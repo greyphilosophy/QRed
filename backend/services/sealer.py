@@ -2,14 +2,14 @@
 
 import base64
 import gzip
+import hashlib
 import json
 import uuid
-from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Optional
 
-from backend.crypto import generate_keypair, sign
-from backend.models import DocumentPayload, QRedChunk, SealGenerationResult
+from backend.models import QRedChunk, SealGenerationResult
+from backend.crypto import sign
 
 
 def generate_document_id() -> str:
@@ -18,18 +18,9 @@ def generate_document_id() -> str:
 
 
 def canonicalize_text(text: str) -> str:
-    """Create a canonical text representation of document content.
-    
-    Rules:
-    - Normalize line endings to \n
-    - Collapse multiple blank lines to one
-    - Strip trailing whitespace per line
-    - Strip leading/trailing whitespace from the whole document
-    - Preserve internal content
-    """
+    """Create a canonical text representation of document content."""
     lines = text.split("\n")
     lines = [line.rstrip() for line in lines]
-    # Collapse multiple empty lines
     collapsed = []
     prev_empty = False
     for line in lines:
@@ -40,7 +31,6 @@ def canonicalize_text(text: str) -> str:
         else:
             collapsed.append(line)
             prev_empty = False
-    # Strip leading/trailing empty lines
     while collapsed and not collapsed[0]:
         collapsed.pop(0)
     while collapsed and not collapsed[-1]:
@@ -72,6 +62,15 @@ def split_into_chunks(data: str, chunk_size: int = 200) -> list[str]:
     return chunks
 
 
+def compute_key_id(public_key_b64: str) -> str:
+    """Compute a stable key_id from a base64 Ed25519 public key.
+
+    The key_id is the first 16 hex chars of SHA-256 of the raw public key bytes.
+    """
+    raw = base64.urlsafe_b64decode(public_key_b64)
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
 def create_seals(
     document_text: str,
     issuer: str,
@@ -82,46 +81,44 @@ def create_seals(
 ) -> SealGenerationResult:
     """Create QRed seals for a document.
 
-    Workflow:
-    1. Canonicalize document text
-    2. Sign with Ed25519 private key
-    3. Compress and chunk payload
-    4. Encode as QRed chunk strings
-
-    The payload contains: issuer_id, public_key_id (not the key itself),
-    and the signature. Verification requires obtaining the public key
-    from a trusted source matching the issuer_id.
+    The payload contains: issuer_id, key_id (NOT the public key itself),
+    and the signature. Verification requires looking up the public key
+    from the issuer registry using (issuer_id, key_id).
     """
-    # Step 1: Canonicalize
+    # Compute key_id from public key
+    key_id = compute_key_id(public_key)
+
+    # Canonicalize
     canonical = canonicalize_text(document_text)
-    
-    # Step 2: Create document ID if not provided
+
+    # Create document ID
     if not document_id:
         document_id = generate_document_id()
-    
-    # Step 3: Create payload metadata (uninitialized)
-    timestamp = datetime.now(timezone.utc).isoformat()
-    payload = DocumentPayload(
-        issuer=issuer,
-        document_id=document_id,
-        timestamp=timestamp,
-        content=canonical,
-    )
-    
-    # Step 4: Sign the canonical content using Ed25519
-    # In production, the payload stores issuer_id + key_id for public key lookup
-    # The public key is NOT embedded in the payload itself
+
+    # Sign with Ed25519
     signature = sign(canonical, private_key)
-    signed_payload = replace(payload, signature=signature)
-    
-    # Step 5: Serialize and compress
-    payload_json = signed_payload.to_canonical_json()
+
+    # Build payload with key_id (not public_key)
+    timestamp = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "version": "1",
+        "issuer": issuer,
+        "key_id": key_id,
+        "document_id": document_id,
+        "timestamp": timestamp,
+        "content": canonical,
+        "signature": signature,
+        "algorithm": "Ed25519",
+    }
+    payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+    # Compress
     compressed = compress_payload(payload_json)
-    
-    # Step 6: Split into chunks
+
+    # Split into chunks
     data_chunks = split_into_chunks(compressed)
-    
-    # Step 7: Create QRed chunks
+
+    # Create QRed chunks
     qred_chunks = []
     for i, chunk_data in enumerate(data_chunks):
         chunk = QRedChunk(
@@ -131,14 +128,13 @@ def create_seals(
             data=chunk_data,
         )
         qred_chunks.append(chunk)
-    
-    # Step 8: Create result
-    result = SealGenerationResult(
+
+    return SealGenerationResult(
         document_id=document_id,
         bootstrap_url=bootstrap_url,
         chunks=qred_chunks,
         payload_json=payload_json,
         total_chunks=len(data_chunks),
+        issuer=issuer,
+        key_id=key_id,
     )
-    
-    return result

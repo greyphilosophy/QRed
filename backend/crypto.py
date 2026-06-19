@@ -27,6 +27,17 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 
+def compute_key_id(public_key_b64: str) -> str:
+    """Derive a stable key_id from a base64-encoded Ed25519 public key.
+    
+    Returns the first 16 hex characters of SHA-256(raw_public_key_bytes).
+    
+    Used by both the sealer and the issuer registry to ensure consistency.
+    """
+    pub_bytes = base64.urlsafe_b64decode(public_key_b64)
+    return hashlib.sha256(pub_bytes).hexdigest()[:16]
+
+
 def generate_keypair() -> dict:
     """Generate an Ed25519 keypair and return as base64 strings.
     
@@ -49,11 +60,12 @@ def generate_keypair() -> dict:
         format=PublicFormat.Raw,
     )
     
-    key_id = hashlib.sha256(pub_bytes).hexdigest()[:16]
+    pub_b64 = base64.urlsafe_b64encode(pub_bytes).decode()
+    key_id = compute_key_id(pub_b64)
     
     return {
         "private_key": base64.urlsafe_b64encode(priv_bytes).decode(),
-        "public_key": base64.urlsafe_b64encode(pub_bytes).decode(),
+        "public_key": pub_b64,
         "key_id": key_id,
     }
 
