@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+.pytest_cache/
+.venv/
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Node
+node_modules/
+frontend/build/
+frontend/dist/
+.npm/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.coverage/
+htmlcov/

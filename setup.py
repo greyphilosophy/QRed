@@ -1,0 +1,21 @@
+from setuptools import setup, find_packages
+
+setup(
+    name="qred",
+    version="0.1.0",
+    description="Tamper-evident document sealing and verification",
+    packages=find_packages(),
+    python_requires=">=3.10",
+    install_requires=[
+        "fastapi>=0.110,<1.0",
+        "pydantic>=2.0,<3.0",
+        "uvicorn>=0.30,<1.0",
+        "pytest>=8.0",
+        "httpx>=0.27",
+    ],
+    entry_points={
+        "console_scripts": [
+            "qred=backend.app:create_app",
+        ],
+    },
+)
