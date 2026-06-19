@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>QRed — Document Verifier</title>
+    <style>
+      :root {
+        --color-primary: #3b82f6;
+        --color-success: #10b981;
+        --color-warning: #f59e0b;
+        --color-error: #ef4444;
+        --color-bg: #f8fafc;
+        --color-card: #ffffff;
+        --color-text: #1e293b;
+        --color-text-secondary: #64748b;
+      }
+
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: var(--color-bg);
+        color: var(--color-text);
+        min-height: 100vh;
+      }
+
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 2rem 1rem;
+      }
+
+      h1 { text-align: center; margin-bottom: 0.5rem; font-size: 2rem; }
+      .subtitle { text-align: center; color: var(--color-text-secondary); margin-bottom: 2rem; }
+
+      .card {
+        background: var(--color-card);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      }
+
+      .card h2 { margin-bottom: 1rem; font-size: 1.2rem; }
+
+      textarea {
+        width: 100%;
+        min-height: 120px;
+        border: 2px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 0.75rem;
+        font-family: monospace;
+        font-size: 0.9rem;
+        resize: vertical;
+        margin-bottom: 1rem;
+      }
+
+      textarea:focus, button:focus {
+        outline: none;
+        border-color: var(--color-primary);
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+      }
+
+      button {
+        background: var(--color-primary);
+        color: white;
+        border: none;
+        padding: 0.75rem 1.5rem;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 1rem;
+        font-weight: 600;
+        transition: background 0.2s;
+      }
+
+      button:hover { background: #2563eb; }
+
+      .result { display: none; }
+      .result.valid {
+        display: block;
+        background: #ecfdf5;
+        border: 1px solid var(--color-success);
+        border-radius: 8px;
+        padding: 1.5rem;
+      }
+
+      .result.invalid {
+        display: block;
+        background: #fef2f2;
+        border: 1px solid var(--color-error);
+        border-radius: 8px;
+        padding: 1.5rem;
+      }
+
+      .result.incomplete {
+        display: block;
+        background: #fffbeb;
+        border: 1px solid var(--color-warning);
+        border-radius: 8px;
+        padding: 1.5rem;
+      }
+
+      .result.error {
+        display: block;
+        background: #f8f9fa;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 1.5rem;
+      }
+
+      .status-badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 999px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+      }
+
+      .valid .status-badge { background: var(--color-success); color: white; }
+      .invalid .status-badge { background: var(--color-error); color: white; }
+      .incomplete .status-badge { background: var(--color-warning); color: white; }
+      .error .status-badge { background: #64748b; color: white; }
+
+      .info-row {
+        margin-bottom: 0.5rem;
+        font-size: 0.9rem;
+        color: var(--color-text-secondary);
+      }
+
+      .info-row strong { color: var(--color-text); }
+
+      .content-box {
+        background: #f1f5f9;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-top: 1rem;
+        font-size: 0.9rem;
+        line-height: 1.6;
+        white-space: pre-wrap;
+      }
+
+      .demo-section {
+        margin-top: 2rem;
+        border-top: 1px solid #e2e8f0;
+        padding-top: 1.5rem;
+      }
+
+      .demo-section h3 { margin-bottom: 0.75rem; }
+
+      .demo-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+      }
+
+      .demo-input {
+        margin-bottom: 0.5rem;
+      }
+
+      .demo-input label {
+        display: block;
+        margin-bottom: 0.25rem;
+        font-size: 0.85rem;
+        color: var(--color-text-secondary);
+      }
+
+      .demo-input input, .demo-input textarea {
+        width: 100%;
+        padding: 0.5rem;
+        border: 2px solid #e2e8f0;
+        border-radius: 6px;
+        font-size: 0.9rem;
+      }
+
+      .demo-input input:focus, .demo-input textarea:focus {
+        border-color: var(--color-primary);
+        outline: none;
+      }
+
+      .footer {
+        text-align: center;
+        margin-top: 2rem;
+        font-size: 0.85rem;
+        color: var(--color-text-secondary);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="src/index.js"></script>
+  </body>
+</html>
