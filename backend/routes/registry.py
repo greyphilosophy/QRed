@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from backend.crypto import compute_key_id
 from backend.services.registry import registry
 
 router = APIRouter()
@@ -64,7 +65,16 @@ def lookup_key(issuer_id: str, key_id: str) -> dict:
 
 @router.post("/registry/{issuer_id}/{key_id}")
 def register_key(issuer_id: str, key_id: str, body: RegisterRequest) -> dict:
-    """Register a public key for an issuer."""
+    """Register a public key for an issuer.
+    
+    Validates that the caller-supplied key_id matches the public_key.
+    """
+    computed_key_id = compute_key_id(body.public_key)
+    if computed_key_id != key_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"key_id does not match public_key (expected {computed_key_id})"
+        )
     registry.register(issuer_id=issuer_id, key_id=key_id, public_key=body.public_key)
     return {
         "status": "REGISTERED",

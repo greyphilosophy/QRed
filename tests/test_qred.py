@@ -769,3 +769,34 @@ def test_compute_key_id_matches_generate_keypair():
     from backend.services.sealer import compute_key_id
     computed = compute_key_id(kp["public_key"])
     assert computed == kp["key_id"]
+
+def test_registry_key_id_validation_correct():
+    """Given a correct key_id, when registering, then 200"""
+    kp = generate_keypair()
+    response = client.post(
+        f"/api/registry/valid-issuer/{kp['key_id']}",
+        json={"public_key": kp["public_key"]},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "REGISTERED"
+
+def test_registry_key_id_validation_wrong_key_id():
+    """Given a wrong key_id for the public_key, when registering, then 400"""
+    kp = generate_keypair()
+    response = client.post(
+        "/api/registry/wrong-issuer/0000000000000000",
+        json={"public_key": kp["public_key"]},
+    )
+    assert response.status_code == 400
+    assert "key_id does not match" in response.json()["detail"]
+
+def test_registry_key_id_validation_different_key():
+    """Given a key_id from one key but a different public_key, when registering, then 400"""
+    kp1 = generate_keypair()
+    kp2 = generate_keypair()
+    response = client.post(
+        f"/api/registry/mixed-issuer/{kp1['key_id']}",
+        json={"public_key": kp2["public_key"]},
+    )
+    assert response.status_code == 400
+    assert "key_id does not match" in response.json()["detail"]
