@@ -36,7 +36,7 @@ def verify_seals(request: VerifyRequest) -> VerifyResponse:
     The public key should be obtained from a trusted issuer key registry
     matching the issuer_id in the payload.
     """
-    result = reconstruct_and_verify(request.seals, request.public_key)
+    result = reconstruct_and_verify(request.seals, request.public_key or None)
     return VerifyResponse(
         status=result.get("status", "ERROR"),
         document_id=result.get("document_id", ""),

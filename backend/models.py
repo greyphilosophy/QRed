@@ -1,51 +1,10 @@
 """QRed Core Data Models — frozen dataclasses with pure functions."""
 
-import hashlib
 import json
-import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from typing import Optional
 
 FORMAT_ID = "QRED1"
-
-
-@dataclass(frozen=True)
-class SignerKeyPair:
-    """Represents an issuer's public/private key pair."""
-    public_key: str
-    private_key: str
-    issuer_id: str
-    algorithm: str = "Ed25519"
-
-    def to_dict(self) -> dict:
-        return {
-            "issuer_id": self.issuer_id,
-            "public_key": self.public_key,
-            "algorithm": self.algorithm,
-        }
-
-
-@dataclass(frozen=True)
-class DocumentPayload:
-    """The signed payload for a QRed document."""
-    version: str = "1"
-    issuer: str = ""
-    document_id: str = ""
-    timestamp: str = ""
-    content: str = ""
-    signature: str = ""
-    algorithm: str = "Ed25519"
-    public_key: str = ""
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-    def to_json(self) -> str:
-        return json.dumps(self.to_dict(), separators=(", ", ":"))
-
-    def to_canonical_json(self) -> str:
-        """Deterministic JSON for signing — sorted keys, no spaces after colons."""
-        return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
 
 
 @dataclass(frozen=True)
@@ -81,12 +40,12 @@ class QRedChunk:
 class VerificationResult:
     """The result of verifying a QRed document."""
     status: str = "ERROR"  # VALID, INVALID, INCOMPLETE, ERROR
-    document: Optional[DocumentPayload] = None
     error_message: str = ""
     issuer: str = ""
     document_id: str = ""
     timestamp: str = ""
     content: str = ""
+    key_id: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -95,6 +54,7 @@ class VerificationResult:
             "document_id": self.document_id,
             "timestamp": self.timestamp,
             "content": self.content,
+            "key_id": self.key_id,
             "error_message": self.error_message,
         }
 
@@ -107,6 +67,8 @@ class SealGenerationResult:
     chunks: list = field(default_factory=list)
     payload_json: str = ""
     total_chunks: int = 0
+    issuer: str = ""
+    key_id: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -115,4 +77,6 @@ class SealGenerationResult:
             "chunks": [c.encode() for c in self.chunks],
             "total_chunks": self.total_chunks,
             "payload_json": self.payload_json,
+            "issuer": self.issuer,
+            "key_id": self.key_id,
         }

@@ -25,7 +25,7 @@ class SealResponse(BaseModel):
     bootstrap_url: str
     seals: list[str]
     total_seals: int
-    public_key: str = Field(description="Issuer's public key for verification")
+    key_id: str = Field(description="Stable key identifier for registry lookup")
     issuer: str = Field(description="Issuing authority")
 
 
@@ -36,7 +36,7 @@ def generate_seals(request: SealRequest) -> SealResponse:
     Takes a document's text content and issuer credentials, produces
     a set of QRed seal strings (QR-encoded) for printing.
 
-    The response includes the public key for verification.
+    The response includes the key_id for registry-based verification.
     In production, the verifier looks up the public key from a trusted
     issuer registry using the issuer_id + key_id.
     """
@@ -53,6 +53,6 @@ def generate_seals(request: SealRequest) -> SealResponse:
         bootstrap_url=result.bootstrap_url,
         seals=[c.encode() for c in result.chunks],
         total_seals=result.total_chunks,
-        public_key=request.public_key,
-        issuer=request.issuer,
+        key_id=result.key_id,
+        issuer=result.issuer,
     )

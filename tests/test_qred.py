@@ -300,7 +300,7 @@ def test_fr4_seal_response_has_required_fields():
     })
     assert response.status_code == 200
     data = response.json()
-    for field in ["document_id", "bootstrap_url", "seals", "total_seals", "public_key"]:
+    for field in ["document_id", "bootstrap_url", "seals", "total_seals", "key_id"]:
         assert field in data, f"Missing field: {field}"
 
 
@@ -590,8 +590,8 @@ def test_ed25519_key_id_is_stable():
     assert len(kp["key_id"]) == 16
 
 
-def test_seal_response_includes_public_key():
-    """Given seal generation, when checking response, then public_key is included"""
+def test_seal_response_includes_key_id():
+    """Given seal generation, when checking response, then key_id is included"""
     response = client.post("/api/seals", json={
         "content": "Test",
         "issuer": TEST_ISSUER,
@@ -599,7 +599,8 @@ def test_seal_response_includes_public_key():
         "public_key": TEST_PUBLIC_KEY,
     })
     assert response.status_code == 200
-    assert response.json()["public_key"] == TEST_PUBLIC_KEY
+    assert "key_id" in response.json()
+    assert len(response.json()["key_id"]) == 16
 
 
 def test_verify_wrong_public_key_returns_invalid():
@@ -619,3 +620,152 @@ def test_private_key_not_leaked_in_seals():
     seals = generate_and_get_seals("Test")
     for seal in seals:
         assert TEST_PRIVATE_KEY not in seal
+
+
+# ===========================
+# Issuer Registry Tests
+# ===========================
+
+def test_registry_register_and_lookup():
+    """Given a registered key, when looked up, then public key is returned"""
+    kp = generate_keypair()
+    from backend.services.registry import registry
+    registry.register(
+        issuer_id="TestIssuer",
+        key_id=kp["key_id"],
+        public_key=kp["public_key"],
+    )
+    result = registry.lookup("TestIssuer", kp["key_id"])
+    assert result == kp["public_key"]
+
+def test_registry_lookup_missing_key():
+    """Given a missing key, when looked up, then None is returned"""
+    from backend.services.registry import registry
+    result = registry.lookup("Missing", "abc123")
+    assert result is None
+
+def test_registry_count():
+    """Given registered keys, when counting, then count is accurate"""
+    from backend.services.registry import registry
+    kp = generate_keypair()
+    registry.register(
+        issuer_id="CountTest",
+        key_id=kp["key_id"],
+        public_key=kp["public_key"],
+    )
+    count = registry.count()
+    assert count >= 1
+
+def test_registry_remove():
+    """Given a registered key, when removed, then it is gone"""
+    from backend.services.registry import registry
+    kp = generate_keypair()
+    registry.register(
+        issuer_id="RemoveTest",
+        key_id=kp["key_id"],
+        public_key=kp["public_key"],
+    )
+    assert registry.is_registered("RemoveTest", kp["key_id"])
+    registry.remove("RemoveTest", kp["key_id"])
+    assert not registry.is_registered("RemoveTest", kp["key_id"])
+
+def test_registry_api_register_endpoint():
+    """Given a POST to /api/registry, when registering, then 200"""
+    kp = generate_keypair()
+    response = client.post(
+        f"/api/registry/test-issuer/{kp['key_id']}",
+        json={"public_key": kp["public_key"]},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "REGISTERED"
+
+def test_registry_api_lookup_endpoint():
+    """Given a GET to /api/registry, when looking up, then 200"""
+    kp = generate_keypair()
+    # Register first
+    client.post(
+        f"/api/registry/test-lookup/{kp['key_id']}",
+        json={"public_key": kp["public_key"]},
+    )
+    # Lookup
+    response = client.get(f"/api/registry/test-lookup/{kp['key_id']}")
+    assert response.status_code == 200
+    assert response.json()["public_key"] == kp["public_key"]
+
+def test_registry_api_404_on_missing_key():
+    """Given a GET to /api/registry for a missing key, then 404"""
+    response = client.get("/api/registry/missing/abc123")
+    assert response.status_code == 404
+
+def test_registry_api_list_endpoint():
+    """Given a GET to /api/registry, when listing, then 200"""
+    response = client.get("/api/registry")
+    assert response.status_code == 200
+    assert "count" in response.json()
+
+def test_registry_api_issuer_keys_endpoint():
+    """Given a GET to /api/registry/{issuer_id}, when listing, then 200"""
+    kp = generate_keypair()
+    client.post(
+        f"/api/registry/test-list/{kp['key_id']}",
+        json={"public_key": kp["public_key"]},
+    )
+    response = client.get("/api/registry/test-list")
+    assert response.status_code == 200
+    assert response.json()["count"] >= 1
+
+def test_registry_api_delete_endpoint():
+    """Given a DELETE to /api/registry, when deleting, then 200"""
+    kp = generate_keypair()
+    client.post(
+        f"/api/registry/test-del/{kp['key_id']}",
+        json={"public_key": kp["public_key"]},
+    )
+    response = client.delete(f"/api/registry/test-del/{kp['key_id']}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "REMOVED"
+
+def test_key_id_computation():
+    """Given a public key, when computing key_id, then it is stable"""
+    kp = generate_keypair()
+    from backend.services.sealer import compute_key_id
+    id1 = compute_key_id(kp["public_key"])
+    id2 = compute_key_id(kp["public_key"])
+    assert id1 == id2
+    assert len(id1) == 16
+
+def test_seals_contain_key_id():
+    """Given a seal generation response, when checking, then key_id is present"""
+    response = client.post("/api/seals", json={
+        "content": "Test",
+        "issuer": "QRed Authority",
+        "private_key": TEST_PRIVATE_KEY,
+        "public_key": TEST_PUBLIC_KEY,
+    })
+    assert response.status_code == 200
+    assert "key_id" in response.json()
+    assert len(response.json()["key_id"]) == 16
+
+def test_verify_with_explicit_public_key_still_works():
+    """Given explicit public_key in verify request, then verification works"""
+    response = client.post("/api/seals", json={
+        "content": "Test",
+        "issuer": "QRed Authority",
+        "private_key": TEST_PRIVATE_KEY,
+        "public_key": TEST_PUBLIC_KEY,
+    })
+    assert response.status_code == 200
+    seals = response.json()["seals"]
+    result = client.post("/api/verify", json={
+        "seals": seals,
+        "public_key": TEST_PUBLIC_KEY,
+    })
+    assert result.status_code == 200
+    assert result.json()["status"] == "VALID"
+
+def test_compute_key_id_matches_generate_keypair():
+    """Given a generated keypair, when computing key_id, then they match"""
+    kp = generate_keypair()
+    from backend.services.sealer import compute_key_id
+    computed = compute_key_id(kp["public_key"])
+    assert computed == kp["key_id"]
