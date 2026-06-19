@@ -5,6 +5,7 @@ Endpoints for registering and looking up issuer public keys.
 All routes use /registry paths — the app.py adds the /api prefix.
 """
 
+import binascii
 from dataclasses import dataclass
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -68,8 +69,15 @@ def register_key(issuer_id: str, key_id: str, body: RegisterRequest) -> dict:
     """Register a public key for an issuer.
     
     Validates that the caller-supplied key_id matches the public_key.
+    Catches malformed base64 to return a clean 400 instead of a server error.
     """
-    computed_key_id = compute_key_id(body.public_key)
+    try:
+        computed_key_id = compute_key_id(body.public_key)
+    except (binascii.Error, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid public_key: malformed base64 encoding"
+        )
     if computed_key_id != key_id:
         raise HTTPException(
             status_code=400,

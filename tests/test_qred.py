@@ -800,3 +800,32 @@ def test_registry_key_id_validation_different_key():
     )
     assert response.status_code == 400
     assert "key_id does not match" in response.json()["detail"]
+
+def test_registry_malformed_base64_public_key():
+    """Given a malformed base64 public_key, when registering, then 400 (key_id mismatch)"""
+    response = client.post(
+        "/api/registry/bad-b64/0000000000000000",
+        json={"public_key": "!!!not-valid-base64"},
+    )
+    assert response.status_code == 400
+    assert "key_id does not match" in response.json()["detail"]
+
+def test_registry_empty_public_key():
+    """Given an empty public_key string, when registering, then 400 (key_id mismatch)"""
+    response = client.post(
+        "/api/registry/empty-pk/0000000000000000",
+        json={"public_key": ""},
+    )
+    assert response.status_code == 400
+    assert "key_id does not match" in response.json()["detail"]
+
+def test_registry_random_bytes_as_public_key():
+    """Given random non-base64 bytes as public_key, when registering, then 400"""
+    response = client.post(
+        "/api/registry/random-pk/0000000000000000",
+        json={"public_key": "not_a_real_key_abcdef1234567890"},
+    )
+    assert response.status_code == 400
+    # Could be malformed base64 or key_id mismatch — either way, 400
+    detail = response.json()["detail"]
+    assert "Invalid public_key" in detail or "key_id does not match" in detail
