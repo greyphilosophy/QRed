@@ -2,14 +2,13 @@
 
 import base64
 import gzip
-import hashlib
-import hmac
 import json
 import uuid
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Optional
 
+from backend.crypto import generate_keypair, sign
 from backend.models import DocumentPayload, QRedChunk, SealGenerationResult
 
 
@@ -49,25 +48,6 @@ def canonicalize_text(text: str) -> str:
     return "\n".join(collapsed)
 
 
-def compute_signature(content: str, key: str) -> str:
-    """Compute a digital signature over content using the issuer's key.
-    
-    Uses HMAC-SHA256 for the reference implementation.
-    The signing key is embedded in the payload and used for verification.
-    In production, use actual Ed25519 via `cryptography` or `pynacl`.
-    """
-    msg_hash = hashlib.sha256(content.encode("utf-8")).digest()
-    key_bytes = key.encode("utf-8")
-    sig = hmac.new(key_bytes, msg_hash, hashlib.sha256).digest()
-    return base64.urlsafe_b64encode(sig).decode("utf-8")
-
-
-def verify_signature(content: str, signature: str, key: str) -> bool:
-    """Verify a digital signature against content using the signing key."""
-    expected = compute_signature(content, key)
-    return base64.urlsafe_b64decode(signature) == base64.urlsafe_b64decode(expected)
-
-
 def compress_payload(payload_json: str) -> str:
     """Compress a JSON payload and return a base64-encoded string."""
     compressed = gzip.compress(payload_json.encode("utf-8"))
@@ -82,10 +62,7 @@ def decompress_payload(compressed_str: str) -> str:
 
 
 def split_into_chunks(data: str, chunk_size: int = 200) -> list[str]:
-    """Split compressed payload data into fixed-size chunks.
-    
-    Each chunk is approximately `chunk_size` characters of the base64 data.
-    """
+    """Split compressed payload data into fixed-size chunks."""
     chunks = []
     total_chunks = max(1, (len(data) + chunk_size - 1) // chunk_size)
     for i in range(total_chunks):
@@ -101,19 +78,19 @@ def create_seals(
     private_key: str,
     public_key: str,
     document_id: Optional[str] = None,
-    bootstrap_url: str = "https://qred.org/verify",
+    bootstrap_url: str = "https://qred.org/verify/v1",
 ) -> SealGenerationResult:
     """Create QRed seals for a document.
-    
+
     Workflow:
     1. Canonicalize document text
-    2. Create signed payload (signed with private key)
-    3. Compress payload
-    4. Split into chunks
-    5. Encode as QRed chunk strings
-    
-    The private key is embedded in the payload so the verifier can
-    use the same key for re-signing and verification.
+    2. Sign with Ed25519 private key
+    3. Compress and chunk payload
+    4. Encode as QRed chunk strings
+
+    The payload contains: issuer_id, public_key_id (not the key itself),
+    and the signature. Verification requires obtaining the public key
+    from a trusted source matching the issuer_id.
     """
     # Step 1: Canonicalize
     canonical = canonicalize_text(document_text)
@@ -122,7 +99,7 @@ def create_seals(
     if not document_id:
         document_id = generate_document_id()
     
-    # Step 3: Create payload (without signature first)
+    # Step 3: Create payload metadata (uninitialized)
     timestamp = datetime.now(timezone.utc).isoformat()
     payload = DocumentPayload(
         issuer=issuer,
@@ -131,9 +108,11 @@ def create_seals(
         content=canonical,
     )
     
-    # Step 4: Sign the canonical content using the private key
-    signature = compute_signature(canonical, private_key)
-    signed_payload = replace(payload, signature=signature, public_key=private_key)
+    # Step 4: Sign the canonical content using Ed25519
+    # In production, the payload stores issuer_id + key_id for public key lookup
+    # The public key is NOT embedded in the payload itself
+    signature = sign(canonical, private_key)
+    signed_payload = replace(payload, signature=signature)
     
     # Step 5: Serialize and compress
     payload_json = signed_payload.to_canonical_json()
