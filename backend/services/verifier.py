@@ -3,24 +3,11 @@
 import base64
 import gzip
 import json
-from dataclasses import dataclass
-from typing import Optional
+
+from backend.crypto import verify as crypto_verify
 
 
-@dataclass
-class VerificationContext:
-    """Mutable state for a verification operation."""
-    chunks: Optional[dict] = None
-    total_chunks: int = 0
-    document_id: str = ""
-    status: str = "ERROR"
-
-    def __post_init__(self):
-        if self.chunks is None:
-            self.chunks = {}
-
-
-def decode_seal(seal_string: str) -> Optional[dict]:
+def decode_seal(seal_string: str) -> dict | None:
     """Decode a QRed seal string into a chunk dict."""
     parts = seal_string.split("|", 4)
     if len(parts) < 5:
@@ -37,7 +24,10 @@ def decode_seal(seal_string: str) -> Optional[dict]:
     }
 
 
-def reconstruct_and_verify(seals: list[str], expected_public_key: Optional[str] = None) -> dict:
+def reconstruct_and_verify(
+    seals: list[str],
+    expected_public_key: str | None = None,
+) -> dict:
     """Reconstruct payload from seal strings and verify the signature.
 
     Returns a verification result dict with:
@@ -105,15 +95,20 @@ def reconstruct_and_verify(seals: list[str], expected_public_key: Optional[str] 
     # Extract fields
     content = payload.get("content", "")
     signature = payload.get("signature", "")
-    public_key = payload.get("public_key", "")
     issuer = payload.get("issuer", "")
     doc_id = payload.get("document_id", "")
     timestamp = payload.get("timestamp", "")
 
-    # Verify signature — use the embedded public key
-    verify_key = expected_public_key or public_key
-    from backend.services.sealer import verify_signature
-    is_valid = verify_signature(content, signature, verify_key)
+    # Verify signature using Ed25519
+    if expected_public_key:
+        is_valid = crypto_verify(content, signature, expected_public_key)
+    elif payload.get("public_key"):
+        is_valid = crypto_verify(content, signature, payload["public_key"])
+    else:
+        return {
+            "status": "ERROR",
+            "error_message": "No public key available for verification",
+        }
 
     if is_valid:
         return {
