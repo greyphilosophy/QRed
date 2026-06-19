@@ -1,6 +1,6 @@
 # QRed Specification
 
-Version: 0.1 Draft
+Version: 0.2
 
 # Overview
 
@@ -22,9 +22,9 @@ The payload seals contain the signed document data required to reconstruct and v
 
 1. Source document is provided.
 2. A canonical text representation is produced.
-3. The canonical text is digitally signed.
-4. The signed payload is compressed.
-5. The payload is divided into chunks.
+3. The canonical text is digitally signed using Ed25519.
+4. The signed payload is compressed using gzip.
+5. The compressed payload is divided into fixed-size chunks.
 6. Chunks are encoded into machine-readable seals.
 7. The bootstrap seal and payload seals are placed on the document.
 
@@ -35,11 +35,12 @@ The payload seals contain the signed document data required to reconstruct and v
 1. User scans bootstrap seal.
 2. Verification application loads.
 3. Verification application scans payload seals.
-4. Payload is reconstructed.
-5. Payload integrity is validated.
-6. Digital signature is verified.
-7. Certified contents are displayed.
-8. Verification result is displayed.
+4. Payload is reconstructed from all chunks.
+5. Payload integrity is validated (all chunks present).
+6. Compressed payload is decompressed.
+7. Digital signature is verified using the issuer's public key.
+8. Certified contents are displayed.
+9. Verification result is reported.
 
 ---
 
@@ -53,7 +54,12 @@ The canonical representation MUST:
 - Produce identical output for identical document contents.
 - Exclude non-essential formatting.
 
-The exact canonicalization algorithm is implementation-defined.
+The reference implementation:
+
+- Splits text on `\n` line endings.
+- Strips trailing whitespace from each line.
+- Collapses consecutive blank lines to a single blank line.
+- Strips leading and trailing empty lines.
 
 Future versions may standardize canonicalization.
 
@@ -65,24 +71,45 @@ A QRed payload SHALL contain:
 
 - Format version
 - Issuer identifier
+- Key ID (derived from the issuer's public key)
 - Document identifier
 - Creation timestamp
 - Canonical document text
 - Signature metadata
 - Digital signature
 
-Example logical structure:
+The reference implementation encodes the payload as a JSON object:
 
+```json
 {
-"version": "1",
-"issuer": "Example Authority",
-"document_id": "123456",
-"timestamp": "2026-06-18T00:00:00Z",
-"content": "...",
-"signature": "..."
+  "version": "1",
+  "issuer": "Example Authority",
+  "key_id": "a1b2c3d4e5f6a1b2",
+  "document_id": "DOC-ABC123DEF456",
+  "timestamp": "2026-06-18T00:00:00+00:00",
+  "content": "...",
+  "signature": "...",
+  "algorithm": "Ed25519"
 }
+```
 
-The physical encoding format is implementation-defined.
+The JSON is serialized with sorted keys and compact separators, then gzip-compressed and base64-encoded.
+
+---
+
+# Key ID Derivation
+
+The key_id is a stable identifier derived from the issuer's Ed25519 public key.
+
+The reference implementation computes key_id as:
+
+```
+key_id = SHA-256(public_key_bytes).hexdigest()[:16]
+```
+
+The key_id is a 16-character lowercase hexadecimal string (64-bit).
+
+The issuer registry validates key_id on registration: the caller-supplied key_id MUST match the computed value, or the registration returns a `400 Bad Request`.
 
 ---
 
@@ -90,24 +117,21 @@ The physical encoding format is implementation-defined.
 
 Payloads exceeding the capacity of a single seal SHALL be divided into chunks.
 
-Each chunk SHALL contain:
+The reference implementation splits the compressed base64 payload into fixed-size data chunks (200 bytes each).
 
-- Format identifier
-- Document identifier
-- Chunk number
-- Total chunk count
-- Payload data
+Each QRed chunk is encoded as a pipe-delimited string:
 
-Example:
-
-QRED1|DOC123|2|5|<data>
+```
+QRED1|DOC-ABC123DEF456|0|3|<base64_gzip_data>
+```
 
 Where:
 
-- QRED1 = format identifier
-- DOC123 = document identifier
-- 2 = chunk number
-- 5 = total chunks
+- `QRED1` = format identifier
+- `DOC-ABC123DEF456` = document identifier
+- `0` = chunk number (0-indexed)
+- `3` = total chunks
+- `<base64_gzip_data>` = chunk data
 
 ---
 
@@ -117,38 +141,56 @@ A QRed document SHALL contain a bootstrap seal.
 
 The bootstrap seal SHALL provide sufficient information to locate a verification application.
 
-Example:
+The reference implementation uses a default bootstrap URL:
 
-https://example.org/qred
+```
+https://qred.org/verify/v1
+```
 
 Future versions may support additional bootstrap mechanisms.
 
 ---
 
-# Compression
-
-Payload compression is OPTIONAL.
-
-Supported compression methods SHALL be identified within the payload metadata.
-
-The initial reference implementation may use GZIP.
-
-Future versions may define additional compression methods.
-
----
-
 # Signatures
 
-QRed relies on public-key cryptography.
+QRed relies on Ed25519 public-key cryptography.
 
 Implementations SHALL:
 
-- Sign canonical document content.
-- Verify signatures using a corresponding public key.
+- Sign canonical document content using an Ed25519 private key.
+- Verify signatures using the corresponding Ed25519 public key.
+- Embed a key_id (derived from the public key) in the payload for registry lookup.
 
-The specific signature algorithm is implementation-defined.
+The issuer registry allows verification applications to look up public keys by (issuer_id, key_id).
 
-Future versions may define mandatory algorithms.
+---
+
+# Issuer Registry
+
+The issuer registry is a trusted key discovery mechanism for QRed verification.
+
+The registry provides:
+
+- Registration of (issuer_id, key_id, public_key) triplets.
+- Key lookup by (issuer_id, key_id).
+- Key validation: key_id MUST match the public key (SHA-256 derivation).
+
+The reference implementation uses an in-memory dictionary. Production implementations may use a database, JSON file, or REST API.
+
+---
+
+# PDF Sealing Layout
+
+PDF sealing layout is implementation-defined in v0.2 and may be standardized later.
+
+The reference implementation produces seal strings suitable for QR code generation. The physical arrangement of seals on the document — including position, size, and number of QR codes per page — is left to the implementer.
+
+Future versions may standardize:
+
+- Seal placement conventions (corner, margin, watermark).
+- Minimum QR code dimensions.
+- Multi-page seal distribution.
+- Bootstrap vs. payload seal grouping.
 
 ---
 
@@ -156,16 +198,16 @@ Future versions may define mandatory algorithms.
 
 Verification applications SHALL report one of the following outcomes:
 
-VALID
+**VALID**
 The payload was reconstructed successfully and the signature verified.
 
-INVALID
+**INVALID**
 The payload was reconstructed but signature verification failed.
 
-INCOMPLETE
+**INCOMPLETE**
 One or more required payload chunks could not be reconstructed.
 
-ERROR
+**ERROR**
 An unexpected processing error occurred.
 
 ---
@@ -187,6 +229,7 @@ QRed provides:
 - Integrity verification
 - Issuer authentication
 - Tamper detection
+- Key ID validation in the issuer registry
 
 QRed does not provide:
 
@@ -198,30 +241,14 @@ Compromise of an issuer's private key compromises trust in documents issued by t
 
 ---
 
-# Reference Architecture
-
-Bootstrap Seal
-↓
-Verification Application
-↓
-Payload Seal Scan
-↓
-Payload Reconstruction
-↓
-Signature Verification
-↓
-Certified Content Display
-
----
-
 # Future Enhancements
 
 Potential future enhancements include:
 
+- Standardized PDF sealing layout
 - Multi-page document support
 - Alternative seal formats
 - Standardized canonicalization
-- Standardized signature algorithms
 - Offline public key distribution
 - Revocation support
 - Embedded document thumbnails
