@@ -6,6 +6,64 @@ QRed encodes the signed contents of a document into one or more QR code seals pr
 
 No app installation is required.
 
+# Quick Start
+
+## Run the demo
+
+```bash
+git clone https://github.com/greyphilosophy/QRed
+cd QRed
+python demo.py
+```
+
+This walks through the full QRed flow:
+
+1. Generates an Ed25519 keypair for the issuer
+2. Creates a sample document
+3. Seals the document into QR-ready seal strings
+4. Shows the generated seals
+5. Verifies the seals end-to-end → VALID
+
+## Use the demo script
+
+The included `demo.sh` sets up a virtual environment and runs the demo in one command:
+
+```bash
+bash demo.sh
+```
+
+## Start the API server
+
+```bash
+make install   # pip install -r requirements.txt
+make run       # uvicorn on port 8190
+```
+
+Then use the REST API:
+
+```bash
+# Generate seals
+curl -X POST http://localhost:8190/api/seals \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "content": "This is my document.",
+    "issuer": "QRed Authority",
+    "private_key": "<base64_private_key>",
+    "public_key": "<base64_public_key>"
+}'
+
+# Verify seals
+curl -X POST http://localhost:8190/api/verify \
+  -H 'Content-Type: application/json' \
+  -d '{"seals": ["QRED1|DOC-ABC|0|3|...", "QRED1|DOC-ABC|1|3|..."]}'
+```
+
+## Run tests
+
+```bash
+make tests     # 82 passing BDD tests
+```
+
 # Motivation
 
 Many documents are distributed in printed form and may be photocopied, scanned, emailed, faxed, or manually altered. While digital signatures are well understood in electronic documents, there is no widely adopted method for making printed documents self-verifying.
