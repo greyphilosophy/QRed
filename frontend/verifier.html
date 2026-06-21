@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f172a">
+  <title>QRed — Document Verifier</title>
+  <script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"><\/script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --surface-2: #334155;
+      --primary: #3b82f6;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --error: #ef4444;
+      --text: #f8fafc;
+      --text-dim: #94a3b8;
+      --radius: 12px;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 1.5rem;
+      text-align: center;
+      border-bottom: 1px solid var(--surface-2);
+      background: var(--surface);
+    }
+
+    header h1 { font-size: 1.5rem; font-weight: 700; }
+    header p { color: var(--text-dim); font-size: 0.9rem; margin-top: 0.25rem; }
+
+    main {
+      flex: 1;
+      padding: 1rem;
+      max-width: 500px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .viewfinder {
+      position: relative;
+      background: #000;
+      border-radius: var(--radius);
+      overflow: hidden;
+      aspect-ratio: 4 / 3;
+      border: 2px solid var(--surface-2);
+      margin-bottom: 1rem;
+    }
+
+    .viewfinder video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .viewfinder canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .viewfinder .scan-line {
+      position: absolute;
+      left: 5%;
+      right: 5%;
+      height: 2px;
+      background: var(--primary);
+      opacity: 0.7;
+      animation: scan-line 2.5s ease-in-out infinite;
+    }
+
+    @keyframes scan-line {
+      0%, 100% { top: 15%; }
+      50% { top: 80%; }
+    }
+
+    .placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-dim);
+      gap: 0.5rem;
+    }
+
+    .placeholder .icon { font-size: 3rem; opacity: 0.5; }
+
+    .controls {
+      display: flex;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 0.875rem;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      text-align: center;
+    }
+
+    .btn:active { transform: scale(0.98); }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-secondary { background: var(--surface-2); color: var(--text); }
+    .btn-secondary:hover { background: #475569; }
+
+    .status-bar {
+      display: none;
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--surface-2);
+      margin-bottom: 1rem;
+    }
+
+    .status-bar.visible { display: flex; align-items: center; gap: 0.75rem; }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--primary);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .status-dot.active { background: var(--success); }
+
+    .seal-list {
+      display: none;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .seal-list.visible { display: flex; }
+
+    .seal-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid var(--surface-2);
+      animation: slide-in 0.3s ease-out;
+    }
+
+    @keyframes slide-in {
+      from { opacity: 0; transform: translateY(-8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .seal-item .seal-index {
+      background: var(--primary);
+      color: white;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .result-view { display: none; }
+    .result-view.visible { display: flex; flex-direction: column; gap: 1rem; }
+
+    .result-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      border: 1px solid var(--surface-2);
+    }
+
+    .result-status {
+      display: inline-block;
+      padding: 0.3rem 0.85rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 1rem;
+    }
+
+    .result-status.valid { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+    .result-status.error { background: rgba(148, 163, 184, 0.2); color: var(--text-dim); }
+
+    .result-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--surface-2);
+    }
+
+    .result-meta .meta-item { font-size: 0.85rem; color: var(--text-dim); }
+    .result-meta .meta-item strong { color: var(--text); }
+
+    .result-content {
+      background: var(--bg);
+      border-radius: 8px;
+      padding: 1rem;
+      font-size: 0.95rem;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: "Georgia", serif;
+    }
+
+    .footer {
+      text-align: center;
+      padding: 1rem;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      opacity: 0.6;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>QRed Verifier</h1>
+    <p>Scan QR seals to verify a document</p>
+  </header>
+
+  <main>
+    <div id="scanMode">
+      <div class="viewfinder" id="viewfinder">
+        <video id="cameraVideo" playsinline autoplay></video>
+        <canvas id="scanCanvas"></canvas>
+        <div class="scan-line" id="scanLine"></div>
+        <div class="placeholder" id="placeholder">
+          <div class="icon">&#9679;</div>
+          <div>Tap <strong>Start Scanning</strong> to open camera</div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button class="btn btn-primary" id="btnScan">Start Scanning</button>
+      </div>
+
+      <div class="status-bar" id="statusBar">
+        <div class="status-dot active" id="statusDot"></div>
+        <div class="status-text" id="statusText">Scanning...</div>
+      </div>
+
+      <div class="seal-list" id="sealList"></div>
+      <div id="progressContainer" style="display:none;">
+        <div style="background: var(--surface-2); border-radius: 2px; height: 4px; margin-bottom: 1rem;">
+          <div id="progressFill" style="background: var(--primary); height: 100%; width: 0%; border-radius: 2px; transition: width 0.3s ease;"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="result-view" id="resultView">
+      <div class="result-card">
+        <div class="result-status" id="resultStatus"></div>
+        <div class="result-meta" id="resultMeta"></div>
+        <div class="result-content" id="resultContent"></div>
+      </div>
+      <div class="controls">
+        <button class="btn btn-secondary" id="btnNewScan">New Scan</button>
+      </div>
+    </div>
+
+    <div id="errorMsg" style="color: var(--error); font-size: 0.85rem; padding: 0.5rem; display: none;"></div>
+  </main>
+
+  <div class="footer">
+    QRed - Tamper-Evident Document Sealing
+  </div>
+
+  <script>
+    // QRed Protocol - decode QRed seal strings
+    function decodeSeal(str) {
+      var parts = str.split("|");
+      if (parts.length < 5) return null;
+      var fmtId = parts[0];
+      var docId = parts[1];
+      var chunkNum = parseInt(parts[2], 10);
+      var total = parseInt(parts[3], 10);
+      var data = parts.slice(4).join("|");
+      if (fmtId.startsWith("QRED")) {
+        return { documentId: docId, chunkNumber: chunkNum, totalChunks: total, data: data };
+      }
+      return null;
+    }
+
+    function uint8FromBase64(b64) {
+      return new Uint8Array(Array.from(atob(b64), c => c.charCodeAt(0)));
+    }
+
+    function bytesFromChunks(arr) {
+      var totalLength = 0;
+      for (var i = 0; i < arr.length; i++) totalLength += arr[i].length;
+      var result = new Uint8Array(totalLength);
+      var offset = 0;
+      for (var i = 0; i < arr.length; i++) {
+        result.set(arr[i], offset);
+        offset += arr[i].length;
+      }
+      return result;
+    }
+
+    function bytesToString(bytes) {
+      return new TextDecoder().decode(bytes);
+    }
+
+    // State
+    var state = {
+      sealsByDocument: {},
+      scannedSeals: [],
+      seenSeals: new Set(),
+      isScanning: false,
+      stream: null,
+      animFrameId: null,
+    };
+
+    // Camera handling
+    var btnScan = document.getElementById("btnScan");
+    var btnNewScan = document.getElementById("btnNewScan");
+    var statusBar = document.getElementById("statusBar");
+    var statusText = document.getElementById("statusText");
+    var sealList = document.getElementById("sealList");
+    var progressContainer = document.getElementById("progressContainer");
+    var progressFill = document.getElementById("progressFill");
+
+    btnScan.onclick = function() {
+      if (state.isScanning) {
+        stopScanning();
+        btnScan.textContent = "Start Scanning";
+      } else {
+        startScanning();
+        btnScan.textContent = "Stop";
+      }
+    };
+
+    btnNewScan.onclick = function() {
+      state.sealsByDocument = {};
+      state.scannedSeals = [];
+      state.seenSeals = new Set();
+      sealList.innerHTML = "";
+      sealList.classList.remove("visible");
+      progressContainer.style.display = "none";
+      document.getElementById("resultView").classList.remove("visible");
+      document.getElementById("scanMode").style.display = "block";
+      btnScan.textContent = "Start Scanning";
+      document.getElementById("placeholder").style.display = "flex";
+      document.getElementById("cameraVideo").style.display = "none";
+      document.getElementById("scanCanvas").style.display = "none";
+      document.getElementById("scanLine").style.display = "none";
+      statusBar.classList.remove("visible");
+    };
+
+    function startScanning() {
+      var video = document.getElementById("cameraVideo");
+      var canvas = document.getElementById("scanCanvas");
+      var placeholder = document.getElementById("placeholder");
+      var scanLine = document.getElementById("scanLine");
+
+      placeholder.style.display = "none";
+      scanLine.style.display = "block";
+      video.style.display = "block";
+
+      navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 960 } }
+      }).then(function(mediaStream) {
+        state.stream = mediaStream;
+        video.srcObject = mediaStream;
+        video.play();
+
+        video.onloadedmetadata = function() {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          state.isScanning = true;
+          statusBar.classList.add("visible");
+
+          var ctx = canvas.getContext("2d");
+
+          function scanFrame() {
+            if (!state.isScanning) return;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            var code = jsQR(imageData.data, canvas.width, canvas.height);
+            if (code) {
+              processScannedSeal(code.data);
+            }
+            state.animFrameId = requestAnimationFrame(scanFrame);
+          }
+          scanFrame();
+        };
+      }).catch(function(err) {
+        statusText.textContent = "Camera error: " + err.message;
+        placeholder.style.display = "flex";
+        placeholder.innerHTML = "<div class='icon'>&#128247;</div><div>" + err.message + "</div>";
+      });
+    }
+
+    function stopScanning() {
+      state.isScanning = false;
+      if (state.animFrameId) {
+        cancelAnimationFrame(state.animFrameId);
+        state.animFrameId = null;
+      }
+      if (state.stream) {
+        state.stream.getTracks().forEach(function(t) { t.stop(); });
+        state.stream = null;
+      }
+      statusBar.classList.remove("visible");
+    }
+
+    function processScannedSeal(sealStr) {
+      if (state.seenSeals.has(sealStr)) return;
+      state.seenSeals.add(sealStr);
+
+      var decoded = decodeSeal(sealStr);
+      if (!decoded) return;
+
+      state.scannedSeals.push(sealStr);
+
+      var docId = decoded.documentId;
+      if (!state.sealsByDocument[docId]) {
+        state.sealsByDocument[docId] = { chunks: {}, total: decoded.totalChunks };
+      }
+      state.sealsByDocument[docId].chunks[decoded.chunkNumber] = decoded.data;
+
+      updateSealList();
+
+      var docData = state.sealsByDocument[docId];
+      var collected = Object.keys(docData.chunks).length;
+      var pct = Math.min(100, (collected / docData.total) * 100);
+      statusText.textContent = collected + " / " + docData.total + " seals";
+      progressFill.style.width = pct + "%";
+      progressContainer.style.display = "block";
+
+      if (collected >= docData.total) {
+        stopScanning();
+        btnScan.textContent = "Start Scanning";
+        reconstructAndShow(docId);
+      }
+    }
+
+    function updateSealList() {
+      if (state.scannedSeals.length > 0) {
+        sealList.classList.add("visible");
+        sealList.innerHTML = "";
+        for (var i = 0; i < state.scannedSeals.length; i++) {
+          var decoded = decodeSeal(state.scannedSeals[i]);
+          if (decoded) {
+            var div = document.createElement("div");
+            div.className = "seal-item";
+            div.innerHTML = "<div class='seal-index'>" + (decoded.chunkNumber + 1) + "</div><div>" + decoded.documentId + " / " + decoded.totalChunks + " chunks</div>";
+            sealList.appendChild(div);
+          }
+        }
+      }
+    }
+
+    // Reconstruct & Display
+    async function reconstructAndShow(docId) {
+      var docData = state.sealsByDocument[docId];
+      var total = docData.total;
+
+      var allData = "";
+      for (var i = 0; i < total; i++) {
+        allData += docData.chunks[i];
+      }
+
+      try {
+        var decompressedBytes = uint8FromBase64(allData);
+        var stream = new Response(decompressedBytes).body;
+        var decompressed = stream.pipeThrough(new DecompressionStream("gzip"));
+        var reader = decompressed.getReader();
+        var chunks = [];
+        for await (var chunk of reader) {
+          chunks.push(chunk);
+        }
+        var combined = bytesFromChunks(chunks);
+        var jsonStr = bytesToString(combined);
+        var payload = JSON.parse(jsonStr);
+        showResult("VALID", payload);
+      } catch (e) {
+        showResult("ERROR", {});
+      }
+    }
+
+    function showResult(status, payload) {
+      document.getElementById("scanMode").style.display = "none";
+      var rv = document.getElementById("resultView");
+      rv.classList.add("visible");
+
+      var rs = document.getElementById("resultStatus");
+      rs.textContent = status;
+      rs.className = "result-status " + status.toLowerCase();
+
+      var rm = document.getElementById("resultMeta");
+      rm.innerHTML = "";
+
+      if (payload.issuer) {
+        rm.innerHTML += "<div class='meta-item'><strong>Issuer:</strong> " + payload.issuer + "</div>";
+      }
+      if (payload.document_id) {
+        rm.innerHTML += "<div class='meta-item'><strong>Doc ID:</strong> " + payload.document_id + "</div>";
+      }
+      if (payload.key_id) {
+        rm.innerHTML += "<div class='meta-item'><strong>Key ID:</strong> " + payload.key_id + "</div>";
+      }
+      if (payload.timestamp) {
+        rm.innerHTML += "<div class='meta-item'><strong>Timestamp:</strong> " + new Date(payload.timestamp).toLocaleString() + "</div>";
+      }
+
+      var rc = document.getElementById("resultContent");
+      rc.textContent = payload.content || "(empty)";
+    }
+  </script>
+</body>
+</html>
