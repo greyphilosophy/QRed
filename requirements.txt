@@ -6,6 +6,11 @@ fastapi>=0.110,<1.0
 pydantic>=2.0,<3.0
 uvicorn>=0.30,<1.0
 
+# PDF sealing pipeline
+pymupdf>=1.27.0
+qrcode>=8.0
+Pillow>=10.0
+
 # Testing
 httpx>=0.27
 pytest>=8.0
