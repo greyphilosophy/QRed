@@ -52,10 +52,15 @@ def reconstruct_and_verify(
             ctx["errors"].append(f"Malformed seal: {seal[:50]}")
             continue
 
-        # Ensure all chunks belong to the same document
+        # Ensure all chunks belong to the same document. Mixing seals from
+        # different documents must fail before reconstruction so chunk-number
+        # collisions cannot silently produce a seemingly valid payload.
         if ctx["document_id"] and decoded["document_id"] != ctx["document_id"]:
-            ctx["document_id"] = ""  # Mixed documents
-            continue
+            return {
+                "status": "INVALID",
+                "document_id": ctx["document_id"],
+                "error_message": "Mixed document IDs",
+            }
 
         if not ctx["document_id"]:
             ctx["document_id"] = decoded["document_id"]
