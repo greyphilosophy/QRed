@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from backend.services.sealer import create_seals
+from backend.services.sealer import DEFAULT_BOOTSTRAP_URL, create_seals
 
 router = APIRouter()
 
@@ -15,8 +15,8 @@ class SealRequest(BaseModel):
     public_key: str = Field(..., min_length=1, description="Issuer's Ed25519 public key")
     document_id: str = Field("", description="Optional document ID")
     bootstrap_url: str = Field(
-        "https://qred.org/verify/v1",
-        description="Bootstrap URL for verifier web app (versioned)",
+        DEFAULT_BOOTSTRAP_URL,
+        description="Bootstrap URL for production verifier web app",
     )
 
 

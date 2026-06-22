@@ -3,12 +3,14 @@
 ## Quick Start
 
 ### Backend
+The local API runs on port `8190`.
+
 ```bash
-cd backend
+# From the repository root
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn backend.app:create_app --factory --reload --port 8000
+uvicorn backend.app:create_app --factory --reload --port 8190
 ```
 
 ### Frontend
@@ -49,6 +51,8 @@ QRed/
 
 ## API Endpoints
 
+Use `http://localhost:8190` for local API requests. Generated bootstrap QR codes target the production verifier at `https://qred.org/verify.htm` by default.
+
 ### POST /api/seals
 Generate QRed seals for a document.
 
@@ -71,7 +75,7 @@ In a second terminal:
 ```powershell
 cd frontend
 npm install
-npm run dev -- --host 127.0.0.1
+npm start -- --host 127.0.0.1
 ```
 
 The Vite dev server proxies `/api` to `http://localhost:8190` by default. Open the Vite URL shown in the terminal, use **Use Demo Keys**, choose a PDF, and click **Upload PDF and Stamp QR Seals**. The downloaded PDF contains `https://qred.org/verify.htm` bootstrap QR codes and QRed payload seal QR codes for the verifier workflow.
