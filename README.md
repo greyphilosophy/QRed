@@ -64,6 +64,54 @@ curl -X POST http://localhost:8190/api/verify \
 make tests     # 91 passing BDD tests
 ```
 
+
+# Production deployment for qred.org
+
+The production verifier is expected to be served by Cloudflare Pages at `https://qred.org/verify.htm`. Do not use GoDaddy URL forwarding as the primary production mechanism: forwarding can change the browser-visible URL, introduce redirect dependencies, and does not prove that `/verify.htm` is being served directly by the Cloudflare Pages deployment with Cloudflare-managed TLS.
+
+## Cloudflare Pages custom domains
+
+1. Open the Cloudflare Pages project that builds and deploys the QRed verifier.
+2. Add `qred.org` as a Pages custom domain. This is the required apex production hostname.
+3. Add `www.qred.org` as an additional Pages custom domain if the site should support both the apex domain and `www`.
+4. Wait for Cloudflare Pages to show the custom domain as active and for the TLS certificate status to become valid before publishing QR codes that point at the hostname.
+
+## DNS configuration
+
+Use one of these DNS approaches; prefer Cloudflare nameserver delegation when possible.
+
+### Recommended: delegate DNS to Cloudflare
+
+1. In Cloudflare, add `qred.org` as a zone if it is not already present.
+2. Copy the two Cloudflare nameservers assigned to the zone.
+3. In GoDaddy, replace the domain's existing nameservers with the Cloudflare nameservers. Do not configure GoDaddy domain forwarding for production traffic.
+4. In the Cloudflare zone, let Cloudflare Pages create the required records for the Pages custom domains, or create the records Cloudflare Pages requests during custom-domain setup.
+5. Confirm that `qred.org` and, if enabled, `www.qred.org` are proxied through Cloudflare and attached to the Pages project.
+
+### Alternative: keep DNS at GoDaddy
+
+If the domain must continue using GoDaddy DNS, do not use GoDaddy forwarding as the main deployment path. Instead, create the exact DNS records that Cloudflare Pages displays during custom-domain setup. Cloudflare Pages commonly asks for a CNAME for a subdomain such as `www.qred.org`; apex-domain requirements can vary by account and Cloudflare setup, so use the current values shown in the Pages custom-domain wizard rather than guessing.
+
+After records are created in GoDaddy, return to Cloudflare Pages and verify that both the DNS check and the certificate issuance check pass for every configured custom domain.
+
+## Required production verification check
+
+Before considering production deployment complete, verify all of the following:
+
+```bash
+curl -I https://qred.org/verify.htm
+```
+
+The response should resolve directly on `https://qred.org/verify.htm`, present a valid TLS certificate, and return a successful HTTP status from the Cloudflare Pages deployment. If `www.qred.org` is enabled, also verify the intended `www` behavior, for example:
+
+```bash
+curl -I https://www.qred.org/verify.htm
+```
+
+## Bootstrap URL stability
+
+QRed-generated bootstrap QR codes target `https://qred.org/verify.htm` by default. The path `/verify.htm` is part of the printed QR bootstrap contract: changing or removing it can break already-issued printed documents. Keep `/verify.htm` stable, and if the verifier application is reorganized, preserve this path with a direct Cloudflare Pages route or rewrite that continues to serve the verifier.
+
 # Motivation
 
 Many documents are distributed in printed form and may be photocopied, scanned, emailed, faxed, or manually altered. While digital signatures are well understood in electronic documents, there is no widely adopted method for making printed documents self-verifying.
