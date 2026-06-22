@@ -548,6 +548,29 @@ def test_decode_invalid_seal_returns_none():
     assert decode_seal("garbage") is None
 
 
+def test_decode_seal_returns_none_for_malformed_numeric_fields():
+    """Given non-integer chunk fields, when decoded, then None returned."""
+    assert decode_seal("QRED1|DOC|not-a-number|1|data") is None
+    assert decode_seal("QRED1|DOC|0|not-a-number|data") is None
+
+
+@pytest.mark.parametrize("seal", [
+    "QRED1|DOC|not-a-number|1|data",
+    "QRED1|DOC|0|not-a-number|data",
+])
+def test_api_verify_returns_structured_error_for_malformed_numeric_fields(seal):
+    """Given malformed numeric chunk fields, when verified, then response is non-500 ERROR."""
+    response = client.post("/api/verify", json={
+        "seals": [seal],
+        "public_key": TEST_PUBLIC_KEY,
+    })
+    body = response.json()
+
+    assert response.status_code != 500
+    assert body["status"] == "ERROR"
+    assert body["error_message"] == "No valid chunks found"
+
+
 def test_api_returns_422_on_missing_fields():
     """Given a POST to /api/seals with missing fields, when sent, then 422"""
     response = client.post("/api/seals", json={"content": "Test"})
