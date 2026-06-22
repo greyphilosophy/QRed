@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0f172a">
   <title>QRed — Document Verifier</title>
-  <script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
   <style>
     :root {
       --bg: #0f172a;
@@ -308,6 +307,7 @@
   </div>
 
   <script type="module">
+    import jsQR from "jsqr";
     import { decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
 
     // QRed Protocol - decode QRed seal strings for scanner UI state.
