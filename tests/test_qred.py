@@ -1053,11 +1053,12 @@ def test_pdf_upload_rejects_non_pdf_content(tmp_path):
         )
     assert response.status_code == 415
 
-def test_mobile_verifier_calls_verify_api_instead_of_trusting_payload():
-    """Given mobile verifier HTML, when inspected, then it posts collected seals to /api/verify"""
+def test_mobile_verifier_verifies_locally_without_posting_document_content():
+    """Given mobile verifier HTML, when inspected, then it verifies in-browser without posting seals to /api/verify."""
     from pathlib import Path
     html = Path("frontend/verifier.html").read_text()
-    assert 'fetch("/api/verify"' in html
+    assert 'fetch("/api/verify"' not in html
+    assert 'verifyQRedSeals(seals, publicKey)' in html
     assert 'showResult("VALID", payload)' not in html
     assert 'publicKeyInput' in html
 
