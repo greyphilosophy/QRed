@@ -39,7 +39,7 @@ make install   # pip install -r requirements.txt
 make run       # uvicorn on port 8190
 ```
 
-Then use the REST API:
+Then use the REST API. The local backend listens on `http://localhost:8190`, and generated bootstrap QR codes target the production verifier at `https://qred.org/verify.htm` by default:
 
 ```bash
 # Generate seals
@@ -61,7 +61,7 @@ curl -X POST http://localhost:8190/api/verify \
 ## Run tests
 
 ```bash
-make tests     # 82 passing BDD tests
+make tests     # 91 passing BDD tests
 ```
 
 # Motivation

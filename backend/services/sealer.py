@@ -12,6 +12,9 @@ from backend.models import QRedChunk, SealGenerationResult
 from backend.crypto import sign
 
 
+DEFAULT_BOOTSTRAP_URL = "https://qred.org/verify.htm"
+
+
 def generate_document_id() -> str:
     """Generate a unique document ID."""
     return f"DOC-{uuid.uuid4().hex[:12].upper()}"
@@ -77,7 +80,7 @@ def create_seals(
     private_key: str,
     public_key: str,
     document_id: Optional[str] = None,
-    bootstrap_url: str = "https://qred.org/verify/v1",
+    bootstrap_url: str = DEFAULT_BOOTSTRAP_URL,
 ) -> SealGenerationResult:
     """Create QRed seals for a document.
 

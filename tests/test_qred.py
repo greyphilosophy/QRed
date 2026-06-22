@@ -25,6 +25,7 @@ from backend.services.sealer import (
     decompress_payload,
     generate_document_id,
     split_into_chunks,
+    DEFAULT_BOOTSTRAP_URL,
 )
 from backend.services.verifier import (
     decode_seal,
@@ -266,8 +267,8 @@ def test_fr4_seals_have_correct_format():
         assert len(seal.split("|")) == 5
 
 
-def test_fr4_bootstrap_url_versioned():
-    """Given seal generation, when checking bootstrap URL, then it includes version"""
+def test_fr4_bootstrap_url_uses_production_verifier():
+    """Given seal generation, when checking bootstrap URL, then it targets the production verifier"""
     response = client.post("/api/seals", json={
         "content": "Test",
         "issuer": TEST_ISSUER,
@@ -275,8 +276,7 @@ def test_fr4_bootstrap_url_versioned():
         "public_key": TEST_PUBLIC_KEY,
     })
     assert response.status_code == 200
-    # Response should include the versioned bootstrap URL
-    assert "v1" in response.json()["bootstrap_url"]
+    assert response.json()["bootstrap_url"] == DEFAULT_BOOTSTRAP_URL
 
 
 def test_fr4_custom_document_id():
