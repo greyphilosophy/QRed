@@ -363,6 +363,17 @@ def test_fr6_no_valid_seals_returns_error():
     assert result["status"] == "ERROR"
 
 
+def test_fr6_mixed_document_ids_returns_invalid():
+    """Given seals from different documents, when verified, then INVALID is deterministic."""
+    first_doc_seals = generate_and_get_seals("First generated document")
+    second_doc_seals = generate_and_get_seals("Second generated document")
+
+    result = verify_with_key([first_doc_seals[0], second_doc_seals[0]])
+
+    assert result["status"] == "INVALID"
+    assert result["error_message"] == "Mixed document IDs"
+
+
 def test_fr6_decode_seal():
     """Given a valid seal, when decoded, then QRedChunk is returned"""
     seals = generate_and_get_seals("Test")
@@ -894,6 +905,32 @@ def test_pdf_path_sealing_uses_verify_htm_bootstrap(tmp_path):
     assert output_path.exists()
     assert result["bootstrap_url"] == "https://qred.org/verify.htm"
     assert result["total_seals"] >= 1
+    assert len(result["page_seal_strings"]) == 2
+
+
+def test_pdf_path_sealing_creates_independently_verifiable_page_seals(tmp_path):
+    """Given a multi-page PDF, when sealed, then each page has standalone verifiable seals."""
+    from backend.services.pdf_stamp import seal_pdf
+    pdf_path = tmp_path / "pages.pdf"
+    output_path = tmp_path / "pages.sealed.pdf"
+    create_sample_pdf(pdf_path, pages=2)
+
+    result = seal_pdf(
+        str(pdf_path),
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        output_path=str(output_path),
+    )
+
+    assert len(result["page_seal_strings"]) == 2
+    first_page_result = reconstruct_and_verify(result["page_seal_strings"][0], TEST_PUBLIC_KEY)
+    second_page_result = reconstruct_and_verify(result["page_seal_strings"][1], TEST_PUBLIC_KEY)
+    assert first_page_result["status"] == "VALID"
+    assert first_page_result["content"] == "QRed demo page 1"
+    assert second_page_result["status"] == "VALID"
+    assert second_page_result["content"] == "QRed demo page 2"
+    assert first_page_result["document_id"] != second_page_result["document_id"]
 
 
 def test_pdf_upload_endpoint_returns_sealed_pdf_download(tmp_path):

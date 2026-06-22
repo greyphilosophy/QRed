@@ -9,7 +9,7 @@ import fitz  # PyMuPDF
 import qrcode
 
 from backend.models import SealGenerationResult
-from backend.services.sealer import create_seals
+from backend.services.sealer import create_seals, generate_document_id
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +95,44 @@ def planned_page_payloads(
     return pages
 
 
+
+
+def page_document_id(base_document_id: str, page_index: int) -> str:
+    """Return a deterministic per-page document id for a sealed PDF page."""
+    return f"{base_document_id}-PAGE-{page_index + 1}"
+
+
+def create_page_seal_results(
+    pdf_path: str,
+    issuer: str,
+    private_key: str,
+    public_key: str,
+    document_id: Optional[str] = None,
+    bootstrap_url: str = DEFAULT_BOOTSTRAP_URL,
+) -> tuple[str, list[SealGenerationResult]]:
+    """Create independent seal results for each PDF page's extracted text."""
+    base_document_id = document_id or generate_document_id()
+    doc = fitz.open(pdf_path)
+    try:
+        page_count = len(doc)
+    finally:
+        doc.close()
+
+    page_results = []
+    for page_index in range(page_count):
+        page_text = extract_text_from_pdf(pdf_path, page_index)
+        page_results.append(
+            create_seals(
+                document_text=page_text,
+                issuer=issuer,
+                private_key=private_key,
+                public_key=public_key,
+                document_id=page_document_id(base_document_id, page_index),
+                bootstrap_url=bootstrap_url,
+            )
+        )
+    return base_document_id, page_results
+
 def insert_qr_row(page: fitz.Page, qr_payloads: list[str], layout: dict) -> None:
     """Insert QR payloads in a bottom row on a PDF page."""
     qr_size = layout.get("size", 96)
@@ -156,6 +194,33 @@ def stamp_seals_on_pdf(
         doc.close()
 
 
+
+def stamp_page_seals_on_pdf(
+    input_pdf: str,
+    output_pdf: str,
+    page_results: list[SealGenerationResult],
+    layout: dict | None = None,
+) -> str:
+    """Stamp each source page with QR seals for that page's own text."""
+    layout = layout or {}
+    doc = fitz.open(input_pdf)
+    try:
+        if len(doc) != len(page_results):
+            raise ValueError("Page seal count must match PDF page count")
+
+        for page, seal_result in zip(doc, page_results):
+            qr_payloads = [seal_result.bootstrap_url] + [chunk.encode() for chunk in seal_result.chunks]
+            max_qr_codes = max_qr_codes_per_row(page.rect.width, layout)
+            if len(qr_payloads) > max_qr_codes:
+                raise ValueError("PDF page layout cannot fit all QRed seals for a page")
+            insert_qr_row(page, qr_payloads, layout)
+
+        doc.save(output_pdf)
+        logger.info("Stamped page-specific seals on %d pages of %s", len(doc), input_pdf)
+        return output_pdf
+    finally:
+        doc.close()
+
 def seal_pdf(
     pdf_path: str,
     issuer: str,
@@ -171,23 +236,27 @@ def seal_pdf(
         input_path = Path(pdf_path)
         output_path = str(input_path.with_name(f"{input_path.stem}.sealed{input_path.suffix}"))
 
-    text = extract_text_from_pdf(pdf_path)
-    result = create_seals(
-        document_text=text,
+    base_document_id, page_results = create_page_seal_results(
+        pdf_path=pdf_path,
         issuer=issuer,
         private_key=private_key,
         public_key=public_key,
         document_id=document_id,
         bootstrap_url=bootstrap_url,
     )
-    stamp_seals_on_pdf(pdf_path, output_path, result, layout or {})
+    stamp_page_seals_on_pdf(pdf_path, output_path, page_results, layout or {})
+
+    page_seal_strings = [[chunk.encode() for chunk in result.chunks] for result in page_results]
+    seal_strings = [seal for page_seals in page_seal_strings for seal in page_seals]
+    first_result = page_results[0]
 
     return {
-        "document_id": result.document_id,
-        "issuer": result.issuer,
-        "key_id": result.key_id,
-        "bootstrap_url": result.bootstrap_url,
+        "document_id": base_document_id,
+        "issuer": first_result.issuer,
+        "key_id": first_result.key_id,
+        "bootstrap_url": first_result.bootstrap_url,
         "output_path": output_path,
-        "total_seals": result.total_chunks,
-        "seal_strings": [c.encode() for c in result.chunks],
+        "total_seals": len(seal_strings),
+        "seal_strings": seal_strings,
+        "page_seal_strings": page_seal_strings,
     }
