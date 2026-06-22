@@ -829,3 +829,116 @@ def test_registry_random_bytes_as_public_key():
     # Could be malformed base64 or key_id mismatch — either way, 400
     detail = response.json()["detail"]
     assert "Invalid public_key" in detail or "key_id does not match" in detail
+
+# ===========================
+# Browser PDF Demo BDD Scenarios
+# ===========================
+
+def create_sample_pdf(path, pages=2):
+    """Create a small PDF fixture with text on each page."""
+    import fitz
+    doc = fitz.open()
+    try:
+        for index in range(pages):
+            page = doc.new_page()
+            page.insert_text((72, 72), f"QRed demo page {index + 1}")
+        doc.save(path)
+    finally:
+        doc.close()
+
+
+def test_demo_keypair_endpoint_supports_browser_demo():
+    """Given the browser demo needs keys, when requested, then an ephemeral keypair is returned"""
+    response = client.get("/api/keys/demo")
+    assert response.status_code == 200
+    data = response.json()
+    assert {"private_key", "public_key", "key_id"}.issubset(data)
+
+
+def test_pdf_stamp_assigns_bootstrap_and_payload_to_each_page():
+    """Given multiple PDF pages, when assigning stamps, then each page gets bootstrap plus payload"""
+    from backend.services.pdf_stamp import planned_page_payloads
+    seals = ["QRED1|DOC|0|2|aaa", "QRED1|DOC|1|2|bbb"]
+    pages = planned_page_payloads(seals, "https://qred.org/verify.htm", source_page_count=2, max_qr_codes=2)
+    assert pages[0][0] == "https://qred.org/verify.htm"
+    assert pages[1][0] == "https://qred.org/verify.htm"
+    assert any(item.startswith("QRED1|") for item in pages[0])
+    assert any(item.startswith("QRED1|") for item in pages[1])
+
+
+def test_pdf_stamp_plan_appends_overflow_pages_without_dropping_seals():
+    """Given too many seals for source pages, when planning stamps, then overflow pages keep all chunks"""
+    from backend.services.pdf_stamp import planned_page_payloads
+    seals = [f"QRED1|DOC|{index}|5|data{index}" for index in range(5)]
+    pages = planned_page_payloads(seals, "https://qred.org/verify.htm", source_page_count=1, max_qr_codes=3)
+    placed = [payload for page in pages for payload in page if payload.startswith("QRED1|")]
+    assert placed == seals
+    assert len(pages) == 3
+
+
+def test_pdf_path_sealing_uses_verify_htm_bootstrap(tmp_path):
+    """Given a local PDF, when sealed, then the response targets qred.org/verify.htm"""
+    from backend.services.pdf_stamp import seal_pdf
+    pdf_path = tmp_path / "demo.pdf"
+    output_path = tmp_path / "demo.sealed.pdf"
+    create_sample_pdf(pdf_path)
+    result = seal_pdf(
+        str(pdf_path),
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        output_path=str(output_path),
+    )
+    assert output_path.exists()
+    assert result["bootstrap_url"] == "https://qred.org/verify.htm"
+    assert result["total_seals"] >= 1
+
+
+def test_pdf_upload_endpoint_returns_sealed_pdf_download(tmp_path):
+    """Given a browser PDF upload, when sealing, then a PDF download is returned"""
+    pdf_path = tmp_path / "upload.pdf"
+    create_sample_pdf(pdf_path)
+    with pdf_path.open("rb") as pdf_file:
+        response = client.post(
+            "/api/pdf/upload-seal",
+            data={
+                "issuer": TEST_ISSUER,
+                "private_key": TEST_PRIVATE_KEY,
+                "public_key": TEST_PUBLIC_KEY,
+            },
+            files={"file": ("upload.pdf", pdf_file, "application/pdf")},
+        )
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["x-qred-bootstrap-url"] == "https://qred.org/verify.htm"
+    assert response.content.startswith(b"%PDF")
+
+def test_pdf_upload_rejects_non_pdf_content(tmp_path):
+    """Given a fake PDF upload, when sealing, then it is rejected as unsupported media"""
+    fake_pdf = tmp_path / "fake.pdf"
+    fake_pdf.write_bytes(b"not a pdf")
+    with fake_pdf.open("rb") as pdf_file:
+        response = client.post(
+            "/api/pdf/upload-seal",
+            data={
+                "issuer": TEST_ISSUER,
+                "private_key": TEST_PRIVATE_KEY,
+                "public_key": TEST_PUBLIC_KEY,
+            },
+            files={"file": ("fake.pdf", pdf_file, "application/pdf")},
+        )
+    assert response.status_code == 415
+
+def test_mobile_verifier_calls_verify_api_instead_of_trusting_payload():
+    """Given mobile verifier HTML, when inspected, then it posts collected seals to /api/verify"""
+    from pathlib import Path
+    html = Path("frontend/verifier.html").read_text()
+    assert 'fetch("/api/verify"' in html
+    assert 'showResult("VALID", payload)' not in html
+    assert 'publicKeyInput' in html
+
+def test_pdf_stamp_plan_rejects_layout_that_cannot_fit_bootstrap_and_payload():
+    """Given a too-narrow layout, when planning stamps, then it fails instead of overflowing"""
+    from backend.services.pdf_stamp import planned_page_payloads
+    with pytest.raises(ValueError, match="bootstrap QR and one payload QR"):
+        planned_page_payloads(["QRED1|DOC|0|1|data"], "https://qred.org/verify.htm", 1, 1)

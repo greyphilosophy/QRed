@@ -4,6 +4,7 @@ const API_BASE = "/api";
 
 function VerifyForm() {
   const [sealInput, setSealInput] = useState("");
+  const [publicKey, setPublicKey] = useState("");
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -21,7 +22,7 @@ function VerifyForm() {
     fetch(API_BASE + "/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ seals }),
+      body: JSON.stringify({ seals, public_key: publicKey }),
     })
       .then((r) => r.json())
       .then((data) => {
@@ -68,6 +69,13 @@ function VerifyForm() {
       value: sealInput,
       onChange: (e) => setSealInput(e.target.value),
       placeholder: "Paste QRed seal strings here...\nOne per line.",
+    }),
+    React.createElement("label", null, "Issuer Public Key"),
+    React.createElement("input", {
+      value: publicKey,
+      onChange: (e) => setPublicKey(e.target.value),
+      placeholder: "Paste the issuer public key used to verify the signature",
+      style: { width: "100%", marginBottom: "1rem" },
     }),
     React.createElement("button", { onClick: handleSubmit, disabled: loading },
       loading ? "Verifying..." : "Verify Document"),
@@ -193,3 +201,93 @@ function GenerateForm() {
     error && React.createElement("p", { style: { color: "#ef4444", marginTop: "0.5rem" }}, error)
   );
 }
+
+function PdfSealForm() {
+  const [file, setFile] = useState(null);
+  const [issuer, setIssuer] = useState("QRed Demo Authority");
+  const [privateKey, setPrivateKey] = useState("");
+  const [publicKey, setPublicKey] = useState("");
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function loadDemoKeys() {
+    const response = await fetch(API_BASE + "/keys/demo");
+    const keys = await response.json();
+    setPrivateKey(keys.private_key);
+    setPublicKey(keys.public_key);
+  }
+
+  async function sealPdf() {
+    if (!file || !issuer || !privateKey || !publicKey) {
+      setMessage("Choose a PDF and provide issuer keys before sealing.");
+      return;
+    }
+    setLoading(true);
+    setMessage("Stamping QRed seals onto each PDF page...");
+    const form = new FormData();
+    form.append("file", file);
+    form.append("issuer", issuer);
+    form.append("private_key", privateKey);
+    form.append("public_key", publicKey);
+    form.append("bootstrap_url", "https://qred.org/verify.htm");
+
+    try {
+      const response = await fetch(API_BASE + "/pdf/upload-seal", { method: "POST", body: form });
+      if (!response.ok) throw new Error(await response.text());
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
+      link.click();
+      URL.revokeObjectURL(url);
+      setMessage(`Sealed ${file.name}. Document ID: ${response.headers.get("X-QRed-Document-Id")}`);
+    } catch (error) {
+      setMessage(`PDF sealing failed: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return React.createElement("div", { className: "card" },
+    React.createElement("h2", null, "Demo: Upload and Seal a PDF"),
+    React.createElement("p", { style: { color: "#64748b", marginBottom: "1rem" }},
+      "Select a PDF, stamp every page with a verifier QR plus payload QR seals, and download the sealed copy."),
+    React.createElement("div", { className: "demo-grid" },
+      React.createElement("div", { className: "demo-input" },
+        React.createElement("label", null, "PDF file"),
+        React.createElement("input", { type: "file", accept: "application/pdf", onChange: (e) => setFile(e.target.files?.[0] || null) })
+      ),
+      React.createElement("div", { className: "demo-input" },
+        React.createElement("label", null, "Issuer"),
+        React.createElement("input", { value: issuer, onChange: (e) => setIssuer(e.target.value) })
+      ),
+      React.createElement("div", { className: "demo-input" },
+        React.createElement("label", null, "Private Key"),
+        React.createElement("input", { value: privateKey, onChange: (e) => setPrivateKey(e.target.value), placeholder: "Click Demo Keys" })
+      ),
+      React.createElement("div", { className: "demo-input" },
+        React.createElement("label", null, "Public Key"),
+        React.createElement("input", { value: publicKey, onChange: (e) => setPublicKey(e.target.value), placeholder: "Click Demo Keys" })
+      )
+    ),
+    React.createElement("button", { onClick: loadDemoKeys, style: { marginRight: "1rem", marginTop: "1rem" }}, "Use Demo Keys"),
+    React.createElement("button", { onClick: sealPdf, disabled: loading, style: { marginTop: "1rem" }}, loading ? "Sealing..." : "Upload PDF and Stamp QR Seals"),
+    message && React.createElement("p", { style: { marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155" }}, message)
+  );
+}
+
+function App() {
+  return React.createElement("div", { className: "container" },
+    React.createElement("h1", null, "QRed"),
+    React.createElement("p", { className: "subtitle" }, "Tamper-evident QR seals for paper documents"),
+    React.createElement(PdfSealForm),
+    React.createElement(GenerateForm),
+    React.createElement(VerifyForm),
+    React.createElement("p", { className: "footer" },
+      React.createElement("a", { href: "./verifier.html" }, "Open mobile verifier"),
+      " · QR bootstrap target: https://qred.org/verify.htm")
+  );
+}
+
+export default App;
