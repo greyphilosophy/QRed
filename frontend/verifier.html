@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0f172a">
   <title>QRed — Document Verifier</title>
-  <script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"><\/script>
+  <script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
   <style>
     :root {
       --bg: #0f172a;
@@ -264,6 +264,18 @@
         <button class="btn btn-primary" id="btnScan">Start Scanning</button>
       </div>
 
+      <div class="result-card" style="margin-bottom: 1rem;">
+        <label for="publicKeyInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Issuer public key</label>
+        <input id="publicKeyInput" type="text" placeholder="Paste issuer public key for signature verification" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;">
+        <label for="manualSealInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Manual seal entry or uploaded seal text</label>
+        <textarea id="manualSealInput" rows="4" placeholder="Paste QRED1 seal strings here, one per line" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;"></textarea>
+        <input id="sealFileInput" type="file" accept=".txt,text/plain" style="width:100%; margin-bottom:0.75rem;">
+        <div class="controls" style="margin-bottom:0;">
+          <button class="btn btn-secondary" id="btnAddManual">Add Manual Seals</button>
+          <button class="btn btn-primary" id="btnVerifyManual">Verify Collected Seals</button>
+        </div>
+      </div>
+
       <div class="status-bar" id="statusBar">
         <div class="status-dot active" id="statusDot"></div>
         <div class="status-text" id="statusText">Scanning...</div>
@@ -349,6 +361,11 @@
     var sealList = document.getElementById("sealList");
     var progressContainer = document.getElementById("progressContainer");
     var progressFill = document.getElementById("progressFill");
+    var publicKeyInput = document.getElementById("publicKeyInput");
+    var manualSealInput = document.getElementById("manualSealInput");
+    var sealFileInput = document.getElementById("sealFileInput");
+    var btnAddManual = document.getElementById("btnAddManual");
+    var btnVerifyManual = document.getElementById("btnVerifyManual");
 
     btnScan.onclick = function() {
       if (state.isScanning) {
@@ -376,6 +393,41 @@
       document.getElementById("scanLine").style.display = "none";
       statusBar.classList.remove("visible");
     };
+
+    btnAddManual.onclick = function() {
+      addManualSeals(manualSealInput.value);
+    };
+
+    btnVerifyManual.onclick = function() {
+      addManualSeals(manualSealInput.value);
+      var docIds = Object.keys(state.sealsByDocument);
+      if (docIds.length === 0) {
+        showError("Add or scan at least one QRed payload seal before verifying.");
+        return;
+      }
+      reconstructAndShow(docIds[0]);
+    };
+
+    sealFileInput.onchange = function(event) {
+      var file = event.target.files && event.target.files[0];
+      if (!file) return;
+      file.text().then(function(text) {
+        manualSealInput.value = text;
+        addManualSeals(text);
+      }).catch(function(err) {
+        showError("Could not read seal file: " + err.message);
+      });
+    };
+
+    function addManualSeals(text) {
+      text.split(/\r?\n/).map(function(line) { return line.trim(); }).filter(Boolean).forEach(processScannedSeal);
+    }
+
+    function showError(message) {
+      var el = document.getElementById("errorMsg");
+      el.textContent = message;
+      el.style.display = "block";
+    }
 
     function startScanning() {
       var video = document.getElementById("cameraVideo");
@@ -481,31 +533,39 @@
       }
     }
 
-    // Reconstruct & Display
+    // Reconstruct & Verify
     async function reconstructAndShow(docId) {
       var docData = state.sealsByDocument[docId];
       var total = docData.total;
-
-      var allData = "";
+      var seals = [];
       for (var i = 0; i < total; i++) {
-        allData += docData.chunks[i];
+        if (!docData.chunks[i]) {
+          showResult("INCOMPLETE", { error_message: "Missing chunk " + i });
+          return;
+        }
+        seals.push("QRED1|" + docId + "|" + i + "|" + total + "|" + docData.chunks[i]);
+      }
+
+      var publicKey = publicKeyInput.value.trim();
+      if (!publicKey) {
+        showError("Issuer public key is required before signature verification can run.");
+        return;
       }
 
       try {
-        var decompressedBytes = uint8FromBase64(allData);
-        var stream = new Response(decompressedBytes).body;
-        var decompressed = stream.pipeThrough(new DecompressionStream("gzip"));
-        var reader = decompressed.getReader();
-        var chunks = [];
-        for await (var chunk of reader) {
-          chunks.push(chunk);
+        var response = await fetch("/api/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ seals: seals, public_key: publicKey }),
+        });
+        var result = await response.json();
+        if (!response.ok) {
+          showResult("ERROR", { error_message: result.detail || "Verification request failed" });
+          return;
         }
-        var combined = bytesFromChunks(chunks);
-        var jsonStr = bytesToString(combined);
-        var payload = JSON.parse(jsonStr);
-        showResult("VALID", payload);
+        showResult(result.status || "ERROR", result);
       } catch (e) {
-        showResult("ERROR", {});
+        showResult("ERROR", { error_message: e.message });
       }
     }
 
@@ -532,6 +592,9 @@
       }
       if (payload.timestamp) {
         rm.innerHTML += "<div class='meta-item'><strong>Timestamp:</strong> " + new Date(payload.timestamp).toLocaleString() + "</div>";
+      }
+      if (payload.error_message) {
+        rm.innerHTML += "<div class='meta-item'><strong>Error:</strong> " + payload.error_message + "</div>";
       }
 
       var rc = document.getElementById("resultContent");
