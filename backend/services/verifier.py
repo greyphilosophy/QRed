@@ -15,11 +15,17 @@ def decode_seal(seal_string: str) -> dict | None:
     fmt_id, doc_id, chunk_num, total, data = parts
     if not fmt_id.startswith("QRED"):
         return None
+    try:
+        chunk_number = int(chunk_num)
+        total_chunks = int(total)
+    except ValueError:
+        return None
+
     return {
         "format_id": fmt_id,
         "document_id": doc_id,
-        "chunk_number": int(chunk_num),
-        "total_chunks": int(total),
+        "chunk_number": chunk_number,
+        "total_chunks": total_chunks,
         "data": data,
     }
 
