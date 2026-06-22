@@ -54,3 +54,24 @@ Generate QRed seals for a document.
 
 ### POST /api/verify
 Verify QRed seals and return verification result.
+
+## Windows 11 Anaconda Demo
+
+From **Anaconda Prompt** or **PowerShell** at the repository root:
+
+```powershell
+conda create -n qred-demo python=3.12 -y
+conda activate qred-demo
+python -m pip install -r requirements.txt
+uvicorn backend.app:create_app --factory --reload --port 8190
+```
+
+In a second terminal:
+
+```powershell
+cd frontend
+npm install
+npm run dev -- --host 127.0.0.1
+```
+
+Open the Vite URL shown in the terminal, use **Use Demo Keys**, choose a PDF, and click **Upload PDF and Stamp QR Seals**. The downloaded PDF contains `https://qred.org/verify.htm` bootstrap QR codes and QRed payload seal QR codes for the verifier workflow.

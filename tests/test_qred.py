@@ -829,3 +829,77 @@ def test_registry_random_bytes_as_public_key():
     # Could be malformed base64 or key_id mismatch — either way, 400
     detail = response.json()["detail"]
     assert "Invalid public_key" in detail or "key_id does not match" in detail
+
+# ===========================
+# Browser PDF Demo BDD Scenarios
+# ===========================
+
+def create_sample_pdf(path, pages=2):
+    """Create a small PDF fixture with text on each page."""
+    import fitz
+    doc = fitz.open()
+    try:
+        for index in range(pages):
+            page = doc.new_page()
+            page.insert_text((72, 72), f"QRed demo page {index + 1}")
+        doc.save(path)
+    finally:
+        doc.close()
+
+
+def test_demo_keypair_endpoint_supports_browser_demo():
+    """Given the browser demo needs keys, when requested, then an ephemeral keypair is returned"""
+    response = client.get("/api/keys/demo")
+    assert response.status_code == 200
+    data = response.json()
+    assert {"private_key", "public_key", "key_id"}.issubset(data)
+
+
+def test_pdf_stamp_assigns_bootstrap_and_payload_to_each_page():
+    """Given multiple PDF pages, when assigning stamps, then each page gets bootstrap plus payload"""
+    from backend.services.pdf_stamp import page_stamp_items
+    seals = ["QRED1|DOC|0|2|aaa", "QRED1|DOC|1|2|bbb"]
+    page_zero = page_stamp_items(seals, "https://qred.org/verify.htm", 0, 2)
+    page_one = page_stamp_items(seals, "https://qred.org/verify.htm", 1, 2)
+    assert page_zero[0] == "https://qred.org/verify.htm"
+    assert page_one[0] == "https://qred.org/verify.htm"
+    assert any(item.startswith("QRED1|") for item in page_zero)
+    assert any(item.startswith("QRED1|") for item in page_one)
+
+
+def test_pdf_path_sealing_uses_verify_htm_bootstrap(tmp_path):
+    """Given a local PDF, when sealed, then the response targets qred.org/verify.htm"""
+    from backend.services.pdf_stamp import seal_pdf
+    pdf_path = tmp_path / "demo.pdf"
+    output_path = tmp_path / "demo.sealed.pdf"
+    create_sample_pdf(pdf_path)
+    result = seal_pdf(
+        str(pdf_path),
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        output_path=str(output_path),
+    )
+    assert output_path.exists()
+    assert result["bootstrap_url"] == "https://qred.org/verify.htm"
+    assert result["total_seals"] >= 1
+
+
+def test_pdf_upload_endpoint_returns_sealed_pdf_download(tmp_path):
+    """Given a browser PDF upload, when sealing, then a PDF download is returned"""
+    pdf_path = tmp_path / "upload.pdf"
+    create_sample_pdf(pdf_path)
+    with pdf_path.open("rb") as pdf_file:
+        response = client.post(
+            "/api/pdf/upload-seal",
+            data={
+                "issuer": TEST_ISSUER,
+                "private_key": TEST_PRIVATE_KEY,
+                "public_key": TEST_PUBLIC_KEY,
+            },
+            files={"file": ("upload.pdf", pdf_file, "application/pdf")},
+        )
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["x-qred-bootstrap-url"] == "https://qred.org/verify.htm"
+    assert response.content.startswith(b"%PDF")
