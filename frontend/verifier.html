@@ -307,40 +307,19 @@
     QRed - Tamper-Evident Document Sealing
   </div>
 
-  <script>
-    // QRed Protocol - decode QRed seal strings
+  <script type="module">
+    import { decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
+
+    // QRed Protocol - decode QRed seal strings for scanner UI state.
     function decodeSeal(str) {
-      var parts = str.split("|");
-      if (parts.length < 5) return null;
-      var fmtId = parts[0];
-      var docId = parts[1];
-      var chunkNum = parseInt(parts[2], 10);
-      var total = parseInt(parts[3], 10);
-      var data = parts.slice(4).join("|");
-      if (fmtId.startsWith("QRED")) {
-        return { documentId: docId, chunkNumber: chunkNum, totalChunks: total, data: data };
-      }
-      return null;
-    }
-
-    function uint8FromBase64(b64) {
-      return new Uint8Array(Array.from(atob(b64), c => c.charCodeAt(0)));
-    }
-
-    function bytesFromChunks(arr) {
-      var totalLength = 0;
-      for (var i = 0; i < arr.length; i++) totalLength += arr[i].length;
-      var result = new Uint8Array(totalLength);
-      var offset = 0;
-      for (var i = 0; i < arr.length; i++) {
-        result.set(arr[i], offset);
-        offset += arr[i].length;
-      }
-      return result;
-    }
-
-    function bytesToString(bytes) {
-      return new TextDecoder().decode(bytes);
+      var decoded = decodeQRedSeal(str);
+      if (!decoded) return null;
+      return {
+        documentId: decoded.document_id,
+        chunkNumber: decoded.chunk_number,
+        totalChunks: decoded.total_chunks,
+        data: decoded.data,
+      };
     }
 
     // State
@@ -553,16 +532,7 @@
       }
 
       try {
-        var response = await fetch("/api/verify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ seals: seals, public_key: publicKey }),
-        });
-        var result = await response.json();
-        if (!response.ok) {
-          showResult("ERROR", { error_message: result.detail || "Verification request failed" });
-          return;
-        }
+        var result = await verifyQRedSeals(seals, publicKey);
         showResult(result.status || "ERROR", result);
       } catch (e) {
         showResult("ERROR", { error_message: e.message });

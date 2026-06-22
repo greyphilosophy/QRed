@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { verifyQRedSeals } from "./qredVerifier.js";
 
 const API_BASE = "/api";
 
@@ -19,12 +20,7 @@ function VerifyForm() {
   function verify(seals) {
     setLoading(true);
     setError(null);
-    fetch(API_BASE + "/verify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ seals, public_key: publicKey }),
-    })
-      .then((r) => r.json())
+    verifyQRedSeals(seals, publicKey)
       .then((data) => {
         setResult(data);
         setLoading(false);
