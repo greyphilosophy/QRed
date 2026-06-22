@@ -5,11 +5,9 @@ Uses the Ed25519 keypair so that:
   - The public key verifies signatures (anyone can verify).
   - Verification != ability to forge.
 
-The public key is embedded in the payload so the verifier can verify
-the signature locally without contacting a key server.
-
-Long-term: the verifier should look up the public key in a trusted
-issuer key registry using the issuer_id + key_id.
+The verifier uses an explicitly supplied public key or resolves one from a
+trusted issuer key registry using issuer_id + key_id. Payload-embedded public
+keys are not trusted for signature verification.
 """
 
 import base64

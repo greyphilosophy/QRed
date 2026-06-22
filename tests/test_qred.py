@@ -13,6 +13,7 @@ Covers:
 """
 
 from pathlib import Path
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -76,6 +77,34 @@ def verify_with_key(seals: list) -> dict:
     })
     assert resp.status_code == 200
     return resp.json()
+
+
+def build_legacy_embedded_public_key_seals(content: str, issuer: str, keypair: dict) -> list[str]:
+    """Build a legacy payload that embeds a public_key for verifier hardening tests."""
+    from backend.crypto import sign
+
+    document_id = generate_document_id()
+    payload = {
+        "version": "1",
+        "issuer": issuer,
+        "document_id": document_id,
+        "timestamp": "2026-06-22T00:00:00+00:00",
+        "content": canonicalize_text(content),
+        "signature": sign(canonicalize_text(content), keypair["private_key"]),
+        "public_key": keypair["public_key"],
+        "algorithm": "Ed25519",
+    }
+    compressed = compress_payload(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    chunks = split_into_chunks(compressed)
+    return [
+        QRedChunk(
+            document_id=document_id,
+            chunk_number=i,
+            total_chunks=len(chunks),
+            data=chunk,
+        ).encode()
+        for i, chunk in enumerate(chunks)
+    ]
 
 
 # ===========================
@@ -379,6 +408,39 @@ def test_fr7_valid_signature():
     """Given a properly sealed document, when verified with correct key, then VALID"""
     seals = generate_and_get_seals("Verified document content")
     result = verify_with_key(seals)
+    assert result["status"] == "VALID"
+
+
+def test_fr7_rejects_embedded_public_key_without_trusted_source():
+    """Given a legacy embedded-key payload, verification requires a trusted key source."""
+    seals = build_legacy_embedded_public_key_seals("Verified document content", TEST_ISSUER, KEYPAIR)
+
+    result = reconstruct_and_verify(seals)
+
+    assert result["status"] == "ERROR"
+    assert "trusted public key" in result["error_message"]
+
+
+def test_fr7_registry_lookup_can_supply_trusted_public_key():
+    """Given registry lookup resolves issuer/key_id, local verification succeeds."""
+    response = client.post("/api/seals", json={
+        "content": "Verified document content",
+        "issuer": TEST_ISSUER,
+        "private_key": TEST_PRIVATE_KEY,
+        "public_key": TEST_PUBLIC_KEY,
+    })
+    assert response.status_code == 200
+    key_id = response.json()["key_id"]
+
+    result = reconstruct_and_verify(
+        response.json()["seals"],
+        registry_lookup=lambda issuer, lookup_key_id: (
+            TEST_PUBLIC_KEY
+            if issuer == TEST_ISSUER and lookup_key_id == key_id
+            else None
+        ),
+    )
+
     assert result["status"] == "VALID"
 
 
