@@ -3,6 +3,7 @@
 import base64
 import gzip
 import json
+from collections.abc import Callable
 
 from backend.crypto import verify as crypto_verify
 
@@ -33,6 +34,7 @@ def decode_seal(seal_string: str) -> dict | None:
 def reconstruct_and_verify(
     seals: list[str],
     expected_public_key: str | None = None,
+    registry_lookup: Callable[[str, str], str | None] | None = None,
 ) -> dict:
     """Reconstruct payload from seal strings and verify the signature.
 
@@ -43,6 +45,12 @@ def reconstruct_and_verify(
     - document_id: the document identifier
     - timestamp: the creation timestamp
     - error_message: human-readable error (if any)
+
+    Verification requires a trusted key source. Callers must either provide
+    expected_public_key explicitly or provide registry_lookup, which resolves
+    the payload's (issuer, key_id) to a trusted public key. Public keys
+    embedded in the payload are intentionally ignored because the payload is
+    untrusted until its signature is verified.
     """
     ctx: dict = {"chunks": {}, "document_id": "", "total_chunks": 0, "errors": []}
 
@@ -109,17 +117,30 @@ def reconstruct_and_verify(
     issuer = payload.get("issuer", "")
     doc_id = payload.get("document_id", "")
     timestamp = payload.get("timestamp", "")
+    key_id = payload.get("key_id", "")
 
-    # Verify signature using Ed25519
-    if expected_public_key:
-        is_valid = crypto_verify(content, signature, expected_public_key)
-    elif payload.get("public_key"):
-        is_valid = crypto_verify(content, signature, payload["public_key"])
-    else:
+    # Verify signature using Ed25519 with a trusted key source.
+    public_key = expected_public_key
+    if not public_key and registry_lookup:
+        if issuer and key_id:
+            public_key = registry_lookup(issuer, key_id)
+        if not public_key:
+            return {
+                "status": "ERROR",
+                "document_id": doc_id,
+                "issuer": issuer,
+                "error_message": "No trusted public key found for issuer/key_id",
+            }
+
+    if not public_key:
         return {
             "status": "ERROR",
-            "error_message": "No public key available for verification",
+            "document_id": doc_id,
+            "issuer": issuer,
+            "error_message": "No trusted public key available for verification",
         }
+
+    is_valid = crypto_verify(content, signature, public_key)
 
     if is_valid:
         return {
