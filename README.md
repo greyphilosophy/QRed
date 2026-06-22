@@ -69,6 +69,24 @@ make tests     # 91 passing BDD tests
 
 The production verifier is expected to be served by Cloudflare Pages at `https://qred.org/verify.htm`. Do not use GoDaddy URL forwarding as the primary production mechanism: forwarding can change the browser-visible URL, introduce redirect dependencies, and does not prove that `/verify.htm` is being served directly by the Cloudflare Pages deployment with Cloudflare-managed TLS.
 
+## Cloudflare Pages build settings
+
+Configure the Cloudflare Pages project with these settings:
+
+| Setting | Value |
+| --- | --- |
+| Project root / root directory | `frontend` |
+| Build command | `npm ci && npm run build` |
+| Build output directory | `build` |
+| Deploy command, if the Cloudflare UI requires one | `npm ci && npm run build` |
+| Production URL expectation | `https://qred.org/verify.htm` |
+
+Use `npm ci && npm run build` only after setting the project root to `frontend`, where `package.json` and `package-lock.json` live. If Cloudflare runs the command from the repository root, it may fail with `npm ci` lockfile errors because the lockfile is in `frontend/package-lock.json`. In that case, either set the Pages project root to `frontend` or, if the UI requires a repository-root deploy command, use `cd frontend && npm ci && npm run build` and set the build output directory to `frontend/build`.
+
+The frontend is a static Pages deployment. The current browser build sends API requests to the relative `/api` path, so the production domain must route `/api/*` to the QRed verification API or otherwise serve the API from the same origin. No Cloudflare Pages environment variables are required for the current frontend build.
+
+If the API base URL becomes configurable in the frontend, add the corresponding build-time variable in Cloudflare Pages, for example `VITE_API_BASE_URL=https://api.qred.org` or another production API origin, and confirm scanner submissions use that endpoint. `VITE_API_PROXY_TARGET` is only used by the local Vite development proxy and is not a production Pages setting.
+
 ## Cloudflare Pages custom domains
 
 1. Open the Cloudflare Pages project that builds and deploys the QRed verifier.
@@ -94,9 +112,16 @@ If the domain must continue using GoDaddy DNS, do not use GoDaddy forwarding as 
 
 After records are created in GoDaddy, return to Cloudflare Pages and verify that both the DNS check and the certificate issuance check pass for every configured custom domain.
 
-## Required production verification check
+## Post-deploy smoke test checklist
 
 Before considering production deployment complete, verify all of the following:
+
+- The homepage loads successfully at `https://qred.org/`.
+- The verifier route loads successfully at `https://qred.org/verify.htm`.
+- The scanner page can submit collected payload seals and issuer public key data to the verification API.
+- Generated bootstrap URLs in sealed PDFs and API responses point to `https://qred.org/verify.htm`.
+
+A quick HTTP check for the required verifier route is:
 
 ```bash
 curl -I https://qred.org/verify.htm
