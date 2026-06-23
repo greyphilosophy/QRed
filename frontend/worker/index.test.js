@@ -47,4 +47,28 @@ describe("frontend worker API handling", () => {
     expect(response.status).toBe(503);
     expect(body.error).toContain("QRED_API_ORIGIN");
   });
+
+  it("proxies API-backed demo routes to the configured backend origin", async () => {
+    const proxiedFetch = vi.fn(async (request) => new Response(JSON.stringify({
+      url: request.url,
+      method: request.method,
+      forwardedHost: request.headers.get("X-Forwarded-Host"),
+      forwardedProto: request.headers.get("X-Forwarded-Proto"),
+    }), { headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", proxiedFetch);
+
+    const response = await worker.fetch(
+      new Request("https://qred.org/api/pdf/upload-seal?demo=1", { method: "POST", body: "pdf" }),
+      env({ QRED_API_ORIGIN: "https://api.qred.example/base-path" }),
+    );
+    const body = await response.json();
+
+    expect(proxiedFetch).toHaveBeenCalledOnce();
+    expect(body).toEqual({
+      url: "https://api.qred.example/api/pdf/upload-seal?demo=1",
+      method: "POST",
+      forwardedHost: "qred.org",
+      forwardedProto: "https",
+    });
+  });
 });
