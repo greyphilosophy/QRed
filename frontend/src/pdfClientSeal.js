@@ -57,7 +57,7 @@ export async function sealPdfInBrowser({
   });
   const pdf = await PDFDocument.load(await file.arrayBuffer());
   const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const qrValues = [bootstrapUrl, ...sealResult.seals];
+  const qrValues = sealResult.seals;
   const qrImages = await Promise.all(qrValues.map(async (value) => pdf.embedPng(await qrPngBytes(value))));
 
   for (const page of pdf.getPages()) {

@@ -308,7 +308,7 @@
 
   <script type="module">
     import jsQR from "jsqr";
-    import { decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
+    import { decodeSeal as decodeQRedSeal, extractSealsFromFragment, verifyQRedSeals } from "./src/qredVerifier.js";
 
     // QRed Protocol - decode QRed seal strings for scanner UI state.
     function decodeSeal(str) {
@@ -400,6 +400,12 @@
 
     function addManualSeals(text) {
       text.split(/\r?\n/).map(function(line) { return line.trim(); }).filter(Boolean).forEach(processScannedSeal);
+    }
+
+    var fragmentSeals = extractSealsFromFragment(window.location.hash);
+    if (fragmentSeals.length > 0) {
+      manualSealInput.value = fragmentSeals.join("\n");
+      addManualSeals(manualSealInput.value);
     }
 
     function showError(message) {
@@ -522,8 +528,11 @@
           showResult("INCOMPLETE", { error_message: "Missing chunk " + i });
           return;
         }
-        seals.push("QRED1|" + docId + "|" + i + "|" + total + "|" + docData.chunks[i]);
       }
+      seals = state.scannedSeals.filter(function(seal) {
+        var decoded = decodeSeal(seal);
+        return decoded && decoded.documentId === docId;
+      });
 
       var publicKey = publicKeyInput.value.trim();
       if (!publicKey) {

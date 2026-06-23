@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 QR_BORDER = 1
 QR_BOX_SIZE = 4
 QR_ERROR_CORRECTION = qrcode.constants.ERROR_CORRECT_M
-DEFAULT_BOOTSTRAP_URL = "https://qred.org/verify.htm"
+DEFAULT_BOOTSTRAP_URL = "https://qred.org/"
 
 
 def extract_text_from_pdf(pdf_path: str, page_number: Optional[int] = None) -> str:
@@ -66,21 +66,21 @@ def planned_page_payloads(
 ) -> list[list[str]]:
     """Plan QR payloads for source and appended pages without dropping chunks.
 
-    Every source page receives the bootstrap QR and at least one payload QR when
-    payload seals exist. If a document has more seals than the source pages can
-    display, additional seal pages are appended to carry the overflow.
+    Every QR payload is now a self-contained https://qred.org/#data URL. If a
+    document has more seal URLs than the source pages can display, additional
+    seal pages are appended to carry the overflow.
     """
     if source_page_count < 1:
         raise ValueError("PDF must contain at least one page")
-    if max_qr_codes < 2:
-        raise ValueError("PDF page layout must fit at least one bootstrap QR and one payload QR")
+    if max_qr_codes < 1:
+        raise ValueError("PDF page layout must fit at least one QRed payload QR")
 
-    payload_capacity = max_qr_codes - 1
+    payload_capacity = max_qr_codes
     pages: list[list[str]] = []
     next_seal = 0
 
     for page_index in range(source_page_count):
-        page_payloads = [bootstrap_url]
+        page_payloads = []
         assigned = seal_strings[next_seal:next_seal + payload_capacity]
         next_seal += len(assigned)
         if not assigned and seal_strings:
@@ -90,7 +90,7 @@ def planned_page_payloads(
     while next_seal < len(seal_strings):
         assigned = seal_strings[next_seal:next_seal + payload_capacity]
         next_seal += len(assigned)
-        pages.append([bootstrap_url] + assigned)
+        pages.append(assigned)
 
     return pages
 
@@ -209,7 +209,7 @@ def stamp_page_seals_on_pdf(
             raise ValueError("Page seal count must match PDF page count")
 
         for page, seal_result in zip(doc, page_results):
-            qr_payloads = [seal_result.bootstrap_url] + [chunk.encode() for chunk in seal_result.chunks]
+            qr_payloads = [chunk.encode() for chunk in seal_result.chunks]
             max_qr_codes = max_qr_codes_per_row(page.rect.width, layout)
             if len(qr_payloads) > max_qr_codes:
                 raise ValueError("PDF page layout cannot fit all QRed seals for a page")

@@ -2,7 +2,6 @@ import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import { planQrStampLayout, sealPdfInBrowser } from "./pdfClientSeal.js";
 import { verifyQRedSeals } from "./qredVerifier.js";
-import { DEFAULT_BOOTSTRAP_URL } from "./qredSealer.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
@@ -56,15 +55,15 @@ describe("browser PDF sealing", () => {
     });
 
     expect(blob.type).toBe("application/pdf");
-    expect(stampedQrValues[0]).toBe(DEFAULT_BOOTSTRAP_URL);
-    expect(stampedQrValues.slice(1)).toEqual(sealResult.seals);
+    expect(stampedQrValues).toEqual(sealResult.seals);
+    expect(stampedQrValues[0]).toMatch(/^https:\/\/qred\.org\/#QRED1\?/);
 
     const layout = planQrStampLayout(612, stampedQrValues.length);
     expect(layout.qrSize).toBeGreaterThanOrEqual(80);
     expect(layout.columns * layout.rows).toBeGreaterThanOrEqual(stampedQrValues.length);
     expect(layout.panelWidth).toBeLessThanOrEqual(612 - 36);
 
-    await expect(verifyQRedSeals(stampedQrValues.slice(1), publicKey)).resolves.toMatchObject({
+    await expect(verifyQRedSeals(stampedQrValues, publicKey)).resolves.toMatchObject({
       status: "VALID",
       issuer: "QRed Letter Authority",
       content: expect.stringContaining("PDF file: letter.pdf"),

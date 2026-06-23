@@ -8,8 +8,49 @@ function decodeBase64Url(value) {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
+function sealFragment(sealString) {
+  const hashIndex = sealString.indexOf("#");
+  return hashIndex >= 0 ? sealString.slice(hashIndex + 1) : sealString;
+}
+
+export function extractSealsFromFragment(hash = window.location.hash) {
+  const fragment = hash.startsWith("#") ? hash.slice(1) : hash;
+  if (!fragment) return [];
+  const decodedFragment = decodeURIComponent(fragment);
+  if (decodedFragment.startsWith("QRED1?")) return [decodedFragment];
+  return decodedFragment.split(/\r?\n/).map((item) => item.trim()).filter((item) => item.startsWith("QRED"));
+}
+
+function decodePlaintextFragment(fragment) {
+  if (!fragment.startsWith("QRED1?")) return null;
+  const params = new URLSearchParams(fragment.slice("QRED1?".length));
+  const chunkNumber = Number.parseInt(params.get("i") || "", 10);
+  const totalChunks = Number.parseInt(params.get("n") || "", 10);
+  const documentId = params.get("doc") || "";
+  if (!documentId || !Number.isInteger(chunkNumber) || !Number.isInteger(totalChunks)) return null;
+
+  return {
+    format_id: "QRED1",
+    document_id: documentId,
+    chunk_number: chunkNumber,
+    total_chunks: totalChunks,
+    data: params.get("txt") || "",
+    plaintext: true,
+    algorithm: params.get("alg") || "Ed25519",
+    issuer: params.get("iss") || "",
+    key_id: params.get("kid") || "",
+    signature: params.get("sig") || "",
+    timestamp: params.get("ts") || "",
+    version: params.get("v") || "1",
+  };
+}
+
 export function decodeSeal(sealString) {
-  const parts = sealString.split("|");
+  const fragment = sealFragment(sealString);
+  const plaintext = decodePlaintextFragment(fragment);
+  if (plaintext) return plaintext;
+
+  const parts = fragment.split("|");
   if (parts.length < 5) return null;
   const [formatId, documentId, chunkNumberText, totalChunksText] = parts;
   const data = parts.slice(4).join("|");
@@ -29,7 +70,7 @@ export function decodeSeal(sealString) {
 }
 
 export async function verifyQRedSeals(seals, publicKey) {
-  const context = { chunks: {}, document_id: "", total_chunks: 0, errors: [] };
+  const context = { chunks: {}, document_id: "", total_chunks: 0, errors: [], plaintext: false, metadata: {} };
 
   for (const seal of seals) {
     const decoded = decodeSeal(seal);
@@ -49,6 +90,19 @@ export async function verifyQRedSeals(seals, publicKey) {
     if (!context.document_id) context.document_id = decoded.document_id;
     context.total_chunks = decoded.total_chunks;
     context.chunks[decoded.chunk_number] = decoded.data;
+    if (decoded.plaintext) {
+      context.plaintext = true;
+      context.metadata = { ...context.metadata, ...Object.fromEntries(
+        Object.entries({
+          algorithm: decoded.algorithm,
+          issuer: decoded.issuer,
+          key_id: decoded.key_id,
+          signature: decoded.signature,
+          timestamp: decoded.timestamp,
+          version: decoded.version,
+        }).filter(([, value]) => value)
+      ) };
+    }
   }
 
   const chunkNumbers = Object.keys(context.chunks).map(Number);
@@ -71,11 +125,24 @@ export async function verifyQRedSeals(seals, publicKey) {
   let payload;
   try {
     const rawData = Array.from({ length: context.total_chunks }, (_, i) => context.chunks[i]).join("");
-    const compressed = decodeBase64Url(rawData);
-    const payloadJson = pako.ungzip(compressed, { to: "string" });
-    payload = JSON.parse(payloadJson);
+    if (context.plaintext) {
+      payload = {
+        algorithm: context.metadata.algorithm || "Ed25519",
+        content: rawData,
+        document_id: context.document_id,
+        issuer: context.metadata.issuer || "",
+        key_id: context.metadata.key_id || "",
+        signature: context.metadata.signature || "",
+        timestamp: context.metadata.timestamp || "",
+        version: context.metadata.version || "1",
+      };
+    } else {
+      const compressed = decodeBase64Url(rawData);
+      const payloadJson = pako.ungzip(compressed, { to: "string" });
+      payload = JSON.parse(payloadJson);
+    }
   } catch (error) {
-    return { status: "ERROR", error_message: `Decompression failed: ${error.message}` };
+    return { status: "ERROR", error_message: `Payload decoding failed: ${error.message}` };
   }
 
   const content = payload.content || "";

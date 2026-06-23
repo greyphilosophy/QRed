@@ -8,9 +8,47 @@ from collections.abc import Callable
 from backend.crypto import verify as crypto_verify
 
 
+def _seal_fragment(seal_string: str) -> str:
+    return seal_string.split("#", 1)[1] if "#" in seal_string else seal_string
+
+
+def _decode_plaintext_fragment(fragment: str) -> dict | None:
+    from urllib.parse import parse_qs
+
+    if not fragment.startswith("QRED1?"):
+        return None
+    params = {key: values[0] for key, values in parse_qs(fragment[len("QRED1?"):], keep_blank_values=True).items()}
+    try:
+        chunk_number = int(params.get("i", ""))
+        total_chunks = int(params.get("n", ""))
+    except ValueError:
+        return None
+    document_id = params.get("doc", "")
+    if not document_id:
+        return None
+    return {
+        "format_id": "QRED1",
+        "document_id": document_id,
+        "chunk_number": chunk_number,
+        "total_chunks": total_chunks,
+        "data": params.get("txt", ""),
+        "plaintext": True,
+        "algorithm": params.get("alg", "Ed25519"),
+        "issuer": params.get("iss", ""),
+        "key_id": params.get("kid", ""),
+        "signature": params.get("sig", ""),
+        "timestamp": params.get("ts", ""),
+        "version": params.get("v", "1"),
+    }
+
+
 def decode_seal(seal_string: str) -> dict | None:
     """Decode a QRed seal string into a chunk dict."""
-    parts = seal_string.split("|", 4)
+    fragment = _seal_fragment(seal_string)
+    plaintext = _decode_plaintext_fragment(fragment)
+    if plaintext:
+        return plaintext
+    parts = fragment.split("|", 4)
     if len(parts) < 5:
         return None
     fmt_id, doc_id, chunk_num, total, data = parts
@@ -52,7 +90,7 @@ def reconstruct_and_verify(
     embedded in the payload are intentionally ignored because the payload is
     untrusted until its signature is verified.
     """
-    ctx: dict = {"chunks": {}, "document_id": "", "total_chunks": 0, "errors": []}
+    ctx: dict = {"chunks": {}, "document_id": "", "total_chunks": 0, "errors": [], "plaintext": False, "metadata": {}}
 
     for seal in seals:
         decoded = decode_seal(seal)
@@ -74,6 +112,11 @@ def reconstruct_and_verify(
             ctx["document_id"] = decoded["document_id"]
         ctx["total_chunks"] = decoded["total_chunks"]
         ctx["chunks"][decoded["chunk_number"]] = decoded["data"]
+        if decoded.get("plaintext"):
+            ctx["plaintext"] = True
+            for key in ("algorithm", "issuer", "key_id", "signature", "timestamp", "version"):
+                if decoded.get(key):
+                    ctx["metadata"][key] = decoded[key]
 
     # Check completeness
     if ctx["chunks"]:
@@ -100,15 +143,27 @@ def reconstruct_and_verify(
 
     raw_data = "".join(ordered_data)
 
-    # Decompress
+    # Decode payload
     try:
-        compressed = base64.urlsafe_b64decode(raw_data)
-        payload_json = gzip.decompress(compressed).decode("utf-8")
-        payload = json.loads(payload_json)
+        if ctx["plaintext"]:
+            payload = {
+                "content": raw_data,
+                "document_id": ctx["document_id"],
+                "issuer": ctx["metadata"].get("issuer", ""),
+                "key_id": ctx["metadata"].get("key_id", ""),
+                "signature": ctx["metadata"].get("signature", ""),
+                "timestamp": ctx["metadata"].get("timestamp", ""),
+                "algorithm": ctx["metadata"].get("algorithm", "Ed25519"),
+                "version": ctx["metadata"].get("version", "1"),
+            }
+        else:
+            compressed = base64.urlsafe_b64decode(raw_data)
+            payload_json = gzip.decompress(compressed).decode("utf-8")
+            payload = json.loads(payload_json)
     except Exception as e:
         return {
             "status": "ERROR",
-            "error_message": f"Decompression failed: {e}",
+            "error_message": f"Payload decoding failed: {e}",
         }
 
     # Extract fields
