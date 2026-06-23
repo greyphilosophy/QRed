@@ -47,6 +47,19 @@ describe("App PDF sealing defaults", () => {
     vi.restoreAllMocks();
   });
 
+
+  it("puts the verifier first and removes the standalone seal generator from the landing page", async () => {
+    render(React.createElement(App));
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Verify QRed Document" })).toBeTruthy());
+
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
+    expect(headings).toEqual(["Verify QRed Document", "Demo: Upload and Seal a PDF"]);
+    expect(screen.queryByRole("heading", { name: "Generate QRed Seals" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Open mobile verifier" })).toBeNull();
+    expect(screen.getByText("QR bootstrap target: https://qred.org/")).toBeTruthy();
+  });
+
   it("loads default keys, obfuscates the private key, and submits them with the PDF seal request", async () => {
     render(React.createElement(App));
 
@@ -79,6 +92,7 @@ describe("App PDF sealing defaults", () => {
     expect(form.get("private_key")).toBe(defaultPrivateKey);
     expect(form.get("public_key")).toBe(defaultPublicKey);
     expect(form.get("issuer")).toBe("QRed Demo Authority");
+    expect(form.get("bootstrap_url")).toBe("https://qred.org/");
   });
 
   it("falls back to browser-side PDF sealing when the static Worker has no backend origin", async () => {
@@ -118,7 +132,7 @@ describe("App PDF sealing defaults", () => {
       issuer: "QRed Demo Authority",
       privateKey: defaultPrivateKey,
       publicKey: defaultPublicKey,
-      bootstrapUrl: "https://qred.org/verify.htm",
+      bootstrapUrl: "https://qred.org/",
     }));
     expect(await screen.findByText("Sealed static.pdf in this browser. Document ID: DOC-BROWSER-FALLBACK")).toBeTruthy();
   });

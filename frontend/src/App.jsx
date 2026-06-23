@@ -104,124 +104,6 @@ function VerifyForm() {
   );
 }
 
-function GenerateForm() {
-  const [content, setContent] = useState("");
-  const [issuer, setIssuer] = useState("");
-  const [privateKey, setPrivateKey] = useState("");
-  const [publicKey, setPublicKey] = useState("");
-  const [seals, setSeals] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  function handleGenerate() {
-    if (content && issuer && privateKey && publicKey) {
-      generate(content, issuer, privateKey, publicKey);
-    }
-  }
-
-  function generate(content, issuer, private_key, public_key) {
-    setLoading(true);
-    setError(null);
-    fetch(API_BASE + "/seals", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content, issuer, private_key, public_key }),
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        setSeals(data);
-        setLoading(false);
-      })
-      .catch((e) => {
-        setError(e.message);
-        setLoading(false);
-      });
-  }
-
-  function handleReset() {
-    setSeals(null);
-    setContent("");
-    setIssuer("");
-    setPrivateKey("");
-    setPublicKey("");
-  }
-
-  if (seals) {
-    return React.createElement("div", { className: "card" },
-      React.createElement("h2", null, "Seals Generated"),
-      React.createElement("p", null,
-        React.createElement("strong", null, "Document ID: "), seals.document_id),
-      React.createElement("p", null,
-        React.createElement("strong", null, "Bootstrap URL: "),
-        React.createElement("a", { href: seals.bootstrap_url, target: "_blank", rel: "noopener" }, seals.bootstrap_url)),
-      React.createElement("p", null,
-        React.createElement("strong", null, "Total Seals: "), seals.total_seals),
-      React.createElement("p", { style: { marginBottom: "1rem" }},
-        "Copy these seal strings for printing as QR codes:"),
-      React.createElement("textarea", {
-        readOnly: true,
-        value: seals.seals.join("\n"),
-        style: { marginBottom: "1rem" },
-      }),
-      React.createElement("div", null,
-        React.createElement("button", {
-          onClick: () => {
-            navigator.clipboard?.writeText(seals.seals.join("\n"));
-          }
-        }, "Copy Seals"),
-        React.createElement("button", {
-          onClick: handleReset,
-          style: { marginLeft: "1rem" }
-        }, "Generate Another")
-      )
-    );
-  }
-
-  return React.createElement("div", { className: "card" },
-    React.createElement("h2", null, "Generate QRed Seals"),
-    React.createElement("p", { style: { color: "#64748b", marginBottom: "1rem" }},
-      "Create tamper-evident seals for a document:"),
-    React.createElement("div", { className: "demo-grid" },
-      React.createElement("div", { className: "demo-input" },
-        React.createElement("label", null, "Document Content"),
-        React.createElement("textarea", {
-          value: content,
-          onChange: (e) => setContent(e.target.value),
-          placeholder: "Paste document text here...",
-          rows: 4,
-        })
-      ),
-      React.createElement("div", { className: "demo-input" },
-        React.createElement("label", null, "Issuer"),
-        React.createElement("input", {
-          value: issuer,
-          onChange: (e) => setIssuer(e.target.value),
-          placeholder: "QRed Authority",
-        })
-      ),
-      React.createElement("div", { className: "demo-input" },
-        React.createElement("label", null, "Private Key"),
-        React.createElement("input", {
-          value: privateKey,
-          onChange: (e) => setPrivateKey(e.target.value),
-          placeholder: "Issuer's private key",
-        })
-      ),
-      React.createElement("div", { className: "demo-input" },
-        React.createElement("label", null, "Public Key"),
-        React.createElement("input", {
-          value: publicKey,
-          onChange: (e) => setPublicKey(e.target.value),
-          placeholder: "Issuer's public key",
-        })
-      )
-    ),
-    React.createElement("button", { onClick: handleGenerate, disabled: loading, style: { marginTop: "1rem" }},
-      loading ? "Generating..." : "Generate Seals"),
-    error && React.createElement("p", { style: { color: "#ef4444", marginTop: "0.5rem" }}, error)
-  );
-}
-
 function PdfSealForm() {
   const [file, setFile] = useState(null);
   const [issuer, setIssuer] = useState("QRed Demo Authority");
@@ -275,7 +157,7 @@ function PdfSealForm() {
     form.append("issuer", issuer);
     form.append("private_key", privateKey);
     form.append("public_key", publicKey);
-    form.append("bootstrap_url", "https://qred.org/verify.htm");
+    form.append("bootstrap_url", "https://qred.org/");
 
     try {
       const response = await fetch(API_BASE + "/pdf/upload-seal", { method: "POST", body: form });
@@ -301,7 +183,7 @@ function PdfSealForm() {
           issuer,
           privateKey,
           publicKey,
-          bootstrapUrl: "https://qred.org/verify.htm",
+          bootstrapUrl: "https://qred.org/",
         });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
@@ -352,12 +234,10 @@ function App() {
   return React.createElement("div", { className: "container" },
     React.createElement("h1", null, "QRed"),
     React.createElement("p", { className: "subtitle" }, "Tamper-evident QR seals for paper documents"),
-    React.createElement(PdfSealForm),
-    React.createElement(GenerateForm),
     React.createElement(VerifyForm),
+    React.createElement(PdfSealForm),
     React.createElement("p", { className: "footer" },
-      React.createElement("a", { href: "./verifier.html" }, "Open mobile verifier"),
-      " · QR bootstrap target: https://qred.org/verify.htm")
+      "QR bootstrap target: https://qred.org/")
   );
 }
 
