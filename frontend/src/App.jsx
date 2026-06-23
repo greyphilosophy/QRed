@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { verifyQRedSeals } from "./qredVerifier.js";
 
 const API_BASE = "/api";
@@ -204,14 +204,34 @@ function PdfSealForm() {
   const [privateKey, setPrivateKey] = useState("");
   const [publicKey, setPublicKey] = useState("");
   const [message, setMessage] = useState("");
+  const [keyStatus, setKeyStatus] = useState("Loading default keys...");
+  const [loadingKeys, setLoadingKeys] = useState(false);
+  const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  async function loadDemoKeys() {
-    const response = await fetch(API_BASE + "/keys/demo");
-    const keys = await response.json();
-    setPrivateKey(keys.private_key);
-    setPublicKey(keys.public_key);
+  async function loadDefaultKeys() {
+    setLoadingKeys(true);
+    setKeyStatus("Loading default keys...");
+
+    try {
+      const response = await fetch(API_BASE + "/keys/default");
+      if (!response.ok) throw new Error(await response.text());
+      const keys = await response.json();
+      setPrivateKey(keys.private_key);
+      setPublicKey(keys.public_key);
+      setKeyStatus(keys.source === "environment" ? "Default keys loaded from server environment." : "Ephemeral demo keys loaded. Set QRED_DEFAULT_PRIVATE_KEY and QRED_DEFAULT_PUBLIC_KEY on the API server to use stable defaults.");
+    } catch (error) {
+      setKeyStatus(`Default key loading failed: ${error.message}`);
+    } finally {
+      setLoadingKeys(false);
+    }
   }
+
+  useEffect(() => {
+    if (!privateKey || !publicKey) {
+      loadDefaultKeys();
+    }
+  }, []);
 
   async function sealPdf() {
     if (!file || !issuer || !privateKey || !publicKey) {
@@ -252,23 +272,25 @@ function PdfSealForm() {
     React.createElement("div", { className: "demo-grid" },
       React.createElement("div", { className: "demo-input" },
         React.createElement("label", null, "PDF file"),
-        React.createElement("input", { type: "file", accept: "application/pdf", onChange: (e) => setFile(e.target.files?.[0] || null) })
+        React.createElement("input", { "aria-label": "PDF file", type: "file", accept: "application/pdf", onChange: (e) => setFile(e.target.files?.[0] || null) })
       ),
       React.createElement("div", { className: "demo-input" },
         React.createElement("label", null, "Issuer"),
-        React.createElement("input", { value: issuer, onChange: (e) => setIssuer(e.target.value) })
+        React.createElement("input", { "aria-label": "Issuer", value: issuer, onChange: (e) => setIssuer(e.target.value) })
       ),
       React.createElement("div", { className: "demo-input" },
         React.createElement("label", null, "Private Key"),
-        React.createElement("input", { value: privateKey, onChange: (e) => setPrivateKey(e.target.value), placeholder: "Click Demo Keys" })
+        React.createElement("input", { "aria-label": "Private Key", type: showPrivateKey ? "text" : "password", value: privateKey, onChange: (e) => setPrivateKey(e.target.value), placeholder: "Default private key", autoComplete: "off" }),
+        React.createElement("button", { type: "button", onClick: () => setShowPrivateKey((value) => !value), style: { marginTop: "0.5rem" }}, showPrivateKey ? "Hide private key" : "Show private key")
       ),
       React.createElement("div", { className: "demo-input" },
         React.createElement("label", null, "Public Key"),
-        React.createElement("input", { value: publicKey, onChange: (e) => setPublicKey(e.target.value), placeholder: "Click Demo Keys" })
+        React.createElement("input", { "aria-label": "Public Key", value: publicKey, onChange: (e) => setPublicKey(e.target.value), placeholder: "Default public key" })
       )
     ),
-    React.createElement("button", { onClick: loadDemoKeys, style: { marginRight: "1rem", marginTop: "1rem" }}, "Use Demo Keys"),
-    React.createElement("button", { onClick: sealPdf, disabled: loading, style: { marginTop: "1rem" }}, loading ? "Sealing..." : "Upload PDF and Stamp QR Seals"),
+    React.createElement("p", { style: { marginTop: "1rem", color: keyStatus.includes("failed") ? "#ef4444" : "#64748b" }}, keyStatus),
+    React.createElement("button", { onClick: loadDefaultKeys, disabled: loadingKeys, style: { marginRight: "1rem", marginTop: "1rem" }}, loadingKeys ? "Loading Default Keys..." : "Use Default Keys"),
+    React.createElement("button", { onClick: sealPdf, disabled: loading || loadingKeys, style: { marginTop: "1rem" }}, loading ? "Sealing..." : "Upload PDF and Stamp QR Seals"),
     message && React.createElement("p", { style: { marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155" }}, message)
   );
 }
