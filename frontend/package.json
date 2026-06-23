@@ -5,11 +5,11 @@
   "description": "QRed Verifier - Web-based QR document verification",
   "scripts": {
     "start": "vite",
-    "build": "vite build",
+    "build": "vite build && cp build/verifier.html build/verify.htm",
     "test": "vitest run",
     "lint": "eslint src/ --ext .jsx,.tsx",
     "test:ci": "vitest run --passWithNoTests",
-    "build:worker": "vite build && cp build/verifier.html build/verify.htm"
+    "build:worker": "npm run build"
   },
   "dependencies": {
     "@noble/ed25519": "^3.1.0",

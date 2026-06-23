@@ -67,7 +67,7 @@ make tests     # 91 passing BDD tests
 
 # Production deployment for qred.org
 
-The production verifier is expected to be served by Cloudflare Pages at `https://qred.org/verify.htm`. Do not use GoDaddy URL forwarding as the primary production mechanism: forwarding can change the browser-visible URL, introduce redirect dependencies, and does not prove that `/verify.htm` is being served directly by the Cloudflare Pages deployment with Cloudflare-managed TLS.
+The production verifier is expected to be served by Cloudflare Pages at `https://qred.org/verify.htm`. The repository root now includes Cloudflare Pages config and npm build scripts so Cloudflare can publish the frontend even when the project is connected from the repository root. Do not use GoDaddy URL forwarding as the primary production mechanism: forwarding can change the browser-visible URL, introduce redirect dependencies, and does not prove that `/verify.htm` is being served directly by the Cloudflare Pages deployment with Cloudflare-managed TLS.
 
 ## Cloudflare Pages build settings
 
@@ -81,7 +81,7 @@ Configure the Cloudflare Pages project with these settings:
 | Deploy command, if the Cloudflare UI requires one | `npm ci && npm run build` |
 | Production URL expectation | `https://qred.org/verify.htm` |
 
-Use `npm ci && npm run build` only after setting the project root to `frontend`, where `package.json` and `package-lock.json` live. If Cloudflare runs the command from the repository root, it may fail with `npm ci` lockfile errors because the lockfile is in `frontend/package-lock.json`. In that case, either set the Pages project root to `frontend` or, if the UI requires a repository-root deploy command, use `cd frontend && npm ci && npm run build` and set the build output directory to `frontend/build`.
+Use `npm ci && npm run build` only after setting the project root to `frontend`, where `package.json` and `package-lock.json` live. If Cloudflare runs from the repository root, use the root `npm run build` script and publish `frontend/build`; the root `wrangler.jsonc` declares that Pages output directory. If the UI requires manual settings instead, use `cd frontend && npm ci && npm run build` and set the build output directory to `frontend/build`.
 
 The frontend is a static Pages deployment. The current browser build sends API requests to the relative `/api` path, so the production domain must route `/api/*` to the QRed verification API or otherwise serve the API from the same origin. No Cloudflare Pages environment variables are required for the current frontend build.
 
