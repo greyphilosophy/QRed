@@ -83,7 +83,7 @@ Configure the Cloudflare Pages project with these settings:
 
 Use `npm ci && npm run build` only after setting the project root to `frontend`, where `package.json` and `package-lock.json` live. If Cloudflare runs from the repository root, use the root `npm run build` script and publish `frontend/build`; the root `wrangler.jsonc` declares that Pages output directory. If the UI requires manual settings instead, use `cd frontend && npm ci && npm run build` and set the build output directory to `frontend/build`.
 
-The production frontend is a Cloudflare Pages deployment with a small Worker in `frontend/worker/index.js`. The browser build sends API requests to the relative `/api` path. Configure the Worker variable `QRED_API_ORIGIN` to the origin of the separately deployed QRed FastAPI backend if production should support API-backed demo features such as seal generation, PDF stamping, registry calls, or server-side verification. Leave the value unset only for a static verifier/demo deployment; in that mode the Worker serves `/api/keys/default` and `/api/keys/demo` locally so the homepage can load demo issuer keys, while other `/api/*` routes return a 503 explaining that the backend origin is missing.
+The production frontend is a Cloudflare Pages deployment with a small Worker in `frontend/worker/index.js`. By default, the browser build sends API requests to the relative `/api` path, which lets the Worker proxy requests. Configure the Worker variable `QRED_API_ORIGIN` to the origin of the separately deployed QRed FastAPI backend if production should support API-backed demo features such as seal generation, PDF stamping, registry calls, or server-side verification. Alternatively, set the frontend build-time variable `VITE_API_BASE_URL` to the backend origin (for example, `https://api.qred.org`) so the browser calls that API directly instead of relying on the Worker proxy. Leave both `QRED_API_ORIGIN` and `VITE_API_BASE_URL` unset only for a static verifier/demo deployment; in that mode the Worker serves `/api/keys/default` and `/api/keys/demo` locally so the homepage can load demo issuer keys, while other `/api/*` routes return a 503 explaining that the backend origin is missing.
 
 Optional Worker variables for stable homepage demo keys are:
 
@@ -93,7 +93,7 @@ Optional Worker variables for stable homepage demo keys are:
 | `QRED_DEFAULT_PUBLIC_KEY` | Matching Base64URL-encoded Ed25519 public key. |
 | `QRED_DEFAULT_KEY_ID` | Optional key ID. If omitted, the Worker derives it from `QRED_DEFAULT_PUBLIC_KEY`. |
 
-If the API base URL becomes configurable in the frontend, add the corresponding build-time variable in Cloudflare Pages, for example `VITE_API_BASE_URL=https://api.qred.org` or another production API origin, and confirm scanner submissions use that endpoint. `VITE_API_PROXY_TARGET` is only used by the local Vite development proxy and is not a production Pages setting.
+When using direct browser API calls, add `VITE_API_BASE_URL=https://api.qred.org` (or another production API origin) as a Cloudflare Pages build-time variable and rebuild the frontend. `VITE_API_PROXY_TARGET` is only used by the local Vite development proxy and is not a production Pages setting.
 
 ## Cloudflare Pages custom domains
 

@@ -1,7 +1,25 @@
 import React, { useEffect, useState } from "react";
 import { verifyQRedSeals } from "./qredVerifier.js";
 
-const API_BASE = "/api";
+function normalizeApiBase(value) {
+  const trimmed = (value || "/api").trim();
+  const withoutTrailingSlash = trimmed.replace(/\/+$/, "");
+  return withoutTrailingSlash || "/api";
+}
+
+const API_BASE = normalizeApiBase(import.meta.env.VITE_API_BASE_URL);
+
+async function responseErrorMessage(response) {
+  const text = await response.text();
+  if (!text) return `${response.status} ${response.statusText}`.trim();
+
+  try {
+    const data = JSON.parse(text);
+    return data.message || data.error || text;
+  } catch {
+    return text;
+  }
+}
 
 function VerifyForm() {
   const [sealInput, setSealInput] = useState("");
@@ -215,7 +233,7 @@ function PdfSealForm() {
 
     try {
       const response = await fetch(API_BASE + "/keys/default");
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await responseErrorMessage(response));
       const keys = await response.json();
       setPrivateKey(keys.private_key);
       setPublicKey(keys.public_key);
@@ -255,7 +273,7 @@ function PdfSealForm() {
 
     try {
       const response = await fetch(API_BASE + "/pdf/upload-seal", { method: "POST", body: form });
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) throw new Error(await responseErrorMessage(response));
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
