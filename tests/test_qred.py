@@ -19,7 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.app import create_app
-from backend.crypto import generate_keypair
+from backend.crypto import compute_key_id, generate_keypair
 from backend.services.sealer import (
     canonicalize_text,
     compress_payload,
@@ -951,6 +951,35 @@ def test_demo_keypair_endpoint_supports_browser_demo():
     assert response.status_code == 200
     data = response.json()
     assert {"private_key", "public_key", "key_id"}.issubset(data)
+
+
+
+def test_default_keypair_endpoint_uses_environment_keys(monkeypatch):
+    """Given configured default keys, when requested, then the stable keypair is returned"""
+    monkeypatch.setenv("QRED_DEFAULT_PRIVATE_KEY", TEST_PRIVATE_KEY)
+    monkeypatch.setenv("QRED_DEFAULT_PUBLIC_KEY", TEST_PUBLIC_KEY)
+
+    response = client.get("/api/keys/default")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["private_key"] == TEST_PRIVATE_KEY
+    assert data["public_key"] == TEST_PUBLIC_KEY
+    assert data["key_id"] == compute_key_id(TEST_PUBLIC_KEY)
+    assert data["source"] == "environment"
+
+
+def test_default_keypair_endpoint_falls_back_to_ephemeral_keys(monkeypatch):
+    """Given no configured default keys, when requested, then an ephemeral keypair is returned"""
+    monkeypatch.delenv("QRED_DEFAULT_PRIVATE_KEY", raising=False)
+    monkeypatch.delenv("QRED_DEFAULT_PUBLIC_KEY", raising=False)
+
+    response = client.get("/api/keys/default")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert {"private_key", "public_key", "key_id"}.issubset(data)
+    assert data["source"] == "ephemeral"
 
 
 def test_pdf_stamp_assigns_bootstrap_and_payload_to_each_page():
