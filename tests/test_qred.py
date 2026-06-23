@@ -1047,6 +1047,45 @@ def test_pdf_path_sealing_creates_independently_verifiable_page_seals(tmp_path):
     assert first_page_result["document_id"] != second_page_result["document_id"]
 
 
+def test_pdf_seal_api_end_to_end_can_verify_returned_seals(tmp_path):
+    """Given a one-page PDF, when sealed through the API, then returned seals verify through the API."""
+    pdf_path = tmp_path / "e2e.pdf"
+    output_path = tmp_path / "e2e.sealed.pdf"
+    create_sample_pdf(pdf_path, pages=1)
+
+    seal_response = client.post(
+        "/api/pdf/seal",
+        params={
+            "pdf_path": str(pdf_path),
+            "output_path": str(output_path),
+            "issuer": TEST_ISSUER,
+            "private_key": TEST_PRIVATE_KEY,
+            "public_key": TEST_PUBLIC_KEY,
+        },
+    )
+
+    assert seal_response.status_code == 200
+    sealed = seal_response.json()
+    assert output_path.exists()
+    assert sealed["bootstrap_url"] == "https://qred.org/verify.htm"
+    assert sealed["total_seals"] == len(sealed["seal_strings"]) >= 1
+
+    verify_response = client.post(
+        "/api/verify",
+        json={
+            "seals": sealed["seal_strings"],
+            "public_key": TEST_PUBLIC_KEY,
+        },
+    )
+
+    assert verify_response.status_code == 200
+    verification = verify_response.json()
+    assert verification["status"] == "VALID"
+    assert verification["issuer"] == TEST_ISSUER
+    assert verification["content"] == "QRed demo page 1"
+    assert verification["document_id"].startswith(sealed["document_id"])
+
+
 def test_pdf_upload_endpoint_returns_sealed_pdf_download(tmp_path):
     """Given a browser PDF upload, when sealing, then a PDF download is returned"""
     pdf_path = tmp_path / "upload.pdf"
