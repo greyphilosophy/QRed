@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { sealPdfInBrowser } from "./pdfClientSeal.js";
 import { verifyQRedSeals } from "./qredVerifier.js";
 
 function normalizeApiBase(value) {
@@ -19,6 +20,11 @@ async function responseErrorMessage(response) {
   } catch {
     return text;
   }
+}
+
+function isMissingBackendOriginMessage(message) {
+  return message.includes("API-backed demo endpoints require a separate QRed backend origin")
+    || message.includes("QRED_API_ORIGIN is not configured");
 }
 
 function VerifyForm() {
@@ -283,7 +289,30 @@ function PdfSealForm() {
       URL.revokeObjectURL(url);
       setMessage(`Sealed ${file.name}. Document ID: ${response.headers.get("X-QRed-Document-Id")}`);
     } catch (error) {
-      setMessage(`PDF sealing failed: ${error.message}`);
+      if (!isMissingBackendOriginMessage(error.message)) {
+        setMessage(`PDF sealing failed: ${error.message}`);
+        return;
+      }
+
+      try {
+        setMessage("Backend PDF sealing is not configured; sealing in this browser instead...");
+        const { blob, sealResult } = await sealPdfInBrowser({
+          file,
+          issuer,
+          privateKey,
+          publicKey,
+          bootstrapUrl: "https://qred.org/verify.htm",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
+        link.click();
+        URL.revokeObjectURL(url);
+        setMessage(`Sealed ${file.name} in this browser. Document ID: ${sealResult.document_id}`);
+      } catch (fallbackError) {
+        setMessage(`PDF sealing failed: ${fallbackError.message}`);
+      }
     } finally {
       setLoading(false);
     }
