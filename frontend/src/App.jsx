@@ -219,7 +219,13 @@ function PdfSealForm() {
       const keys = await response.json();
       setPrivateKey(keys.private_key);
       setPublicKey(keys.public_key);
-      setKeyStatus(keys.source === "environment" ? "Default keys loaded from server environment." : "Ephemeral demo keys loaded. Set QRED_DEFAULT_PRIVATE_KEY and QRED_DEFAULT_PUBLIC_KEY on the API server to use stable defaults.");
+      if (keys.source === "environment" || keys.source === "worker-environment") {
+        setKeyStatus("Default keys loaded from server environment.");
+      } else if (keys.source === "worker-static-demo") {
+        setKeyStatus("Static demo keys loaded from qred.org. Configure QRED_DEFAULT_PRIVATE_KEY, QRED_DEFAULT_PUBLIC_KEY, and QRED_DEFAULT_KEY_ID on the Worker to use stable custom defaults.");
+      } else {
+        setKeyStatus("Ephemeral demo keys loaded. Set QRED_DEFAULT_PRIVATE_KEY and QRED_DEFAULT_PUBLIC_KEY on the API server to use stable defaults.");
+      }
     } catch (error) {
       setKeyStatus(`Default key loading failed: ${error.message}`);
     } finally {
