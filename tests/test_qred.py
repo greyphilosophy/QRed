@@ -292,8 +292,8 @@ def test_fr4_seals_have_correct_format():
     })
     assert response.status_code == 200
     for seal in response.json()["seals"]:
-        assert seal.startswith("QRED1|")
-        assert len(seal.split("|")) == 5
+        assert seal.startswith("https://qred.org/#QRED1?")
+        assert "doc=" in seal and "txt=" in seal
 
 
 def test_fr4_bootstrap_url_uses_production_verifier():
@@ -533,7 +533,7 @@ def test_fr10_version_in_seal_format():
     """Given generated seals, when checking format ID, then version is included"""
     seals = generate_and_get_seals("Test")
     for seal in seals:
-        assert seal.startswith("QRED1|")
+        assert seal.startswith("https://qred.org/#QRED1?")
 
 
 def test_fr10_rejects_wrong_version():
@@ -983,28 +983,26 @@ def test_default_keypair_endpoint_falls_back_to_ephemeral_keys(monkeypatch):
 
 
 def test_pdf_stamp_assigns_bootstrap_and_payload_to_each_page():
-    """Given multiple PDF pages, when assigning stamps, then each page gets bootstrap plus payload"""
+    """Given multiple PDF pages, when assigning stamps, then each page gets a payload URL"""
     from backend.services.pdf_stamp import planned_page_payloads
     seals = ["QRED1|DOC|0|2|aaa", "QRED1|DOC|1|2|bbb"]
-    pages = planned_page_payloads(seals, "https://qred.org/verify.htm", source_page_count=2, max_qr_codes=2)
-    assert pages[0][0] == "https://qred.org/verify.htm"
-    assert pages[1][0] == "https://qred.org/verify.htm"
-    assert any(item.startswith("QRED1|") for item in pages[0])
-    assert any(item.startswith("QRED1|") for item in pages[1])
+    pages = planned_page_payloads(seals, "https://qred.org/", source_page_count=2, max_qr_codes=2)
+    assert pages[0][0] == seals[0]
+    assert pages[1][0] == seals[1]
 
 
 def test_pdf_stamp_plan_appends_overflow_pages_without_dropping_seals():
     """Given too many seals for source pages, when planning stamps, then overflow pages keep all chunks"""
     from backend.services.pdf_stamp import planned_page_payloads
     seals = [f"QRED1|DOC|{index}|5|data{index}" for index in range(5)]
-    pages = planned_page_payloads(seals, "https://qred.org/verify.htm", source_page_count=1, max_qr_codes=3)
+    pages = planned_page_payloads(seals, "https://qred.org/", source_page_count=1, max_qr_codes=3)
     placed = [payload for page in pages for payload in page if payload.startswith("QRED1|")]
     assert placed == seals
-    assert len(pages) == 3
+    assert len(pages) == 2
 
 
 def test_pdf_path_sealing_uses_verify_htm_bootstrap(tmp_path):
-    """Given a local PDF, when sealed, then the response targets qred.org/verify.htm"""
+    """Given a local PDF, when sealed, then the response targets qred.org fragments"""
     from backend.services.pdf_stamp import seal_pdf
     pdf_path = tmp_path / "demo.pdf"
     output_path = tmp_path / "demo.sealed.pdf"
@@ -1017,7 +1015,7 @@ def test_pdf_path_sealing_uses_verify_htm_bootstrap(tmp_path):
         output_path=str(output_path),
     )
     assert output_path.exists()
-    assert result["bootstrap_url"] == "https://qred.org/verify.htm"
+    assert result["bootstrap_url"] == "https://qred.org/"
     assert result["total_seals"] >= 1
     assert len(result["page_seal_strings"]) == 2
 
@@ -1067,7 +1065,7 @@ def test_pdf_seal_api_end_to_end_can_verify_returned_seals(tmp_path):
     assert seal_response.status_code == 200
     sealed = seal_response.json()
     assert output_path.exists()
-    assert sealed["bootstrap_url"] == "https://qred.org/verify.htm"
+    assert sealed["bootstrap_url"] == "https://qred.org/"
     assert sealed["total_seals"] == len(sealed["seal_strings"]) >= 1
 
     verify_response = client.post(
@@ -1102,7 +1100,7 @@ def test_pdf_upload_endpoint_returns_sealed_pdf_download(tmp_path):
         )
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/pdf"
-    assert response.headers["x-qred-bootstrap-url"] == "https://qred.org/verify.htm"
+    assert response.headers["x-qred-bootstrap-url"] == "https://qred.org/"
     assert response.content.startswith(b"%PDF")
 
 def test_pdf_upload_rejects_non_pdf_content(tmp_path):
@@ -1133,8 +1131,8 @@ def test_mobile_verifier_verifies_locally_without_posting_document_content():
 def test_pdf_stamp_plan_rejects_layout_that_cannot_fit_bootstrap_and_payload():
     """Given a too-narrow layout, when planning stamps, then it fails instead of overflowing"""
     from backend.services.pdf_stamp import planned_page_payloads
-    with pytest.raises(ValueError, match="bootstrap QR and one payload QR"):
-        planned_page_payloads(["QRED1|DOC|0|1|data"], "https://qred.org/verify.htm", 1, 1)
+    with pytest.raises(ValueError, match="one QRed payload QR"):
+        planned_page_payloads(["QRED1|DOC|0|1|data"], "https://qred.org/", 1, 0)
 
 
 def test_backend_ci_requirements_include_imported_runtime_packages():

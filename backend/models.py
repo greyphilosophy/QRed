@@ -17,12 +17,26 @@ class QRedChunk:
     data: str = ""
 
     def encode(self) -> str:
-        """Encode chunk into the QRed seal format string."""
+        """Encode chunk into the QRed seal format string or fragment URL."""
+        if self.data.startswith("http://") or self.data.startswith("https://"):
+            return self.data
         return f"{self.format_id}|{self.document_id}|{self.chunk_number}|{self.total_chunks}|{self.data}"
 
     @classmethod
     def decode(cls, encoded: str) -> "QRedChunk":
-        """Decode a QRed seal string back into a chunk."""
+        """Decode a QRed seal string or fragment URL back into a chunk."""
+        if "#QRED1?" in encoded or encoded.startswith("QRED1?"):
+            from urllib.parse import parse_qs
+
+            fragment = encoded.split("#", 1)[1] if "#" in encoded else encoded
+            params = {key: values[0] for key, values in parse_qs(fragment[len("QRED1?"):], keep_blank_values=True).items()}
+            return cls(
+                format_id="QRED1",
+                document_id=params.get("doc", ""),
+                chunk_number=int(params.get("i", "0")),
+                total_chunks=int(params.get("n", "0")),
+                data=encoded,
+            )
         parts = encoded.split("|", 4)
         if len(parts) < 5:
             raise ValueError(f"Invalid QRed chunk format: {encoded}")

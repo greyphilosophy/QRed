@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { sealPdfInBrowser } from "./pdfClientSeal.js";
-import { verifyQRedSeals } from "./qredVerifier.js";
+import { extractSealsFromFragment, verifyQRedSeals } from "./qredVerifier.js";
 
 function normalizeApiBase(value) {
   const trimmed = (value || "/api").trim();
@@ -33,6 +33,13 @@ function VerifyForm() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const fragmentSeals = extractSealsFromFragment(window.location.hash);
+    if (fragmentSeals.length > 0) {
+      setSealInput(fragmentSeals.join("\n"));
+    }
+  }, []);
 
   function handleSubmit() {
     const seals = sealInput.trim().split("\n").map(s => s.trim()).filter(s => s.length > 0);
@@ -237,7 +244,7 @@ function App() {
     React.createElement(VerifyForm),
     React.createElement(PdfSealForm),
     React.createElement("p", { className: "footer" },
-      "QR bootstrap target: https://qred.org/")
+      "QR payload target: https://qred.org/#data")
   );
 }
 
