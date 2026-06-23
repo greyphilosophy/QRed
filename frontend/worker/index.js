@@ -24,6 +24,7 @@ function buildProxyRequest(request, apiOrigin) {
     method: request.method,
     headers,
     body: request.body,
+    duplex: request.body ? "half" : undefined,
     redirect: "manual",
   });
 }

@@ -3,6 +3,11 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App.jsx";
+import { sealPdfInBrowser } from "./pdfClientSeal.js";
+
+vi.mock("./pdfClientSeal.js", () => ({
+  sealPdfInBrowser: vi.fn(),
+}));
 
 const defaultPrivateKey = "default-private-key";
 const defaultPublicKey = "default-public-key";
@@ -31,6 +36,7 @@ function mockSuccessfulPdfSeal() {
 describe("App PDF sealing defaults", () => {
   beforeEach(() => {
     globalThis.fetch = mockSuccessfulPdfSeal();
+    sealPdfInBrowser.mockReset();
     URL.createObjectURL = vi.fn(() => "blob:sealed-pdf");
     URL.revokeObjectURL = vi.fn();
     HTMLAnchorElement.prototype.click = vi.fn();
@@ -73,5 +79,47 @@ describe("App PDF sealing defaults", () => {
     expect(form.get("private_key")).toBe(defaultPrivateKey);
     expect(form.get("public_key")).toBe(defaultPublicKey);
     expect(form.get("issuer")).toBe("QRed Demo Authority");
+  });
+
+  it("falls back to browser-side PDF sealing when the static Worker has no backend origin", async () => {
+    globalThis.fetch = vi.fn((url) => {
+      if (url === "/api/keys/default") {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ private_key: defaultPrivateKey, public_key: defaultPublicKey, source: "worker-static-demo" }),
+        });
+      }
+
+      if (url === "/api/pdf/upload-seal") {
+        return Promise.resolve({
+          ok: false,
+          text: () => Promise.resolve(JSON.stringify({
+            message: "The static verifier is available, but API-backed demo endpoints require a separate QRed backend origin.",
+          })),
+        });
+      }
+
+      return Promise.reject(new Error(`Unexpected fetch URL: ${url}`));
+    });
+    sealPdfInBrowser.mockResolvedValue({
+      blob: new Blob(["sealed in browser"], { type: "application/pdf" }),
+      sealResult: { document_id: "DOC-BROWSER-FALLBACK" },
+    });
+
+    render(React.createElement(App));
+
+    await waitFor(() => expect(screen.getByLabelText("Private Key").value).toBe(defaultPrivateKey));
+    const pdf = new File(["%PDF-1.4"], "static.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText("PDF file"), { target: { files: [pdf] } });
+    fireEvent.click(screen.getByRole("button", { name: "Upload PDF and Stamp QR Seals" }));
+
+    await waitFor(() => expect(sealPdfInBrowser).toHaveBeenCalledWith({
+      file: pdf,
+      issuer: "QRed Demo Authority",
+      privateKey: defaultPrivateKey,
+      publicKey: defaultPublicKey,
+      bootstrapUrl: "https://qred.org/verify.htm",
+    }));
+    expect(await screen.findByText("Sealed static.pdf in this browser. Document ID: DOC-BROWSER-FALLBACK")).toBeTruthy();
   });
 });
