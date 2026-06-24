@@ -1075,6 +1075,10 @@ def test_pdf_page_seals_share_merkle_root_to_detect_page_swaps(tmp_path):
         output_path=str(tmp_path / "second.sealed.pdf"),
     )
 
+    assert re.fullmatch(r"[0-9a-f]{64}", first["document_id"])
+    first_doc_ids = [decode_seal(seal)["document_id"] for page in first["page_seal_strings"] for seal in page]
+    assert all(doc_id.startswith(first["document_id"] + "-") for doc_id in first_doc_ids)
+
     first_page = reconstruct_and_verify(first["page_seal_strings"][0], TEST_PUBLIC_KEY)
     first_second_page = reconstruct_and_verify(first["page_seal_strings"][1], TEST_PUBLIC_KEY)
     swapped_page = reconstruct_and_verify(second["page_seal_strings"][1], TEST_PUBLIC_KEY)
@@ -1129,7 +1133,7 @@ def test_pdf_seal_api_end_to_end_can_verify_returned_seals(tmp_path):
     assert verification["issuer"] == TEST_ISSUER
     assert "QRed demo page 1" in verification["content"]
     assert "Document Merkle Root:" in verification["content"]
-    assert verification["document_id"].startswith(sealed["document_id"])
+    assert verification["document_id"].startswith(sealed["document_id"] + "-")
 
 
 def test_pdf_upload_endpoint_returns_sealed_pdf_download(tmp_path):

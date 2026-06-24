@@ -177,7 +177,7 @@ This allows recipients to verify:
 - Open and interoperable format.
 - Resistant to casual document tampering.
 - Supports multi-page and high-content documents.
-- Binds backend-sealed PDF pages with signed page hashes and a shared document Merkle root so swapped-in pages can be detected.
+- Binds backend-sealed PDF pages with signed page hashes and a shared document Merkle root, using the root in QR grouping data so swapped-in pages can be detected.
 - Suitable for government, legal, educational, and business records.
 
 # Non-Goals

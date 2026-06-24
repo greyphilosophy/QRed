@@ -10,7 +10,7 @@ import fitz  # PyMuPDF
 import qrcode
 
 from backend.models import SealGenerationResult
-from backend.services.sealer import canonicalize_text, create_seals, generate_document_id
+from backend.services.sealer import canonicalize_text, create_seals
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +98,9 @@ def planned_page_payloads(
 
 
 
-def page_document_id(base_document_id: str, page_index: int) -> str:
-    """Return a deterministic per-page document id for a sealed PDF page."""
-    return f"{base_document_id}-PAGE-{page_index + 1}"
+def page_seal_document_id(merkle_root: str, page_text: str) -> str:
+    """Return a public chunk-grouping id derived from document and page hashes."""
+    return f"{merkle_root}-{page_content_hash(page_text)[:16]}"
 
 
 def page_content_hash(page_text: str) -> str:
@@ -149,7 +149,6 @@ def create_page_seal_results(
     bootstrap_url: str = DEFAULT_BOOTSTRAP_URL,
 ) -> tuple[str, list[SealGenerationResult]]:
     """Create independent seal results for each PDF page's extracted text."""
-    base_document_id = document_id or generate_document_id()
     doc = fitz.open(pdf_path)
     try:
         page_count = len(doc)
@@ -157,6 +156,8 @@ def create_page_seal_results(
         doc.close()
 
     page_texts = [extract_text_from_pdf(pdf_path, page_index) for page_index in range(page_count)]
+    # PDF page seals use the content-derived Merkle root as their public
+    # document identifier; document_id is kept for API compatibility only.
     merkle_root = document_merkle_root(page_texts)
 
     page_results = []
@@ -167,11 +168,11 @@ def create_page_seal_results(
                 issuer=issuer,
                 private_key=private_key,
                 public_key=public_key,
-                document_id=page_document_id(base_document_id, page_index),
+                document_id=page_seal_document_id(merkle_root, page_text),
                 bootstrap_url=bootstrap_url,
             )
         )
-    return base_document_id, page_results
+    return merkle_root, page_results
 
 def insert_qr_row(page: fitz.Page, qr_payloads: list[str], layout: dict) -> None:
     """Insert QR payloads in a bottom row on a PDF page."""

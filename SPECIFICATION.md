@@ -190,7 +190,7 @@ For PDF sealing, the reference implementation seals each source page as an indep
 - `Page SHA256`: the SHA-256 digest of that page's canonical text.
 - `Document Merkle Root`: a Merkle-style root computed over the ordered list of page content hashes for the source PDF.
 
-The Merkle root binds all page seals from the same source PDF without embedding a document identifier or page number in the signed text. A verifier or recipient can compare the roots shown by scanned page seals: pages from the same sealed PDF share a root, while a swapped-in page from another PDF exposes a different root.
+The Merkle root binds all page seals from the same source PDF without embedding a document identifier or page number in the signed text. For PDF page seals, the public QRed `doc` chunk-grouping parameter is derived from this Merkle root plus the page content hash instead of a generated document ID. A verifier or recipient can compare the roots shown by scanned page seals: pages from the same sealed PDF share a root, while a swapped-in page from another PDF exposes a different root.
 
 Future versions may standardize:
 
