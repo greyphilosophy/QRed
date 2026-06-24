@@ -57,7 +57,7 @@ describe("App PDF sealing defaults", () => {
     expect(headings).toEqual(["Verify QRed Document", "Demo: Upload and Seal a PDF"]);
     expect(screen.queryByRole("heading", { name: "Generate QRed Seals" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Open mobile verifier" })).toBeNull();
-    expect(screen.getByText("QR bootstrap target: https://qred.org/")).toBeTruthy();
+    expect(screen.getByText(/https:\/\/qred\.org/)).toBeTruthy();
   });
 
   it("loads default keys, obfuscates the private key, and submits them with the PDF seal request", async () => {

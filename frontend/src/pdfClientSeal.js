@@ -2,7 +2,7 @@ import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import QRCode from "qrcode";
 import { createQRedSeals, DEFAULT_BOOTSTRAP_URL } from "./qredSealer.js";
 
-const QR_SIZE = 82;
+export const QR_SIZE = 177;
 const QR_GAP = 10;
 const PANEL_MARGIN = 18;
 const PANEL_PADDING = 10;
@@ -21,7 +21,7 @@ function buildPdfManifest(file, digest) {
   ].join("\n");
 }
 
-async function qrPngBytes(value) {
+export async function qrPngBytes(value) {
   const dataUrl = await QRCode.toDataURL(value, { errorCorrectionLevel: "M", margin: 2, width: 360 });
   const base64 = dataUrl.split(",")[1];
   const binary = atob(base64);
