@@ -1,6 +1,9 @@
+import { Buffer } from "node:buffer";
+import jsQR from "jsqr";
 import { PDFDocument } from "pdf-lib";
+import { PNG } from "pngjs";
 import { describe, expect, it } from "vitest";
-import { planQrStampLayout, sealPdfInBrowser } from "./pdfClientSeal.js";
+import { planQrStampLayout, qrPngBytes, sealPdfInBrowser } from "./pdfClientSeal.js";
 import { verifyQRedSeals } from "./qredVerifier.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
@@ -22,6 +25,20 @@ async function makeLetterPdfFile() {
   page.drawText("Sincerely, QRed QA", { x: 72, y: 648, size: 12 });
   const bytes = await pdf.save();
   return new File([bytes], "letter.pdf", { type: "application/pdf" });
+}
+
+async function printBlobToPdf(blob) {
+  const sourcePdf = await PDFDocument.load(await blob.arrayBuffer());
+  const printedPdf = await PDFDocument.create();
+  const copiedPages = await printedPdf.copyPages(sourcePdf, sourcePdf.getPageIndices());
+  copiedPages.forEach((page) => printedPdf.addPage(page));
+  return printedPdf.save();
+}
+
+function scanQrPng(bytes) {
+  const png = PNG.sync.read(Buffer.from(bytes));
+  const qr = jsQR(new Uint8ClampedArray(png.data), png.width, png.height);
+  return qr?.data || null;
 }
 
 describe("browser PDF sealing", () => {
@@ -59,7 +76,7 @@ describe("browser PDF sealing", () => {
     expect(stampedQrValues[0]).toMatch(/^https:\/\/qred\.org\/#QRED1\?/);
 
     const layout = planQrStampLayout(612, stampedQrValues.length);
-    expect(layout.qrSize).toBeGreaterThanOrEqual(80);
+    expect(layout.qrSize).toBeGreaterThanOrEqual(177);
     expect(layout.columns * layout.rows).toBeGreaterThanOrEqual(stampedQrValues.length);
     expect(layout.panelWidth).toBeLessThanOrEqual(612 - 36);
 
@@ -68,5 +85,27 @@ describe("browser PDF sealing", () => {
       issuer: "QRed Letter Authority",
       content: expect.stringContaining("PDF file: letter.pdf"),
     });
+  });
+
+  it("keeps printed QR40-capacity stamps large enough to scan after print-to-PDF", async () => {
+    const file = await makeLetterPdfFile();
+
+    const { blob, stampedQrValues } = await sealPdfInBrowser({
+      file,
+      issuer: "QRed Print QA",
+      privateKey,
+      publicKey,
+    });
+
+    const printedBytes = await printBlobToPdf(blob);
+    const printedPdf = await PDFDocument.load(printedBytes);
+    const [printedPage] = printedPdf.getPages();
+    const printedLayout = planQrStampLayout(printedPage.getWidth(), stampedQrValues.length);
+
+    expect(printedLayout.qrSize).toBeGreaterThanOrEqual(177);
+    expect(printedLayout.qrSize / 72).toBeGreaterThanOrEqual(177 / 72);
+
+    const scannedQrValue = scanQrPng(await qrPngBytes(stampedQrValues[0]));
+    expect(scannedQrValue).toBe(stampedQrValues[0]);
   });
 });
