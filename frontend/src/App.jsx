@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { sealPdfInBrowser } from "./pdfClientSeal.js";
-import { extractSealsFromFragment, verifyQRedSeals } from "./qredVerifier.js";
 
 function normalizeApiBase(value) {
   const trimmed = (value || "/api").trim();
@@ -27,89 +26,22 @@ function isMissingBackendOriginMessage(message) {
     || message.includes("QRED_API_ORIGIN is not configured");
 }
 
-function VerifyForm() {
-  const [sealInput, setSealInput] = useState("");
-  const [publicKey, setPublicKey] = useState("");
-  const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    const fragmentSeals = extractSealsFromFragment(window.location.hash);
-    if (fragmentSeals.length > 0) {
-      setSealInput(fragmentSeals.join("\n"));
-    }
-  }, []);
-
-  function handleSubmit() {
-    const seals = sealInput.trim().split("\n").map(s => s.trim()).filter(s => s.length > 0);
-    if (seals.length > 0) {
-      verify(seals);
-    }
-  }
-
-  function verify(seals) {
-    setLoading(true);
-    setError(null);
-    verifyQRedSeals(seals, publicKey)
-      .then((data) => {
-        setResult(data);
-        setLoading(false);
-      })
-      .catch((e) => {
-        setError(e.message);
-        setLoading(false);
-      });
-  }
-
-  function renderResult() {
-    if (!result) return null;
-    if (result.status === "VALID") {
-      return React.createElement("div", { style: { background: "#ecfdf5", border: "1px solid #10b981", borderRadius: "8px", padding: "1.5rem" } },
-        React.createElement("span", { style: { display: "inline-block", padding: "0.25rem 0.75rem", borderRadius: "999px", fontSize: "0.85rem", fontWeight: 600, background: "#10b981", color: "white", marginBottom: "1rem" }}, "VALID"),
-        React.createElement("p", { style: { marginBottom: "0.5rem" }},
-          React.createElement("strong", null, "Issuer: "), result.issuer),
-        React.createElement("p", { style: { marginBottom: "0.5rem" }},
-          React.createElement("strong", null, "Document ID: "), result.document_id),
-        React.createElement("p", { style: { marginBottom: "0.5rem" }},
-          React.createElement("strong", null, "Timestamp: "), new Date(result.timestamp).toLocaleString()),
-        React.createElement("div", { style: { background: "#f1f5f9", borderRadius: "8px", padding: "1rem", marginTop: "1rem", whiteSpace: "pre-wrap" }}, result.content)
-      );
-    }
-    if (result.status === "INCOMPLETE") {
-      return React.createElement("div", { style: { background: "#fffbeb", border: "1px solid #f59e0b", borderRadius: "8px", padding: "1.5rem" }},
-        React.createElement("span", { style: { display: "inline-block", padding: "0.25rem 0.75rem", borderRadius: "999px", fontSize: "0.85rem", fontWeight: 600, background: "#f59e0b", color: "white", marginBottom: "1rem" }}, "INCOMPLETE"),
-        React.createElement("p", null, result.error_message)
-      );
-    }
-    return React.createElement("div", { style: { background: "#fef2f2", border: "1px solid #ef4444", borderRadius: "8px", padding: "1.5rem" }},
-      React.createElement("span", { style: { display: "inline-block", padding: "0.25rem 0.75rem", borderRadius: "999px", fontSize: "0.85rem", fontWeight: 600, background: "#ef4444", color: "white", marginBottom: "1rem" }}, result.status),
-      React.createElement("p", null, result.error_message || "Verification failed")
-    );
-  }
-
-  return React.createElement("div", { className: "card" },
-    React.createElement("h2", null, "Verify QRed Document"),
+function VerifierFrame() {
+  return React.createElement("section", { className: "card verifier-card" },
+    React.createElement("div", { className: "verifier-card-header" },
+      React.createElement("h2", null, "QRed Verifier"),
+      React.createElement("a", { href: "/verify.htm", target: "_blank", rel: "noreferrer" }, "Open full verifier")
+    ),
     React.createElement("p", { style: { color: "#64748b", marginBottom: "1rem" }},
-      "Enter QRed seal strings (one per line) to verify a document:"),
-    React.createElement("textarea", {
-      value: sealInput,
-      onChange: (e) => setSealInput(e.target.value),
-      placeholder: "Paste QRed seal strings here...\nOne per line.",
-    }),
-    React.createElement("label", null, "Issuer Public Key"),
-    React.createElement("input", {
-      value: publicKey,
-      onChange: (e) => setPublicKey(e.target.value),
-      placeholder: "Paste the issuer public key used to verify the signature",
-      style: { width: "100%", marginBottom: "1rem" },
-    }),
-    React.createElement("button", { onClick: handleSubmit, disabled: loading },
-      loading ? "Verifying..." : "Verify Document"),
-    error && React.createElement("p", { style: { color: "#ef4444", marginTop: "1rem" }}, error),
-    renderResult()
+      "Scan QR seals, add manual seal text, and verify documents with the same verifier served at qred.org/verify.htm."),
+    React.createElement("iframe", {
+      title: "QRed Verifier",
+      src: "/verify.htm",
+      className: "verifier-frame",
+    })
   );
 }
+
 
 function PdfSealForm() {
   const [file, setFile] = useState(null);
@@ -241,7 +173,7 @@ function App() {
   return React.createElement("div", { className: "container" },
     React.createElement("h1", null, "QRed"),
     React.createElement("p", { className: "subtitle" }, "Tamper-evident QR seals for paper documents"),
-    React.createElement(VerifyForm),
+    React.createElement(VerifierFrame),
     React.createElement(PdfSealForm),
     React.createElement("p", { className: "footer" },
       "QR payload target: https://qred.org/#data")
