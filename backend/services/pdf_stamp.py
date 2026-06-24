@@ -1,5 +1,6 @@
 """PDF Sealing Pipeline — read PDF, extract text, stamp QR seals onto pages."""
 
+import hashlib
 import io
 import logging
 from pathlib import Path
@@ -9,7 +10,7 @@ import fitz  # PyMuPDF
 import qrcode
 
 from backend.models import SealGenerationResult
-from backend.services.sealer import create_seals, generate_document_id
+from backend.services.sealer import canonicalize_text, create_seals, generate_document_id
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,48 @@ def page_document_id(base_document_id: str, page_index: int) -> str:
     return f"{base_document_id}-PAGE-{page_index + 1}"
 
 
+def page_content_hash(page_text: str) -> str:
+    """Return a stable SHA-256 hash for a page's canonical certified text."""
+    return hashlib.sha256(canonicalize_text(page_text).encode("utf-8")).hexdigest()
+
+
+def document_manifest_root(page_texts: list[str]) -> str:
+    """Return a Merkle-style root over the ordered page content hashes."""
+    leaves = [page_content_hash(page_text) for page_text in page_texts]
+    if not leaves:
+        return hashlib.sha256(b"").hexdigest()
+
+    level = leaves
+    while len(level) > 1:
+        next_level = []
+        for index in range(0, len(level), 2):
+            left = level[index]
+            right = level[index + 1] if index + 1 < len(level) else left
+            next_level.append(hashlib.sha256(f"{left}{right}".encode("ascii")).hexdigest())
+        level = next_level
+    return level[0]
+
+
+def page_manifest_text(
+    base_document_id: str,
+    page_index: int,
+    page_count: int,
+    page_text: str,
+    manifest_root: str,
+) -> str:
+    """Wrap page text with signed manifest metadata that binds pages together."""
+    canonical_page_text = canonicalize_text(page_text)
+    return "\n".join([
+        "QRed PDF page manifest",
+        f"Document ID: {base_document_id}",
+        f"Page: {page_index + 1} of {page_count}",
+        f"Page SHA256: {page_content_hash(page_text)}",
+        f"Document Merkle Root: {manifest_root}",
+        "",
+        canonical_page_text,
+    ])
+
+
 def create_page_seal_results(
     pdf_path: str,
     issuer: str,
@@ -118,12 +161,14 @@ def create_page_seal_results(
     finally:
         doc.close()
 
+    page_texts = [extract_text_from_pdf(pdf_path, page_index) for page_index in range(page_count)]
+    manifest_root = document_manifest_root(page_texts)
+
     page_results = []
-    for page_index in range(page_count):
-        page_text = extract_text_from_pdf(pdf_path, page_index)
+    for page_index, page_text in enumerate(page_texts):
         page_results.append(
             create_seals(
-                document_text=page_text,
+                document_text=page_manifest_text(base_document_id, page_index, page_count, page_text, manifest_root),
                 issuer=issuer,
                 private_key=private_key,
                 public_key=public_key,
