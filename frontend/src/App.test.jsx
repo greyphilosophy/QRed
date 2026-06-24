@@ -48,16 +48,18 @@ describe("App PDF sealing defaults", () => {
   });
 
 
-  it("puts the verifier first and removes the standalone seal generator from the landing page", async () => {
+  it("puts the production verifier first and removes the standalone seal generator from the landing page", async () => {
     render(React.createElement(App));
 
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Verify QRed Document" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "QRed Verifier" })).toBeTruthy());
 
     const headings = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
-    expect(headings).toEqual(["Verify QRed Document", "Demo: Upload and Seal a PDF"]);
+    expect(headings).toEqual(["QRed Verifier", "Demo: Upload and Seal a PDF"]);
+    expect(screen.getByTitle("QRed Verifier").getAttribute("src")).toBe("/verify.htm");
+    expect(screen.getByRole("link", { name: "Open full verifier" }).getAttribute("href")).toBe("/verify.htm");
     expect(screen.queryByRole("heading", { name: "Generate QRed Seals" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Open mobile verifier" })).toBeNull();
-    expect(screen.getByText(/https:\/\/qred\.org/)).toBeTruthy();
+    expect(screen.getByText(/qred\.org\/verify\.htm/)).toBeTruthy();
   });
 
   it("loads default keys, obfuscates the private key, and submits them with the PDF seal request", async () => {
