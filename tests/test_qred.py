@@ -1064,7 +1064,6 @@ def test_pdf_page_seals_share_manifest_root_to_detect_page_swaps(tmp_path):
         private_key=TEST_PRIVATE_KEY,
         public_key=TEST_PUBLIC_KEY,
         output_path=str(tmp_path / "first.sealed.pdf"),
-        document_id="DOC-FIRST",
     )
     second = seal_pdf(
         str(second_pdf),
@@ -1072,7 +1071,6 @@ def test_pdf_page_seals_share_manifest_root_to_detect_page_swaps(tmp_path):
         private_key=TEST_PRIVATE_KEY,
         public_key=TEST_PUBLIC_KEY,
         output_path=str(tmp_path / "second.sealed.pdf"),
-        document_id="DOC-SECOND",
     )
 
     first_page = reconstruct_and_verify(first["page_seal_strings"][0], TEST_PUBLIC_KEY)
@@ -1089,8 +1087,8 @@ def test_pdf_page_seals_share_manifest_root_to_detect_page_swaps(tmp_path):
     assert swapped_page["status"] == "VALID"
     assert first_root == first_second_root
     assert swapped_root != first_root
-    assert "Document ID: DOC-FIRST" in first_page["content"]
-    assert "Document ID: DOC-SECOND" in swapped_page["content"]
+    assert "Document ID:" not in first_page["content"]
+    assert "Document ID:" not in swapped_page["content"]
 
 def test_pdf_seal_api_end_to_end_can_verify_returned_seals(tmp_path):
     """Given a one-page PDF, when sealed through the API, then returned seals verify through the API."""

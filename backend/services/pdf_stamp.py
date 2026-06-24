@@ -126,7 +126,6 @@ def document_manifest_root(page_texts: list[str]) -> str:
 
 
 def page_manifest_text(
-    base_document_id: str,
     page_index: int,
     page_count: int,
     page_text: str,
@@ -136,7 +135,6 @@ def page_manifest_text(
     canonical_page_text = canonicalize_text(page_text)
     return "\n".join([
         "QRed PDF page manifest",
-        f"Document ID: {base_document_id}",
         f"Page: {page_index + 1} of {page_count}",
         f"Page SHA256: {page_content_hash(page_text)}",
         f"Document Merkle Root: {manifest_root}",
@@ -168,7 +166,7 @@ def create_page_seal_results(
     for page_index, page_text in enumerate(page_texts):
         page_results.append(
             create_seals(
-                document_text=page_manifest_text(base_document_id, page_index, page_count, page_text, manifest_root),
+                document_text=page_manifest_text(page_index, page_count, page_text, manifest_root),
                 issuer=issuer,
                 private_key=private_key,
                 public_key=public_key,
