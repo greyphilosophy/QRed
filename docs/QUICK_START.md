@@ -78,4 +78,4 @@ npm install
 npm start -- --host 127.0.0.1
 ```
 
-The Vite dev server proxies `/api` to `http://localhost:8190` by default. Open the Vite URL shown in the terminal, use **Use Demo Keys**, choose a PDF, and click **Upload PDF and Stamp QR Seals**. The downloaded PDF contains `https://qred.org/verify.htm` bootstrap QR codes and QRed payload seal QR codes for the verifier workflow.
+The Vite dev server proxies `/api` to `http://localhost:8190` by default. Open the Vite URL shown in the terminal, use **Use Demo Keys**, choose a PDF, and click **Upload PDF and Stamp QR Seals**. The downloaded PDF contains QRed payload QR codes for the verifier workflow. Backend PDF sealing signs each page with integrity metadata that includes a page content hash and a shared document Merkle root, allowing scanned page seals from the same PDF to be compared for swap detection.

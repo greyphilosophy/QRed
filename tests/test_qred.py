@@ -14,6 +14,7 @@ Covers:
 
 from pathlib import Path
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -1039,11 +1040,57 @@ def test_pdf_path_sealing_creates_independently_verifiable_page_seals(tmp_path):
     first_page_result = reconstruct_and_verify(result["page_seal_strings"][0], TEST_PUBLIC_KEY)
     second_page_result = reconstruct_and_verify(result["page_seal_strings"][1], TEST_PUBLIC_KEY)
     assert first_page_result["status"] == "VALID"
-    assert first_page_result["content"] == "QRed demo page 1"
+    assert "QRed demo page 1" in first_page_result["content"]
+    assert "Page SHA256:" in first_page_result["content"]
+    assert "Page:" not in first_page_result["content"]
     assert second_page_result["status"] == "VALID"
-    assert second_page_result["content"] == "QRed demo page 2"
+    assert "QRed demo page 2" in second_page_result["content"]
+    assert "Page SHA256:" in second_page_result["content"]
+    assert "Page:" not in second_page_result["content"]
     assert first_page_result["document_id"] != second_page_result["document_id"]
 
+
+
+def test_pdf_page_seals_share_merkle_root_to_detect_page_swaps(tmp_path):
+    """Given two sealed PDFs, when pages are compared, then swapped-in pages expose a different Merkle root."""
+    from backend.services.pdf_stamp import seal_pdf
+
+    first_pdf = tmp_path / "first.pdf"
+    second_pdf = tmp_path / "second.pdf"
+    create_sample_pdf(first_pdf, pages=2)
+    create_sample_pdf(second_pdf, pages=3)
+
+    first = seal_pdf(
+        str(first_pdf),
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        output_path=str(tmp_path / "first.sealed.pdf"),
+    )
+    second = seal_pdf(
+        str(second_pdf),
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        output_path=str(tmp_path / "second.sealed.pdf"),
+    )
+
+    first_page = reconstruct_and_verify(first["page_seal_strings"][0], TEST_PUBLIC_KEY)
+    first_second_page = reconstruct_and_verify(first["page_seal_strings"][1], TEST_PUBLIC_KEY)
+    swapped_page = reconstruct_and_verify(second["page_seal_strings"][1], TEST_PUBLIC_KEY)
+
+    root_pattern = r"Document Merkle Root: ([0-9a-f]{64})"
+    first_root = re.search(root_pattern, first_page["content"]).group(1)
+    first_second_root = re.search(root_pattern, first_second_page["content"]).group(1)
+    swapped_root = re.search(root_pattern, swapped_page["content"]).group(1)
+
+    assert first_page["status"] == "VALID"
+    assert first_second_page["status"] == "VALID"
+    assert swapped_page["status"] == "VALID"
+    assert first_root == first_second_root
+    assert swapped_root != first_root
+    assert "Document ID:" not in first_page["content"]
+    assert "Document ID:" not in swapped_page["content"]
 
 def test_pdf_seal_api_end_to_end_can_verify_returned_seals(tmp_path):
     """Given a one-page PDF, when sealed through the API, then returned seals verify through the API."""
@@ -1080,7 +1127,8 @@ def test_pdf_seal_api_end_to_end_can_verify_returned_seals(tmp_path):
     verification = verify_response.json()
     assert verification["status"] == "VALID"
     assert verification["issuer"] == TEST_ISSUER
-    assert verification["content"] == "QRed demo page 1"
+    assert "QRed demo page 1" in verification["content"]
+    assert "Document Merkle Root:" in verification["content"]
     assert verification["document_id"].startswith(sealed["document_id"])
 
 
