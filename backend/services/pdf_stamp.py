@@ -98,9 +98,10 @@ def planned_page_payloads(
 
 
 
-def page_seal_document_id(merkle_root: str, page_text: str) -> str:
-    """Return a public chunk-grouping id derived from document and page hashes."""
-    return f"{merkle_root}-{page_content_hash(page_text)[:16]}"
+def page_seal_document_id(merkle_root: str, page_text: str, seal_occurrence_number: int) -> str:
+    """Return a unique QR transport id for one independently reconstructable page payload."""
+    grouping_material = f"{merkle_root}{page_content_hash(page_text)}{seal_occurrence_number}"
+    return hashlib.sha256(grouping_material.encode("ascii")).hexdigest()
 
 
 def page_content_hash(page_text: str) -> str:
@@ -168,7 +169,7 @@ def create_page_seal_results(
                 issuer=issuer,
                 private_key=private_key,
                 public_key=public_key,
-                document_id=page_seal_document_id(merkle_root, page_text),
+                document_id=page_seal_document_id(merkle_root, page_text, page_index),
                 bootstrap_url=bootstrap_url,
             )
         )
