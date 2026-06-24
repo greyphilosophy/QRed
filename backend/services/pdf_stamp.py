@@ -1,5 +1,6 @@
 """PDF Sealing Pipeline — read PDF, extract text, stamp QR seals onto pages."""
 
+import hashlib
 import io
 import logging
 from pathlib import Path
@@ -9,7 +10,7 @@ import fitz  # PyMuPDF
 import qrcode
 
 from backend.models import SealGenerationResult
-from backend.services.sealer import create_seals, generate_document_id
+from backend.services.sealer import canonicalize_text, create_seals
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +98,47 @@ def planned_page_payloads(
 
 
 
-def page_document_id(base_document_id: str, page_index: int) -> str:
-    """Return a deterministic per-page document id for a sealed PDF page."""
-    return f"{base_document_id}-PAGE-{page_index + 1}"
+def page_seal_document_id(merkle_root: str, page_text: str, seal_occurrence_number: int) -> str:
+    """Return a unique QR transport id for one independently reconstructable page payload."""
+    grouping_material = f"{merkle_root}{page_content_hash(page_text)}{seal_occurrence_number}"
+    return hashlib.sha256(grouping_material.encode("ascii")).hexdigest()
+
+
+def page_content_hash(page_text: str) -> str:
+    """Return a stable SHA-256 hash for a page's canonical certified text."""
+    return hashlib.sha256(canonicalize_text(page_text).encode("utf-8")).hexdigest()
+
+
+def document_merkle_root(page_texts: list[str]) -> str:
+    """Return a Merkle-style root over the ordered page content hashes."""
+    leaves = [page_content_hash(page_text) for page_text in page_texts]
+    if not leaves:
+        return hashlib.sha256(b"").hexdigest()
+
+    level = leaves
+    while len(level) > 1:
+        next_level = []
+        for index in range(0, len(level), 2):
+            left = level[index]
+            right = level[index + 1] if index + 1 < len(level) else left
+            next_level.append(hashlib.sha256(f"{left}{right}".encode("ascii")).hexdigest())
+        level = next_level
+    return level[0]
+
+
+def page_integrity_text(
+    page_text: str,
+    merkle_root: str,
+) -> str:
+    """Wrap page text with signed integrity metadata that binds pages together."""
+    canonical_page_text = canonicalize_text(page_text)
+    return "\n".join([
+        "QRed PDF page integrity",
+        f"Page SHA256: {page_content_hash(page_text)}",
+        f"Document Merkle Root: {merkle_root}",
+        "",
+        canonical_page_text,
+    ])
 
 
 def create_page_seal_results(
@@ -111,27 +150,30 @@ def create_page_seal_results(
     bootstrap_url: str = DEFAULT_BOOTSTRAP_URL,
 ) -> tuple[str, list[SealGenerationResult]]:
     """Create independent seal results for each PDF page's extracted text."""
-    base_document_id = document_id or generate_document_id()
     doc = fitz.open(pdf_path)
     try:
         page_count = len(doc)
     finally:
         doc.close()
 
+    page_texts = [extract_text_from_pdf(pdf_path, page_index) for page_index in range(page_count)]
+    # PDF page seals use the content-derived Merkle root as their public
+    # document identifier; document_id is kept for API compatibility only.
+    merkle_root = document_merkle_root(page_texts)
+
     page_results = []
-    for page_index in range(page_count):
-        page_text = extract_text_from_pdf(pdf_path, page_index)
+    for page_index, page_text in enumerate(page_texts):
         page_results.append(
             create_seals(
-                document_text=page_text,
+                document_text=page_integrity_text(page_text, merkle_root),
                 issuer=issuer,
                 private_key=private_key,
                 public_key=public_key,
-                document_id=page_document_id(base_document_id, page_index),
+                document_id=page_seal_document_id(merkle_root, page_text, page_index),
                 bootstrap_url=bootstrap_url,
             )
         )
-    return base_document_id, page_results
+    return merkle_root, page_results
 
 def insert_qr_row(page: fitz.Page, qr_payloads: list[str], layout: dict) -> None:
     """Insert QR payloads in a bottom row on a PDF page."""

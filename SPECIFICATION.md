@@ -185,6 +185,13 @@ PDF sealing layout is implementation-defined in v0.2 and may be standardized lat
 
 The reference implementation produces seal strings suitable for QR code generation. The physical arrangement of seals on the document — including position, size, and number of QR codes per page — is left to the implementer.
 
+For PDF sealing, the reference implementation seals each source page as an independently verifiable QRed payload. Before signing a page payload, it prefixes the canonical page text with integrity metadata containing:
+
+- `Page SHA256`: the SHA-256 digest of that page's canonical text.
+- `Document Merkle Root`: a Merkle-style root computed over the ordered list of page content hashes for the source PDF.
+
+The Merkle root binds all page seals from the same source PDF without embedding a document identifier or page number in the signed text. For PDF page seals, the public QRed `doc` chunk-grouping parameter is a transport namespace derived from the Merkle root, the page content hash, and a per-seal occurrence number instead of a generated document ID. A verifier or recipient can compare the roots shown by scanned page seals: pages from the same sealed PDF share a root, while a swapped-in page from another PDF exposes a different root.
+
 Future versions may standardize:
 
 - Seal placement conventions (corner, margin, watermark).
@@ -246,10 +253,10 @@ Compromise of an issuer's private key compromises trust in documents issued by t
 Potential future enhancements include:
 
 - Standardized PDF sealing layout
-- Multi-page document support
+- Standardized multi-page document root formats
 - Alternative seal formats
 - Standardized canonicalization
 - Offline public key distribution
 - Revocation support
 - Embedded document thumbnails
-- Merkle-tree payload structures
+- Full Merkle proof payload structures
