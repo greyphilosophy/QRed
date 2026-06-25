@@ -3,6 +3,7 @@ import { compareDocumentText, compareWordSequences, decodeSeal, verifyQRedSeals 
 
 const publicKey = "X0qh5pQ9Joya3katdVpggpkbb7PJ_6oCdp6CkBlfb4U=";
 const wrongPublicKey = "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=";
+const staticDemoPublicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 const seals = [
   "QRED1|DOC-TESTBROWSER|0|2|H4sIAEGQOWoC_y2NW0-DMABG_4rpq8O03cBBsgcYoOFBNi4ykiULl5bVQYtQZMvif7dG376cc5LvDoq2EQOT5w5YwKuxriMTLEAluCRcKrYVnLJabVa0R37krqim7lctQP0_T6xWoRtutcSLEycKs9iLlGfjOJFBqX1E6oe9rdCF3P7qAlJEaY2osYbmsqLKjazhhZwG",
   "QRED1|DOC-TESTBROWSER|1|2|onRJA_b22TrI38VtP-b-kKUOonPerJ3Ghr1I049De8WVeN2F1xnlzk0Liiw-yPehz83KKU9J4J-1C2176ZbZ_CJi295s1I1kHRll0fXqBkNsaNDQME6Qaa2wpT8_mRgvzdUjhBaEKv8iw8gEVzEC3z-Ehhd0LwEAAA==",
@@ -24,6 +25,30 @@ describe("qredVerifier", () => {
       issuer: "QRed QA",
       document_id: "DOC-TESTBROWSER",
       content: "Confidential\n\nDocument",
+    });
+  });
+
+
+  it("verifies the sample plaintext fragment with the static demo public key", async () => {
+    const fragmentSeal = "https://qred.org/#QRED1?v=1&alg=Ed25519&doc=DOC-A58A798C5FB2&i=0&n=1&iss=QRed+Demo+Authority&kid=da522162396ab2d0&ts=2026-06-25T03%3A46%3A04.757Z&sig=LvusYUa1V3MtKgfVLeHbzMan8tDGQIpakRTJ39WD-LeiXzCBSMOrqNjSUNj7QyzfFhV2H5QpNnMKvjz9PWh_CA&txt=PDF+file%3A+Minutes_2023_05_23.pdf%0ASize%3A+346921+bytes%0ASHA-256%3A+c08048143569b6324147179a9a3d9e6b85d386aedff1260783d5fafd7b7a5f63";
+
+    await expect(verifyQRedSeals([fragmentSeal], staticDemoPublicKey)).resolves.toMatchObject({
+      status: "VALID",
+      issuer: "QRed Demo Authority",
+      document_id: "DOC-A58A798C5FB2",
+      content: "PDF file: Minutes_2023_05_23.pdf\nSize: 346921 bytes\nSHA-256: c08048143569b6324147179a9a3d9e6b85d386aedff1260783d5fafd7b7a5f63",
+    });
+  });
+
+  it("returns plaintext fragment content when no public key is available", async () => {
+    const fragmentSeal = "https://qred.org/#QRED1?v=1&alg=Ed25519&doc=DOC-A58A798C5FB2&i=0&n=1&iss=QRed+Demo+Authority&kid=da522162396ab2d0&ts=2026-06-25T03%3A46%3A04.757Z&sig=LvusYUa1V3MtKgfVLeHbzMan8tDGQIpakRTJ39WD-LeiXzCBSMOrqNjSUNj7QyzfFhV2H5QpNnMKvjz9PWh_CA&txt=PDF+file%3A+Minutes_2023_05_23.pdf%0ASize%3A+346921+bytes%0ASHA-256%3A+c08048143569b6324147179a9a3d9e6b85d386aedff1260783d5fafd7b7a5f63";
+
+    await expect(verifyQRedSeals([fragmentSeal], "")).resolves.toMatchObject({
+      status: "UNVERIFIED",
+      issuer: "QRed Demo Authority",
+      document_id: "DOC-A58A798C5FB2",
+      content: "PDF file: Minutes_2023_05_23.pdf\nSize: 346921 bytes\nSHA-256: c08048143569b6324147179a9a3d9e6b85d386aedff1260783d5fafd7b7a5f63",
+      error_message: "No trusted public key available for signature verification",
     });
   });
 

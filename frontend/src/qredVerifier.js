@@ -154,11 +154,13 @@ export async function verifyQRedSeals(seals, publicKey) {
 
   if (!publicKey) {
     return {
-      status: "ERROR",
+      status: "UNVERIFIED",
       document_id: documentId,
       issuer,
+      timestamp,
+      content,
       key_id: keyId,
-      error_message: "No trusted public key available for verification",
+      error_message: "No trusted public key available for signature verification",
     };
   }
 
