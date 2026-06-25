@@ -338,7 +338,6 @@
       isScanning: false,
       stream: null,
       animFrameId: null,
-      lastFrameCanvas: null,
       pageText: "",
       ocrPromise: null,
     };
@@ -457,7 +456,6 @@
           function scanFrame() {
             if (!state.isScanning) return;
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            state.lastFrameCanvas = canvas;
             var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             var code = jsQR(imageData.data, canvas.width, canvas.height);
             if (code) {
@@ -538,13 +536,17 @@
     async function readPageTextFromScanner() {
       if (pageTextInput.value.trim()) return pageTextInput.value.trim();
       if (state.pageText) return state.pageText;
-      if (!state.lastFrameCanvas || state.ocrPromise) return state.ocrPromise || "";
+      if (state.ocrPromise) return state.ocrPromise;
+      if (!window.confirm("Point the camera at the full document page, then tap OK to capture page text for OCR.")) return "";
 
       statusBar.classList.add("visible");
-      statusText.textContent = "Reading page text...";
-      state.ocrPromise = import("tesseract.js").then(function(module) {
-        var workerApi = module.default || module;
-        return workerApi.recognize(state.lastFrameCanvas, "eng");
+      statusText.textContent = "Capturing page text...";
+      state.ocrPromise = captureDocumentFrameForOcr().then(function(canvas) {
+        statusText.textContent = "Reading page text...";
+        return import("tesseract.js").then(function(module) {
+          var workerApi = module.default || module;
+          return workerApi.recognize(canvas, "eng");
+        });
       }).then(function(result) {
         state.pageText = (result && result.data && result.data.text ? result.data.text : "").trim();
         pageTextInput.value = state.pageText;
@@ -552,8 +554,41 @@
       }).catch(function(err) {
         showError("Page OCR failed; paste page text to compare: " + err.message);
         return "";
+      }).finally(function() {
+        statusBar.classList.remove("visible");
       });
       return state.ocrPromise;
+    }
+
+    function captureDocumentFrameForOcr() {
+      return navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1600 }, height: { ideal: 1200 } }
+      }).then(function(mediaStream) {
+        return new Promise(function(resolve, reject) {
+          var video = document.createElement("video");
+          video.playsInline = true;
+          video.muted = true;
+          video.srcObject = mediaStream;
+          video.onloadedmetadata = function() {
+            video.play().then(function() {
+              window.setTimeout(function() {
+                var canvas = document.createElement("canvas");
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+                mediaStream.getTracks().forEach(function(track) { track.stop(); });
+                resolve(canvas);
+              }, 800);
+            }).catch(reject);
+          };
+          video.onerror = function() {
+            reject(new Error("Unable to read camera frame for OCR."));
+          };
+        }).catch(function(error) {
+          mediaStream.getTracks().forEach(function(track) { track.stop(); });
+          throw error;
+        });
+      });
     }
 
     async function reconstructAndShow(docId) {
@@ -614,6 +649,8 @@
         rm.innerHTML += "<div class='meta-item'><strong>Error:</strong> " + payload.error_message + "</div>";
       }
 
+      statusBar.classList.remove("visible");
+
       var rc = document.getElementById("resultContent");
       rc.innerHTML = "";
       if (payload.content && payload.page_text) {
@@ -625,7 +662,7 @@
         var diff = document.createElement("div");
         diff.className = "diff-view";
         diff.appendChild(renderDiffSection("Page text", comparison.pageTokens, { matched: "diff-token-matched", extra: "diff-token-extra" }));
-        diff.appendChild(renderDiffSection("Missing QR text overlay", comparison.qrTokens.filter(function(item) { return item.status !== "matched"; }), { missing: "diff-token-missing" }));
+        diff.appendChild(renderDiffSection("QR text", comparison.qrTokens, { matched: "diff-token-matched", missing: "diff-token-missing" }));
         rc.appendChild(diff);
       } else {
         rc.textContent = payload.content || "(empty)";
