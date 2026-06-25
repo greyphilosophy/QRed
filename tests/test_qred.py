@@ -1221,6 +1221,8 @@ def test_mobile_verifier_verifies_locally_without_posting_document_content():
     assert 'verifyQRedSeals(seals, publicKey)' in html
     assert 'showResult("VALID", payload)' not in html
     assert 'publicKeyInput' in html
+    assert 'fetch("/api/keys/default")' in html
+    assert 'No default trusted key found; showing unverified QR text.' in html
 
 def test_pdf_stamp_plan_rejects_layout_that_cannot_fit_bootstrap_and_payload():
     """Given a too-narrow layout, when planning stamps, then it fails instead of overflowing"""

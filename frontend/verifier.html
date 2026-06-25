@@ -365,6 +365,8 @@
       arTimerId: null,
       arBusy: false,
       arErrorShown: false,
+      defaultKeysPromise: null,
+      defaultKeyLookupMessage: "",
     };
 
     // Camera handling
@@ -450,6 +452,45 @@
 
     function addManualSeals(text) {
       text.split(/\r?\n/).map(function(line) { return line.trim(); }).filter(Boolean).forEach(processScannedSeal);
+    }
+
+    function fetchDefaultKeys() {
+      if (!state.defaultKeysPromise) {
+        state.defaultKeysPromise = fetch("/api/keys/default")
+          .then(function(response) {
+            if (!response.ok) throw new Error("Default keys request failed with HTTP " + response.status);
+            return response.json();
+          })
+          .catch(function() {
+            return null;
+          });
+      }
+      return state.defaultKeysPromise;
+    }
+
+    async function loadMatchingDefaultPublicKey(seals) {
+      state.defaultKeyLookupMessage = "";
+      if (publicKeyInput.value.trim()) return publicKeyInput.value.trim();
+      var keyIds = seals.map(function(seal) {
+        var decoded = decodeQRedSeal(seal);
+        return decoded && decoded.key_id ? decoded.key_id : "";
+      }).filter(Boolean);
+      if (keyIds.length === 0) {
+        state.defaultKeyLookupMessage = "No default trusted key could be selected because the seal does not include a key ID.";
+        return "";
+      }
+
+      var keys = await fetchDefaultKeys();
+      if (!keys || !keys.public_key || !keys.key_id) {
+        state.defaultKeyLookupMessage = "No default trusted key found; showing unverified QR text.";
+        return "";
+      }
+      if (keyIds.indexOf(keys.key_id) === -1) {
+        state.defaultKeyLookupMessage = "Default trusted key did not match this seal's key ID; showing unverified QR text.";
+        return "";
+      }
+      publicKeyInput.value = keys.public_key;
+      return keys.public_key;
     }
 
     var fragmentSeals = extractSealsFromFragment(window.location.hash);
@@ -548,7 +589,7 @@
       if (collected >= docData.total) {
         stopScanning();
         btnScan.textContent = "Start Scanning";
-        reconstructAndShow(docId);
+        reconstructAndShow(docId, { capturePageText: false });
       }
     }
 
@@ -628,7 +669,8 @@
       });
     }
 
-    async function reconstructAndShow(docId) {
+    async function reconstructAndShow(docId, options) {
+      options = options || {};
       var docData = state.sealsByDocument[docId];
       var total = docData.total;
       var seals = [];
@@ -643,15 +685,13 @@
         return decoded && decoded.documentId === docId;
       });
 
-      var publicKey = publicKeyInput.value.trim();
-      if (!publicKey) {
-        showError("Issuer public key is required before signature verification can run.");
-        return;
-      }
-
       try {
+        var publicKey = await loadMatchingDefaultPublicKey(seals);
         var result = await verifyQRedSeals(seals, publicKey);
-        result.page_text = await readPageTextFromScanner();
+        if (!publicKey && state.defaultKeyLookupMessage) {
+          result.error_message = state.defaultKeyLookupMessage + (result.error_message ? " " + result.error_message : "");
+        }
+        result.page_text = options.capturePageText ? await readPageTextFromScanner() : (pageTextInput.value.trim() || state.pageText || "");
         showResult(result.status || "ERROR", result);
       } catch (e) {
         showResult("ERROR", { error_message: e.message });
