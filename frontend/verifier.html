@@ -366,6 +366,7 @@
       arBusy: false,
       arErrorShown: false,
       defaultKeysPromise: null,
+      defaultKeyLookupMessage: "",
     };
 
     // Camera handling
@@ -468,15 +469,26 @@
     }
 
     async function loadMatchingDefaultPublicKey(seals) {
+      state.defaultKeyLookupMessage = "";
       if (publicKeyInput.value.trim()) return publicKeyInput.value.trim();
       var keyIds = seals.map(function(seal) {
         var decoded = decodeQRedSeal(seal);
         return decoded && decoded.key_id ? decoded.key_id : "";
       }).filter(Boolean);
-      if (keyIds.length === 0) return "";
+      if (keyIds.length === 0) {
+        state.defaultKeyLookupMessage = "No default trusted key could be selected because the seal does not include a key ID.";
+        return "";
+      }
 
       var keys = await fetchDefaultKeys();
-      if (!keys || !keys.public_key || !keys.key_id || keyIds.indexOf(keys.key_id) === -1) return "";
+      if (!keys || !keys.public_key || !keys.key_id) {
+        state.defaultKeyLookupMessage = "No default trusted key found; showing unverified QR text.";
+        return "";
+      }
+      if (keyIds.indexOf(keys.key_id) === -1) {
+        state.defaultKeyLookupMessage = "Default trusted key did not match this seal's key ID; showing unverified QR text.";
+        return "";
+      }
       publicKeyInput.value = keys.public_key;
       return keys.public_key;
     }
@@ -676,6 +688,9 @@
       try {
         var publicKey = await loadMatchingDefaultPublicKey(seals);
         var result = await verifyQRedSeals(seals, publicKey);
+        if (!publicKey && state.defaultKeyLookupMessage) {
+          result.error_message = state.defaultKeyLookupMessage + (result.error_message ? " " + result.error_message : "");
+        }
         result.page_text = options.capturePageText ? await readPageTextFromScanner() : (pageTextInput.value.trim() || state.pageText || "");
         showResult(result.status || "ERROR", result);
       } catch (e) {
