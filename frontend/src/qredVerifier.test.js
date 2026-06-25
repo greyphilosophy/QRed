@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeSeal, verifyQRedSeals } from "./qredVerifier.js";
+import { compareDocumentText, decodeSeal, verifyQRedSeals } from "./qredVerifier.js";
 
 const publicKey = "X0qh5pQ9Joya3katdVpggpkbb7PJ_6oCdp6CkBlfb4U=";
 const wrongPublicKey = "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=";
@@ -41,5 +41,15 @@ describe("qredVerifier", () => {
       document_id: "DOC-TESTBROWSER",
       error_message: "Missing chunks: [1]",
     });
+  });
+
+  it("compares QR text to OCR page text for matched, missing, and extra words", () => {
+    const comparison = compareDocumentText("The original document text", "The altered document text plus");
+
+    expect(comparison.matchedWords).toBe(3);
+    expect(comparison.missingWords).toBe(1);
+    expect(comparison.extraWords).toBe(2);
+    expect(comparison.qrTokens.filter((token) => token.status === "missing").map((token) => token.token)).toEqual(["original"]);
+    expect(comparison.pageTokens.filter((token) => token.status === "extra").map((token) => token.token)).toEqual(["altered", "plus"]);
   });
 });

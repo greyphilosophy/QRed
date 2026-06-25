@@ -207,6 +207,12 @@
     }
 
     .result-status.valid { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+    .diff-summary { color: var(--text-dim); font-size: 0.85rem; margin: 0.75rem 0; }
+    .diff-view { display: grid; gap: 0.75rem; }
+    .diff-label { color: var(--text-dim); font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.35rem; }
+    .diff-token-matched { background: #bbf7d0; color: #052e16; border-radius: 3px; }
+    .diff-token-extra { background: #fecaca; color: #450a0a; border-radius: 3px; }
+    .diff-token-missing { color: #ef4444; font-weight: 700; text-decoration: underline; }
     .result-status.error { background: rgba(148, 163, 184, 0.2); color: var(--text-dim); }
 
     .result-meta {
@@ -269,6 +275,8 @@
         <label for="manualSealInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Manual seal entry or uploaded seal text</label>
         <textarea id="manualSealInput" rows="4" placeholder="Paste QRED1 seal strings here, one per line" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;"></textarea>
         <input id="sealFileInput" type="file" accept=".txt,text/plain" style="width:100%; margin-bottom:0.75rem;">
+        <label for="pageTextInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Page text read by scanner or pasted for comparison</label>
+        <textarea id="pageTextInput" rows="4" placeholder="Start scanning to OCR the page, or paste document text here" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;"></textarea>
         <div class="controls" style="margin-bottom:0;">
           <button class="btn btn-secondary" id="btnAddManual">Add Manual Seals</button>
           <button class="btn btn-primary" id="btnVerifyManual">Verify Collected Seals</button>
@@ -308,7 +316,7 @@
 
   <script type="module">
     import jsQR from "jsqr";
-    import { decodeSeal as decodeQRedSeal, extractSealsFromFragment, verifyQRedSeals } from "./src/qredVerifier.js";
+    import { compareDocumentText, decodeSeal as decodeQRedSeal, extractSealsFromFragment, verifyQRedSeals } from "./src/qredVerifier.js";
 
     // QRed Protocol - decode QRed seal strings for scanner UI state.
     function decodeSeal(str) {
@@ -330,6 +338,9 @@
       isScanning: false,
       stream: null,
       animFrameId: null,
+      lastFrameCanvas: null,
+      pageText: "",
+      ocrPromise: null,
     };
 
     // Camera handling
@@ -345,6 +356,7 @@
     var sealFileInput = document.getElementById("sealFileInput");
     var btnAddManual = document.getElementById("btnAddManual");
     var btnVerifyManual = document.getElementById("btnVerifyManual");
+    var pageTextInput = document.getElementById("pageTextInput");
 
     btnScan.onclick = function() {
       if (state.isScanning) {
@@ -371,6 +383,9 @@
       document.getElementById("scanCanvas").style.display = "none";
       document.getElementById("scanLine").style.display = "none";
       statusBar.classList.remove("visible");
+      state.pageText = "";
+      state.ocrPromise = null;
+      pageTextInput.value = "";
     };
 
     btnAddManual.onclick = function() {
@@ -442,6 +457,7 @@
           function scanFrame() {
             if (!state.isScanning) return;
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            state.lastFrameCanvas = canvas;
             var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             var code = jsQR(imageData.data, canvas.width, canvas.height);
             if (code) {
@@ -519,6 +535,27 @@
     }
 
     // Reconstruct & Verify
+    async function readPageTextFromScanner() {
+      if (pageTextInput.value.trim()) return pageTextInput.value.trim();
+      if (state.pageText) return state.pageText;
+      if (!state.lastFrameCanvas || state.ocrPromise) return state.ocrPromise || "";
+
+      statusBar.classList.add("visible");
+      statusText.textContent = "Reading page text...";
+      state.ocrPromise = import("tesseract.js").then(function(module) {
+        var workerApi = module.default || module;
+        return workerApi.recognize(state.lastFrameCanvas, "eng");
+      }).then(function(result) {
+        state.pageText = (result && result.data && result.data.text ? result.data.text : "").trim();
+        pageTextInput.value = state.pageText;
+        return state.pageText;
+      }).catch(function(err) {
+        showError("Page OCR failed; paste page text to compare: " + err.message);
+        return "";
+      });
+      return state.ocrPromise;
+    }
+
     async function reconstructAndShow(docId) {
       var docData = state.sealsByDocument[docId];
       var total = docData.total;
@@ -542,6 +579,7 @@
 
       try {
         var result = await verifyQRedSeals(seals, publicKey);
+        result.page_text = await readPageTextFromScanner();
         showResult(result.status || "ERROR", result);
       } catch (e) {
         showResult("ERROR", { error_message: e.message });
@@ -577,7 +615,39 @@
       }
 
       var rc = document.getElementById("resultContent");
-      rc.textContent = payload.content || "(empty)";
+      rc.innerHTML = "";
+      if (payload.content && payload.page_text) {
+        var comparison = compareDocumentText(payload.content, payload.page_text);
+        var summary = document.createElement("div");
+        summary.className = "diff-summary";
+        summary.textContent = comparison.matchedWords + " matched words, " + comparison.missingWords + " QR words missing from the page, " + comparison.extraWords + " page words not found in the QR code.";
+        rc.appendChild(summary);
+        var diff = document.createElement("div");
+        diff.className = "diff-view";
+        diff.appendChild(renderDiffSection("Page text", comparison.pageTokens, { matched: "diff-token-matched", extra: "diff-token-extra" }));
+        diff.appendChild(renderDiffSection("Missing QR text overlay", comparison.qrTokens.filter(function(item) { return item.status !== "matched"; }), { missing: "diff-token-missing" }));
+        rc.appendChild(diff);
+      } else {
+        rc.textContent = payload.content || "(empty)";
+      }
+    }
+
+    function renderDiffSection(label, tokens, classes) {
+      var container = document.createElement("div");
+      var heading = document.createElement("div");
+      heading.className = "diff-label";
+      heading.textContent = label;
+      container.appendChild(heading);
+      var body = document.createElement("div");
+      tokens.forEach(function(item) {
+        var span = document.createElement("span");
+        span.textContent = item.token;
+        if (classes[item.status]) span.className = classes[item.status];
+        body.appendChild(span);
+      });
+      if (tokens.length === 0) body.textContent = "No differences found.";
+      container.appendChild(body);
+      return container;
     }
   </script>
 </body>

@@ -190,3 +190,53 @@ export async function verifyQRedSeals(seals, publicKey) {
     key_id: keyId,
   };
 }
+
+
+export function tokenizeDocumentText(text) {
+  return (text || "").match(/\S+|\s+/g) || [];
+}
+
+function comparableToken(token) {
+  return token.trim().toLocaleLowerCase().replace(/^\p{P}+|\p{P}+$/gu, "");
+}
+
+export function compareDocumentText(qrText, pageText) {
+  const qrTokens = tokenizeDocumentText(qrText);
+  const pageTokens = tokenizeDocumentText(pageText);
+  const qrWords = qrTokens.map((token, index) => ({ token, index, key: comparableToken(token) })).filter((item) => item.key);
+  const pageWords = pageTokens.map((token, index) => ({ token, index, key: comparableToken(token) })).filter((item) => item.key);
+
+  const table = Array.from({ length: qrWords.length + 1 }, () => Array(pageWords.length + 1).fill(0));
+  for (let i = qrWords.length - 1; i >= 0; i -= 1) {
+    for (let j = pageWords.length - 1; j >= 0; j -= 1) {
+      table[i][j] = qrWords[i].key === pageWords[j].key
+        ? table[i + 1][j + 1] + 1
+        : Math.max(table[i + 1][j], table[i][j + 1]);
+    }
+  }
+
+  const matchedQr = new Set();
+  const matchedPage = new Set();
+  let i = 0;
+  let j = 0;
+  while (i < qrWords.length && j < pageWords.length) {
+    if (qrWords[i].key === pageWords[j].key) {
+      matchedQr.add(qrWords[i].index);
+      matchedPage.add(pageWords[j].index);
+      i += 1;
+      j += 1;
+    } else if (table[i + 1][j] >= table[i][j + 1]) {
+      i += 1;
+    } else {
+      j += 1;
+    }
+  }
+
+  return {
+    qrTokens: qrTokens.map((token, index) => ({ token, status: comparableToken(token) ? (matchedQr.has(index) ? "matched" : "missing") : "space" })),
+    pageTokens: pageTokens.map((token, index) => ({ token, status: comparableToken(token) ? (matchedPage.has(index) ? "matched" : "extra") : "space" })),
+    matchedWords: matchedQr.size,
+    missingWords: qrWords.length - matchedQr.size,
+    extraWords: pageWords.length - matchedPage.size,
+  };
+}
