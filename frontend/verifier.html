@@ -207,6 +207,19 @@
     }
 
     .result-status.valid { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+    .diff-summary { color: var(--text-dim); font-size: 0.85rem; margin: 0.75rem 0; }
+    .diff-view { display: grid; gap: 0.75rem; }
+    .diff-label { color: var(--text-dim); font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.35rem; }
+    .diff-token-matched { background: #bbf7d0; color: #052e16; border-radius: 3px; }
+    .diff-token-extra { background: #fecaca; color: #450a0a; border-radius: 3px; }
+    .diff-token-missing { color: #ef4444; font-weight: 700; text-decoration: underline; }
+    .ar-hint { color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.75rem; }
+    .ar-legend { display: flex; gap: 0.5rem; flex-wrap: wrap; color: var(--text-dim); font-size: 0.8rem; margin-top: 0.5rem; }
+    .ar-legend span { display: inline-flex; align-items: center; gap: 0.25rem; }
+    .ar-swatch { width: 0.8rem; height: 0.8rem; border-radius: 2px; display: inline-block; }
+    .ar-swatch.match { background: rgba(187, 247, 208, 0.75); }
+    .ar-swatch.extra { background: rgba(254, 202, 202, 0.75); }
+    .ar-swatch.missing { background: rgba(239, 68, 68, 0.9); }
     .result-status.error { background: rgba(148, 163, 184, 0.2); color: var(--text-dim); }
 
     .result-meta {
@@ -269,6 +282,8 @@
         <label for="manualSealInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Manual seal entry or uploaded seal text</label>
         <textarea id="manualSealInput" rows="4" placeholder="Paste QRED1 seal strings here, one per line" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;"></textarea>
         <input id="sealFileInput" type="file" accept=".txt,text/plain" style="width:100%; margin-bottom:0.75rem;">
+        <label for="pageTextInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Page text read by scanner or pasted for comparison</label>
+        <textarea id="pageTextInput" rows="4" placeholder="Start scanning to OCR the page, or paste document text here" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;"></textarea>
         <div class="controls" style="margin-bottom:0;">
           <button class="btn btn-secondary" id="btnAddManual">Add Manual Seals</button>
           <button class="btn btn-primary" id="btnVerifyManual">Verify Collected Seals</button>
@@ -289,12 +304,25 @@
     </div>
 
     <div class="result-view" id="resultView">
+      <div class="result-card" id="arCard" style="display:none;">
+        <div class="ar-hint">Point the camera at the document page. Highlights are drawn in the same camera-plane orientation as the visible page text.</div>
+        <div class="viewfinder">
+          <video id="arVideo" playsinline autoplay></video>
+          <canvas id="arCanvas"></canvas>
+        </div>
+        <div class="ar-legend">
+          <span><i class="ar-swatch match"></i>QR text found on page</span>
+          <span><i class="ar-swatch extra"></i>Page text not in QR</span>
+          <span><i class="ar-swatch missing"></i>QR text missing from page</span>
+        </div>
+      </div>
       <div class="result-card">
         <div class="result-status" id="resultStatus"></div>
         <div class="result-meta" id="resultMeta"></div>
         <div class="result-content" id="resultContent"></div>
       </div>
       <div class="controls">
+        <button class="btn btn-primary" id="btnStartAr" style="display:none;">Start AR Overlay</button>
         <button class="btn btn-secondary" id="btnNewScan">New Scan</button>
       </div>
     </div>
@@ -308,7 +336,7 @@
 
   <script type="module">
     import jsQR from "jsqr";
-    import { decodeSeal as decodeQRedSeal, extractSealsFromFragment, verifyQRedSeals } from "./src/qredVerifier.js";
+    import { compareDocumentText, compareWordSequences, decodeSeal as decodeQRedSeal, extractSealsFromFragment, verifyQRedSeals } from "./src/qredVerifier.js";
 
     // QRed Protocol - decode QRed seal strings for scanner UI state.
     function decodeSeal(str) {
@@ -330,11 +358,19 @@
       isScanning: false,
       stream: null,
       animFrameId: null,
+      pageText: "",
+      ocrPromise: null,
+      verifiedContent: "",
+      arStream: null,
+      arTimerId: null,
+      arBusy: false,
+      arErrorShown: false,
     };
 
     // Camera handling
     var btnScan = document.getElementById("btnScan");
     var btnNewScan = document.getElementById("btnNewScan");
+    var btnStartAr = document.getElementById("btnStartAr");
     var statusBar = document.getElementById("statusBar");
     var statusText = document.getElementById("statusText");
     var sealList = document.getElementById("sealList");
@@ -345,6 +381,7 @@
     var sealFileInput = document.getElementById("sealFileInput");
     var btnAddManual = document.getElementById("btnAddManual");
     var btnVerifyManual = document.getElementById("btnVerifyManual");
+    var pageTextInput = document.getElementById("pageTextInput");
 
     btnScan.onclick = function() {
       if (state.isScanning) {
@@ -359,6 +396,7 @@
     btnNewScan.onclick = function() {
       state.sealsByDocument = {};
       state.scannedSeals = [];
+      stopArOverlay();
       state.seenSeals = new Set();
       sealList.innerHTML = "";
       sealList.classList.remove("visible");
@@ -371,6 +409,18 @@
       document.getElementById("scanCanvas").style.display = "none";
       document.getElementById("scanLine").style.display = "none";
       statusBar.classList.remove("visible");
+      state.pageText = "";
+      state.ocrPromise = null;
+      pageTextInput.value = "";
+      state.verifiedContent = "";
+    };
+
+    btnStartAr.onclick = function() {
+      if (state.arStream) {
+        stopArOverlay();
+      } else {
+        startArOverlay();
+      }
     };
 
     btnAddManual.onclick = function() {
@@ -519,6 +569,65 @@
     }
 
     // Reconstruct & Verify
+    async function readPageTextFromScanner() {
+      if (pageTextInput.value.trim()) return pageTextInput.value.trim();
+      if (state.pageText) return state.pageText;
+      if (state.ocrPromise) return state.ocrPromise;
+      if (!window.confirm("Point the camera at the full document page, then tap OK to capture page text for OCR.")) return "";
+
+      statusBar.classList.add("visible");
+      statusText.textContent = "Capturing page text...";
+      state.ocrPromise = captureDocumentFrameForOcr().then(function(canvas) {
+        statusText.textContent = "Reading page text...";
+        return import("tesseract.js").then(function(module) {
+          var workerApi = module.default || module;
+          return workerApi.recognize(canvas, "eng");
+        });
+      }).then(function(result) {
+        state.pageText = (result && result.data && result.data.text ? result.data.text : "").trim();
+        pageTextInput.value = state.pageText;
+        return state.pageText;
+      }).catch(function(err) {
+        showError("Page OCR failed; paste page text to compare: " + err.message);
+        return "";
+      }).finally(function() {
+        statusBar.classList.remove("visible");
+        state.ocrPromise = null;
+      });
+      return state.ocrPromise;
+    }
+
+    function captureDocumentFrameForOcr() {
+      return navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1600 }, height: { ideal: 1200 } }
+      }).then(function(mediaStream) {
+        return new Promise(function(resolve, reject) {
+          var video = document.createElement("video");
+          video.playsInline = true;
+          video.muted = true;
+          video.srcObject = mediaStream;
+          video.onloadedmetadata = function() {
+            video.play().then(function() {
+              window.setTimeout(function() {
+                var canvas = document.createElement("canvas");
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+                mediaStream.getTracks().forEach(function(track) { track.stop(); });
+                resolve(canvas);
+              }, 800);
+            }).catch(reject);
+          };
+          video.onerror = function() {
+            reject(new Error("Unable to read camera frame for OCR."));
+          };
+        }).catch(function(error) {
+          mediaStream.getTracks().forEach(function(track) { track.stop(); });
+          throw error;
+        });
+      });
+    }
+
     async function reconstructAndShow(docId) {
       var docData = state.sealsByDocument[docId];
       var total = docData.total;
@@ -542,6 +651,7 @@
 
       try {
         var result = await verifyQRedSeals(seals, publicKey);
+        result.page_text = await readPageTextFromScanner();
         showResult(result.status || "ERROR", result);
       } catch (e) {
         showResult("ERROR", { error_message: e.message });
@@ -550,6 +660,8 @@
 
     function showResult(status, payload) {
       document.getElementById("scanMode").style.display = "none";
+      state.verifiedContent = payload.content || "";
+      btnStartAr.style.display = state.verifiedContent ? "block" : "none";
       var rv = document.getElementById("resultView");
       rv.classList.add("visible");
 
@@ -576,8 +688,149 @@
         rm.innerHTML += "<div class='meta-item'><strong>Error:</strong> " + payload.error_message + "</div>";
       }
 
+      statusBar.classList.remove("visible");
+
       var rc = document.getElementById("resultContent");
-      rc.textContent = payload.content || "(empty)";
+      rc.innerHTML = "";
+      if (payload.content && payload.page_text) {
+        var comparison = compareDocumentText(payload.content, payload.page_text);
+        var summary = document.createElement("div");
+        summary.className = "diff-summary";
+        summary.textContent = comparison.matchedWords + " matched words, " + comparison.missingWords + " QR words missing from the page, " + comparison.extraWords + " page words not found in the QR code.";
+        rc.appendChild(summary);
+        var diff = document.createElement("div");
+        diff.className = "diff-view";
+        diff.appendChild(renderDiffSection("Page text", comparison.pageTokens, { matched: "diff-token-matched", extra: "diff-token-extra" }));
+        diff.appendChild(renderDiffSection("QR text", comparison.qrTokens, { matched: "diff-token-matched", missing: "diff-token-missing" }));
+        rc.appendChild(diff);
+      } else {
+        rc.textContent = payload.content || "(empty)";
+      }
+    }
+
+    function classifyOcrWords(qrText, ocrWords) {
+      var qrWords = (qrText || "").match(/\S+/g) || [];
+      var pageWords = ocrWords.map(function(word) { return word.text || ""; });
+      var comparison = compareWordSequences(qrWords, pageWords);
+      return {
+        words: ocrWords.map(function(word, index) { return { word: word, status: comparison.matchedPage.has(index) ? "matched" : "extra" }; }),
+        missing: comparison.missingQrWords,
+      };
+    }
+
+    function startArOverlay() {
+      if (!state.verifiedContent) return;
+      var arCard = document.getElementById("arCard");
+      var video = document.getElementById("arVideo");
+      var canvas = document.getElementById("arCanvas");
+      arCard.style.display = "block";
+      btnStartAr.textContent = "Stop AR Overlay";
+      navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1600 }, height: { ideal: 1200 } }
+      }).then(function(mediaStream) {
+        state.arStream = mediaStream;
+        state.arErrorShown = false;
+        video.srcObject = mediaStream;
+        return video.play();
+      }).then(function() {
+        canvas.width = video.videoWidth || 1600;
+        canvas.height = video.videoHeight || 1200;
+        runArOcrFrame();
+        state.arTimerId = window.setInterval(runArOcrFrame, 3500);
+      }).catch(function(err) {
+        showError("Could not start AR overlay camera: " + err.message);
+        stopArOverlay();
+      });
+    }
+
+    function stopArOverlay() {
+      if (state.arTimerId) {
+        window.clearInterval(state.arTimerId);
+        state.arTimerId = null;
+      }
+      if (state.arStream) {
+        state.arStream.getTracks().forEach(function(track) { track.stop(); });
+        state.arStream = null;
+      }
+      state.arBusy = false;
+      btnStartAr.textContent = "Start AR Overlay";
+      var arCard = document.getElementById("arCard");
+      if (arCard) arCard.style.display = "none";
+      var arCanvas = document.getElementById("arCanvas");
+      if (arCanvas) arCanvas.getContext("2d").clearRect(0, 0, arCanvas.width, arCanvas.height);
+    }
+
+    function runArOcrFrame() {
+      if (state.arBusy || !state.arStream) return;
+      var video = document.getElementById("arVideo");
+      var canvas = document.getElementById("arCanvas");
+      if (!video.videoWidth || !video.videoHeight) return;
+      state.arBusy = true;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      var capture = document.createElement("canvas");
+      capture.width = video.videoWidth;
+      capture.height = video.videoHeight;
+      capture.getContext("2d").drawImage(video, 0, 0, capture.width, capture.height);
+      import("tesseract.js").then(function(module) {
+        var workerApi = module.default || module;
+        return workerApi.recognize(capture, "eng");
+      }).then(function(result) {
+        var words = result && result.data && result.data.words ? result.data.words : [];
+        drawArOverlay(classifyOcrWords(state.verifiedContent, words));
+      }).catch(function(err) {
+        if (!state.arErrorShown) {
+          state.arErrorShown = true;
+          showError("AR OCR failed; stopping overlay so it does not repeat errors: " + err.message);
+        }
+        stopArOverlay();
+      }).finally(function() {
+        state.arBusy = false;
+      });
+    }
+
+    function drawArOverlay(classified) {
+      var canvas = document.getElementById("arCanvas");
+      var ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      classified.words.forEach(function(item) {
+        var bbox = item.word.bbox;
+        if (!bbox) return;
+        var color = item.status === "matched" ? "rgba(187, 247, 208, 0.55)" : "rgba(254, 202, 202, 0.6)";
+        ctx.fillStyle = color;
+        ctx.strokeStyle = item.status === "matched" ? "rgba(22, 163, 74, 0.95)" : "rgba(220, 38, 38, 0.95)";
+        ctx.lineWidth = 2;
+        ctx.fillRect(bbox.x0, bbox.y0, bbox.x1 - bbox.x0, bbox.y1 - bbox.y0);
+        ctx.strokeRect(bbox.x0, bbox.y0, bbox.x1 - bbox.x0, bbox.y1 - bbox.y0);
+      });
+      if (classified.missing.length > 0) {
+        var missingText = "Missing from page: " + classified.missing.slice(0, 12).join(" ") + (classified.missing.length > 12 ? " ..." : "");
+        ctx.font = "24px sans-serif";
+        ctx.textBaseline = "top";
+        var metrics = ctx.measureText(missingText);
+        ctx.fillStyle = "rgba(15, 23, 42, 0.82)";
+        ctx.fillRect(12, 12, metrics.width + 24, 44);
+        ctx.fillStyle = "#ef4444";
+        ctx.fillText(missingText, 24, 22);
+      }
+    }
+
+    function renderDiffSection(label, tokens, classes) {
+      var container = document.createElement("div");
+      var heading = document.createElement("div");
+      heading.className = "diff-label";
+      heading.textContent = label;
+      container.appendChild(heading);
+      var body = document.createElement("div");
+      tokens.forEach(function(item) {
+        var span = document.createElement("span");
+        span.textContent = item.token;
+        if (classes[item.status]) span.className = classes[item.status];
+        body.appendChild(span);
+      });
+      if (tokens.length === 0) body.textContent = "No differences found.";
+      container.appendChild(body);
+      return container;
     }
   </script>
 </body>

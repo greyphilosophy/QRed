@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeSeal, verifyQRedSeals } from "./qredVerifier.js";
+import { compareDocumentText, compareWordSequences, decodeSeal, verifyQRedSeals } from "./qredVerifier.js";
 
 const publicKey = "X0qh5pQ9Joya3katdVpggpkbb7PJ_6oCdp6CkBlfb4U=";
 const wrongPublicKey = "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=";
@@ -41,5 +41,45 @@ describe("qredVerifier", () => {
       document_id: "DOC-TESTBROWSER",
       error_message: "Missing chunks: [1]",
     });
+  });
+
+  it("shares word sequence comparison for OCR overlays", () => {
+    const comparison = compareWordSequences(["The", "original", "document", "text"], ["The", "altered", "document", "text", "plus"]);
+
+    expect(comparison.matchedWords).toBe(3);
+    expect(comparison.missingWords).toBe(1);
+    expect(comparison.extraWords).toBe(2);
+    expect(comparison.missingQrWords).toEqual(["original"]);
+    expect(Array.from(comparison.matchedPage)).toEqual([0, 2, 3]);
+  });
+
+  it("handles punctuation, case, and repeated words in word sequence matching", () => {
+    const comparison = compareWordSequences(["Alpha,", "beta", "alpha", "gamma!"], ["alpha", "ALPHA", "gamma", "delta"]);
+
+    expect(comparison.matchedWords).toBe(3);
+    expect(comparison.missingWords).toBe(1);
+    expect(comparison.extraWords).toBe(1);
+    expect(comparison.missingQrWords).toEqual(["beta"]);
+    expect(Array.from(comparison.matchedQr)).toEqual([0, 2, 3]);
+    expect(Array.from(comparison.matchedPage)).toEqual([0, 1, 2]);
+  });
+
+  it("ignores non-word tokens when comparing word sequences", () => {
+    const comparison = compareWordSequences(["Signed", "---", "Document"], ["signed", "document", "***"]);
+
+    expect(comparison.matchedWords).toBe(2);
+    expect(comparison.missingWords).toBe(0);
+    expect(comparison.extraWords).toBe(0);
+    expect(comparison.missingQrWords).toEqual([]);
+  });
+
+  it("compares QR text to OCR page text for matched, missing, and extra words", () => {
+    const comparison = compareDocumentText("The original document text", "The altered document text plus");
+
+    expect(comparison.matchedWords).toBe(3);
+    expect(comparison.missingWords).toBe(1);
+    expect(comparison.extraWords).toBe(2);
+    expect(comparison.qrTokens.filter((token) => token.status === "missing").map((token) => token.token)).toEqual(["original"]);
+    expect(comparison.pageTokens.filter((token) => token.status === "extra").map((token) => token.token)).toEqual(["altered", "plus"]);
   });
 });
