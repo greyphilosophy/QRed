@@ -113,6 +113,10 @@ function ScannerView({ onScan, onClose }) {
         const canvas = canvasRef.current;
         if (canvas) {
           const ctx = canvas.getContext("2d");
+          if (video.videoWidth && video.videoHeight && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+          }
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const code = jsQR(imageData.data, canvas.width, canvas.height, { inverted: false });
