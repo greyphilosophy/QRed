@@ -16,7 +16,6 @@ export function QrScanner() {
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
 
-  // Display scan result — show ANY QR code content (plaintext, URL, QRED1?)
   if (mode === "result") {
     if (scannedText && isQRedSeal(scannedText)) {
       const sealData = parseQRedSeal(scannedText);
@@ -36,28 +35,38 @@ export function QrScanner() {
             )
           : null,
         React.createElement("button", {
-          onClick: () => { setMode("idle"); setScannedText(null); },
+          onClick: () => {
+            setMode("idle");
+            setScannedText(null);
+          },
           style: { marginTop: "1rem" }
         }, "New scan")
       );
     }
-    // Plain text / URL / other QR content
+
     return React.createElement("div", { className: "card qr-scan-result" },
       React.createElement("h2", null, "QR Code Content"),
       React.createElement("div", { className: "doc-text" }, scannedText),
       React.createElement("button", {
-        onClick: () => { setMode("idle"); setScannedText(null); },
+        onClick: () => {
+          setMode("idle");
+          setScannedText(null);
+        },
         style: { marginTop: "1rem" }
       }, "New scan")
     );
   }
 
-  // Scanning mode
   if (mode === "scanning") {
-    return ScannerView();
+    return React.createElement(ScannerView, {
+      onScan: (text) => {
+        setScannedText(text);
+        setMode("result");
+      },
+      onClose: () => setMode("idle"),
+    });
   }
 
-  // Default — user-initiated start
   return React.createElement("div", { className: "card" },
     React.createElement("h2", null, "QR Code Scanner"),
     React.createElement("p", { style: { color: "#64748b", marginBottom: "1rem" }},
@@ -70,41 +79,35 @@ export function QrScanner() {
   );
 }
 
-/**
- * ScannerView — Camera capture + jsQR loop. Uses the onQRFound ref to pass
- * scan results back to QrScanner without closure capture issues.
- */
-function ScannerView() {
+function ScannerView({ onScan, onClose }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [error, setError] = useState(null);
-  const [closed, setClosed] = useState(false);
-
-  // This ref holds the callback that the scan loop calls when a QR is found.
-  // We update it here so it always points to the latest version.
-  const onQRFoundRef = useRef(null);
-  onQRFoundRef.current = (text) => {
-    setMode("result");
-    setScannedText(text);
-  };
 
   useEffect(() => {
-    let animId;
-    let stream;
+    let animId = null;
+    let stream = null;
+    let stopped = false;
 
     function stop() {
+      stopped = true;
       if (stream) {
-        stream.getTracks().forEach(t => t.stop());
+        stream.getTracks().forEach((track) => track.stop());
         stream = null;
       }
       const video = videoRef.current;
       if (video && video.srcObject) {
         video.srcObject = null;
       }
-      if (animId) cancelAnimationFrame(animId);
+      if (animId !== null) {
+        cancelAnimationFrame(animId);
+        animId = null;
+      }
     }
 
     function scanFrame() {
+      if (stopped) return;
+
       const video = videoRef.current;
       if (video && video.readyState === 4) {
         const canvas = canvasRef.current;
@@ -115,7 +118,7 @@ function ScannerView() {
           const code = jsQR(imageData.data, canvas.width, canvas.height, { inverted: false });
           if (code && code.data) {
             stop();
-            onQRFoundRef.current(code.data);
+            onScan(code.data);
             return;
           }
         }
@@ -123,33 +126,33 @@ function ScannerView() {
       animId = requestAnimationFrame(scanFrame);
     }
 
-    const constraints = { video: { facingMode: "environment" } };
-    navigator.mediaDevices.getUserMedia(constraints)
-      .then(s => {
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+      .then((s) => {
+        if (stopped) {
+          s.getTracks().forEach((track) => track.stop());
+          return;
+        }
         stream = s;
         const video = videoRef.current;
         video.srcObject = s;
         video.play();
         scanFrame();
       })
-      .catch(e => {
-        setError("Camera access needed: " + (e.message || "facingMode: environment"));
-        stop();
+      .catch((e) => {
+        if (!stopped) {
+          setError("Camera access needed: " + (e.message || "facingMode: environment"));
+        }
       });
 
     return stop;
-  }, []);
+  }, [onScan]);
 
   if (error) {
     return React.createElement("div", { className: "card" },
       React.createElement("h2", null, "QR Code Scanner"),
       React.createElement("p", { style: { color: "#ef4444" }}, error),
-      React.createElement("button", { onClick: () => setClosed(true), style: { marginTop: "1rem" }}, "Close")
+      React.createElement("button", { onClick: onClose, style: { marginTop: "1rem" }}, "Close")
     );
-  }
-
-  if (closed) {
-    return null;
   }
 
   return React.createElement("div", { className: "card qr-scanner" },
@@ -164,6 +167,6 @@ function ScannerView() {
       autoPlay: true
     }),
     React.createElement("canvas", { ref: canvasRef, style: { display: "none" } }),
-    React.createElement("button", { onClick: () => setClosed(true), style: { marginTop: "1rem" }}, "Close")
+    React.createElement("button", { onClick: onClose, style: { marginTop: "1rem" }}, "Close")
   );
 }
