@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { sealPdfInBrowser } from "./pdfClientSeal.js";
+import { QrScanner } from "./QrScanner.jsx";
 import { FragmentDisplay } from "./FragmentDisplay.jsx";
 
 function normalizeApiBase(value) {
@@ -126,7 +127,7 @@ function PdfSealForm() {
         });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
-        link.href = url;
+      link.href = url;
       link.download = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
       link.click();
       URL.revokeObjectURL(url);
@@ -174,6 +175,7 @@ function App() {
     React.createElement("h1", null, "QRed"),
     React.createElement("p", { className: "subtitle" }, "Tamper-evident QR seals for paper documents"),
     React.createElement(FragmentDisplay),
+    React.createElement(QrScanner),
     React.createElement(VerifierFrame),
     React.createElement(PdfSealForm),
     React.createElement("p", { className: "footer" },
