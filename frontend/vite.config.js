@@ -19,6 +19,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, "index.html"),
         verifier: resolve(__dirname, "verifier.html"),
+        display: resolve(__dirname, "display.html"),
       },
     },
   },

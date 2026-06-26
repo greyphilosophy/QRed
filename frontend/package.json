@@ -5,7 +5,7 @@
   "description": "QRed Verifier - Web-based QR document verification",
   "scripts": {
     "start": "vite",
-    "build": "vite build && cp build/verifier.html build/verify.htm",
+    "build": "vite build && cp build/verifier.html build/verify.htm && cp build/display.html build/display.htm",
     "test": "vitest run",
     "lint": "eslint src/ --ext .jsx,.tsx",
     "test:ci": "vitest run --passWithNoTests",

@@ -91,6 +91,14 @@ export default {
       return fetch(buildProxyRequest(request, env.QRED_API_ORIGIN));
     }
 
+    // Redirect hash-only URLs to the display page
+    // qred.org/#QRED1?... → qred.org/display.htm#QRED1?...
+    if (url.pathname === "/" && url.hash.startsWith("#QRED1")) {
+      const displayUrl = url.clone();
+      displayUrl.pathname = "/display.htm";
+      return Response.redirect(displayUrl.toString(), 302);
+    }
+
     return env.ASSETS.fetch(request);
   },
 };
