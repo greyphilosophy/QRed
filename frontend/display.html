@@ -3,51 +3,55 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>QRed - Verified Document</title>
+<title>QRed - Document Data</title>
 <style>
+:root{--bg:#f8fafc;--card:#fff;--text:#1e293b;--text-dim:#64748b;--border:#e2e8f0;--primary:#3b82f6;--success:#10b981;--warning:#f59e0b}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f8fafc;color:#1e293b;min-height:100vh;padding:1rem}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:1rem}
 .container{max-width:680px;margin:0 auto}
-.header{text-align:center;margin-bottom:1.5rem;padding:1.5rem 0;border-bottom:2px solid #e2e8f0}
-.header h1{font-size:1.75rem;color:#3b82f6;margin-bottom:.25rem}
-.header .tagline{color:#64748b;font-size:.9rem}
-.card{background:#fff;border-radius:12px;padding:1.5rem;margin-bottom:1rem;box-shadow:0 1px 3px rgba(0,0,0,.1);border:1px solid #e2e8f0}
+.header{text-align:center;margin-bottom:1.5rem;padding:1.5rem 0;border-bottom:2px solid var(--border)}
+.header h1{font-size:1.75rem;color:var(--primary);margin-bottom:.25rem}
+.header .tagline{color:var(--text-dim);font-size:.9rem}
+.card{background:var(--card);border-radius:12px;padding:1.5rem;margin-bottom:1rem;box-shadow:0 1px 3px rgba(0,0,0,.1);border:1px solid var(--border)}
 .card h2{font-size:1.1rem;margin-bottom:.75rem;display:flex;align-items:center;gap:.5rem}
 .badge{display:inline-block;padding:.2rem .75rem;border-radius:999px;font-size:.8rem;font-weight:600}
-.badge.partial{background:#f59e0b;color:white}
-.badge.complete{background:#10b981;color:white}
+.badge.partial{background:var(--warning);color:#fff}
+.badge.complete{background:var(--success);color:#fff}
 .meta-grid{display:grid;grid-template-columns:auto 1fr;gap:.4rem 1rem;font-size:.85rem}
-.meta-label{color:#64748b;font-weight:600}
-.doc-text{background:#f1f5f9;border-radius:8px;padding:1.25rem;font-size:.95rem;line-height:1.7;white-space:pre-wrap;word-wrap:break-word;border:1px solid #e2e8f0;min-height:4rem}
+.meta-label{color:var(--text-dim);font-weight:600}
+.doc-text{background:#f1f5f9;border-radius:8px;padding:1.25rem;font-size:.95rem;line-height:1.7;white-space:pre-wrap;word-wrap:break-word;border:1px solid var(--border);min-height:4rem}
 .error-msg{background:#fef2f2;border:1px solid #ef4444;border-radius:8px;padding:1rem;color:#991b16;font-size:.9rem}
 .chunk-note{background:#fffbeb;border:1px solid #fbbf24;border-radius:8px;padding:1rem;font-size:.85rem;color:#924c14;margin-top:1rem}
-.footer{text-align:center;margin-top:1.5rem;font-size:.8rem;color:#64748b}
-.footer a{color:#3b82f6}
+.info-box{background:#f1f5f9;border:1px solid var(--border);border-radius:8px;padding:1rem;font-size:.85rem;color:var(--text-dim);margin-top:1rem}
+.footer{text-align:center;margin-top:1.5rem;font-size:.8rem;color:var(--text-dim)}
+.footer a{color:var(--primary)}
 .hidden{display:none}
 </style>
 </head>
 <body>
 <div class="container">
-<div class="header"><h1>QRed</h1><div class="tagline">Tamper-Evident Document</div></div>
+<div class="header"><h1>QRed</h1><div class="tagline">QRed Document Data</div></div>
 <div id="error" class="card error-msg hidden"><div id="error-text"></div></div>
 <div id="content" class="hidden">
 <div class="card"><h2><span id="chunk-badge" class="badge partial"></span> Document Content</h2><div class="doc-text" id="doc-text"></div></div>
 <div class="card"><h2>Document Metadata</h2><div class="meta-grid"><div class="meta-label">Issuer</div><div id="meta-issuer"></div><div class="meta-label">Document ID</div><div id="meta-doc-id"></div><div class="meta-label">Timestamp</div><div id="meta-timestamp"></div><div class="meta-label">Key ID</div><div id="meta-key-id"></div></div></div>
-<div class="card"><h2>Security</h2><div class="meta-grid"><div class="meta-label">Signed</div><div id="meta-signed"></div><div class="meta-label">Page Hash</div><div id="meta-page-hash"></div><div class="meta-label">Merkle Root</div><div id="meta-merkle"></div></div></div>
+<div class="card"><h2>Signature</h2><div class="meta-grid"><div class="meta-label">Status</div><div id="meta-signed"></div><div class="meta-label">Page Hash</div><div id="meta-page-hash"></div><div class="meta-label">Merkle Root</div><div id="meta-merkle"></div></div></div>
+<div class="info-box">This page displays the data embedded in the QR code. To verify the digital signature and document bindings, open the <a href="/verify.htm" style="color:var(--primary)">QRed Verifier</a>.</div>
 <div id="multi-note" class="chunk-note hidden"><strong>Multi-part document</strong> — This QR code contains part <span id="part-cur"></span> of <span id="part-total"></span>. Scan all QR codes on the document to view the full sealed content.</div>
-<div class="footer">Verified via QRed protocol · <a href="https://qred.org">qred.org</a></div>
+<div class="footer">QRed protocol · <a href="https://qred.org">qred.org</a></div>
 </div>
-<div id="loading" class="card" style="text-align:center"><p style="color:#64748b">Loading document data...</p></div>
+<div id="loading" class="card" style="text-align:center"><p style="color:var(--text-dim)">Loading document data...</p></div>
 </div>
 <script>
 (function(){
 var hash=window.location.hash||'';
 var fragment=hash.startsWith('#')?hash.slice(1):hash;
-var decoded=decodeURIComponent(fragment);
-if(!decoded.startsWith('QRED1?')){showError('No QRed data found in URL fragment.');return;}
-var params=new URLSearchParams(decoded.slice(6));
-var txt=params.get('txt')||'';var issuer=params.get('iss')||'';var docId=params.get('doc')||'';
-var ts=params.get('ts')||'';var kid=params.get('kid')||'';var sig=params.get('sig')||'';
+if(!fragment.startsWith('QRED1?')){showError('No QRed data found in URL fragment.');return;}
+var params=new URLSearchParams(fragment.slice(6));
+var txt=params.get('txt')||'';
+var issuer=params.get('iss')||'';var docId=params.get('doc')||'';
+var ts=params.get('ts')||'';var kid=params.get('kid')||'';
+var sig=params.get('sig')||'';
 var chunkNum=params.get('i')||'';var totalChunks=params.get('n')||'';
 document.getElementById('loading').classList.add('hidden');
 document.getElementById('content').classList.remove('hidden');
@@ -64,7 +68,7 @@ document.getElementById('chunk-badge').className='badge complete';
 }
 s('meta-issuer',issuer||'—');s('meta-doc-id',docId||'—');
 s('meta-timestamp',ts?new Date(ts).toLocaleString():'—');s('meta-key-id',kid||'—');
-if(sig){s('meta-signed','Yes (Ed25519)')}else{s('meta-signed','Signature in part 0')}
+if(sig){s('meta-signed','Signature present (Ed25519)')}else{s('meta-signed','Signature in part 0')}
 s('meta-page-hash',docId?'Bound via document ID':'—');
 s('meta-merkle',docId?'Page bound to document Merkle root':'—');
 function s(id,v){document.getElementById(id).textContent=v}

@@ -91,14 +91,8 @@ export default {
       return fetch(buildProxyRequest(request, env.QRED_API_ORIGIN));
     }
 
-    // Redirect hash-only URLs to the display page
-    // qred.org/#QRED1?... → qred.org/display.htm#QRED1?...
-    if (url.pathname === "/" && url.hash.startsWith("#QRED1")) {
-      const displayUrl = url.clone();
-      displayUrl.pathname = "/display.htm";
-      return Response.redirect(displayUrl.toString(), 302);
-    }
-
+    // Note: browsers don't send hash fragments to the server, so the Worker
+    // cannot detect /#QRED1?... The client-side redirect in index.html handles it.
     return env.ASSETS.fetch(request);
   },
 };
