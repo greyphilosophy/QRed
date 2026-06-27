@@ -380,17 +380,24 @@ def test_fr4_b45_roundtrip_preserves_escapes():
     assert "%C3%A9" in result.compact
 
 
-def test_fr4_b45_mode_is_accepted_by_seal_generation():
-    """Given b45 mode, when generating seals, then it is accepted as a sealing parameter"""
-    result = create_seals(
-        document_text="the document and the page",
-        issuer=TEST_ISSUER,
-        private_key=TEST_PRIVATE_KEY,
-        public_key=TEST_PUBLIC_KEY,
-        encoding_strategy="b45",
-    )
-    assert result.selected_recipe == "b45"
-    assert result.encoding in {"b45", "plaintext", "compressed"}
+def test_fr4_b45_literal_plus_roundtrips():
+    """Given literal plus signs, when using b45, then ++ decodes back to +"""
+    original = "C++"
+    result = validate_simple_english(original)
+    assert result.reversible is True
+    assert result.restored == original
+    assert result.compact.startswith("+C")
+    assert "++++" in result.compact
+
+
+def test_fr4_b45_unicode_digits_are_escaped():
+    """Given non-ASCII digits, when using b45, then they are UTF-8 escaped rather than kept literal"""
+    original = "Section １"
+    result = validate_simple_english(original)
+    assert result.reversible is True
+    assert result.restored == original
+    assert "１" not in result.compact
+    assert "%EF%BC%91" in result.compact
 
 
 
@@ -464,6 +471,25 @@ def test_fr6_decode_seal():
     for seal in seals:
         chunk = QRedChunk.decode(seal)
         assert chunk.format_id == "QRED1"
+
+
+def test_fr6_b45_recipe_metadata_is_used_for_verification():
+    """Given b45-encoded seals, when verified, then the recipe metadata is preserved and decoded before signature verification"""
+    content = "C++ plus １"
+    result = create_seals(
+        document_text=content,
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        encoding_strategy="b45",
+    )
+    assert result.selected_recipe == "b45"
+
+    verification = reconstruct_and_verify([chunk.encode() for chunk in result.chunks], expected_public_key=TEST_PUBLIC_KEY)
+
+    assert verification["status"] == "VALID"
+    assert verification["recipe"] == "b45"
+    assert verification["content"] == canonicalize_text(content)
 
 
 # ===========================

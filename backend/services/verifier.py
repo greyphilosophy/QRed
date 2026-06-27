@@ -123,7 +123,7 @@ def reconstruct_and_verify(
         ctx["chunks"][decoded["chunk_number"]] = decoded["data"]
         if decoded.get("plaintext"):
             ctx["plaintext"] = True
-            for key in ("algorithm", "issuer", "key_id", "signature", "timestamp", "version"):
+            for key in ("recipe", "algorithm", "issuer", "key_id", "signature", "timestamp", "version"):
                 if decoded.get(key):
                     ctx["metadata"][key] = decoded[key]
 
@@ -186,7 +186,7 @@ def reconstruct_and_verify(
         except Exception as e:
             return {
                 "status": "ERROR",
-                "error_message": f"Recipe 1 decoding failed: {e}",
+                "error_message": f"b45 decoding failed: {e}",
             }
     signature = payload.get("signature", "")
     issuer = payload.get("issuer", "")

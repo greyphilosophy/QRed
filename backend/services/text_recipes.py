@@ -60,7 +60,7 @@ def encode_b45ish(text: str) -> str:
             pieces.append(f"+{char}")
         elif char in {"%", "+"}:
             pieces.append(char * 2)
-        elif char in DIRECT_PUNCTUATION or char.isdigit():
+        elif char in DIRECT_PUNCTUATION or "0" <= char <= "9":
             pieces.append(char)
         else:
             for byte in char.encode("utf-8"):
@@ -89,6 +89,10 @@ def decode_b45ish(compact: str) -> str:
             if index + 1 >= len(compact):
                 raise ValueError("Truncated b45 uppercase escape")
             code = compact[index + 1]
+            if code == "+":
+                restored.append("+")
+                index += 2
+                continue
             if not ("A" <= code <= "Z"):
                 raise ValueError(f"Invalid b45 uppercase escape: +{code}")
             restored.append(code)
@@ -110,7 +114,7 @@ def decode_b45ish(compact: str) -> str:
         _flush_utf8_bytes(utf8_bytes, restored)
         if "A" <= char <= "Z":
             restored.append(char.lower())
-        elif char.isdigit() or char in DIRECT_PUNCTUATION:
+        elif "0" <= char <= "9" or char in DIRECT_PUNCTUATION:
             restored.append(char)
         else:
             raise ValueError(f"Invalid b45 character: {char}")
