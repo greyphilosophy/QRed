@@ -24,6 +24,21 @@ describe("browser QRed sealing", () => {
     });
   });
 
+  it("supports the base45ish text mode for compact sealing", async () => {
+    const sealed = await createQRedSeals({
+      content: "compact text mode? yes!",
+      issuer: "QRed Browser Demo",
+      privateKey,
+      publicKey,
+      documentId: "DOC-BROWSER-TEXT-MODE",
+      textMode: "base45ish",
+    });
+
+    const firstSeal = new URL(sealed.seals[0]);
+    expect(firstSeal.hash).toContain("txt=COMPACT+TEXT+MODE*+YES*");
+    expect(sealed.seals.every((seal) => seal.startsWith("https://qred.org/#QRED1?"))).toBe(true);
+  });
+
   it("prefers compression only when it reduces the QR count", async () => {
     const repetitive = "lorem ipsum dolor sit amet ".repeat(200);
     const sealed = await createQRedSeals({

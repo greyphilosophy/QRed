@@ -37,7 +37,7 @@ These scenarios describe the Windows 11 demo flow for QRed using a local FastAPI
 **Given** the verifier has collected all payload QR seal strings for one document
 **And** the issuer public key is available from a trusted registry or demo input
 **When** the recipient clicks **Verify Document**
-**Then** the verifier reconstructs the compressed signed payload
+**And** the verifier reconstructs the chosen signed payload format
 **And** submits the collected payload seals and issuer public key to the verification API
 **And** verifies the Ed25519 signature over the original canonical document text
 **And** displays the verification status, original document text, document ID, timestamp, and signature issuer.

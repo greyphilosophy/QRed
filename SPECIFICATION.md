@@ -23,9 +23,9 @@ The payload seals contain the signed document data required to reconstruct and v
 1. Source document is provided.
 2. A canonical text representation is produced.
 3. The canonical text is digitally signed using Ed25519.
-4. The signed payload is compressed using gzip.
-5. The compressed payload is divided into fixed-size chunks.
-6. Chunks are encoded into machine-readable seals.
+4. Implementations SHALL compare the QR count required for plaintext payloads against the QR count required for compressed payloads.
+5. Implementations SHALL choose the smaller QR count.
+6. The chosen payload form is divided into chunks and encoded into machine-readable seals.
 7. The bootstrap seal and payload seals are placed on the document.
 
 ---
@@ -37,7 +37,7 @@ The payload seals contain the signed document data required to reconstruct and v
 3. Verification application scans payload seals.
 4. Payload is reconstructed from all chunks.
 5. Payload integrity is validated (all chunks present).
-6. Compressed payload is decompressed.
+6. If the payload is compressed, it is decompressed.
 7. Digital signature is verified using the issuer's public key.
 8. Certified contents are displayed.
 9. Verification result is reported.
@@ -93,7 +93,12 @@ The reference implementation encodes the payload as a JSON object:
 }
 ```
 
-The JSON is serialized with sorted keys and compact separators, then gzip-compressed and base64-encoded.
+The reference implementation stores the signed payload as JSON with sorted keys and compact separators, then selects the smaller QR count between:
+
+- a plaintext `QRED1?...` fragment URL that carries the canonical text directly, and
+- a legacy compressed `QRED1|...` seal format that gzip-compresses and base64-encodes the payload.
+
+Plaintext is the default when it is not worse than compression.
 
 ---
 
@@ -117,9 +122,9 @@ The issuer registry validates key_id on registration: the caller-supplied key_id
 
 Payloads exceeding the capacity of a single seal SHALL be divided into chunks.
 
-The reference implementation splits the compressed base64 payload into fixed-size data chunks (200 bytes each).
+When compression wins, the reference implementation splits the compressed base64 payload into fixed-size data chunks (200 bytes each).
 
-Each QRed chunk is encoded as a pipe-delimited string:
+Compressed QRed chunks are encoded as a pipe-delimited string:
 
 ```
 QRED1|DOC-ABC123DEF456|0|3|<base64_gzip_data>

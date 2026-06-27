@@ -14,6 +14,7 @@ class SealRequest(BaseModel):
     private_key: str = Field(..., min_length=1, description="Issuer's Ed25519 private key")
     public_key: str = Field(..., min_length=1, description="Issuer's Ed25519 public key")
     document_id: str = Field("", description="Optional document ID")
+    text_mode: str = Field("plaintext", description="Document text encoding mode")
     bootstrap_url: str = Field(
         DEFAULT_BOOTSTRAP_URL,
         description="Bootstrap URL for production verifier web app",
@@ -48,6 +49,7 @@ def generate_seals(request: SealRequest) -> SealResponse:
         public_key=request.public_key,
         document_id=request.document_id or None,
         bootstrap_url=request.bootstrap_url,
+        text_mode=request.text_mode,
     )
     return SealResponse(
         document_id=result.document_id,

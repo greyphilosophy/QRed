@@ -43,6 +43,19 @@ def canonicalize_text(text: str) -> str:
     return "\n".join(collapsed)
 
 
+def compactify_text(text: str) -> str:
+    """Apply the lossy compact text transform used for base45ish mode."""
+    compacted = []
+    for char in text:
+        if "a" <= char <= "z":
+            compacted.append(char.upper())
+        elif char.isupper() or char.isdigit() or char.isspace() or char == "*":
+            compacted.append(char)
+        else:
+            compacted.append("*")
+    return "".join(compacted)
+
+
 def compress_payload(payload_json: str) -> str:
     """Compress a JSON payload and return a base64-encoded string."""
     compressed = gzip.compress(payload_json.encode("utf-8"))
@@ -152,6 +165,7 @@ def create_seals(
     public_key: str,
     document_id: Optional[str] = None,
     bootstrap_url: str = DEFAULT_BOOTSTRAP_URL,
+    text_mode: str = "plaintext",
 ) -> SealGenerationResult:
     """Create QRed seals for a document.
 
@@ -162,8 +176,10 @@ def create_seals(
     # Compute key_id from public key
     key_id = compute_key_id(public_key)
 
-    # Canonicalize
+    # Canonicalize and optionally compactify the sealed document text.
     canonical = canonicalize_text(document_text)
+    if text_mode == "base45ish":
+        canonical = compactify_text(canonical)
 
     # Create document ID
     if not document_id:

@@ -22,6 +22,20 @@ function bytesToHex(bytes) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function compactifyText(text) {
+  let output = "";
+  for (const char of text) {
+    if (char >= "a" && char <= "z") {
+      output += char.toUpperCase();
+    } else if (char === char.toUpperCase() && /[A-Z0-9\s*]/.test(char)) {
+      output += char;
+    } else {
+      output += "*";
+    }
+  }
+  return output;
+}
+
 function fragmentBase(bootstrapUrl) {
   const base = bootstrapUrl || DEFAULT_BOOTSTRAP_URL;
   return base.includes("#") ? base.slice(0, base.indexOf("#")) : base;
@@ -126,13 +140,15 @@ export async function createQRedSeals({
   publicKey,
   documentId = generateDocumentId(),
   bootstrapUrl = DEFAULT_BOOTSTRAP_URL,
+  textMode = "plaintext",
 }) {
   const canonical = canonicalizeText(content);
-  const signature = await signEd25519(new TextEncoder().encode(canonical), decodeBase64Url(privateKey));
+  const sealText = textMode === "base45ish" ? compactifyText(canonical) : canonical;
+  const signature = await signEd25519(new TextEncoder().encode(sealText), decodeBase64Url(privateKey));
   const keyId = await computeKeyId(publicKey);
   const payload = {
     algorithm: "Ed25519",
-    content: canonical,
+    content: sealText,
     document_id: documentId,
     issuer,
     key_id: keyId,
@@ -141,7 +157,7 @@ export async function createQRedSeals({
     version: "1",
   };
   const payloadJson = JSON.stringify(payload, Object.keys(payload).sort());
-  const plaintextChunks = splitTextForQrUrls(canonical, payload, bootstrapUrl);
+  const plaintextChunks = splitTextForQrUrls(sealText, payload, bootstrapUrl);
   const compressedSeals = createLegacyQRedSeals(payload, documentId);
   const useCompressed = compressedSeals.length < plaintextChunks.length;
   const seals = useCompressed
