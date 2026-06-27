@@ -6,11 +6,13 @@ import json
 from collections.abc import Callable
 
 from backend.crypto import verify as crypto_verify
-from backend.services.text_recipes import decode_simple_english
+from backend.services.text_recipes import decode_b45ish
 
 RECIPE_DECODERS = {
-    "recipe1": decode_simple_english,
-    "simple_english": decode_simple_english,
+    "b45": decode_b45ish,
+    "base45ish": decode_b45ish,
+    "recipe1": decode_b45ish,
+    "simple_english": decode_b45ish,
 }
 
 
@@ -121,7 +123,7 @@ def reconstruct_and_verify(
         ctx["chunks"][decoded["chunk_number"]] = decoded["data"]
         if decoded.get("plaintext"):
             ctx["plaintext"] = True
-            for key in ("algorithm", "issuer", "key_id", "signature", "timestamp", "version"):
+            for key in ("recipe", "algorithm", "issuer", "key_id", "signature", "timestamp", "version"):
                 if decoded.get(key):
                     ctx["metadata"][key] = decoded[key]
 
@@ -184,7 +186,7 @@ def reconstruct_and_verify(
         except Exception as e:
             return {
                 "status": "ERROR",
-                "error_message": f"Recipe 1 decoding failed: {e}",
+                "error_message": f"b45 decoding failed: {e}",
             }
     signature = payload.get("signature", "")
     issuer = payload.get("issuer", "")

@@ -138,19 +138,27 @@ function selectCandidate(candidates, preferred = "automatic") {
   const selectable = candidates.filter((candidate) => candidate.reversible);
   if (selectable.length === 0) return candidates[0];
 
+  const aliases = {
+    base45ish: "b45",
+    b45: "b45",
+    recipe1: "b45",
+    simple_english: "b45",
+  };
+  const normalizedPreferred = aliases[preferred] || preferred;
+
+  const preferredCandidate = candidates.find((candidate) => candidate.encoding === normalizedPreferred || candidate.recipe === normalizedPreferred);
+  if (preferredCandidate && preferredCandidate.reversible) return preferredCandidate;
+
   if (preferred === "plaintext") {
     return candidates.find((candidate) => candidate.encoding === "plaintext");
-  }
-  if (preferred === "recipe1") {
-    return candidates.find((candidate) => candidate.encoding === "recipe1" && candidate.reversible)
-      || candidates.find((candidate) => candidate.encoding === "plaintext");
   }
   if (preferred === "legacy_compression") {
     return candidates.find((candidate) => candidate.encoding === "compressed");
   }
 
-  const rank = { plaintext: 0, recipe1: 1, compressed: 2 };
-  return selectable.slice().sort((a, b) => (a.qr_count - b.qr_count) || (rank[a.encoding] - rank[b.encoding]))[0];
+  return selectable
+    .map((candidate, index) => ({ candidate, index }))
+    .sort((a, b) => (a.candidate.qr_count - b.candidate.qr_count) || (a.index - b.index))[0].candidate;
 }
 
 export async function createQRedSeals({
@@ -182,7 +190,7 @@ export async function createQRedSeals({
   const plaintextReport = candidateReport("plaintext", plaintextUrls.length, true, []);
 
   const recipeResult = validateSimpleEnglish(canonical);
-  const recipeReport = candidateReport("recipe1", 0, recipeResult.reversible, recipeResult.diagnostics, recipeResult.recipe_id);
+  const recipeReport = candidateReport("b45", 0, recipeResult.reversible, recipeResult.diagnostics, recipeResult.recipe_id);
   let recipeUrls = [];
   let recipeJson = "";
   if (recipeResult.reversible) {
@@ -200,7 +208,7 @@ export async function createQRedSeals({
     { encoding: "compressed", strings: compressedSeals, payload_json: plaintextJson, recipe: "legacy", ...compressedReport },
   ];
   if (recipeResult.reversible) {
-    candidates.splice(1, 0, { encoding: "recipe1", strings: recipeUrls, payload_json: recipeJson, recipe: recipeResult.recipe_id, ...recipeReport });
+    candidates.splice(1, 0, { encoding: "b45", strings: recipeUrls, payload_json: recipeJson, recipe: recipeResult.recipe_id, ...recipeReport });
   }
   const selected = selectCandidate(candidates, encodingStrategy);
   const seals = selected.strings;

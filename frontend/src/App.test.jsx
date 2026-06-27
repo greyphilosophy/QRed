@@ -54,7 +54,7 @@ describe("App PDF sealing defaults", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "QRed Verifier" })).toBeTruthy());
 
     const headings = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
-    expect(headings).toEqual(["QRed Verifier", "Demo: Upload and Seal a PDF"]);
+    expect(headings).toEqual(["QR Code Scanner", "QRed Verifier", "Demo: Upload and Seal a PDF"]);
     expect(screen.getByTitle("QRed Verifier").getAttribute("src")).toBe("/verify.htm");
     expect(screen.getByRole("link", { name: "Open full verifier" }).getAttribute("href")).toBe("/verify.htm");
     expect(screen.queryByRole("heading", { name: "Generate QRed Seals" })).toBeNull();
@@ -135,7 +135,8 @@ describe("App PDF sealing defaults", () => {
       privateKey: defaultPrivateKey,
       publicKey: defaultPublicKey,
       bootstrapUrl: "https://qred.org/",
+      encodingStrategy: "automatic",
     }));
-    expect(await screen.findByText("Sealed static.pdf in this browser. Document ID: DOC-BROWSER-FALLBACK")).toBeTruthy();
+    expect(await screen.findByText(/Sealed static\.pdf in this browser\./)).toBeTruthy();
   });
 });

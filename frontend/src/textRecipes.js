@@ -1,146 +1,118 @@
-const TOKEN_RE = /\s+|[A-Za-z]+|[0-9]+|\*|[^A-Za-z0-9\s]/g;
+const B45_RECIPE_ID = "b45";
+const DIRECT_PUNCTUATION = new Set([".", "-", "/", ":", "$", " " ]);
+const HEX_DIGITS = new Set("0123456789ABCDEF");
 
-const WORD_TO_CODE = {
-  the: "a",
-  and: "b",
-  to: "c",
-  of: "d",
-  in: "e",
-  for: "f",
-  is: "g",
-  on: "h",
-  with: "i",
-  that: "j",
-  this: "k",
-  it: "l",
-  as: "m",
-  are: "n",
-  be: "o",
-  at: "p",
-  by: "q",
-  from: "r",
-  or: "s",
-  not: "t",
-  you: "u",
-  we: "v",
-  can: "w",
-  if: "x",
-  one: "y",
-  all: "z",
-  document: "0",
-  page: "1",
-  qr: "2",
-  code: "3",
-  text: "4",
-  plain: "5",
-  recipe: "6",
-  automatic: "7",
-  legacy: "8",
-  compression: "9",
-  simple: "A",
-  english: "B",
-  valid: "C",
-  reversible: "D",
-  encoding: "E",
-  strategy: "F",
-  readable: "G",
-  choose: "H",
-  smallest: "I",
-  content: "J",
-  seal: "K",
-  verify: "L",
-  select: "M",
-  word: "N",
-  line: "O",
-  sentence: "P",
-  support: "Q",
-  rejected: "R",
-};
-
-const CODE_TO_WORD = Object.fromEntries(Object.entries(WORD_TO_CODE).map(([word, code]) => [code, word]));
-const APPROVED_ACRONYMS = new Set(["API", "HTTP", "HTTPS", "ID", "JSON", "NASA", "PDF", "PNG", "QR", "QRED", "SHA", "URL", "XML"]);
-const SIMPLE_PUNCTUATION = new Set([".", ",", "!", "?", ";", ":", "-", "(", ")", "[", "]", "{", "}", "'", '"', "/", "\\"]);
-
-function lineNumber(text, index) {
-  return text.slice(0, index).split("\n").length;
+function utf8BytesToString(bytes) {
+  return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes));
 }
 
-function describeWordFailure(token) {
-  if (token === token.toUpperCase()) return "Unknown acronym.";
-  if (token === token.toLowerCase() || token[0] === token[0]?.toUpperCase()) return "Unsupported word for Recipe 1.";
-  return "Unsupported mixed-case word.";
-}
-
-function encodeWord(token) {
-  const lower = token.toLowerCase();
-  if (Object.hasOwn(WORD_TO_CODE, lower)) {
-    const code = WORD_TO_CODE[lower];
-    if (token === token.toLowerCase()) return `*${code}`;
-    if (token[0] === token[0].toUpperCase() && token.slice(1) === token.slice(1).toLowerCase()) return `^${code}`;
-    if (token === token.toUpperCase()) return `!${code}`;
-    return { diagnostic: { line: 1, reason: "Unsupported mixed-case word.", original: token, recommendation: "Rewrite the word in plain lowercase, title case, or approved acronym form." } };
+function flushUtf8Bytes(buffer, output) {
+  if (buffer.length) {
+    output.push(utf8BytesToString(buffer));
+    buffer.length = 0;
   }
-  if (token === token.toUpperCase() && APPROVED_ACRONYMS.has(token)) return token;
-  return { diagnostic: { line: 1, reason: describeWordFailure(token), original: token, recommendation: "Add this word to the recipe dictionary, rewrite it as a supported common word, or choose plaintext/legacy compression." } };
 }
 
-export function encodeSimpleEnglish(text) {
-  const diagnostics = [];
+export function encodeB45ish(text) {
   const pieces = [];
-  for (const match of text.matchAll(TOKEN_RE)) {
-    const token = match[0];
-    const line = lineNumber(text, match.index ?? 0);
-    if (token === "*") {
-      diagnostics.push({ line, reason: "Literal '*' is not allowed in Recipe 1.", original: token, recommendation: "Replace '*' with a spelled-out word or use plaintext." });
-      continue;
+  for (const char of text) {
+    if (char >= "a" && char <= "z") {
+      pieces.push(char.toUpperCase());
+    } else if (char >= "A" && char <= "Z") {
+      pieces.push(`+${char}`);
+    } else if (char === "%" || char === "+") {
+      pieces.push(char + char);
+    } else if (char.length === 1 && (char >= "0" && char <= "9" || DIRECT_PUNCTUATION.has(char))) {
+      pieces.push(char);
+    } else {
+      const bytes = new TextEncoder().encode(char);
+      for (const byte of bytes) pieces.push(`%${byte.toString(16).toUpperCase().padStart(2, "0")}`);
     }
-    if (/^\s+$/.test(token)) {
-      pieces.push(token);
-      continue;
-    }
-    if (/^[0-9]+$/.test(token) || (token.length === 1 && SIMPLE_PUNCTUATION.has(token))) {
-      pieces.push(token);
-      continue;
-    }
-    if (/^[A-Za-z]+$/.test(token)) {
-      const encoded = encodeWord(token);
-      if (typeof encoded === "string") {
-        pieces.push(encoded);
-      } else {
-        diagnostics.push({ line, ...encoded.diagnostic });
-      }
-      continue;
-    }
-    diagnostics.push({ line, reason: "Unsupported character sequence for Recipe 1.", original: token, recommendation: "Use only supported English words, digits, spaces, and simple punctuation." });
   }
-  const compact = pieces.join("");
-  const restored = diagnostics.length ? "" : decodeSimpleEnglish(compact);
-  return { compact, restored, diagnostics };
+  return pieces.join("");
 }
 
-export function decodeSimpleEnglish(compact) {
-  let restored = "";
-  for (let index = 0; index < compact.length; index += 1) {
+export function decodeB45ish(compact) {
+  const restored = [];
+  const utf8Bytes = [];
+  for (let index = 0; index < compact.length; ) {
     const char = compact[index];
-    if (char === "*" || char === "^" || char === "!") {
+    if (char === "+") {
+      flushUtf8Bytes(utf8Bytes, restored);
       const code = compact[index + 1];
-      if (!code || !Object.hasOwn(CODE_TO_WORD, code)) {
-        throw new Error(`Unknown Recipe 1 code: ${code || "<truncated>"}`);
+      if (!code || code < "A" || code > "Z") {
+        throw new Error(`Invalid b45 uppercase escape: +${code || "<truncated>"}`);
       }
-      const word = CODE_TO_WORD[code];
-      restored += char === "*" ? word : char === "^" ? word[0].toUpperCase() + word.slice(1) : word.toUpperCase();
-      index += 1;
+      restored.push(code);
+      index += 2;
       continue;
     }
-    restored += char;
+    if (char === "%") {
+      if (compact[index + 1] === "%") {
+        flushUtf8Bytes(utf8Bytes, restored);
+        restored.push("%");
+        index += 2;
+        continue;
+      }
+      if (index + 2 >= compact.length) throw new Error("Truncated b45 byte escape");
+      const hex = compact.slice(index + 1, index + 3);
+      if (!HEX_DIGITS.has(hex[0]) || !HEX_DIGITS.has(hex[1])) {
+        throw new Error(`Invalid b45 byte escape: %${hex}`);
+      }
+      utf8Bytes.push(Number.parseInt(hex, 16));
+      index += 3;
+      continue;
+    }
+
+    flushUtf8Bytes(utf8Bytes, restored);
+    if (char >= "A" && char <= "Z") {
+      restored.push(char.toLowerCase());
+    } else if (char >= "0" && char <= "9" || DIRECT_PUNCTUATION.has(char)) {
+      restored.push(char);
+    } else {
+      throw new Error(`Invalid b45 character: ${char}`);
+    }
+    index += 1;
   }
-  return restored;
+  flushUtf8Bytes(utf8Bytes, restored);
+  return restored.join("");
 }
 
-export function validateSimpleEnglish(original) {
-  const { compact, restored, diagnostics } = encodeSimpleEnglish(original);
-  if (diagnostics.length) {
-    return { recipe_id: "recipe1", reversible: false, compact, restored: "", diagnostics };
+export function validateB45(original) {
+  const compact = encodeB45ish(original);
+  try {
+    const restored = decodeB45ish(compact);
+    const reversible = restored === original;
+    return {
+      recipe_id: B45_RECIPE_ID,
+      reversible,
+      compact,
+      restored,
+      diagnostics: reversible ? [] : [{
+        line: 1,
+        reason: "b45 round-trip did not restore the original text.",
+        original,
+        restored,
+        recommendation: "Use plaintext or legacy compression instead.",
+      }],
+    };
+  } catch (error) {
+    return {
+      recipe_id: B45_RECIPE_ID,
+      reversible: false,
+      compact,
+      restored: "",
+      diagnostics: [{
+        line: 1,
+        reason: `b45 decoding failed: ${error.message}`,
+        original,
+        recommendation: "Use plaintext or legacy compression instead.",
+      }],
+    };
   }
-  return { recipe_id: "recipe1", reversible: restored === original, compact, restored, diagnostics: restored === original ? [] : [{ line: 1, reason: "Recipe 1 round-trip did not restore the original text.", original, restored, recommendation: "Rewrite the document using supported simple-English patterns or use plaintext." }] };
 }
+
+// Compatibility aliases for older call sites.
+export const encodeSimpleEnglish = encodeB45ish;
+export const decodeSimpleEnglish = decodeB45ish;
+export const validateSimpleEnglish = validateB45;
