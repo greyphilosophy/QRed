@@ -73,6 +73,47 @@
       pointer-events: none;
     }
 
+    .ar-qr-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    .ar-qr-box {
+      position: absolute;
+      pointer-events: auto;
+      border: 2px solid transparent;
+      border-radius: 10px;
+      padding: 0.35rem 0.45rem;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: white;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(1px);
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.22);
+      cursor: pointer;
+    }
+
+    .ar-qr-box.valid { background: rgba(16, 185, 129, 0.28); border-color: rgba(34, 197, 94, 0.95); }
+    .ar-qr-box.info { background: rgba(245, 158, 11, 0.28); border-color: rgba(245, 158, 11, 0.95); }
+    .ar-qr-box.invalid { background: rgba(239, 68, 68, 0.28); border-color: rgba(239, 68, 68, 0.95); }
+    .ar-qr-box.selected { outline: 3px solid rgba(255, 255, 255, 0.9); }
+
+    .ar-qr-box .ar-qr-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.25rem;
+      height: 1.25rem;
+      border-radius: 50%;
+      background: rgba(15, 23, 42, 0.35);
+      flex-shrink: 0;
+    }
+
     .viewfinder .scan-line {
       position: absolute;
       left: 5%;
@@ -220,6 +261,17 @@
     .ar-swatch.match { background: rgba(187, 247, 208, 0.75); }
     .ar-swatch.extra { background: rgba(254, 202, 202, 0.75); }
     .ar-swatch.missing { background: rgba(239, 68, 68, 0.9); }
+    .ar-selected {
+      margin-top: 0.75rem;
+      background: var(--bg);
+      border: 1px solid var(--surface-2);
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+      font-size: 0.9rem;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
     .result-status.error { background: rgba(148, 163, 184, 0.2); color: var(--text-dim); }
 
     .result-meta {
@@ -268,12 +320,12 @@
         <div class="scan-line" id="scanLine"></div>
         <div class="placeholder" id="placeholder">
           <div class="icon">&#9679;</div>
-          <div>Tap <strong>Scan QR Seals</strong> to open camera</div>
+          <div>Tap <strong>Scan QR Code</strong> to open camera</div>
         </div>
       </div>
 
       <div class="controls">
-        <button class="btn btn-primary" id="btnScan">Scan QR Seals</button>
+        <button class="btn btn-primary" id="btnScan">Scan QR Code</button>
       </div>
 
       <div class="result-card" style="margin-bottom: 1rem;">
@@ -283,7 +335,7 @@
         <textarea id="manualSealInput" rows="4" placeholder="Paste QRED1 seal strings here, one per line" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;"></textarea>
         <input id="sealFileInput" type="file" accept=".txt,text/plain" style="width:100%; margin-bottom:0.75rem;">
         <label for="pageTextInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Page text read by scanner or pasted for comparison</label>
-        <textarea id="pageTextInput" rows="4" placeholder="Scan QR Seals to OCR the page, or paste document text here" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;"></textarea>
+        <textarea id="pageTextInput" rows="4" placeholder="Scan QR Code to OCR the page, or paste document text here" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;"></textarea>
         <div class="controls" style="margin-bottom:0;">
           <button class="btn btn-secondary" id="btnAddManual">Add Manual Seals</button>
           <button class="btn btn-primary" id="btnVerifyManual">Verify Collected Seals</button>
@@ -309,12 +361,14 @@
         <div class="viewfinder">
           <video id="arVideo" playsinline autoplay></video>
           <canvas id="arCanvas"></canvas>
+          <div class="ar-qr-layer" id="arQrLayer"></div>
         </div>
         <div class="ar-legend">
           <span><i class="ar-swatch match"></i>QR text found on page</span>
           <span><i class="ar-swatch extra"></i>Page text not in QR</span>
           <span><i class="ar-swatch missing"></i>QR text missing from page</span>
         </div>
+        <div class="ar-selected" id="arSelected">Tap a QR box to see its data.</div>
       </div>
       <div class="result-card">
         <div class="result-status" id="resultStatus"></div>
@@ -355,6 +409,9 @@
       sealsByDocument: {},
       scannedSeals: [],
       seenSeals: new Set(),
+      arItems: [],
+      arItemsByRaw: new Map(),
+      arSelectedRaw: "",
       isScanning: false,
       stream: null,
       animFrameId: null,
@@ -363,6 +420,9 @@
       verifiedContent: "",
       arStream: null,
       arTimerId: null,
+      arQrFrameId: null,
+      arQrBusy: false,
+      arQrLastScanAt: 0,
       arBusy: false,
       arErrorShown: false,
       defaultKeysPromise: null,
@@ -373,6 +433,8 @@
     var btnScan = document.getElementById("btnScan");
     var btnNewScan = document.getElementById("btnNewScan");
     var btnStartAr = document.getElementById("btnStartAr");
+    var arSelected = document.getElementById("arSelected");
+    var arQrLayer = document.getElementById("arQrLayer");
     var statusBar = document.getElementById("statusBar");
     var statusText = document.getElementById("statusText");
     var sealList = document.getElementById("sealList");
@@ -388,7 +450,7 @@
     btnScan.onclick = function() {
       if (state.isScanning) {
         stopScanning();
-        btnScan.textContent = "Scan QR Seals";
+        btnScan.textContent = "Scan QR Code";
       } else {
         startScanning();
         btnScan.textContent = "Stop";
@@ -400,12 +462,17 @@
       state.scannedSeals = [];
       stopArOverlay();
       state.seenSeals = new Set();
+      state.arItems = [];
+      state.arItemsByRaw = new Map();
+      state.arSelectedRaw = "";
+      if (arSelected) arSelected.textContent = "Tap a QR box to see its data.";
+      renderArQrLayer();
       sealList.innerHTML = "";
       sealList.classList.remove("visible");
       progressContainer.style.display = "none";
       document.getElementById("resultView").classList.remove("visible");
       document.getElementById("scanMode").style.display = "block";
-      btnScan.textContent = "Scan QR Seals";
+      btnScan.textContent = "Scan QR Code";
       document.getElementById("placeholder").style.display = "flex";
       document.getElementById("cameraVideo").style.display = "none";
       document.getElementById("scanCanvas").style.display = "none";
@@ -505,6 +572,200 @@
       el.style.display = "block";
     }
 
+    function getQrBounds(location, frameWidth, frameHeight) {
+      if (!location || !frameWidth || !frameHeight) return null;
+      var corners = [
+        location.topLeftCorner,
+        location.topRightCorner,
+        location.bottomLeftCorner,
+        location.bottomRightCorner,
+      ].filter(Boolean);
+      if (corners.length === 0) return null;
+      var xs = corners.map(function(point) { return point.x; });
+      var ys = corners.map(function(point) { return point.y; });
+      var minX = Math.max(0, Math.min.apply(Math, xs));
+      var minY = Math.max(0, Math.min.apply(Math, ys));
+      var maxX = Math.min(frameWidth, Math.max.apply(Math, xs));
+      var maxY = Math.min(frameHeight, Math.max.apply(Math, ys));
+      return {
+        left: (minX / frameWidth) * 100,
+        top: (minY / frameHeight) * 100,
+        width: Math.max(1, ((maxX - minX) / frameWidth) * 100),
+        height: Math.max(1, ((maxY - minY) / frameHeight) * 100),
+      };
+    }
+
+    function arItemTitle(item) {
+      if (item.kind === "seal") {
+        return "Seal " + item.documentId + " · chunk " + (item.chunkNumber + 1) + "/" + item.totalChunks;
+      }
+      return "QR info";
+    }
+
+    function arItemIcon(status) {
+      if (status === "valid") return "✓";
+      if (status === "invalid") return "✕";
+      return "i";
+    }
+
+    function arItemStatusLabel(item) {
+      if (item.kind === "seal") {
+        if (item.status === "valid") return "Valid seal";
+        if (item.status === "invalid") return "Invalid seal";
+        return "Seal detected";
+      }
+      return "QR content";
+    }
+
+    function arItemDetails(item) {
+      var lines = [];
+      lines.push(arItemStatusLabel(item));
+      if (item.kind === "seal") {
+        lines.push("Document ID: " + item.documentId);
+        lines.push("Chunk: " + (item.chunkNumber + 1) + " / " + item.totalChunks);
+        if (item.verificationStatus) {
+          lines.push("Verification: " + item.verificationStatus);
+        }
+        if (item.verificationMessage) {
+          lines.push("Note: " + item.verificationMessage);
+        }
+      } else {
+        lines.push("Non-QRed QR code");
+      }
+      lines.push("");
+      lines.push("Data:");
+      lines.push(item.raw);
+      return lines.join("\n");
+    }
+
+    function renderArSelectedItem(item) {
+      if (!arSelected) return;
+      state.arSelectedRaw = item ? item.raw : "";
+      arSelected.textContent = item ? arItemDetails(item) : "Tap a QR box to see its data.";
+      renderArQrLayer();
+    }
+
+    function renderArQrLayer() {
+      if (!arQrLayer) return;
+      arQrLayer.innerHTML = "";
+      state.arItems.forEach(function(item) {
+        if (!item.bbox) return;
+        var button = document.createElement("button");
+        button.type = "button";
+        button.className = "ar-qr-box " + item.status + (item.raw === state.arSelectedRaw ? " selected" : "");
+        button.style.left = item.bbox.left + "%";
+        button.style.top = item.bbox.top + "%";
+        button.style.width = item.bbox.width + "%";
+        button.style.height = item.bbox.height + "%";
+        button.title = arItemDetails(item);
+        button.innerHTML = "<span class='ar-qr-icon'>" + arItemIcon(item.status) + "</span><span>" + arItemTitle(item) + "</span>";
+        button.onclick = function() {
+          renderArSelectedItem(item);
+        };
+        arQrLayer.appendChild(button);
+      });
+    }
+
+    function registerSealInSession(sealStr, decoded) {
+      state.scannedSeals.push(sealStr);
+      var docId = decoded.documentId;
+      if (!state.sealsByDocument[docId]) {
+        state.sealsByDocument[docId] = { chunks: {}, total: decoded.totalChunks };
+      }
+      state.sealsByDocument[docId].chunks[decoded.chunkNumber] = decoded.data;
+      updateSealList();
+      return state.sealsByDocument[docId];
+    }
+
+    async function refreshArSealStatus(docId) {
+      var seals = state.arItems.filter(function(item) {
+        return item.kind === "seal" && item.documentId === docId;
+      }).map(function(item) { return item.raw; });
+      if (seals.length === 0) return;
+
+      try {
+        var publicKey = await loadMatchingDefaultPublicKey(seals);
+        var result = await verifyQRedSeals(seals, publicKey);
+        var status = result.status === "VALID" ? "valid" : result.status === "INVALID" ? "invalid" : "info";
+        var message = result.error_message || (result.status === "VALID" ? "Verified successfully." : result.status === "INCOMPLETE" ? "Waiting for the remaining chunks." : "");
+
+        state.arItems.forEach(function(item) {
+          if (item.kind === "seal" && item.documentId === docId) {
+            item.status = status;
+            item.verificationStatus = result.status || "INFO";
+            item.verificationMessage = message;
+          }
+        });
+
+        if (state.arSelectedRaw) {
+          var selected = state.arItemsByRaw.get(state.arSelectedRaw);
+          if (selected) renderArSelectedItem(selected);
+        } else {
+          renderArQrLayer();
+        }
+      } catch (error) {
+        state.arItems.forEach(function(item) {
+          if (item.kind === "seal" && item.documentId === docId) {
+            item.status = "info";
+            item.verificationStatus = "ERROR";
+            item.verificationMessage = error.message;
+          }
+        });
+        renderArQrLayer();
+      }
+    }
+
+    function processArQrDetection(code, frameWidth, frameHeight) {
+      if (!code || !code.data) return;
+
+      var raw = code.data;
+      if (state.arItemsByRaw.has(raw)) {
+        var existing = state.arItemsByRaw.get(raw);
+        existing.bbox = getQrBounds(code.location, frameWidth || existing.frameWidth, frameHeight || existing.frameHeight) || existing.bbox;
+        existing.lastSeen = Date.now();
+        renderArQrLayer();
+        return;
+      }
+
+      var bounds = getQrBounds(code.location, frameWidth, frameHeight);
+      var decoded = decodeSeal(raw);
+      if (!decoded) {
+        var infoItem = {
+          raw: raw,
+          kind: "info",
+          status: "info",
+          bbox: bounds,
+          frameWidth: frameWidth,
+          frameHeight: frameHeight,
+          lastSeen: Date.now(),
+        };
+        state.arItems.push(infoItem);
+        state.arItemsByRaw.set(raw, infoItem);
+        renderArQrLayer();
+        return;
+      }
+
+      var sealItem = {
+        raw: raw,
+        kind: "seal",
+        status: "info",
+        bbox: bounds,
+        frameWidth: frameWidth,
+        frameHeight: frameHeight,
+        documentId: decoded.documentId,
+        chunkNumber: decoded.chunkNumber,
+        totalChunks: decoded.totalChunks,
+        verificationStatus: "INCOMPLETE",
+        verificationMessage: "Waiting for verification.",
+        lastSeen: Date.now(),
+      };
+      state.arItems.push(sealItem);
+      state.arItemsByRaw.set(raw, sealItem);
+      registerSealInSession(raw, decoded);
+      renderArSelectedItem(sealItem);
+      refreshArSealStatus(decoded.documentId);
+    }
+
     function startScanning() {
       var video = document.getElementById("cameraVideo");
       var canvas = document.getElementById("scanCanvas");
@@ -569,21 +830,14 @@
       var decoded = decodeSeal(sealStr);
       if (!decoded) {
         stopScanning();
-        btnScan.textContent = "Scan QR Seals";
+        btnScan.textContent = "Scan QR Code";
         showResult("QR_CONTENT", { content: sealStr });
         return;
       }
 
-      state.scannedSeals.push(sealStr);
+      registerSealInSession(sealStr, decoded);
 
       var docId = decoded.documentId;
-      if (!state.sealsByDocument[docId]) {
-        state.sealsByDocument[docId] = { chunks: {}, total: decoded.totalChunks };
-      }
-      state.sealsByDocument[docId].chunks[decoded.chunkNumber] = decoded.data;
-
-      updateSealList();
-
       var docData = state.sealsByDocument[docId];
       var collected = Object.keys(docData.chunks).length;
       var pct = Math.min(100, (collected / docData.total) * 100);
@@ -593,7 +847,7 @@
 
       if (collected >= docData.total) {
         stopScanning();
-        btnScan.textContent = "Scan QR Seals";
+        btnScan.textContent = "Scan QR Code";
         reconstructAndShow(docId, { capturePageText: false });
       }
     }
@@ -775,11 +1029,13 @@
       }).then(function(mediaStream) {
         state.arStream = mediaStream;
         state.arErrorShown = false;
+        state.arQrLastScanAt = 0;
         video.srcObject = mediaStream;
         return video.play();
       }).then(function() {
         canvas.width = video.videoWidth || 1600;
         canvas.height = video.videoHeight || 1200;
+        runArQrFrame();
         runArOcrFrame();
         state.arTimerId = window.setInterval(runArOcrFrame, 3500);
       }).catch(function(err) {
@@ -793,16 +1049,50 @@
         window.clearInterval(state.arTimerId);
         state.arTimerId = null;
       }
+      if (state.arQrFrameId) {
+        cancelAnimationFrame(state.arQrFrameId);
+        state.arQrFrameId = null;
+      }
       if (state.arStream) {
         state.arStream.getTracks().forEach(function(track) { track.stop(); });
         state.arStream = null;
       }
       state.arBusy = false;
+      state.arQrBusy = false;
       btnStartAr.textContent = "Start AR Overlay";
       var arCard = document.getElementById("arCard");
       if (arCard) arCard.style.display = "none";
       var arCanvas = document.getElementById("arCanvas");
       if (arCanvas) arCanvas.getContext("2d").clearRect(0, 0, arCanvas.width, arCanvas.height);
+      if (arQrLayer) arQrLayer.innerHTML = "";
+    }
+
+    function runArQrFrame() {
+      if (state.arQrBusy || !state.arStream) return;
+      var video = document.getElementById("arVideo");
+      if (!video.videoWidth || !video.videoHeight) {
+        state.arQrFrameId = requestAnimationFrame(runArQrFrame);
+        return;
+      }
+      if (Date.now() - state.arQrLastScanAt < 250) {
+        state.arQrFrameId = requestAnimationFrame(runArQrFrame);
+        return;
+      }
+      state.arQrLastScanAt = Date.now();
+      state.arQrBusy = true;
+      var capture = document.createElement("canvas");
+      capture.width = video.videoWidth;
+      capture.height = video.videoHeight;
+      capture.getContext("2d").drawImage(video, 0, 0, capture.width, capture.height);
+      var imageData = capture.getContext("2d").getImageData(0, 0, capture.width, capture.height);
+      var code = jsQR(imageData.data, capture.width, capture.height);
+      if (code && code.data) {
+        processArQrDetection(code, capture.width, capture.height);
+      }
+      state.arQrBusy = false;
+      if (state.arStream) {
+        state.arQrFrameId = requestAnimationFrame(runArQrFrame);
+      }
     }
 
     function runArOcrFrame() {
@@ -817,6 +1107,10 @@
       capture.width = video.videoWidth;
       capture.height = video.videoHeight;
       capture.getContext("2d").drawImage(video, 0, 0, capture.width, capture.height);
+      var qrCode = jsQR(capture.getContext("2d").getImageData(0, 0, capture.width, capture.height).data, capture.width, capture.height);
+      if (qrCode && qrCode.data) {
+        processArQrDetection(qrCode, capture.width, capture.height);
+      }
       import("tesseract.js").then(function(module) {
         var workerApi = module.default || module;
         return workerApi.recognize(capture, "eng");
