@@ -369,22 +369,29 @@ def test_fr4_recipe1_reversible_on_supported_simple_english():
     assert result.compact
 
 
-def test_fr4_recipe1_mode_is_accepted_by_seal_generation():
-    """Given Recipe 1 mode, when generating seals, then it is accepted as a sealing parameter"""
+def test_fr4_b45_roundtrip_preserves_escapes():
+    """Given representative content, when using b45, then escapes preserve every byte exactly"""
+    original = "Hello, Alfred!\nhttps://qred.org/#QRED1\né"
+    result = validate_simple_english(original)
+    assert result.reversible is True
+    assert result.restored == original
+    assert "%23" in result.compact
+    assert "%0A" in result.compact
+    assert "%C3%A9" in result.compact
+
+
+def test_fr4_b45_mode_is_accepted_by_seal_generation():
+    """Given b45 mode, when generating seals, then it is accepted as a sealing parameter"""
     result = create_seals(
         document_text="the document and the page",
         issuer=TEST_ISSUER,
         private_key=TEST_PRIVATE_KEY,
         public_key=TEST_PUBLIC_KEY,
-        encoding_strategy="simple_english",
+        encoding_strategy="b45",
     )
-    assert result.selected_recipe == "simple_english"
-    assert result.encoding in {"simple_english", "plaintext", "compressed"}
+    assert result.selected_recipe == "b45"
+    assert result.encoding in {"b45", "plaintext", "compressed"}
 
-
-# ===========================
-# FR5: Bootstrap Seal
-# ===========================
 
 
 def test_fr5_bootstrap_seal_present():

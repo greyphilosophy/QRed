@@ -1,93 +1,18 @@
 """Reversible text recipe helpers for QRed seal generation.
 
-Recipe 1 is intentionally conservative: it only accepts simple English text
-made of supported words, approved acronyms, digits, whitespace, and common
-punctuation. Supported words are encoded into compact two-character escape
-sequences, and the recipe is only considered valid when the round-trip is exact.
+The b45 recipe (Base45ish) is fully reversible and deterministic. It preserves
+human-readable ASCII where possible, and uses short escapes for uppercase letters,
+percent signs, plus signs, and UTF-8 byte escapes for everything else.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
-import re
-from typing import Iterable
 
-TOKEN_RE = re.compile(r"\s+|[A-Za-z]+|[0-9]+|\*|[^A-Za-z0-9\s]")
-
-# 36 compact codes for the most common English words in our narrow subset.
-WORD_TO_CODE: dict[str, str] = {
-    "the": "a",
-    "and": "b",
-    "to": "c",
-    "of": "d",
-    "in": "e",
-    "for": "f",
-    "is": "g",
-    "on": "h",
-    "with": "i",
-    "that": "j",
-    "this": "k",
-    "it": "l",
-    "as": "m",
-    "are": "n",
-    "be": "o",
-    "at": "p",
-    "by": "q",
-    "from": "r",
-    "or": "s",
-    "not": "t",
-    "you": "u",
-    "we": "v",
-    "can": "w",
-    "if": "x",
-    "one": "y",
-    "all": "z",
-    "document": "0",
-    "page": "1",
-    "qr": "2",
-    "code": "3",
-    "text": "4",
-    "plain": "5",
-    "recipe": "6",
-    "automatic": "7",
-    "legacy": "8",
-    "compression": "9",
-    "simple": "A",
-    "english": "B",
-    "valid": "C",
-    "reversible": "D",
-    "encoding": "E",
-    "strategy": "F",
-    "readable": "G",
-    "choose": "H",
-    "smallest": "I",
-    "content": "J",
-    "seal": "K",
-    "verify": "L",
-    "select": "M",
-    "word": "N",
-    "line": "O",
-    "sentence": "P",
-    "support": "Q",
-    "rejected": "R",
-}
-
-CODE_TO_WORD = {code: word for word, code in WORD_TO_CODE.items()}
-APPROVED_ACRONYMS = {
-    "API",
-    "HTTP",
-    "HTTPS",
-    "ID",
-    "JSON",
-    "NASA",
-    "PDF",
-    "PNG",
-    "QR",
-    "QRED",
-    "SHA",
-    "URL",
-    "XML",
-}
+B45_RECIPE_ID = "b45"
+B45_LONG_RECIPE_ID = "base45ish"
+DIRECT_PUNCTUATION = {".", "-", "/", ":", "$", " "}
+HEX_DIGITS = set("0123456789ABCDEF")
 
 
 @dataclass(frozen=True)
@@ -120,154 +45,95 @@ class RecipeValidationResult:
         }
 
 
-def _line_number(text: str, index: int) -> int:
-    return text.count("\n", 0, index) + 1
+def _flush_utf8_bytes(buffer: bytearray, output: list[str]) -> None:
+    if buffer:
+        output.append(buffer.decode("utf-8"))
+        buffer.clear()
 
 
-def _describe_word_failure(token: str) -> str:
-    if token.isupper():
-        return "Unknown acronym."
-    if token.islower() or token.istitle():
-        return "Unsupported word for Recipe 1."
-    return "Unsupported mixed-case word."
-
-
-def _encode_word(token: str) -> tuple[str | None, RecipeDiagnostic | None]:
-    lower = token.lower()
-    if lower in WORD_TO_CODE:
-        code = WORD_TO_CODE[lower]
-        if token.islower():
-            return f"*{code}", None
-        if token.istitle():
-            return f"^{code}", None
-        if token.isupper():
-            return f"!{code}", None
-        return None, RecipeDiagnostic(
-            line=1,
-            reason="Unsupported mixed-case word.",
-            original=token,
-            recommendation="Rewrite the word in plain lowercase, title case, or approved acronym form.",
-        )
-
-    if token.isupper() and token in APPROVED_ACRONYMS:
-        return token, None
-
-    return None, RecipeDiagnostic(
-        line=1,
-        reason=_describe_word_failure(token),
-        original=token,
-        recommendation=(
-            "Add this word to the recipe dictionary, rewrite it as a supported common word, "
-            "or choose plaintext/legacy compression."
-        ),
-    )
-
-
-def encode_simple_english(text: str) -> tuple[str, list[RecipeDiagnostic]]:
-    diagnostics: list[RecipeDiagnostic] = []
+def encode_b45ish(text: str) -> str:
     pieces: list[str] = []
-
-    for match in TOKEN_RE.finditer(text):
-        token = match.group(0)
-        line = _line_number(text, match.start())
-
-        if token == "*":
-            diagnostics.append(
-                RecipeDiagnostic(
-                    line=line,
-                    reason="Literal '*' is not allowed in Recipe 1.",
-                    original=token,
-                    recommendation="Replace '*' with a spelled-out word or use plaintext.",
-                )
-            )
-            continue
-
-        if token.isspace():
-            pieces.append(token)
-            continue
-
-        if token.isdigit() or re.fullmatch(r"[.,!?;:\-()\[\]{}'\"/\\]", token):
-            pieces.append(token)
-            continue
-
-        if token.isalpha():
-            encoded, diagnostic = _encode_word(token)
-            if encoded is None:
-                assert diagnostic is not None
-                diagnostics.append(
-                    RecipeDiagnostic(
-                        line=line,
-                        reason=diagnostic.reason,
-                        original=diagnostic.original,
-                        recommendation=diagnostic.recommendation,
-                    )
-                )
-            else:
-                pieces.append(encoded)
-            continue
-
-        diagnostics.append(
-            RecipeDiagnostic(
-                line=line,
-                reason="Unsupported character sequence for Recipe 1.",
-                original=token,
-                recommendation="Use only supported English words, digits, spaces, and simple punctuation.",
-            )
-        )
-
-    compact = "".join(pieces)
-    restored = decode_simple_english(compact) if not diagnostics else ""
-    return compact, diagnostics
+    for char in text:
+        if "a" <= char <= "z":
+            pieces.append(char.upper())
+        elif "A" <= char <= "Z":
+            pieces.append(f"+{char}")
+        elif char in {"%", "+"}:
+            pieces.append(char * 2)
+        elif char in DIRECT_PUNCTUATION or char.isdigit():
+            pieces.append(char)
+        else:
+            for byte in char.encode("utf-8"):
+                pieces.append(f"%{byte:02X}")
+    return "".join(pieces)
 
 
-def decode_simple_english(compact: str) -> str:
+def _decode_byte_escape(compact: str, index: int) -> tuple[int, int]:
+    if index + 2 >= len(compact):
+        raise ValueError("Truncated b45 byte escape")
+    hex_pair = compact[index + 1 : index + 3]
+    if hex_pair[0] not in HEX_DIGITS or hex_pair[1] not in HEX_DIGITS:
+        raise ValueError(f"Invalid b45 byte escape: %{hex_pair}")
+    return int(hex_pair, 16), index + 3
+
+
+def decode_b45ish(compact: str) -> str:
     restored: list[str] = []
+    utf8_bytes = bytearray()
     index = 0
+
     while index < len(compact):
         char = compact[index]
-        if char in {"*", "^", "!"}:
+        if char == "+":
+            _flush_utf8_bytes(utf8_bytes, restored)
             if index + 1 >= len(compact):
-                raise ValueError("Truncated Recipe 1 token")
+                raise ValueError("Truncated b45 uppercase escape")
             code = compact[index + 1]
-            word = CODE_TO_WORD.get(code)
-            if not word:
-                raise ValueError(f"Unknown Recipe 1 code: {code}")
-            if char == "*":
-                restored.append(word)
-            elif char == "^":
-                restored.append(word.capitalize())
-            else:
-                restored.append(word.upper())
+            if not ("A" <= code <= "Z"):
+                raise ValueError(f"Invalid b45 uppercase escape: +{code}")
+            restored.append(code)
             index += 2
             continue
-        restored.append(char)
+
+        if char == "%":
+            if index + 1 >= len(compact):
+                raise ValueError("Truncated b45 percent escape")
+            if compact[index + 1] == "%":
+                _flush_utf8_bytes(utf8_bytes, restored)
+                restored.append("%")
+                index += 2
+                continue
+            byte_value, index = _decode_byte_escape(compact, index)
+            utf8_bytes.append(byte_value)
+            continue
+
+        _flush_utf8_bytes(utf8_bytes, restored)
+        if "A" <= char <= "Z":
+            restored.append(char.lower())
+        elif char.isdigit() or char in DIRECT_PUNCTUATION:
+            restored.append(char)
+        else:
+            raise ValueError(f"Invalid b45 character: {char}")
         index += 1
+
+    _flush_utf8_bytes(utf8_bytes, restored)
     return "".join(restored)
 
 
-def validate_simple_english(original: str) -> RecipeValidationResult:
-    compact, diagnostics = encode_simple_english(original)
-    if diagnostics:
-        return RecipeValidationResult(
-            recipe_id="simple_english",
-            reversible=False,
-            compact=compact,
-            restored="",
-            diagnostics=diagnostics,
-        )
-
+def validate_b45(original: str) -> RecipeValidationResult:
+    compact = encode_b45ish(original)
     try:
-        restored = decode_simple_english(compact)
+        restored = decode_b45ish(compact)
     except Exception as exc:
         return RecipeValidationResult(
-            recipe_id="simple_english",
+            recipe_id=B45_RECIPE_ID,
             reversible=False,
             compact=compact,
             restored="",
             diagnostics=[
                 RecipeDiagnostic(
                     line=1,
-                    reason=f"Recipe 1 decoding failed: {exc}",
+                    reason=f"b45 decoding failed: {exc}",
                     original=original,
                     recommendation="Use plaintext or legacy compression instead.",
                 )
@@ -275,19 +141,36 @@ def validate_simple_english(original: str) -> RecipeValidationResult:
         )
 
     reversible = restored == original
-    diagnostics_out: list[RecipeDiagnostic] = [] if reversible else [
-        RecipeDiagnostic(
-            line=1,
-            reason="Recipe 1 round-trip did not restore the original text.",
-            original=original,
-            restored=restored,
-            recommendation="Rewrite the document using supported simple-English patterns or use plaintext.",
-        )
-    ]
+    diagnostics: list[RecipeDiagnostic] = []
+    if not reversible:
+        diagnostics = [
+            RecipeDiagnostic(
+                line=1,
+                reason="b45 round-trip did not restore the original text.",
+                original=original,
+                restored=restored,
+                recommendation="Use plaintext or legacy compression instead.",
+            )
+        ]
     return RecipeValidationResult(
-        recipe_id="simple_english",
+        recipe_id=B45_RECIPE_ID,
         reversible=reversible,
         compact=compact,
         restored=restored,
-        diagnostics=diagnostics_out,
+        diagnostics=diagnostics,
     )
+
+
+# Compatibility aliases kept so older call sites keep working while the recipe
+# itself moves to the b45 spec.
+def encode_simple_english(text: str) -> tuple[str, list[RecipeDiagnostic]]:
+    compact = encode_b45ish(text)
+    return compact, []
+
+
+def decode_simple_english(compact: str) -> str:
+    return decode_b45ish(compact)
+
+
+def validate_simple_english(original: str) -> RecipeValidationResult:
+    return validate_b45(original)

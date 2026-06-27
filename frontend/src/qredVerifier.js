@@ -1,6 +1,6 @@
 import { verifyAsync as verifyEd25519 } from "@noble/ed25519";
 import pako from "pako";
-import { decodeSimpleEnglish } from "./textRecipes.js";
+import { decodeB45ish } from "./textRecipes.js";
 
 function decodeBase64Url(value) {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
@@ -152,7 +152,13 @@ export async function verifyQRedSeals(seals, publicKey) {
 
   const content = payload.content || "";
   const recipe = payload.recipe || "plaintext";
-  const restoredContent = recipe === "recipe1" ? decodeSimpleEnglish(content) : content;
+  const recipeDecoders = {
+    b45: decodeB45ish,
+    base45ish: decodeB45ish,
+    recipe1: decodeB45ish,
+    simple_english: decodeB45ish,
+  };
+  const restoredContent = (recipeDecoders[recipe] || ((value) => value))(content);
   const signature = payload.signature || "";
   const issuer = payload.issuer || "";
   const documentId = payload.document_id || "";

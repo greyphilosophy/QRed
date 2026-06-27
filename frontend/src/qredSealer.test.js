@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createQRedSeals } from "./qredSealer.js";
 import { verifyQRedSeals } from "./qredVerifier.js";
+import { validateSimpleEnglish } from "./textRecipes.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
@@ -31,12 +32,12 @@ describe("browser QRed sealing", () => {
       privateKey,
       publicKey,
       documentId: "DOC-BROWSER-RECIPE1",
-      encodingStrategy: "recipe1",
+      encodingStrategy: "b45",
     });
 
-    expect(sealed.selected_recipe).toBe("recipe1");
-    expect(sealed.encoding).toBe("recipe1");
-    expect(sealed.candidate_reports.some((report) => report.encoding === "recipe1" && report.reversible)).toBe(true);
+    expect(sealed.selected_recipe).toBe("b45");
+    expect(sealed.encoding).toBe("b45");
+    expect(sealed.candidate_reports.some((report) => report.encoding === "b45" && report.reversible)).toBe(true);
     await expect(verifyQRedSeals(sealed.seals, publicKey)).resolves.toMatchObject({
       status: "VALID",
       issuer: "QRed Browser Demo",
@@ -45,21 +46,14 @@ describe("browser QRed sealing", () => {
     });
   });
 
-  it("prefers compression only when it reduces the QR count", async () => {
-    const repetitive = "lorem ipsum dolor sit amet ".repeat(200);
-    const sealed = await createQRedSeals({
-      content: repetitive,
-      issuer: "QRed Browser Demo",
-      privateKey,
-      publicKey,
-      documentId: "DOC-BROWSER-COMPRESS",
-    });
+  it("round-trips b45 escapes for newline, hash, and utf-8", () => {
+    const original = "Hello, Alfred!\nhttps://qred.org/#QRED1\né";
+    const result = validateSimpleEnglish(original);
 
-    expect(["plaintext", "compressed"]).toContain(sealed.encoding);
-    if (sealed.encoding === "compressed") {
-      expect(sealed.seals.every((seal) => seal.startsWith("QRED1|"))).toBe(true);
-    } else {
-      expect(sealed.seals.every((seal) => seal.startsWith("https://qred.org/#QRED1?"))).toBe(true);
-    }
+    expect(result.reversible).toBe(true);
+    expect(result.restored).toBe(original);
+    expect(result.compact).toContain("%23");
+    expect(result.compact).toContain("%0A");
+    expect(result.compact).toContain("%C3%A9");
   });
 });

@@ -6,11 +6,13 @@ import json
 from collections.abc import Callable
 
 from backend.crypto import verify as crypto_verify
-from backend.services.text_recipes import decode_simple_english
+from backend.services.text_recipes import decode_b45ish
 
 RECIPE_DECODERS = {
-    "recipe1": decode_simple_english,
-    "simple_english": decode_simple_english,
+    "b45": decode_b45ish,
+    "base45ish": decode_b45ish,
+    "recipe1": decode_b45ish,
+    "simple_english": decode_b45ish,
 }
 
 
