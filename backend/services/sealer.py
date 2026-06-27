@@ -14,6 +14,7 @@ from backend.crypto import sign
 
 DEFAULT_BOOTSTRAP_URL = "https://qred.org/"
 MAX_QR_PAYLOAD_LENGTH = 1200
+LEGACY_CHUNK_SIZE = 200
 
 
 def generate_document_id() -> str:
@@ -129,6 +130,12 @@ def split_text_into_qr_urls(text: str, payload: dict, bootstrap_url: str) -> lis
     ]
 
 
+def _legacy_qred_strings(payload_json: str, document_id: str) -> list[str]:
+    compressed = compress_payload(payload_json)
+    chunks = split_into_chunks(compressed, chunk_size=LEGACY_CHUNK_SIZE)
+    return [f"QRED1|{document_id}|{index}|{len(chunks)}|{chunk}" for index, chunk in enumerate(chunks)]
+
+
 def compute_key_id(public_key_b64: str) -> str:
     """Compute a stable key_id from a base64 Ed25519 public key.
 
@@ -179,17 +186,23 @@ def create_seals(
     }
     payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
-    # Split plaintext content into QRed fragment URLs.
-    data_chunks = split_text_into_qr_urls(canonical, payload, bootstrap_url)
+    # Compare plaintext QR count vs compressed QR count and choose the smaller.
+    plaintext_urls = split_text_into_qr_urls(canonical, payload, bootstrap_url)
+    compressed_strings = _legacy_qred_strings(payload_json, document_id)
+    if len(compressed_strings) < len(plaintext_urls):
+        chosen_strings = compressed_strings
+        encoding = "compressed"
+    else:
+        chosen_strings = plaintext_urls
+        encoding = "plaintext"
 
-    # Create QRed chunks. For the new URL-fragment format, data already holds
-    # the complete QR payload URL and encode() returns it unchanged.
+    # Create QRed chunks that preserve the chosen encoded payloads.
     qred_chunks = []
-    for i, chunk_data in enumerate(data_chunks):
+    for i, chunk_data in enumerate(chosen_strings):
         chunk = QRedChunk(
             document_id=document_id,
             chunk_number=i,
-            total_chunks=len(data_chunks),
+            total_chunks=len(chosen_strings),
             data=chunk_data,
         )
         qred_chunks.append(chunk)
@@ -199,7 +212,8 @@ def create_seals(
         bootstrap_url=bootstrap_url,
         chunks=qred_chunks,
         payload_json=payload_json,
-        total_chunks=len(data_chunks),
+        total_chunks=len(chosen_strings),
         issuer=issuer,
         key_id=key_id,
+        encoding=encoding,
     )

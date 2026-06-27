@@ -18,7 +18,7 @@ class QRedChunk:
 
     def encode(self) -> str:
         """Encode chunk into the QRed seal format string or fragment URL."""
-        if self.data.startswith("http://") or self.data.startswith("https://"):
+        if self.data.startswith(("http://", "https://", "QRED1|", "QRED1?")):
             return self.data
         return f"{self.format_id}|{self.document_id}|{self.chunk_number}|{self.total_chunks}|{self.data}"
 
@@ -83,6 +83,7 @@ class SealGenerationResult:
     total_chunks: int = 0
     issuer: str = ""
     key_id: str = ""
+    encoding: str = "plaintext"
 
     def to_dict(self) -> dict:
         return {
@@ -93,4 +94,5 @@ class SealGenerationResult:
             "payload_json": self.payload_json,
             "issuer": self.issuer,
             "key_id": self.key_id,
+            "encoding": self.encoding,
         }

@@ -24,6 +24,7 @@ from backend.crypto import compute_key_id, generate_keypair
 from backend.services.sealer import (
     canonicalize_text,
     compress_payload,
+    create_seals,
     decompress_payload,
     generate_document_id,
     split_into_chunks,
@@ -34,6 +35,7 @@ from backend.services.verifier import (
     reconstruct_and_verify,
 )
 from backend.models import QRedChunk
+import backend.services.sealer as sealer_module
 
 app = create_app()
 client = TestClient(app)
@@ -336,9 +338,32 @@ def test_fr4_seal_response_has_required_fields():
         assert field in data, f"Missing field: {field}"
 
 
+def test_fr4_prefers_smaller_qr_count_for_large_repetitive_content():
+    """Given repetitive content, when compression reduces QR count, then the smaller option is chosen"""
+    content = "lorem ipsum dolor sit amet " * 200
+    result = create_seals(
+        document_text=content,
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+    )
+    payload = json.loads(result.payload_json)
+    canonical = sealer_module.canonicalize_text(content)
+    plaintext_count = len(sealer_module.split_text_into_qr_urls(canonical, payload, DEFAULT_BOOTSTRAP_URL))
+    compressed_count = len(getattr(sealer_module, "_legacy_qred_strings")(result.payload_json, result.document_id))
+
+    assert result.total_chunks == min(plaintext_count, compressed_count)
+    assert getattr(result, "encoding", "plaintext") == ("compressed" if compressed_count < plaintext_count else "plaintext")
+    if getattr(result, "encoding", "plaintext") == "compressed":
+        assert all(chunk.encode().startswith("QRED1|") for chunk in result.chunks)
+    else:
+        assert all(chunk.encode().startswith("https://qred.org/#QRED1?") for chunk in result.chunks)
+
+
 # ===========================
 # FR5: Bootstrap Seal
 # ===========================
+
 
 def test_fr5_bootstrap_seal_present():
     """Given seal generation, when checking response, then bootstrap URL is present"""

@@ -27,6 +27,7 @@ class SealResponse(BaseModel):
     total_seals: int
     key_id: str = Field(description="Stable key identifier for registry lookup")
     issuer: str = Field(description="Issuing authority")
+    encoding: str = Field(description="Chosen QR payload encoding")
 
 
 @router.post("/seals", response_model=SealResponse)
@@ -55,4 +56,5 @@ def generate_seals(request: SealRequest) -> SealResponse:
         total_seals=result.total_chunks,
         key_id=result.key_id,
         issuer=result.issuer,
+        encoding=result.encoding,
     )

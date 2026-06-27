@@ -141,11 +141,15 @@ export async function createQRedSeals({
     version: "1",
   };
   const payloadJson = JSON.stringify(payload, Object.keys(payload).sort());
-  const textChunks = splitTextForQrUrls(canonical, payload, bootstrapUrl);
-  const seals = textChunks.map((chunkText, index) => buildFragmentUrl(
-    bootstrapUrl,
-    buildFragmentData({ payload, chunkText, chunkNumber: index, totalChunks: textChunks.length }),
-  ));
+  const plaintextChunks = splitTextForQrUrls(canonical, payload, bootstrapUrl);
+  const compressedSeals = createLegacyQRedSeals(payload, documentId);
+  const useCompressed = compressedSeals.length < plaintextChunks.length;
+  const seals = useCompressed
+    ? compressedSeals
+    : plaintextChunks.map((chunkText, index) => buildFragmentUrl(
+        bootstrapUrl,
+        buildFragmentData({ payload, chunkText, chunkNumber: index, totalChunks: plaintextChunks.length }),
+      ));
 
   return {
     bootstrap_url: fragmentBase(bootstrapUrl),
@@ -155,6 +159,7 @@ export async function createQRedSeals({
     payload_json: payloadJson,
     seals,
     total_seals: seals.length,
+    encoding: useCompressed ? "compressed" : "plaintext",
   };
 }
 
