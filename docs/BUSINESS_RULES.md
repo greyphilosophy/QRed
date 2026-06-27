@@ -22,13 +22,15 @@ This document summarizes the current business rules for QRed as implemented and 
    - strips leading and trailing empty lines.
 5. The canonical text is signed by the issuing authority using Ed25519.
 6. The signed payload is encoded into one or more machine-readable payload seals.
-7. Implementations compare plaintext and compressed payload encodings and choose the encoding that requires the fewest QR codes.
-8. Plaintext `QRED1?...` fragment payloads are preferred when they are not worse than compression.
-9. Compressed legacy `QRED1|...` payloads are allowed when compression produces fewer QR codes.
-10. Payloads that exceed a single seal's capacity are divided into numbered chunks.
-11. Printed QR payload URLs use the shortest production verifier origin currently required for scanning: `https://qred.org/`.
-12. Fragment payload seals append QRed data after the hash, for example `https://qred.org/#QRED1?...`, so the URL path does not consume QR capacity.
-13. The `/verify.htm` route may remain available as a human-facing verifier page, but newly generated QR payloads must not add `/verify.htm` unless a future compatibility requirement explicitly requires it.
+7. Automatic mode evaluates all reversible supported payload candidates, currently plaintext fragment URLs, reversible recipe payloads such as `b45`, and legacy compressed `QRED1|...` payloads.
+8. Only reversible candidates are selectable.
+9. Automatic mode chooses the candidate that requires the fewest QR codes.
+10. QR-count ties prefer plaintext `QRED1?...` fragment payloads, then recipe encodings, then compressed legacy `QRED1|...` payloads.
+11. Explicit strategies may request `plaintext`, `b45`, or implementation-supported legacy compression aliases such as `legacy_compression`.
+12. Payloads that exceed a single seal's capacity are divided into numbered chunks.
+13. Printed QR payload URLs use the shortest production verifier origin currently required for scanning: `https://qred.org/`.
+14. Fragment payload seals append QRed data after the hash, for example `https://qred.org/#QRED1?...`, so the URL path does not consume QR capacity.
+15. The `/verify.htm` route may remain available as a human-facing verifier page, but newly generated QR payloads must not add `/verify.htm` unless a future compatibility requirement explicitly requires it.
 
 ## Payload and Metadata Rules
 

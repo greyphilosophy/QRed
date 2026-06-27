@@ -23,10 +23,13 @@ The payload seals contain the signed document data required to reconstruct and v
 1. Source document is provided.
 2. A canonical text representation is produced.
 3. The canonical text is digitally signed using Ed25519.
-4. Implementations SHALL compare the QR count required for plaintext payloads against the QR count required for compressed payloads.
-5. Implementations SHALL choose the smaller QR count.
-6. The chosen payload form is divided into chunks and encoded into machine-readable seals.
-7. The bootstrap seal and payload seals are placed on the document.
+4. In automatic mode, implementations SHALL evaluate all reversible supported payload candidates, currently plaintext fragment URLs, reversible recipe payloads such as `b45`, and legacy compressed `QRED1|...` payloads.
+5. Only reversible candidates are selectable.
+6. Automatic mode SHALL choose the candidate with the smallest QR count.
+7. QR-count ties SHALL prefer plaintext, then recipe encodings, then compressed legacy encoding.
+8. Explicit encoding strategies MAY request `plaintext`, `b45`, or legacy compression aliases supported by the implementation.
+9. The chosen payload form is divided into chunks and encoded into machine-readable seals.
+10. The payload seals are placed on the document.
 
 ---
 
@@ -93,12 +96,13 @@ The reference implementation encodes the payload as a JSON object:
 }
 ```
 
-The reference implementation stores the signed payload as JSON with sorted keys and compact separators, then selects the smaller QR count between:
+The reference implementation stores the signed payload as JSON with sorted keys and compact separators, then automatic mode evaluates all reversible supported candidates, currently:
 
-- a plaintext `QRED1?...` fragment URL that carries the canonical text directly, and
-- a legacy compressed `QRED1|...` seal format that gzip-compresses and base64-encodes the payload.
+- plaintext `QRED1?...` fragment URLs that carry the canonical text directly,
+- reversible recipe payloads such as `b45`, and
+- legacy compressed `QRED1|...` seal formats that gzip-compress and base64-encode the payload.
 
-Plaintext is the default when it is not worse than compression.
+Only reversible candidates are selectable. Automatic mode selects the candidate with the smallest QR count. Ties prefer plaintext, then recipe encodings, then compressed legacy encoding. Explicit strategies may request `plaintext`, `b45`, or supported legacy compression aliases such as `legacy_compression`.
 
 ---
 
