@@ -39,7 +39,7 @@ make install   # pip install -r requirements.txt
 make run       # uvicorn on port 8190
 ```
 
-Then use the REST API. The local backend listens on `http://localhost:8190`, and generated bootstrap QR codes target the production verifier at `https://qred.org/verify.htm` by default:
+Then use the REST API. The local backend listens on `http://localhost:8190`, and generated QRed payload QR codes use `https://qred.org/` as the production URL base by default:
 
 ```bash
 # Generate seals
@@ -127,7 +127,7 @@ Before considering production deployment complete, verify all of the following:
 - The homepage loads successfully at `https://qred.org/`.
 - The verifier route loads successfully at `https://qred.org/verify.htm`.
 - The scanner page can submit collected payload seals and issuer public key data to the verification API.
-- Generated bootstrap URLs in sealed PDFs and API responses point to `https://qred.org/verify.htm`.
+- Generated QRed payload URLs in sealed PDFs and API responses use `https://qred.org/` as the URL base.
 
 A quick HTTP check for the required verifier route is:
 
@@ -141,9 +141,9 @@ The response should resolve directly on `https://qred.org/verify.htm`, present a
 curl -I https://www.qred.org/verify.htm
 ```
 
-## Bootstrap URL stability
+## Bootstrap URL and verifier route
 
-QRed-generated bootstrap QR codes target `https://qred.org/verify.htm` by default. The path `/verify.htm` is part of the printed QR bootstrap contract: changing or removing it can break already-issued printed documents. Keep `/verify.htm` stable, and if the verifier application is reorganized, preserve this path with a direct Cloudflare Pages route or rewrite that continues to serve the verifier.
+New QRed-generated payload QR codes use `https://qred.org/` as the default URL base and append the QRed payload in the fragment (for example, `https://qred.org/#QRED1?...`). The `/verify.htm` path is retained only as the human-facing verifier route. If the verifier application is reorganized, either keep this route serving the verifier or update the production deployment documentation at the same time.
 
 # Motivation
 

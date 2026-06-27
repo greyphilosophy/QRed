@@ -28,7 +28,7 @@ These scenarios describe the Windows 11 demo flow for QRed using a local FastAPI
 ### Scenario: Launch verifier from a stamped document
 **Given** a sealed PDF page includes a bootstrap QR code
 **When** the recipient scans that QR code with a smartphone camera
-**Then** the smartphone opens `https://qred.org/verify.htm`
+**Then** the smartphone opens a QRed payload URL using the default base `https://qred.org/`
 **And** the verifier page offers a camera scanner, manual seal entry, text-file upload, and issuer public-key entry.
 
 ## Feature: Reconstruct and verify a sealed document

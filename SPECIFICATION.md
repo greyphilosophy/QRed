@@ -146,11 +146,11 @@ A QRed document SHALL contain a bootstrap seal.
 
 The bootstrap seal SHALL provide sufficient information to locate a verification application.
 
-The reference implementation uses a default bootstrap URL:
+The reference implementation uses `https://qred.org/` as the default generated QRed payload URL base. Payload QR codes append QRed fragment data to that base, for example `https://qred.org/#QRED1?...`.
 
-```
-https://qred.org/verify/v1
-```
+`https://qred.org/verify/v1` was an obsolete draft bootstrap URL and is not the current implementation default. New generated payload URLs SHOULD use `https://qred.org/` unless an issuer explicitly configures another bootstrap base.
+
+The human-facing verifier route MAY also be served at `/verify.htm` (for example, `https://qred.org/verify.htm`) as a deployed verifier page. This route is distinct from the default payload URL base used for newly generated QRed payload QR codes.
 
 Future versions may support additional bootstrap mechanisms.
 
