@@ -24,19 +24,25 @@ describe("browser QRed sealing", () => {
     });
   });
 
-  it("supports the base45ish text mode for compact sealing", async () => {
+  it("supports Recipe 1 for compact sealing when reversible", async () => {
     const sealed = await createQRedSeals({
-      content: "compact text mode? yes!",
+      content: "the document and the page",
       issuer: "QRed Browser Demo",
       privateKey,
       publicKey,
-      documentId: "DOC-BROWSER-TEXT-MODE",
-      textMode: "base45ish",
+      documentId: "DOC-BROWSER-RECIPE1",
+      encodingStrategy: "recipe1",
     });
 
-    const firstSeal = new URL(sealed.seals[0]);
-    expect(firstSeal.hash).toContain("txt=COMPACT+TEXT+MODE*+YES*");
-    expect(sealed.seals.every((seal) => seal.startsWith("https://qred.org/#QRED1?"))).toBe(true);
+    expect(sealed.selected_recipe).toBe("recipe1");
+    expect(sealed.encoding).toBe("recipe1");
+    expect(sealed.candidate_reports.some((report) => report.encoding === "recipe1" && report.reversible)).toBe(true);
+    await expect(verifyQRedSeals(sealed.seals, publicKey)).resolves.toMatchObject({
+      status: "VALID",
+      issuer: "QRed Browser Demo",
+      document_id: "DOC-BROWSER-RECIPE1",
+      content: "the document and the page",
+    });
   });
 
   it("prefers compression only when it reduces the QR count", async () => {

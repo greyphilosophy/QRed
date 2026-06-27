@@ -36,6 +36,7 @@ from backend.services.verifier import (
 )
 from backend.models import QRedChunk
 import backend.services.sealer as sealer_module
+from backend.services.text_recipes import validate_simple_english
 
 app = create_app()
 client = TestClient(app)
@@ -360,21 +361,25 @@ def test_fr4_prefers_smaller_qr_count_for_large_repetitive_content():
         assert all(chunk.encode().startswith("https://qred.org/#QRED1?") for chunk in result.chunks)
 
 
-def test_fr4_compactify_text_transforms_to_uppercase_and_asterisks():
-    """Given mixed text, when compactifying, then non-lowercase characters become asterisks"""
-    assert sealer_module.compactify_text("abc?") == "ABC*"
+def test_fr4_recipe1_reversible_on_supported_simple_english():
+    """Given supported simple English, when applying Recipe 1, then it round-trips exactly"""
+    result = validate_simple_english("the document and the page")
+    assert result.reversible is True
+    assert result.restored == "the document and the page"
+    assert result.compact
 
 
-def test_fr4_base45ish_mode_is_accepted_by_seal_generation():
-    """Given compact-text mode, when generating seals, then it is accepted as a sealing parameter"""
+def test_fr4_recipe1_mode_is_accepted_by_seal_generation():
+    """Given Recipe 1 mode, when generating seals, then it is accepted as a sealing parameter"""
     result = create_seals(
-        document_text="compact text mode should exist",
+        document_text="the document and the page",
         issuer=TEST_ISSUER,
         private_key=TEST_PRIVATE_KEY,
         public_key=TEST_PUBLIC_KEY,
-        text_mode="base45ish",
+        encoding_strategy="simple_english",
     )
-    assert result is not None
+    assert result.selected_recipe == "simple_english"
+    assert result.encoding in {"simple_english", "plaintext", "compressed"}
 
 
 # ===========================

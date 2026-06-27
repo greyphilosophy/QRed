@@ -52,7 +52,7 @@ function PdfSealForm() {
   const [message, setMessage] = useState("");
   const [keyStatus, setKeyStatus] = useState("Loading default keys...");
   const [loadingKeys, setLoadingKeys] = useState(false);
-  const [textMode, setTextMode] = useState("plaintext");
+  const [encodingStrategy, setEncodingStrategy] = useState("automatic");
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -99,7 +99,7 @@ function PdfSealForm() {
     form.append("private_key", privateKey);
     form.append("public_key", publicKey);
     form.append("bootstrap_url", "https://qred.org/");
-    form.append("text_mode", textMode);
+    form.append("encoding_strategy", encodingStrategy);
 
     try {
       const response = await fetch(API_BASE + "/pdf/upload-seal", { method: "POST", body: form });
@@ -111,7 +111,13 @@ function PdfSealForm() {
       link.download = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
       link.click();
       URL.revokeObjectURL(url);
-      setMessage(`Sealed ${file.name}. Document ID: ${response.headers.get("X-QRed-Document-Id")}`);
+      setMessage([
+        `Selected encoding: ${response.headers.get("X-QRed-Encoding") || "plaintext"}`,
+        `Selected recipe: ${response.headers.get("X-QRed-Selected-Recipe") || "plaintext"}`,
+        `Estimated QR count: ${response.headers.get("X-QRed-Estimated-QR-Count") || response.headers.get("X-QRed-Total-Seals") || "0"}`,
+        `Compression savings: ${response.headers.get("X-QRed-Compression-Savings-Pct") || "0"}%`,
+        `Document ID: ${response.headers.get("X-QRed-Document-Id")}`,
+      ].join("\n"));
     } catch (error) {
       if (!isMissingBackendOriginMessage(error.message)) {
         setMessage(`PDF sealing failed: ${error.message}`);
@@ -126,18 +132,24 @@ function PdfSealForm() {
           privateKey,
           publicKey,
           bootstrapUrl: "https://qred.org/",
-          textMode,
+          encodingStrategy,
         });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
-      link.href = url;
-      link.download = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
-      link.click();
-      URL.revokeObjectURL(url);
-      setMessage(`Sealed ${file.name} in this browser. Document ID: ${sealResult.document_id}`);
-    } catch (fallbackError) {
-      setMessage(`PDF sealing failed: ${fallbackError.message}`);
-    }
+        link.href = url;
+        link.download = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
+        link.click();
+        URL.revokeObjectURL(url);
+        setMessage([
+          `Selected encoding: ${sealResult.encoding}`,
+          `Selected recipe: ${sealResult.selected_recipe || "plaintext"}`,
+          `Estimated QR count: ${sealResult.estimated_qr_count || sealResult.total_seals}`,
+          `Compression savings: ${sealResult.compression_savings_pct || 0}%`,
+          `Document ID: ${sealResult.document_id}`,
+        ].join("\n"));
+      } catch (fallbackError) {
+        setMessage(`PDF sealing failed: ${fallbackError.message}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -166,13 +178,15 @@ function PdfSealForm() {
         React.createElement("input", { "aria-label": "Public Key", value: publicKey, onChange: (e) => setPublicKey(e.target.value), placeholder: "Default public key" })
       ),
       React.createElement("div", { className: "demo-input" },
-        React.createElement("label", null, "Document Text Mode"),
-        React.createElement("select", { "aria-label": "Document Text Mode", title: "Base45 capitalizes letters and replaces special characters with asterisks so more text can fit in a QR code.", value: textMode, onChange: (e) => setTextMode(e.target.value) },
+        React.createElement("label", null, "Encoding Strategy"),
+        React.createElement("select", { "aria-label": "Encoding Strategy", value: encodingStrategy, onChange: (e) => setEncodingStrategy(e.target.value), title: "Automatic tries every reversible recipe and chooses the smallest successful encoding." },
+          React.createElement("option", { value: "automatic" }, "Automatic (recommended)"),
           React.createElement("option", { value: "plaintext" }, "Plaintext"),
-          React.createElement("option", { value: "base45ish" }, "Base45-ish compact mode")
+          React.createElement("option", { value: "simple_english" }, "Recipe 1 – Simple English"),
+          React.createElement("option", { value: "legacy_compression" }, "Legacy Compression")
         ),
         React.createElement("small", { style: { color: "#64748b", display: "block", marginTop: "0.5rem" } },
-          "Base45 capitalizes letters and replaces special characters with asterisks so more text can fit into a single QR code."
+          "Automatic tries every reversible recipe and chooses the smallest successful encoding."
         )
       )
     ),

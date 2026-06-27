@@ -6,6 +6,12 @@ import json
 from collections.abc import Callable
 
 from backend.crypto import verify as crypto_verify
+from backend.services.text_recipes import decode_simple_english
+
+RECIPE_DECODERS = {
+    "recipe1": decode_simple_english,
+    "simple_english": decode_simple_english,
+}
 
 
 def _seal_fragment(seal_string: str) -> str:
@@ -32,6 +38,7 @@ def _decode_plaintext_fragment(fragment: str) -> dict | None:
         "chunk_number": chunk_number,
         "total_chunks": total_chunks,
         "data": params.get("txt", ""),
+        "recipe": params.get("rc", "plaintext"),
         "plaintext": True,
         "algorithm": params.get("alg", "Ed25519"),
         "issuer": params.get("iss", ""),
@@ -155,6 +162,7 @@ def reconstruct_and_verify(
                 "timestamp": ctx["metadata"].get("timestamp", ""),
                 "algorithm": ctx["metadata"].get("algorithm", "Ed25519"),
                 "version": ctx["metadata"].get("version", "1"),
+                "recipe": ctx["metadata"].get("recipe", "plaintext"),
             }
         else:
             compressed = base64.urlsafe_b64decode(raw_data)
@@ -168,6 +176,16 @@ def reconstruct_and_verify(
 
     # Extract fields
     content = payload.get("content", "")
+    recipe = payload.get("recipe", "plaintext")
+    decoder = RECIPE_DECODERS.get(recipe)
+    if decoder is not None:
+        try:
+            content = decoder(content)
+        except Exception as e:
+            return {
+                "status": "ERROR",
+                "error_message": f"Recipe 1 decoding failed: {e}",
+            }
     signature = payload.get("signature", "")
     issuer = payload.get("issuer", "")
     doc_id = payload.get("document_id", "")
@@ -204,6 +222,7 @@ def reconstruct_and_verify(
             "document_id": doc_id,
             "timestamp": timestamp,
             "content": content,
+            "recipe": recipe,
         }
     else:
         return {
@@ -212,4 +231,5 @@ def reconstruct_and_verify(
             "document_id": doc_id,
             "error_message": "Digital signature verification failed",
             "content": content,
+            "recipe": recipe,
         }

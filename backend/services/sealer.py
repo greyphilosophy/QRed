@@ -10,6 +10,7 @@ from typing import Optional
 
 from backend.models import QRedChunk, SealGenerationResult
 from backend.crypto import sign
+from backend.services.text_recipes import validate_simple_english
 
 
 DEFAULT_BOOTSTRAP_URL = "https://qred.org/"
@@ -43,18 +44,6 @@ def canonicalize_text(text: str) -> str:
     return "\n".join(collapsed)
 
 
-def compactify_text(text: str) -> str:
-    """Apply the lossy compact text transform used for base45ish mode."""
-    compacted = []
-    for char in text:
-        if "a" <= char <= "z":
-            compacted.append(char.upper())
-        elif char.isupper() or char.isdigit() or char.isspace() or char == "*":
-            compacted.append(char)
-        else:
-            compacted.append("*")
-    return "".join(compacted)
-
 
 def compress_payload(payload_json: str) -> str:
     """Compress a JSON payload and return a base64-encoded string."""
@@ -85,8 +74,8 @@ def _fragment_base(bootstrap_url: str) -> str:
     return bootstrap_url.split("#", 1)[0] or DEFAULT_BOOTSTRAP_URL
 
 
-def _fragment_data(payload: dict, chunk_text: str, chunk_number: int, total_chunks: int) -> str:
-    """Build readable QRed fragment data with plaintext document text."""
+def _fragment_data(payload: dict, chunk_text: str, chunk_number: int, total_chunks: int, recipe_id: str = "plaintext") -> str:
+    """Build readable QRed fragment data with plaintext or recipe-encoded text."""
     from urllib.parse import urlencode
 
     params = {
@@ -100,6 +89,10 @@ def _fragment_data(payload: dict, chunk_text: str, chunk_number: int, total_chun
         "ts": payload["timestamp"],
         "txt": chunk_text,
     }
+    if recipe_id and recipe_id != "plaintext":
+        params["rc"] = recipe_id
+    elif payload.get("recipe") and payload["recipe"] != "plaintext":
+        params["rc"] = payload["recipe"]
     if chunk_number == 0:
         params["sig"] = payload["signature"]
     return "QRED1?" + urlencode(params)
@@ -109,8 +102,8 @@ def _fragment_url(bootstrap_url: str, fragment_data: str) -> str:
     return f"{_fragment_base(bootstrap_url)}#{fragment_data}"
 
 
-def split_text_into_qr_urls(text: str, payload: dict, bootstrap_url: str) -> list[str]:
-    """Split plaintext into as many fragment URLs as needed to stay under QR limits."""
+def split_text_into_qr_urls(text: str, payload: dict, bootstrap_url: str, recipe_id: str = "plaintext") -> list[str]:
+    """Split text into as many fragment URLs as needed to stay under QR limits."""
     if not text:
         text_chunks = [""]
     else:
@@ -123,7 +116,7 @@ def split_text_into_qr_urls(text: str, payload: dict, bootstrap_url: str) -> lis
                 while low <= high:
                     mid = (low + high) // 2
                     candidate = text[offset:offset + mid]
-                    url = _fragment_url(bootstrap_url, _fragment_data(payload, candidate, len(text_chunks), total_chunks))
+                    url = _fragment_url(bootstrap_url, _fragment_data(payload, candidate, len(text_chunks), total_chunks, recipe_id))
                     if len(url) <= MAX_QR_PAYLOAD_LENGTH:
                         best = mid
                         low = mid + 1
@@ -138,7 +131,7 @@ def split_text_into_qr_urls(text: str, payload: dict, bootstrap_url: str) -> lis
             total_chunks = len(text_chunks)
 
     return [
-        _fragment_url(bootstrap_url, _fragment_data(payload, chunk, index, len(text_chunks)))
+        _fragment_url(bootstrap_url, _fragment_data(payload, chunk, index, len(text_chunks), recipe_id))
         for index, chunk in enumerate(text_chunks)
     ]
 
@@ -158,6 +151,58 @@ def compute_key_id(public_key_b64: str) -> str:
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
+def _build_payload(
+    base_fields: dict,
+    content: str,
+    recipe: str = "plaintext",
+) -> dict:
+    payload = {**base_fields, "content": content, "recipe": recipe}
+    return payload
+
+
+def _candidate_report(
+    encoding: str,
+    qr_count: int,
+    reversible: bool,
+    diagnostics: list[dict],
+    recipe_id: str = "",
+) -> dict:
+    return {
+        "encoding": encoding,
+        "qr_count": qr_count,
+        "reversible": reversible,
+        "diagnostics": diagnostics,
+        "recipe_id": recipe_id,
+    }
+
+
+def _select_candidate(candidates: list[dict], preferred: str = "automatic") -> dict:
+    selectable = [candidate for candidate in candidates if candidate["reversible"]]
+    if not selectable:
+        return candidates[0]
+
+    by_encoding = {candidate["encoding"]: candidate for candidate in candidates}
+    by_recipe = {candidate.get("recipe", ""): candidate for candidate in candidates if candidate.get("recipe")}
+
+    if preferred == "plaintext":
+        return by_encoding["plaintext"]
+    if preferred == "legacy_compression":
+        return by_encoding["compressed"]
+
+    preferred_candidate = by_recipe.get(preferred) or by_encoding.get(preferred)
+    if preferred_candidate is not None:
+        return preferred_candidate
+
+    return sorted(
+        selectable,
+        key=lambda candidate: (
+            candidate["qr_count"],
+            0 if candidate["encoding"] == "plaintext" else 2 if candidate["encoding"] == "compressed" else 1,
+            candidate.get("recipe", ""),
+        ),
+    )[0]
+
+
 def create_seals(
     document_text: str,
     issuer: str,
@@ -165,7 +210,7 @@ def create_seals(
     public_key: str,
     document_id: Optional[str] = None,
     bootstrap_url: str = DEFAULT_BOOTSTRAP_URL,
-    text_mode: str = "plaintext",
+    encoding_strategy: str = "automatic",
 ) -> SealGenerationResult:
     """Create QRed seals for a document.
 
@@ -173,63 +218,99 @@ def create_seals(
     and the signature. Verification requires looking up the public key
     from the issuer registry using (issuer_id, key_id).
     """
-    # Compute key_id from public key
     key_id = compute_key_id(public_key)
-
-    # Canonicalize and optionally compactify the sealed document text.
     canonical = canonicalize_text(document_text)
-    if text_mode == "base45ish":
-        canonical = compactify_text(canonical)
 
-    # Create document ID
     if not document_id:
         document_id = generate_document_id()
 
-    # Sign with Ed25519
     signature = sign(canonical, private_key)
-
-    # Build payload with key_id (not public_key)
     timestamp = datetime.now(timezone.utc).isoformat()
-    payload = {
-        "version": "1",
+
+    base_fields = {
+        "algorithm": "Ed25519",
         "issuer": issuer,
         "key_id": key_id,
         "document_id": document_id,
         "timestamp": timestamp,
-        "content": canonical,
         "signature": signature,
-        "algorithm": "Ed25519",
+        "version": "1",
     }
-    payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
-    # Compare plaintext QR count vs compressed QR count and choose the smaller.
-    plaintext_urls = split_text_into_qr_urls(canonical, payload, bootstrap_url)
-    compressed_strings = _legacy_qred_strings(payload_json, document_id)
-    if len(compressed_strings) < len(plaintext_urls):
-        chosen_strings = compressed_strings
-        encoding = "compressed"
+    plaintext_payload = _build_payload(base_fields, canonical, "plaintext")
+    plaintext_json = json.dumps(plaintext_payload, sort_keys=True, separators=(",", ":"))
+    plaintext_urls = split_text_into_qr_urls(canonical, plaintext_payload, bootstrap_url, "plaintext")
+    plaintext_report = _candidate_report(
+        "plaintext",
+        len(plaintext_urls),
+        True,
+        [],
+    )
+
+    recipe_result = validate_simple_english(canonical)
+    recipe_report = _candidate_report(
+        recipe_result.recipe_id,
+        0,
+        recipe_result.reversible,
+        [diag.to_dict() for diag in recipe_result.diagnostics],
+        recipe_result.recipe_id,
+    )
+    recipe_urls: list[str] = []
+    recipe_payload = None
+    if recipe_result.reversible:
+        recipe_payload = _build_payload(base_fields, recipe_result.compact, recipe_result.recipe_id)
+        recipe_payload["recipe"] = recipe_result.recipe_id
+        recipe_json = json.dumps(recipe_payload, sort_keys=True, separators=(",", ":"))
+        recipe_urls = split_text_into_qr_urls(recipe_result.compact, recipe_payload, bootstrap_url, recipe_result.recipe_id)
+        recipe_report["qr_count"] = len(recipe_urls)
     else:
-        chosen_strings = plaintext_urls
-        encoding = "plaintext"
+        recipe_json = ""
 
-    # Create QRed chunks that preserve the chosen encoded payloads.
+    compressed_strings = _legacy_qred_strings(plaintext_json, document_id)
+    compressed_report = _candidate_report(
+        "compressed",
+        len(compressed_strings),
+        True,
+        [],
+    )
+
+    candidates = [
+        {"encoding": "plaintext", "strings": plaintext_urls, **plaintext_report, "payload_json": plaintext_json, "recipe": "plaintext"},
+        {"encoding": "compressed", "strings": compressed_strings, **compressed_report, "payload_json": plaintext_json, "recipe": "legacy"},
+    ]
+    if recipe_result.reversible and recipe_payload is not None:
+        candidates.insert(1, {"encoding": recipe_result.recipe_id, "strings": recipe_urls, **recipe_report, "payload_json": recipe_json, "recipe": recipe_result.recipe_id})
+
+    selected = _select_candidate(candidates, encoding_strategy)
+
     qred_chunks = []
-    for i, chunk_data in enumerate(chosen_strings):
+    for i, chunk_data in enumerate(selected["strings"]):
         chunk = QRedChunk(
             document_id=document_id,
             chunk_number=i,
-            total_chunks=len(chosen_strings),
+            total_chunks=len(selected["strings"]),
             data=chunk_data,
         )
         qred_chunks.append(chunk)
+
+    plaintext_count = plaintext_report["qr_count"]
+    selected_count = selected["qr_count"]
+    savings_pct = 0
+    if plaintext_count > 0 and selected_count < plaintext_count:
+        savings_pct = round(((plaintext_count - selected_count) / plaintext_count) * 100)
 
     return SealGenerationResult(
         document_id=document_id,
         bootstrap_url=bootstrap_url,
         chunks=qred_chunks,
-        payload_json=payload_json,
-        total_chunks=len(chosen_strings),
+        payload_json=selected.get("payload_json", plaintext_json),
+        total_chunks=len(selected["strings"]),
         issuer=issuer,
         key_id=key_id,
-        encoding=encoding,
+        encoding=selected["encoding"],
+        encoding_strategy=encoding_strategy,
+        selected_recipe=selected.get("recipe", "plaintext"),
+        estimated_qr_count=selected_count,
+        compression_savings_pct=savings_pct,
+        candidate_reports=[plaintext_report] + ([recipe_report] if recipe_result.reversible else []) + [compressed_report],
     )
