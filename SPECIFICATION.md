@@ -29,7 +29,7 @@ The payload seals contain the signed document data required to reconstruct and v
 7. QR-count ties SHALL prefer plaintext, then recipe encodings, then compressed legacy encoding.
 8. Explicit encoding strategies MAY request `plaintext`, `b45`, or legacy compression aliases supported by the implementation.
 9. The chosen payload form is divided into chunks and encoded into machine-readable seals.
-10. The bootstrap seal and payload seals are placed on the document.
+10. The payload seals are placed on the document.
 
 ---
 
