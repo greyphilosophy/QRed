@@ -376,10 +376,10 @@ def test_fr4_recipe1_mode_is_accepted_by_seal_generation():
         issuer=TEST_ISSUER,
         private_key=TEST_PRIVATE_KEY,
         public_key=TEST_PUBLIC_KEY,
-        encoding_strategy="recipe1",
+        encoding_strategy="simple_english",
     )
-    assert result.selected_recipe == "recipe1"
-    assert result.encoding in {"recipe1", "plaintext", "compressed"}
+    assert result.selected_recipe == "simple_english"
+    assert result.encoding in {"simple_english", "plaintext", "compressed"}
 
 
 # ===========================

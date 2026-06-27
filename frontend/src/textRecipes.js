@@ -59,6 +59,7 @@ const WORD_TO_CODE = {
 
 const CODE_TO_WORD = Object.fromEntries(Object.entries(WORD_TO_CODE).map(([word, code]) => [code, word]));
 const APPROVED_ACRONYMS = new Set(["API", "HTTP", "HTTPS", "ID", "JSON", "NASA", "PDF", "PNG", "QR", "QRED", "SHA", "URL", "XML"]);
+const SIMPLE_PUNCTUATION = new Set([".", ",", "!", "?", ";", ":", "-", "(", ")", "[", "]", "{", "}", "'", '"', "/", "\\"]);
 
 function lineNumber(text, index) {
   return text.slice(0, index).split("\n").length;
@@ -97,7 +98,7 @@ export function encodeSimpleEnglish(text) {
       pieces.push(token);
       continue;
     }
-    if (/^[0-9]+$/.test(token) || /^[.,!?;:\-()\[\]{}'"/\\]$/.test(token)) {
+    if (/^[0-9]+$/.test(token) || (token.length === 1 && SIMPLE_PUNCTUATION.has(token))) {
       pieces.push(token);
       continue;
     }

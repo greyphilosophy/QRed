@@ -8,6 +8,11 @@ from collections.abc import Callable
 from backend.crypto import verify as crypto_verify
 from backend.services.text_recipes import decode_simple_english
 
+RECIPE_DECODERS = {
+    "recipe1": decode_simple_english,
+    "simple_english": decode_simple_english,
+}
+
 
 def _seal_fragment(seal_string: str) -> str:
     return seal_string.split("#", 1)[1] if "#" in seal_string else seal_string
@@ -172,9 +177,10 @@ def reconstruct_and_verify(
     # Extract fields
     content = payload.get("content", "")
     recipe = payload.get("recipe", "plaintext")
-    if recipe == "recipe1":
+    decoder = RECIPE_DECODERS.get(recipe)
+    if decoder is not None:
         try:
-            content = decode_simple_english(content)
+            content = decoder(content)
         except Exception as e:
             return {
                 "status": "ERROR",

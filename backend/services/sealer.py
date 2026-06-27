@@ -181,18 +181,26 @@ def _select_candidate(candidates: list[dict], preferred: str = "automatic") -> d
     if not selectable:
         return candidates[0]
 
-    if preferred == "plaintext":
-        return next(candidate for candidate in candidates if candidate["encoding"] == "plaintext")
-    if preferred == "recipe1":
-        recipe_candidate = next((candidate for candidate in candidates if candidate["encoding"] == "recipe1"), None)
-        if recipe_candidate and recipe_candidate["reversible"]:
-            return recipe_candidate
-        return next(candidate for candidate in candidates if candidate["encoding"] == "plaintext")
-    if preferred == "legacy_compression":
-        return next(candidate for candidate in candidates if candidate["encoding"] == "compressed")
+    by_encoding = {candidate["encoding"]: candidate for candidate in candidates}
+    by_recipe = {candidate.get("recipe", ""): candidate for candidate in candidates if candidate.get("recipe")}
 
-    rank = {"plaintext": 0, "recipe1": 1, "compressed": 2}
-    return sorted(selectable, key=lambda candidate: (candidate["qr_count"], rank.get(candidate["encoding"], 99)))[0]
+    if preferred == "plaintext":
+        return by_encoding["plaintext"]
+    if preferred == "legacy_compression":
+        return by_encoding["compressed"]
+
+    preferred_candidate = by_recipe.get(preferred) or by_encoding.get(preferred)
+    if preferred_candidate is not None:
+        return preferred_candidate
+
+    return sorted(
+        selectable,
+        key=lambda candidate: (
+            candidate["qr_count"],
+            0 if candidate["encoding"] == "plaintext" else 2 if candidate["encoding"] == "compressed" else 1,
+            candidate.get("recipe", ""),
+        ),
+    )[0]
 
 
 def create_seals(
@@ -241,7 +249,7 @@ def create_seals(
 
     recipe_result = validate_simple_english(canonical)
     recipe_report = _candidate_report(
-        "recipe1",
+        recipe_result.recipe_id,
         0,
         recipe_result.reversible,
         [diag.to_dict() for diag in recipe_result.diagnostics],
@@ -271,7 +279,7 @@ def create_seals(
         {"encoding": "compressed", "strings": compressed_strings, **compressed_report, "payload_json": plaintext_json, "recipe": "legacy"},
     ]
     if recipe_result.reversible and recipe_payload is not None:
-        candidates.insert(1, {"encoding": "recipe1", "strings": recipe_urls, **recipe_report, "payload_json": recipe_json, "recipe": recipe_result.recipe_id})
+        candidates.insert(1, {"encoding": recipe_result.recipe_id, "strings": recipe_urls, **recipe_report, "payload_json": recipe_json, "recipe": recipe_result.recipe_id})
 
     selected = _select_candidate(candidates, encoding_strategy)
 

@@ -249,7 +249,7 @@ def validate_simple_english(original: str) -> RecipeValidationResult:
     compact, diagnostics = encode_simple_english(original)
     if diagnostics:
         return RecipeValidationResult(
-            recipe_id="recipe1",
+            recipe_id="simple_english",
             reversible=False,
             compact=compact,
             restored="",
@@ -260,7 +260,7 @@ def validate_simple_english(original: str) -> RecipeValidationResult:
         restored = decode_simple_english(compact)
     except Exception as exc:
         return RecipeValidationResult(
-            recipe_id="recipe1",
+            recipe_id="simple_english",
             reversible=False,
             compact=compact,
             restored="",
@@ -285,7 +285,7 @@ def validate_simple_english(original: str) -> RecipeValidationResult:
         )
     ]
     return RecipeValidationResult(
-        recipe_id="recipe1",
+        recipe_id="simple_english",
         reversible=reversible,
         compact=compact,
         restored=restored,
