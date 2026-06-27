@@ -52,6 +52,7 @@ function PdfSealForm() {
   const [message, setMessage] = useState("");
   const [keyStatus, setKeyStatus] = useState("Loading default keys...");
   const [loadingKeys, setLoadingKeys] = useState(false);
+  const [textMode, setTextMode] = useState("plaintext");
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -98,6 +99,7 @@ function PdfSealForm() {
     form.append("private_key", privateKey);
     form.append("public_key", publicKey);
     form.append("bootstrap_url", "https://qred.org/");
+    form.append("text_mode", textMode);
 
     try {
       const response = await fetch(API_BASE + "/pdf/upload-seal", { method: "POST", body: form });
@@ -124,6 +126,7 @@ function PdfSealForm() {
           privateKey,
           publicKey,
           bootstrapUrl: "https://qred.org/",
+          textMode,
         });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
@@ -161,6 +164,16 @@ function PdfSealForm() {
       React.createElement("div", { className: "demo-input" },
         React.createElement("label", null, "Public Key"),
         React.createElement("input", { "aria-label": "Public Key", value: publicKey, onChange: (e) => setPublicKey(e.target.value), placeholder: "Default public key" })
+      ),
+      React.createElement("div", { className: "demo-input" },
+        React.createElement("label", null, "Document Text Mode"),
+        React.createElement("select", { "aria-label": "Document Text Mode", title: "Base45 capitalizes letters and replaces special characters with asterisks so more text can fit in a QR code.", value: textMode, onChange: (e) => setTextMode(e.target.value) },
+          React.createElement("option", { value: "plaintext" }, "Plaintext"),
+          React.createElement("option", { value: "base45ish" }, "Base45-ish compact mode")
+        ),
+        React.createElement("small", { style: { color: "#64748b", display: "block", marginTop: "0.5rem" } },
+          "Base45 capitalizes letters and replaces special characters with asterisks so more text can fit into a single QR code."
+        )
       )
     ),
     React.createElement("p", { style: { marginTop: "1rem", color: keyStatus.includes("failed") ? "#ef4444" : "#64748b" }}, keyStatus),

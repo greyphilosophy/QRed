@@ -70,7 +70,7 @@ The canonical representation shall be digitally signed by the issuing authority.
 
 FR4. Seal Generation
 
-The signed payload shall be encoded into one or more machine-readable seals.
+The signed payload shall be encoded into one or more machine-readable seals, with implementations choosing plaintext or compression based on which produces fewer QR codes.
 
 FR5. Bootstrap Seal
 
@@ -87,6 +87,10 @@ The verification application shall verify the digital signature using the issuer
 FR8. Content Display
 
 The verification application shall display the certified contents contained within the seals.
+
+FR8a. Universal QR Scanning
+
+The scanner interface shall display the contents of arbitrary QR payloads, not only QRed seals.
 
 FR9. Verification Result
 

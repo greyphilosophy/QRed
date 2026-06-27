@@ -55,13 +55,13 @@ curl -X POST http://localhost:8190/api/seals \
 # Verify seals
 curl -X POST http://localhost:8190/api/verify \
   -H 'Content-Type: application/json' \
-  -d '{"seals": ["QRED1|DOC-ABC|0|3|...", "QRED1|DOC-ABC|1|3|..."]}'
+  -d '{"seals": ["https://qred.org/#QRED1?...", "QRED1|DOC-ABC|1|3|..."]}'
 ```
 
 ## Run tests
 
 ```bash
-make tests     # 91 passing BDD tests
+make tests     # 104 passing BDD tests
 ```
 
 
@@ -160,14 +160,17 @@ This allows recipients to verify:
 # How It Works
 
 1. A document is converted into a canonical text representation.
-2. The canonical text is digitally signed by the issuing authority.
-3. The signed payload is compressed and divided into one or more QR code seals.
-4. A bootstrap QR code containing a URL to a verifier web application is added to the document.
-5. The QR seals are printed alongside the document.
-6. A recipient scans the bootstrap QR code.
-7. The verifier web application scans the remaining QR seals.
-8. The payload is reconstructed and the signature is verified.
-9. The certified contents are displayed to the user.
+3. The canonical text is digitally signed by the issuing authority.
+4. The implementation chooses the smaller QR count between:
+   - plaintext, scanner-readable `QRED1?...` fragment URLs, and
+   - compressed legacy `QRED1|...` seals.
+5. The chosen payload format is divided into one or more QR code seals.
+6. A bootstrap QR code containing a URL to a verifier web application is added to the document.
+7. The QR seals are printed alongside the document.
+8. A recipient scans the bootstrap QR code.
+9. The verifier web application scans the remaining QR seals.
+10. The payload is reconstructed and the signature is verified.
+11. The certified contents are displayed to the user.
 
 # Design Goals
 
