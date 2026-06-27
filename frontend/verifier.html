@@ -268,12 +268,12 @@
         <div class="scan-line" id="scanLine"></div>
         <div class="placeholder" id="placeholder">
           <div class="icon">&#9679;</div>
-          <div>Tap <strong>Start Scanning</strong> to open camera</div>
+          <div>Tap <strong>Scan QR Seals</strong> to open camera</div>
         </div>
       </div>
 
       <div class="controls">
-        <button class="btn btn-primary" id="btnScan">Start Scanning</button>
+        <button class="btn btn-primary" id="btnScan">Scan QR Seals</button>
       </div>
 
       <div class="result-card" style="margin-bottom: 1rem;">
@@ -283,7 +283,7 @@
         <textarea id="manualSealInput" rows="4" placeholder="Paste QRED1 seal strings here, one per line" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;"></textarea>
         <input id="sealFileInput" type="file" accept=".txt,text/plain" style="width:100%; margin-bottom:0.75rem;">
         <label for="pageTextInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Page text read by scanner or pasted for comparison</label>
-        <textarea id="pageTextInput" rows="4" placeholder="Start scanning to OCR the page, or paste document text here" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;"></textarea>
+        <textarea id="pageTextInput" rows="4" placeholder="Scan QR Seals to OCR the page, or paste document text here" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;"></textarea>
         <div class="controls" style="margin-bottom:0;">
           <button class="btn btn-secondary" id="btnAddManual">Add Manual Seals</button>
           <button class="btn btn-primary" id="btnVerifyManual">Verify Collected Seals</button>
@@ -388,7 +388,7 @@
     btnScan.onclick = function() {
       if (state.isScanning) {
         stopScanning();
-        btnScan.textContent = "Start Scanning";
+        btnScan.textContent = "Scan QR Seals";
       } else {
         startScanning();
         btnScan.textContent = "Stop";
@@ -405,7 +405,7 @@
       progressContainer.style.display = "none";
       document.getElementById("resultView").classList.remove("visible");
       document.getElementById("scanMode").style.display = "block";
-      btnScan.textContent = "Start Scanning";
+      btnScan.textContent = "Scan QR Seals";
       document.getElementById("placeholder").style.display = "flex";
       document.getElementById("cameraVideo").style.display = "none";
       document.getElementById("scanCanvas").style.display = "none";
@@ -567,7 +567,12 @@
       state.seenSeals.add(sealStr);
 
       var decoded = decodeSeal(sealStr);
-      if (!decoded) return;
+      if (!decoded) {
+        stopScanning();
+        btnScan.textContent = "Scan QR Seals";
+        showResult("QR_CONTENT", { content: sealStr });
+        return;
+      }
 
       state.scannedSeals.push(sealStr);
 
@@ -588,7 +593,7 @@
 
       if (collected >= docData.total) {
         stopScanning();
-        btnScan.textContent = "Start Scanning";
+        btnScan.textContent = "Scan QR Seals";
         reconstructAndShow(docId, { capturePageText: false });
       }
     }
@@ -701,7 +706,7 @@
     function showResult(status, payload) {
       document.getElementById("scanMode").style.display = "none";
       state.verifiedContent = payload.content || "";
-      btnStartAr.style.display = state.verifiedContent ? "block" : "none";
+      btnStartAr.style.display = status === "VALID" && state.verifiedContent ? "block" : "none";
       var rv = document.getElementById("resultView");
       rv.classList.add("visible");
 
