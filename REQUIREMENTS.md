@@ -70,7 +70,7 @@ The canonical representation shall be digitally signed by the issuing authority.
 
 FR4. Seal Generation
 
-The signed payload shall be encoded into one or more machine-readable seals, with implementations choosing plaintext or compression based on which produces fewer QR codes.
+The signed payload shall be encoded into one or more machine-readable seals. In automatic mode, implementations shall evaluate all reversible supported candidates, currently plaintext fragment URLs, reversible recipe payloads such as `b45`, and legacy compressed `QRED1|...` payloads. Only reversible candidates are selectable; automatic mode shall minimize QR count, with ties preferring plaintext, then recipe encodings, then compressed legacy encoding. Explicit strategies may request `plaintext`, `b45`, or implementation-supported legacy compression aliases.
 
 FR5. Bootstrap Seal
 
