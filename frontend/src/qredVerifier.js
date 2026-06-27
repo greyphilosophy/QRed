@@ -1,5 +1,6 @@
 import { verifyAsync as verifyEd25519 } from "@noble/ed25519";
 import pako from "pako";
+import { decodeSimpleEnglish } from "./textRecipes.js";
 
 function decodeBase64Url(value) {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
@@ -35,7 +36,7 @@ function decodePlaintextFragment(fragment) {
     chunk_number: chunkNumber,
     total_chunks: totalChunks,
     data: params.get("txt") || "",
-    plaintext: true,
+    recipe: params.get("rc") || "plaintext",
     algorithm: params.get("alg") || "Ed25519",
     issuer: params.get("iss") || "",
     key_id: params.get("kid") || "",
@@ -90,8 +91,11 @@ export async function verifyQRedSeals(seals, publicKey) {
     if (!context.document_id) context.document_id = decoded.document_id;
     context.total_chunks = decoded.total_chunks;
     context.chunks[decoded.chunk_number] = decoded.data;
-    if (decoded.plaintext) {
+    if (decoded.recipe !== undefined) {
       context.plaintext = true;
+      context.metadata = { ...context.metadata, recipe: decoded.recipe };
+    }
+    if (decoded.recipe !== undefined || decoded.algorithm) {
       context.metadata = { ...context.metadata, ...Object.fromEntries(
         Object.entries({
           algorithm: decoded.algorithm,
@@ -135,6 +139,7 @@ export async function verifyQRedSeals(seals, publicKey) {
         signature: context.metadata.signature || "",
         timestamp: context.metadata.timestamp || "",
         version: context.metadata.version || "1",
+        recipe: context.metadata.recipe || "plaintext",
       };
     } else {
       const compressed = decodeBase64Url(rawData);
@@ -146,6 +151,8 @@ export async function verifyQRedSeals(seals, publicKey) {
   }
 
   const content = payload.content || "";
+  const recipe = payload.recipe || "plaintext";
+  const restoredContent = recipe === "recipe1" ? decodeSimpleEnglish(content) : content;
   const signature = payload.signature || "";
   const issuer = payload.issuer || "";
   const documentId = payload.document_id || "";
@@ -158,7 +165,8 @@ export async function verifyQRedSeals(seals, publicKey) {
       document_id: documentId,
       issuer,
       timestamp,
-      content,
+      content: restoredContent,
+      recipe,
       key_id: keyId,
       error_message: "No trusted public key available for signature verification",
     };
@@ -166,7 +174,7 @@ export async function verifyQRedSeals(seals, publicKey) {
 
   let isValid;
   try {
-    const message = new TextEncoder().encode(content);
+    const message = new TextEncoder().encode(restoredContent);
     isValid = await verifyEd25519(decodeBase64Url(signature), message, decodeBase64Url(publicKey));
   } catch {
     isValid = false;
@@ -178,7 +186,8 @@ export async function verifyQRedSeals(seals, publicKey) {
       issuer,
       document_id: documentId,
       timestamp,
-      content,
+      content: restoredContent,
+      recipe,
       key_id: keyId,
     };
   }
@@ -188,11 +197,11 @@ export async function verifyQRedSeals(seals, publicKey) {
     issuer,
     document_id: documentId,
     error_message: "Digital signature verification failed",
-    content,
+    content: restoredContent,
+    recipe,
     key_id: keyId,
   };
 }
-
 
 export function tokenizeDocumentText(text) {
   return (text || "").match(/\S+|\s+/g) || [];

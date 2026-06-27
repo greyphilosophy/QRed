@@ -86,7 +86,7 @@ def seal_pdf_endpoint(
     layout_spacing: Optional[int] = Query(default=None),
     layout_margin: Optional[int] = Query(default=None),
     bootstrap_url: str = Query(default=DEFAULT_BOOTSTRAP_URL),
-    text_mode: str = Query(default="plaintext"),
+    encoding_strategy: str = Query(default="automatic"),
 ):
     """Seal a PDF addressed by local path with QRed QR codes."""
     if not os.path.exists(pdf_path):
@@ -102,7 +102,7 @@ def seal_pdf_endpoint(
             document_id=document_id,
             layout=build_layout(layout_size, layout_spacing, layout_margin),
             bootstrap_url=bootstrap_url,
-            text_mode=text_mode,
+            encoding_strategy=encoding_strategy,
         )
     except Exception as e:
         logger.exception("Error sealing PDF: %s", e)
@@ -117,7 +117,7 @@ def upload_and_seal_pdf(
     public_key: str = Form(...),
     document_id: Optional[str] = Form(default=None),
     bootstrap_url: str = Form(default=DEFAULT_BOOTSTRAP_URL),
-    text_mode: str = Form(default="plaintext"),
+    encoding_strategy: str = Form(default="automatic"),
 ):
     """Accept a browser PDF upload and return a sealed PDF download."""
     ensure_pdf_upload(file)
@@ -138,7 +138,7 @@ def upload_and_seal_pdf(
             output_path=str(output_path),
             document_id=document_id,
             bootstrap_url=bootstrap_url,
-            text_mode=text_mode,
+            encoding_strategy=encoding_strategy,
         )
     except HTTPException:
         remove_workdir(workdir)
@@ -154,6 +154,11 @@ def upload_and_seal_pdf(
         "X-QRed-Key-Id": result["key_id"],
         "X-QRed-Total-Seals": str(result["total_seals"]),
         "X-QRed-Bootstrap-Url": result["bootstrap_url"],
+        "X-QRed-Encoding": result.get("encoding", "plaintext"),
+        "X-QRed-Encoding-Strategy": result.get("encoding_strategy", "automatic"),
+        "X-QRed-Selected-Recipe": result.get("selected_recipe", "plaintext"),
+        "X-QRed-Estimated-QR-Count": str(result.get("estimated_qr_count", result["total_seals"])),
+        "X-QRed-Compression-Savings-Pct": str(result.get("compression_savings_pct", 0)),
     }
     return FileResponse(
         path=output_path,

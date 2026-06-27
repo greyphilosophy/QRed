@@ -1,5 +1,6 @@
 import { signAsync as signEd25519 } from "@noble/ed25519";
 import pako from "pako";
+import { validateSimpleEnglish } from "./textRecipes.js";
 
 export const DEFAULT_BOOTSTRAP_URL = "https://qred.org/";
 export const MAX_QR_PAYLOAD_LENGTH = 1200;
@@ -22,26 +23,12 @@ function bytesToHex(bytes) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function compactifyText(text) {
-  let output = "";
-  for (const char of text) {
-    if (char >= "a" && char <= "z") {
-      output += char.toUpperCase();
-    } else if (char === char.toUpperCase() && /[A-Z0-9\s*]/.test(char)) {
-      output += char;
-    } else {
-      output += "*";
-    }
-  }
-  return output;
-}
-
 function fragmentBase(bootstrapUrl) {
   const base = bootstrapUrl || DEFAULT_BOOTSTRAP_URL;
   return base.includes("#") ? base.slice(0, base.indexOf("#")) : base;
 }
 
-function buildFragmentData({ payload, chunkText, chunkNumber, totalChunks }) {
+function buildFragmentData({ payload, chunkText, chunkNumber, totalChunks, recipeId = "plaintext" }) {
   const params = new URLSearchParams();
   params.set("v", payload.version);
   params.set("alg", payload.algorithm);
@@ -51,6 +38,8 @@ function buildFragmentData({ payload, chunkText, chunkNumber, totalChunks }) {
   params.set("iss", payload.issuer);
   params.set("kid", payload.key_id);
   params.set("ts", payload.timestamp);
+  if (recipeId && recipeId !== "plaintext") params.set("rc", recipeId);
+  else if (payload.recipe && payload.recipe !== "plaintext") params.set("rc", payload.recipe);
   if (chunkNumber === 0) params.set("sig", payload.signature);
   params.set("txt", chunkText);
   return `QRED1?${params.toString()}`;
@@ -60,8 +49,8 @@ function buildFragmentUrl(bootstrapUrl, fragmentData) {
   return `${fragmentBase(bootstrapUrl)}#${fragmentData}`;
 }
 
-function splitTextForQrUrls(canonical, payload, bootstrapUrl) {
-  if (!canonical) {
+function splitTextForQrUrls(text, payload, bootstrapUrl, recipeId = "plaintext") {
+  if (!text) {
     return [""];
   }
 
@@ -72,18 +61,19 @@ function splitTextForQrUrls(canonical, payload, bootstrapUrl) {
   while (!stable) {
     chunks = [];
     let offset = 0;
-    while (offset < canonical.length) {
+    while (offset < text.length) {
       let low = 1;
-      let high = canonical.length - offset;
+      let high = text.length - offset;
       let best = 0;
       while (low <= high) {
         const mid = Math.floor((low + high) / 2);
-        const chunkText = canonical.slice(offset, offset + mid);
+        const chunkText = text.slice(offset, offset + mid);
         const fragmentData = buildFragmentData({
           payload,
           chunkText,
           chunkNumber: chunks.length,
           totalChunks,
+          recipeId,
         });
         if (buildFragmentUrl(bootstrapUrl, fragmentData).length <= MAX_QR_PAYLOAD_LENGTH) {
           best = mid;
@@ -95,14 +85,17 @@ function splitTextForQrUrls(canonical, payload, bootstrapUrl) {
       if (best === 0) {
         throw new Error("QRed metadata and signature exceed the QR payload limit before adding document text");
       }
-      chunks.push(canonical.slice(offset, offset + best));
+      chunks.push(text.slice(offset, offset + best));
       offset += best;
     }
     stable = chunks.length === totalChunks;
     totalChunks = chunks.length;
   }
 
-  return chunks;
+  return chunks.map((chunkText, index) => buildFragmentUrl(
+    bootstrapUrl,
+    buildFragmentData({ payload, chunkText, chunkNumber: index, totalChunks: chunks.length, recipeId }),
+  ));
 }
 
 export function canonicalizeText(text) {
@@ -133,6 +126,33 @@ export function generateDocumentId() {
   return `DOC-${bytesToHex(bytes).toUpperCase()}`;
 }
 
+function buildPayload(baseFields, content, recipe = "plaintext") {
+  return { ...baseFields, content, recipe };
+}
+
+function candidateReport(encoding, qrCount, reversible, diagnostics, recipeId = "") {
+  return { encoding, qr_count: qrCount, reversible, diagnostics, recipe_id: recipeId };
+}
+
+function selectCandidate(candidates, preferred = "automatic") {
+  const selectable = candidates.filter((candidate) => candidate.reversible);
+  if (selectable.length === 0) return candidates[0];
+
+  if (preferred === "plaintext") {
+    return candidates.find((candidate) => candidate.encoding === "plaintext");
+  }
+  if (preferred === "recipe1") {
+    return candidates.find((candidate) => candidate.encoding === "recipe1" && candidate.reversible)
+      || candidates.find((candidate) => candidate.encoding === "plaintext");
+  }
+  if (preferred === "legacy_compression") {
+    return candidates.find((candidate) => candidate.encoding === "compressed");
+  }
+
+  const rank = { plaintext: 0, recipe1: 1, compressed: 2 };
+  return selectable.slice().sort((a, b) => (a.qr_count - b.qr_count) || (rank[a.encoding] - rank[b.encoding]))[0];
+}
+
 export async function createQRedSeals({
   content,
   issuer,
@@ -140,15 +160,14 @@ export async function createQRedSeals({
   publicKey,
   documentId = generateDocumentId(),
   bootstrapUrl = DEFAULT_BOOTSTRAP_URL,
-  textMode = "plaintext",
+  encodingStrategy = "automatic",
 }) {
   const canonical = canonicalizeText(content);
-  const sealText = textMode === "base45ish" ? compactifyText(canonical) : canonical;
-  const signature = await signEd25519(new TextEncoder().encode(sealText), decodeBase64Url(privateKey));
+  if (!documentId) documentId = generateDocumentId();
+  const signature = await signEd25519(new TextEncoder().encode(canonical), decodeBase64Url(privateKey));
   const keyId = await computeKeyId(publicKey);
-  const payload = {
+  const baseFields = {
     algorithm: "Ed25519",
-    content: sealText,
     document_id: documentId,
     issuer,
     key_id: keyId,
@@ -156,26 +175,50 @@ export async function createQRedSeals({
     timestamp: new Date().toISOString(),
     version: "1",
   };
-  const payloadJson = JSON.stringify(payload, Object.keys(payload).sort());
-  const plaintextChunks = splitTextForQrUrls(sealText, payload, bootstrapUrl);
-  const compressedSeals = createLegacyQRedSeals(payload, documentId);
-  const useCompressed = compressedSeals.length < plaintextChunks.length;
-  const seals = useCompressed
-    ? compressedSeals
-    : plaintextChunks.map((chunkText, index) => buildFragmentUrl(
-        bootstrapUrl,
-        buildFragmentData({ payload, chunkText, chunkNumber: index, totalChunks: plaintextChunks.length }),
-      ));
+
+  const plaintextPayload = buildPayload(baseFields, canonical, "plaintext");
+  const plaintextJson = JSON.stringify(plaintextPayload, Object.keys(plaintextPayload).sort());
+  const plaintextUrls = splitTextForQrUrls(canonical, plaintextPayload, bootstrapUrl, "plaintext");
+  const plaintextReport = candidateReport("plaintext", plaintextUrls.length, true, []);
+
+  const recipeResult = validateSimpleEnglish(canonical);
+  const recipeReport = candidateReport("recipe1", 0, recipeResult.reversible, recipeResult.diagnostics, recipeResult.recipe_id);
+  let recipeUrls = [];
+  let recipeJson = "";
+  if (recipeResult.reversible) {
+    const recipePayload = buildPayload(baseFields, recipeResult.compact, recipeResult.recipe_id);
+    recipeUrls = splitTextForQrUrls(recipeResult.compact, recipePayload, bootstrapUrl, recipeResult.recipe_id);
+    recipeReport.qr_count = recipeUrls.length;
+    recipeJson = JSON.stringify(recipePayload, Object.keys(recipePayload).sort());
+  }
+
+  const compressedSeals = createLegacyQRedSeals(plaintextPayload, documentId);
+  const compressedReport = candidateReport("compressed", compressedSeals.length, true, []);
+
+  const candidates = [
+    { encoding: "plaintext", strings: plaintextUrls, payload_json: plaintextJson, recipe: "plaintext", ...plaintextReport },
+    { encoding: "compressed", strings: compressedSeals, payload_json: plaintextJson, recipe: "legacy", ...compressedReport },
+  ];
+  if (recipeResult.reversible) {
+    candidates.splice(1, 0, { encoding: "recipe1", strings: recipeUrls, payload_json: recipeJson, recipe: recipeResult.recipe_id, ...recipeReport });
+  }
+  const selected = selectCandidate(candidates, encodingStrategy);
+  const seals = selected.strings;
 
   return {
     bootstrap_url: fragmentBase(bootstrapUrl),
     document_id: documentId,
     issuer,
     key_id: keyId,
-    payload_json: payloadJson,
+    payload_json: selected.payload_json,
     seals,
     total_seals: seals.length,
-    encoding: useCompressed ? "compressed" : "plaintext",
+    encoding: selected.encoding,
+    encoding_strategy: encodingStrategy,
+    selected_recipe: selected.recipe,
+    estimated_qr_count: selected.qr_count,
+    compression_savings_pct: plaintextUrls.length > selected.qr_count ? Math.round(((plaintextUrls.length - selected.qr_count) / plaintextUrls.length) * 100) : 0,
+    candidate_reports: candidates.map(({ encoding, qr_count, reversible, diagnostics, recipe_id }) => ({ encoding, qr_count, reversible, diagnostics, recipe_id })),
   };
 }
 

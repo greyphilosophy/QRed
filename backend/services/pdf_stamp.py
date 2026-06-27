@@ -148,7 +148,7 @@ def create_page_seal_results(
     public_key: str,
     document_id: Optional[str] = None,
     bootstrap_url: str = DEFAULT_BOOTSTRAP_URL,
-    text_mode: str = "plaintext",
+    encoding_strategy: str = "automatic",
 ) -> tuple[str, list[SealGenerationResult]]:
     """Create independent seal results for each PDF page's extracted text."""
     doc = fitz.open(pdf_path)
@@ -172,7 +172,7 @@ def create_page_seal_results(
                 public_key=public_key,
                 document_id=page_seal_document_id(merkle_root, page_text, page_index),
                 bootstrap_url=bootstrap_url,
-                text_mode=text_mode,
+                encoding_strategy=encoding_strategy,
             )
         )
     return merkle_root, page_results
@@ -274,7 +274,7 @@ def seal_pdf(
     document_id: Optional[str] = None,
     layout: dict | None = None,
     bootstrap_url: str = DEFAULT_BOOTSTRAP_URL,
-    text_mode: str = "plaintext",
+    encoding_strategy: str = "automatic",
 ) -> dict:
     """Full pipeline: read PDF → sign → generate seals → stamp onto PDF."""
     if output_path is None:
@@ -288,7 +288,7 @@ def seal_pdf(
         public_key=public_key,
         document_id=document_id,
         bootstrap_url=bootstrap_url,
-        text_mode=text_mode,
+        encoding_strategy=encoding_strategy,
     )
     stamp_page_seals_on_pdf(pdf_path, output_path, page_results, layout or {})
 
@@ -305,4 +305,10 @@ def seal_pdf(
         "total_seals": len(seal_strings),
         "seal_strings": seal_strings,
         "page_seal_strings": page_seal_strings,
+        "encoding": first_result.encoding,
+        "encoding_strategy": first_result.encoding_strategy,
+        "selected_recipe": first_result.selected_recipe,
+        "estimated_qr_count": first_result.estimated_qr_count,
+        "compression_savings_pct": first_result.compression_savings_pct,
+        "candidate_reports": first_result.candidate_reports,
     }

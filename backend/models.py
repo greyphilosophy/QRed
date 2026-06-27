@@ -84,6 +84,11 @@ class SealGenerationResult:
     issuer: str = ""
     key_id: str = ""
     encoding: str = "plaintext"
+    encoding_strategy: str = "automatic"
+    selected_recipe: str = "plaintext"
+    estimated_qr_count: int = 0
+    compression_savings_pct: int = 0
+    candidate_reports: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -95,4 +100,9 @@ class SealGenerationResult:
             "issuer": self.issuer,
             "key_id": self.key_id,
             "encoding": self.encoding,
+            "encoding_strategy": self.encoding_strategy,
+            "selected_recipe": self.selected_recipe,
+            "estimated_qr_count": self.estimated_qr_count,
+            "compression_savings_pct": self.compression_savings_pct,
+            "candidate_reports": self.candidate_reports,
         }

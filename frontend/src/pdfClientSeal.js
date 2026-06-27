@@ -46,7 +46,7 @@ export async function sealPdfInBrowser({
   privateKey,
   publicKey,
   bootstrapUrl = DEFAULT_BOOTSTRAP_URL,
-  textMode = "plaintext",
+  encodingStrategy = "automatic",
 }) {
   const digest = await fileDigestHex(file);
   const sealResult = await createQRedSeals({
@@ -55,7 +55,7 @@ export async function sealPdfInBrowser({
     privateKey,
     publicKey,
     bootstrapUrl,
-    textMode,
+    encodingStrategy,
   });
   const pdf = await PDFDocument.load(await file.arrayBuffer());
   const font = await pdf.embedFont(StandardFonts.Helvetica);
