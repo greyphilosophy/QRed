@@ -23,12 +23,12 @@ These scenarios describe the Windows 11 demo flow for QRed using a local FastAPI
 **And** stamps each PDF page with its page-specific payload QR codes when space allows
 **And** returns a sealed PDF download.
 
-## Feature: Smartphone bootstrap verification
+## Feature: Smartphone QR payload verification
 
 ### Scenario: Launch verifier from a stamped document
-**Given** a sealed PDF page includes a bootstrap QR code
+**Given** a sealed PDF page includes a QRed payload QR URL
 **When** the recipient scans that QR code with a smartphone camera
-**Then** the smartphone opens `https://qred.org/verify.htm`
+**Then** the smartphone opens the short `https://qred.org/` verifier origin with QRed data in the URL fragment
 **And** the verifier page offers a camera scanner, manual seal entry, text-file upload, and issuer public-key entry.
 
 ## Feature: Reconstruct and verify a sealed document

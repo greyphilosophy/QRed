@@ -51,7 +51,7 @@ QRed/
 
 ## API Endpoints
 
-Use `http://localhost:8190` for local API requests. Generated bootstrap QR codes target the production verifier at `https://qred.org/verify.htm` by default.
+Use `http://localhost:8190` for local API requests. Generated QR payload URLs use `https://qred.org/` as the production base by default.
 
 ### POST /api/seals
 Generate QRed seals for a document.

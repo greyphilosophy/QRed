@@ -2,7 +2,7 @@
 
 QRed is an open standard and reference implementation for tamper-evident document sealing and verification.
 
-QRed encodes the signed contents of a document into one or more QR code seals printed alongside the document. Recipients can scan a bootstrap QR code using a standard smartphone camera to launch a web-based verifier that reconstructs, validates, and displays the certified contents of the document.
+QRed encodes the signed contents of a document into one or more QR code seals printed alongside the document. Recipients can scan QRed QR payload URLs using a standard smartphone camera to launch a web-based verifier that reconstructs, validates, and displays the certified contents of the document.
 
 No app installation is required.
 
@@ -39,7 +39,7 @@ make install   # pip install -r requirements.txt
 make run       # uvicorn on port 8190
 ```
 
-Then use the REST API. The local backend listens on `http://localhost:8190`, and generated bootstrap QR codes target the production verifier at `https://qred.org/verify.htm` by default:
+Then use the REST API. The local backend listens on `http://localhost:8190`, and generated QR payload URLs use `https://qred.org/` as the production base by default:
 
 ```bash
 # Generate seals
@@ -67,7 +67,7 @@ make tests     # 104 passing BDD tests
 
 # Production deployment for qred.org
 
-The production verifier is expected to be served by Cloudflare Pages at `https://qred.org/verify.htm`. The repository root now includes Cloudflare Pages config and npm build scripts so Cloudflare can publish the frontend even when the project is connected from the repository root. Do not use GoDaddy URL forwarding as the primary production mechanism: forwarding can change the browser-visible URL, introduce redirect dependencies, and does not prove that `/verify.htm` is being served directly by the Cloudflare Pages deployment with Cloudflare-managed TLS.
+The production verifier is expected to be served by Cloudflare Pages at `https://qred.org/`, with `/verify.htm` retained as a human-facing verifier route. The repository root now includes Cloudflare Pages config and npm build scripts so Cloudflare can publish the frontend even when the project is connected from the repository root. Do not use GoDaddy URL forwarding as the primary production mechanism: forwarding can change the browser-visible URL, introduce redirect dependencies, and does not prove that `qred.org` is being served directly by the Cloudflare Pages deployment with Cloudflare-managed TLS.
 
 ## Cloudflare Pages build settings
 
@@ -79,7 +79,7 @@ Configure the Cloudflare Pages project with these settings:
 | Build command | `npm ci && npm run build` |
 | Build output directory | `build` |
 | Deploy command, if the Cloudflare UI requires one | `npm ci && npm run build` |
-| Production URL expectation | `https://qred.org/verify.htm` |
+| Production QR URL expectation | `https://qred.org/#QRED1?...` |
 
 Use `npm ci && npm run build` only after setting the project root to `frontend`, where `package.json` and `package-lock.json` live. If Cloudflare runs from the repository root, use the root `npm run build` script and publish `frontend/build`; the root `wrangler.jsonc` declares that Pages output directory. If the UI requires manual settings instead, use `cd frontend && npm ci && npm run build` and set the build output directory to `frontend/build`.
 
@@ -125,25 +125,25 @@ After records are created in GoDaddy, return to Cloudflare Pages and verify that
 Before considering production deployment complete, verify all of the following:
 
 - The homepage loads successfully at `https://qred.org/`.
-- The verifier route loads successfully at `https://qred.org/verify.htm`.
+- The verifier route loads successfully at `https://qred.org/`; `/verify.htm` may also load as a human-facing route.
 - The scanner page can submit collected payload seals and issuer public key data to the verification API.
-- Generated bootstrap URLs in sealed PDFs and API responses point to `https://qred.org/verify.htm`.
+- Generated QR payload URLs in sealed PDFs and API responses use `https://qred.org/` as their base and place QRed data in the fragment.
 
 A quick HTTP check for the required verifier route is:
 
 ```bash
-curl -I https://qred.org/verify.htm
+curl -I https://qred.org/
 ```
 
-The response should resolve directly on `https://qred.org/verify.htm`, present a valid TLS certificate, and return a successful HTTP status from the Cloudflare Pages deployment. If `www.qred.org` is enabled, also verify the intended `www` behavior, for example:
+The response should resolve directly on `https://qred.org/`, present a valid TLS certificate, and return a successful HTTP status from the Cloudflare Pages deployment. If `www.qred.org` is enabled, also verify the intended `www` behavior, for example:
 
 ```bash
-curl -I https://www.qred.org/verify.htm
+curl -I https://www.qred.org/
 ```
 
 ## Bootstrap URL stability
 
-QRed-generated bootstrap QR codes target `https://qred.org/verify.htm` by default. The path `/verify.htm` is part of the printed QR bootstrap contract: changing or removing it can break already-issued printed documents. Keep `/verify.htm` stable, and if the verifier application is reorganized, preserve this path with a direct Cloudflare Pages route or rewrite that continues to serve the verifier.
+QRed-generated QR payload URLs target `https://qred.org/` by default and place payload data after the hash, for example `https://qred.org/#QRED1?...`. Keep the printed URL base as short as practical so more QR capacity remains available for certified data. The `/verify.htm` route may continue to exist for humans opening the full verifier directly, but newly generated QR payloads should not include that path unless a future compatibility requirement explicitly requires it.
 
 # Motivation
 
@@ -165,10 +165,10 @@ This allows recipients to verify:
    - plaintext, scanner-readable `QRED1?...` fragment URLs, and
    - compressed legacy `QRED1|...` seals.
 5. The chosen payload format is divided into one or more QR code seals.
-6. A bootstrap QR code containing a URL to a verifier web application is added to the document.
+6. The QR payload URLs use the short `https://qred.org/` production base and carry QRed data in the URL fragment.
 7. The QR seals are printed alongside the document.
-8. A recipient scans the bootstrap QR code.
-9. The verifier web application scans the remaining QR seals.
+8. A recipient scans one or more QRed QR payload URLs.
+9. The verifier web application collects any remaining QR seals.
 10. The payload is reconstructed and the signature is verified.
 11. The certified contents are displayed to the user.
 
@@ -207,13 +207,10 @@ QRed is not intended to:
 
 A typical QRed document contains:
 
-- One bootstrap QR code
-- One or more payload QR codes
+- One or more QRed payload QR codes
 - A digitally signed document payload
 
-The bootstrap QR launches the verifier web application.
-
-The payload QR codes contain the signed document data required to reconstruct and validate the certified contents.
+The QRed payload QR URLs launch the verifier web application from the short `https://qred.org/` origin and contain the signed document data required to reconstruct and validate the certified contents.
 
 # Security Model
 

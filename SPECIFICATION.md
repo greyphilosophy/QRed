@@ -8,11 +8,10 @@ QRed is a document sealing and verification standard that embeds a signed repres
 
 A QRed document consists of:
 
-- One bootstrap seal
 - One or more payload seals
 - A signed document payload
 
-The bootstrap seal directs the recipient to a verification application.
+Payload seal URLs use the short verifier origin to direct the recipient to a verification application.
 
 The payload seals contain the signed document data required to reconstruct and verify the certified contents.
 
@@ -26,15 +25,15 @@ The payload seals contain the signed document data required to reconstruct and v
 4. Implementations SHALL compare the QR count required for plaintext payloads against the QR count required for compressed payloads.
 5. Implementations SHALL choose the smaller QR count.
 6. The chosen payload form is divided into chunks and encoded into machine-readable seals.
-7. The bootstrap seal and payload seals are placed on the document.
+7. The payload seals are placed on the document.
 
 ---
 
 # Verification Workflow
 
-1. User scans bootstrap seal.
-2. Verification application loads.
-3. Verification application scans payload seals.
+1. User scans one or more payload seal URLs.
+2. Verification application loads from the short verifier origin when needed.
+3. Verification application collects remaining payload seals.
 4. Payload is reconstructed from all chunks.
 5. Payload integrity is validated (all chunks present).
 6. If the payload is compressed, it is decompressed.
@@ -140,19 +139,17 @@ Where:
 
 ---
 
-# Bootstrap Seal
+# Verifier URL Base
 
-A QRed document SHALL contain a bootstrap seal.
+A QRed payload URL SHALL provide sufficient information to locate a verification application.
 
-The bootstrap seal SHALL provide sufficient information to locate a verification application.
-
-The reference implementation uses a default bootstrap URL:
+The reference implementation uses the shortest production verifier origin currently required for scanning:
 
 ```
-https://qred.org/verify/v1
+https://qred.org/
 ```
 
-Future versions may support additional bootstrap mechanisms.
+QRed fragment payloads append signed payload data after the hash, for example `https://qred.org/#QRED1?...`, so URL path bytes do not consume QR capacity. Future versions may support additional verifier discovery mechanisms.
 
 ---
 
@@ -202,7 +199,7 @@ Future versions may standardize:
 - Seal placement conventions (corner, margin, watermark).
 - Minimum QR code dimensions.
 - Multi-page seal distribution.
-- Bootstrap vs. payload seal grouping.
+- Payload seal grouping and verifier discovery.
 
 ---
 
