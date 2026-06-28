@@ -55,7 +55,7 @@ curl -X POST http://localhost:8190/api/seals \
 # Verify seals
 curl -X POST http://localhost:8190/api/verify \
   -H 'Content-Type: application/json' \
-  -d '{"seals": ["https://qred.org/#QRED1?...", "QRED1|DOC-ABC|1|3|..."]}'
+  -d '{"seals": ["https://qred.org/#QRED1?..."]}'
 ```
 
 ## Run tests
@@ -163,7 +163,7 @@ This allows recipients to verify:
 3. The canonical text is digitally signed by the issuing authority.
 4. The implementation chooses the smaller QR count between:
    - plaintext, scanner-readable `QRED1?...` fragment URLs, and
-   - compressed legacy `QRED1|...` seals.
+   - reversible recipe payloads such as `b45`.
 5. The chosen payload format is divided into one or more QR code seals.
 6. A bootstrap QR code containing a URL to a verifier web application is added to the document.
 7. The QR seals are printed alongside the document.

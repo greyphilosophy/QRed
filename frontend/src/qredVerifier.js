@@ -1,5 +1,4 @@
 import { verifyAsync as verifyEd25519 } from "@noble/ed25519";
-import pako from "pako";
 import { decodeB45ish } from "./textRecipes.js";
 
 function decodeBase64Url(value) {
@@ -51,23 +50,7 @@ export function decodeSeal(sealString) {
   const plaintext = decodePlaintextFragment(fragment);
   if (plaintext) return plaintext;
 
-  const parts = fragment.split("|");
-  if (parts.length < 5) return null;
-  const [formatId, documentId, chunkNumberText, totalChunksText] = parts;
-  const data = parts.slice(4).join("|");
-  if (!formatId.startsWith("QRED")) return null;
-
-  const chunkNumber = Number.parseInt(chunkNumberText, 10);
-  const totalChunks = Number.parseInt(totalChunksText, 10);
-  if (!Number.isInteger(chunkNumber) || !Number.isInteger(totalChunks)) return null;
-
-  return {
-    format_id: formatId,
-    document_id: documentId,
-    chunk_number: chunkNumber,
-    total_chunks: totalChunks,
-    data,
-  };
+  return null;
 }
 
 export async function verifyQRedSeals(seals, publicKey) {
@@ -142,9 +125,7 @@ export async function verifyQRedSeals(seals, publicKey) {
         recipe: context.metadata.recipe || "plaintext",
       };
     } else {
-      const compressed = decodeBase64Url(rawData);
-      const payloadJson = pako.ungzip(compressed, { to: "string" });
-      payload = JSON.parse(payloadJson);
+      return { status: "ERROR", error_message: "Unsupported seal format" };
     }
   } catch (error) {
     return { status: "ERROR", error_message: `Payload decoding failed: ${error.message}` };

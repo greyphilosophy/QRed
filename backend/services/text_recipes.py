@@ -68,7 +68,7 @@ def validate_b45(original: str) -> RecipeValidationResult:
                     line=1,
                     reason=f"b45 decoding failed: {exc}",
                     original=original,
-                    recommendation="Use plaintext or legacy compression instead.",
+                    recommendation="Use plaintext or another reversible recipe instead.",
                 )
             ],
         )
@@ -82,7 +82,7 @@ def validate_b45(original: str) -> RecipeValidationResult:
                 reason="b45 round-trip did not restore the original text.",
                 original=original,
                 restored=restored,
-                recommendation="Use plaintext or legacy compression instead.",
+                recommendation="Use plaintext or another reversible recipe instead.",
             )
         ]
     return RecipeValidationResult(

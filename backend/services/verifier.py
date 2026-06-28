@@ -1,8 +1,5 @@
 """QRed Verifier — reconstruct, decompress, verify, and display QRed payloads."""
 
-import base64
-import gzip
-import json
 from collections.abc import Callable
 
 from backend.crypto import verify as crypto_verify
@@ -57,25 +54,7 @@ def decode_seal(seal_string: str) -> dict | None:
     plaintext = _decode_plaintext_fragment(fragment)
     if plaintext:
         return plaintext
-    parts = fragment.split("|", 4)
-    if len(parts) < 5:
-        return None
-    fmt_id, doc_id, chunk_num, total, data = parts
-    if not fmt_id.startswith("QRED"):
-        return None
-    try:
-        chunk_number = int(chunk_num)
-        total_chunks = int(total)
-    except ValueError:
-        return None
-
-    return {
-        "format_id": fmt_id,
-        "document_id": doc_id,
-        "chunk_number": chunk_number,
-        "total_chunks": total_chunks,
-        "data": data,
-    }
+    return None
 
 
 def reconstruct_and_verify(
@@ -167,9 +146,7 @@ def reconstruct_and_verify(
                 "recipe": ctx["metadata"].get("recipe", "plaintext"),
             }
         else:
-            compressed = base64.urlsafe_b64decode(raw_data)
-            payload_json = gzip.decompress(compressed).decode("utf-8")
-            payload = json.loads(payload_json)
+            return {"status": "ERROR", "error_message": "Unsupported seal format"}
     except Exception as e:
         return {
             "status": "ERROR",

@@ -23,11 +23,11 @@ The payload seals contain the signed document data required to reconstruct and v
 1. Source document is provided.
 2. A canonical text representation is produced.
 3. The canonical text is digitally signed using Ed25519.
-4. In automatic mode, implementations SHALL evaluate all reversible supported payload candidates, currently plaintext fragment URLs, reversible recipe payloads such as `b45`, and legacy compressed `QRED1|...` payloads.
+4. In automatic mode, implementations SHALL evaluate all reversible supported payload candidates, currently plaintext fragment URLs and reversible recipe payloads such as `b45`.
 5. Only reversible candidates are selectable.
 6. Automatic mode SHALL choose the candidate with the smallest QR count.
-7. QR-count ties SHALL prefer plaintext, then recipe encodings, then compressed legacy encoding.
-8. Explicit encoding strategies MAY request `plaintext`, `b45`, or legacy compression aliases supported by the implementation.
+7. QR-count ties SHALL prefer plaintext, then recipe encodings.
+8. Explicit encoding strategies MAY request `plaintext`, `b45`, or additional modular recipes supported by the implementation.
 9. The chosen payload form is divided into chunks and encoded into machine-readable seals.
 10. The payload seals are placed on the document.
 
@@ -40,7 +40,6 @@ The payload seals contain the signed document data required to reconstruct and v
 3. Verification application scans payload seals.
 4. Payload is reconstructed from all chunks.
 5. Payload integrity is validated (all chunks present).
-6. If the payload is compressed, it is decompressed.
 7. Digital signature is verified using the issuer's public key.
 8. Certified contents are displayed.
 9. Verification result is reported.
@@ -100,9 +99,9 @@ The reference implementation stores the signed payload as JSON with sorted keys 
 
 - plaintext `QRED1?...` fragment URLs that carry the canonical text directly,
 - reversible recipe payloads such as `b45`, and
-- legacy compressed `QRED1|...` seal formats that gzip-compress and base64-encode the payload.
 
-Only reversible candidates are selectable. Automatic mode selects the candidate with the smallest QR count. Ties prefer plaintext, then recipe encodings, then compressed legacy encoding. Explicit strategies may request `plaintext`, `b45`, or supported legacy compression aliases such as `legacy_compression`.
+
+Only reversible candidates are selectable. Automatic mode selects the candidate with the smallest QR count. Ties prefer plaintext, then recipe encodings. Explicit strategies may request `plaintext`, `b45`, or additional modular recipes supported by the implementation.
 
 ---
 
@@ -126,12 +125,12 @@ The issuer registry validates key_id on registration: the caller-supplied key_id
 
 Payloads exceeding the capacity of a single seal SHALL be divided into chunks.
 
-When compression wins, the reference implementation splits the compressed base64 payload into fixed-size data chunks (200 bytes each).
+The reference implementation emits plaintext fragment URLs and modular recipe fragment URLs; it does not emit or accept the removed compressed pipe seal format.
 
 Compressed QRed chunks are encoded as a pipe-delimited string:
 
 ```
-QRED1|DOC-ABC123DEF456|0|3|<base64_gzip_data>
+
 ```
 
 Where:
