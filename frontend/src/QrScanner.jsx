@@ -1,11 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
-import { isQRedSeal, parseQRedSeal } from "./qredFragment.js";
 
 /**
  * QrScanner — Camera-based QR code scanner that can scan ANY QR code and
- * display its contents. For QRED1? format codes, shows structured metadata
- * using the shared qredFragment parser. For plain text, shows the raw content.
+ * display its raw contents.
  *
  * Three states:
  * 1. Idle — shows the AR viewport and "Start scanning" button (user-initiated camera access)
@@ -71,26 +69,6 @@ export function QrScanner({ onOpenPdfStampTool }) {
 }
 
 function ResultPanel({ scannedText }) {
-  if (scannedText && isQRedSeal(scannedText)) {
-    const sealData = parseQRedSeal(scannedText);
-    return React.createElement("div", { className: "ar-result-panel" },
-      React.createElement("h2", null, "QRed Document Data"),
-      React.createElement("div", { className: "doc-text" }, sealData?.text || scannedText),
-      (sealData?.issuer || sealData?.documentId)
-        ? React.createElement("div", { className: "fragment-meta" },
-            sealData.issuer && React.createElement("div", { className: "meta-row" },
-              React.createElement("span", { className: "meta-label" }, "Issuer:"),
-              React.createElement("span", null, sealData.issuer)
-            ),
-            sealData.documentId && React.createElement("div", { className: "meta-row" },
-              React.createElement("span", { className: "meta-label" }, "Document ID:"),
-              React.createElement("span", null, sealData.documentId)
-            )
-          )
-        : null
-    );
-  }
-
   return React.createElement("div", { className: "ar-result-panel" },
     React.createElement("h2", null, "QR Code Content"),
     React.createElement("div", { className: "doc-text" }, scannedText)

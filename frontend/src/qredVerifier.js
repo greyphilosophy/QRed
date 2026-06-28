@@ -22,14 +22,6 @@ function sealFragment(sealString) {
   return hashIndex >= 0 ? sealString.slice(hashIndex + 1) : sealString;
 }
 
-export function extractSealsFromFragment(hash = window.location.hash) {
-  const fragment = hash.startsWith("#") ? hash.slice(1) : hash;
-  if (!fragment) return [];
-  const decodedFragment = decodeURIComponent(fragment);
-  if (decodedFragment.startsWith("QRED1?")) return [decodedFragment];
-  return decodedFragment.split(/\r?\n/).map((item) => item.trim()).filter((item) => item.startsWith("QRED"));
-}
-
 function decodePlaintextFragment(fragment) {
   if (!fragment.startsWith("QRED1?")) return null;
   const params = new URLSearchParams(fragment.slice("QRED1?".length));
