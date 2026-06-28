@@ -52,7 +52,7 @@ describe("browser QRed sealing", () => {
 
     expect(result.reversible).toBe(true);
     expect(result.restored).toBe(original);
-    expect(result.compact).toContain("%23");
+    expect(result.compact).toContain("+3");
     expect(result.compact).toContain("%0A");
     expect(result.compact).toContain("%C3%A9");
   });

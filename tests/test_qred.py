@@ -375,7 +375,7 @@ def test_fr4_b45_roundtrip_preserves_escapes():
     result = validate_simple_english(original)
     assert result.reversible is True
     assert result.restored == original
-    assert "%23" in result.compact
+    assert "+3" in result.compact
     assert "%0A" in result.compact
     assert "%C3%A9" in result.compact
 

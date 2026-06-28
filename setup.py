@@ -17,6 +17,7 @@ setup(
         "python-multipart>=0.0.9",
         "pytest>=8.0",
         "httpx>=0.27",
+        "b45 @ git+https://github.com/greyphilosophy/b45.git@338ffcaec502b73a66d01948a7dbe4049a4ed783",
     ],
     entry_points={
         "console_scripts": [
