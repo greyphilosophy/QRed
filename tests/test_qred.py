@@ -661,6 +661,14 @@ def test_decode_invalid_seal_returns_none():
     assert decode_seal("garbage") is None
 
 
+def test_qred_chunk_encode_rejects_pipe_format_fallback():
+    """Given raw chunk data, encode rejects removed pipe-format serialization."""
+    chunk = QRedChunk(document_id="DOC1", chunk_number=0, total_chunks=1, data="raw-data")
+
+    with pytest.raises(ValueError, match="Invalid QRed chunk data"):
+        chunk.encode()
+
+
 def test_decode_seal_returns_none_for_malformed_numeric_fields():
     """Given non-integer chunk fields, when decoded, then None returned."""
     assert decode_seal("QRED1?doc=DOC&i=not-a-number&n=1&txt=data") is None

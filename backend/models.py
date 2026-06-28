@@ -16,10 +16,14 @@ class QRedChunk:
     data: str = ""
 
     def encode(self) -> str:
-        """Encode chunk into the QRed seal format string or fragment URL."""
+        """Return an already-built QRed fragment URL or fragment payload.
+
+        Pipe-format chunk serialization has been removed, so callers must
+        provide data that is already in a supported fragment form.
+        """
         if self.data.startswith(("http://", "https://", "QRED1?")):
             return self.data
-        return f"{self.format_id}|{self.document_id}|{self.chunk_number}|{self.total_chunks}|{self.data}"
+        raise ValueError(f"Invalid QRed chunk data: {self.data}")
 
     @classmethod
     def decode(cls, encoded: str) -> "QRedChunk":
