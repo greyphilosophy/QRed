@@ -336,6 +336,40 @@ def test_fr4_prefers_smallest_modular_reversible_candidate_for_large_content():
     assert getattr(result, "encoding", "plaintext") in {"plaintext", "b45"}
     assert all(chunk.encode().startswith("https://qred.org/#QRED1?") for chunk in result.chunks)
 
+def test_fr4_brotli_is_available_when_it_makes_smaller_seals():
+    """Given highly repetitive content, when Brotli is requested, then it is selected and verifies."""
+    content = ("QRed Brotli compression option. " * 500).strip()
+    result = create_seals(
+        document_text=content,
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        encoding_strategy="brotli",
+    )
+
+    assert result.selected_recipe == "brotli"
+    assert result.encoding == "brotli"
+    assert any(report["encoding"] == "brotli" and report["reversible"] for report in result.candidate_reports)
+
+    verification = reconstruct_and_verify([chunk.encode() for chunk in result.chunks], expected_public_key=TEST_PUBLIC_KEY)
+    assert verification["status"] == "VALID"
+    assert verification["recipe"] == "brotli"
+    assert verification["content"] == canonicalize_text(content)
+
+
+def test_fr4_brotli_falls_back_when_not_smaller():
+    """Given short content, when Brotli is requested, then a smaller reversible candidate is used instead."""
+    result = create_seals(
+        document_text="Short",
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        encoding_strategy="brotli",
+    )
+
+    assert result.selected_recipe != "brotli"
+    assert any(report["encoding"] == "brotli" and not report["reversible"] for report in result.candidate_reports)
+
 
 def test_fr4_recipe1_reversible_on_supported_simple_english():
     """Given supported simple English, when applying Recipe 1, then it round-trips exactly"""

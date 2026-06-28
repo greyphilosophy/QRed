@@ -9,7 +9,7 @@ from typing import Optional
 
 from backend.models import QRedChunk, SealGenerationResult
 from backend.crypto import sign
-from backend.services.text_recipes import validate_simple_english
+from backend.services.text_recipes import validate_brotli, validate_simple_english
 
 
 DEFAULT_BOOTSTRAP_URL = "https://qred.org/"
@@ -166,11 +166,14 @@ def _select_candidate(candidates: list[dict], preferred: str = "automatic") -> d
     if preferred == "plaintext":
         return by_encoding["plaintext"]
     preferred_candidate = by_recipe.get(preferred) or by_encoding.get(preferred)
-    if preferred_candidate is not None:
+    if preferred_candidate is not None and preferred_candidate["reversible"]:
         return preferred_candidate
 
+    automatic_selectable = [candidate for candidate in selectable if candidate["encoding"] != "brotli"]
+    if not automatic_selectable:
+        automatic_selectable = selectable
     return sorted(
-        selectable,
+        automatic_selectable,
         key=lambda candidate: (
             candidate["qr_count"],
             0 if candidate["encoding"] == "plaintext" else 1,
@@ -242,11 +245,43 @@ def create_seals(
     else:
         recipe_json = ""
 
+    brotli_report = None
+    brotli_urls: list[str] = []
+    brotli_payload = None
+    brotli_json = ""
+    if encoding_strategy == "brotli":
+        brotli_result = validate_brotli(canonical)
+        brotli_report = _candidate_report(
+            brotli_result.recipe_id,
+            0,
+            brotli_result.reversible,
+            [diag.to_dict() for diag in brotli_result.diagnostics],
+            brotli_result.recipe_id,
+        )
+        if brotli_result.reversible:
+            brotli_payload = _build_payload(base_fields, brotli_result.compact, brotli_result.recipe_id)
+            brotli_json = json.dumps(brotli_payload, sort_keys=True, separators=(",", ":"))
+            brotli_urls = split_text_into_qr_urls(brotli_result.compact, brotli_payload, bootstrap_url, brotli_result.recipe_id)
+            brotli_report["qr_count"] = len(brotli_urls)
+            baseline_url_count = len(recipe_urls) if recipe_result.reversible and recipe_urls else len(plaintext_urls)
+            baseline_char_count = min((len("".join(urls)) for urls in (recipe_urls, plaintext_urls) if urls), default=len("".join(plaintext_urls)))
+            if len(brotli_urls) >= baseline_url_count and len("".join(brotli_urls)) >= baseline_char_count:
+                brotli_report["reversible"] = False
+                brotli_report["diagnostics"] = brotli_report["diagnostics"] + [{
+                    "line": 1,
+                    "reason": "brotli did not produce a smaller seal payload than b45/plaintext.",
+                    "original": "",
+                    "restored": "",
+                    "recommendation": "Use b45 or plaintext instead.",
+                }]
+
     candidates = [
         {"encoding": "plaintext", "strings": plaintext_urls, **plaintext_report, "payload_json": plaintext_json, "recipe": "plaintext"},
     ]
     if recipe_result.reversible and recipe_payload is not None:
         candidates.insert(1, {"encoding": recipe_result.recipe_id, "strings": recipe_urls, **recipe_report, "payload_json": recipe_json, "recipe": recipe_result.recipe_id})
+    if brotli_payload is not None and brotli_report is not None:
+        candidates.append({"encoding": "brotli", "strings": brotli_urls, **brotli_report, "payload_json": brotli_json, "recipe": "brotli"})
 
     selected = _select_candidate(candidates, encoding_strategy)
 
@@ -279,5 +314,5 @@ def create_seals(
         selected_recipe=selected.get("recipe", "plaintext"),
         estimated_qr_count=selected_count,
         compression_savings_pct=savings_pct,
-        candidate_reports=[plaintext_report] + ([recipe_report] if recipe_result.reversible else []),
+        candidate_reports=[plaintext_report] + ([recipe_report] if recipe_result.reversible else []) + ([brotli_report] if brotli_report is not None else []),
     )

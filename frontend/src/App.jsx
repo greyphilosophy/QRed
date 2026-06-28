@@ -183,7 +183,8 @@ function PdfSealForm() {
         React.createElement("select", { "aria-label": "Encoding Strategy", value: encodingStrategy, onChange: (e) => setEncodingStrategy(e.target.value), title: "Automatic tries every reversible recipe and chooses the smallest successful encoding." },
           React.createElement("option", { value: "automatic" }, "Automatic (recommended)"),
           React.createElement("option", { value: "plaintext" }, "Plaintext"),
-          React.createElement("option", { value: "b45" }, "Recipe 1 – b45")
+          React.createElement("option", { value: "b45" }, "Recipe 1 – b45"),
+          React.createElement("option", { value: "brotli" }, "Brotli (when smaller)")
         ),
         React.createElement("small", { style: { color: "#64748b", display: "block", marginTop: "0.5rem" } },
           "Automatic tries every reversible recipe and chooses the smallest successful encoding."
