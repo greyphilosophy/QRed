@@ -330,10 +330,21 @@ def test_fr4_prefers_smallest_modular_reversible_candidate_for_large_content():
         private_key=TEST_PRIVATE_KEY,
         public_key=TEST_PUBLIC_KEY,
     )
-    reversible_counts = [report["qr_count"] for report in result.candidate_reports if report["reversible"]]
+    reversible_reports = {
+        report["encoding"]: report
+        for report in result.candidate_reports
+        if report["reversible"]
+    }
+    brotli_qr_count = reversible_reports["brotli"]["qr_count"]
+    other_qr_counts = [
+        report["qr_count"]
+        for encoding, report in reversible_reports.items()
+        if encoding != "brotli"
+    ]
 
-    assert result.total_chunks == min(reversible_counts)
-    assert getattr(result, "encoding", "plaintext") == "brotli"
+    assert brotli_qr_count < min(other_qr_counts)
+    assert result.total_chunks == brotli_qr_count
+    assert result.encoding == "brotli"
     assert all(chunk.encode().startswith("https://qred.org/#QRED1?") for chunk in result.chunks)
 
 
