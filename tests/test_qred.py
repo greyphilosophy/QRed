@@ -330,11 +330,92 @@ def test_fr4_prefers_smallest_modular_reversible_candidate_for_large_content():
         private_key=TEST_PRIVATE_KEY,
         public_key=TEST_PUBLIC_KEY,
     )
-    reversible_counts = [report["qr_count"] for report in result.candidate_reports if report["reversible"]]
+    reversible_reports = {
+        report["encoding"]: report
+        for report in result.candidate_reports
+        if report["reversible"]
+    }
+    brotli_qr_count = reversible_reports["brotli"]["qr_count"]
+    other_qr_counts = [
+        report["qr_count"]
+        for encoding, report in reversible_reports.items()
+        if encoding != "brotli"
+    ]
 
-    assert result.total_chunks == min(reversible_counts)
-    assert getattr(result, "encoding", "plaintext") in {"plaintext", "b45"}
+    assert brotli_qr_count < min(other_qr_counts)
+    assert result.total_chunks == brotli_qr_count
+    assert result.encoding == "brotli"
     assert all(chunk.encode().startswith("https://qred.org/#QRED1?") for chunk in result.chunks)
+
+
+def test_fr4_automatic_prefers_readability_when_qr_counts_tie():
+    """Given equal QR counts, automatic mode chooses the most readable representation."""
+    result = create_seals(
+        document_text="Short",
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+    )
+
+    assert result.total_chunks == 1
+    assert result.selected_recipe == "plaintext"
+
+def test_fr4_automatic_tiebreaks_by_readability_after_minimizing_qr_count():
+    """Given b45 and Brotli need equal QR counts, automatic mode prefers b45 readability."""
+    selected = sealer_module._select_candidate([
+        {"encoding": "plaintext", "recipe": "plaintext", "qr_count": 3, "reversible": True},
+        {"encoding": "b45", "recipe": "b45", "qr_count": 2, "reversible": True},
+        {"encoding": "brotli", "recipe": "brotli", "qr_count": 2, "reversible": True},
+    ])
+
+    assert selected["encoding"] == "b45"
+
+
+def test_fr4_automatic_selects_brotli_when_it_reduces_qr_count():
+    """Given Brotli is the only two-QR candidate, automatic mode selects Brotli."""
+    selected = sealer_module._select_candidate([
+        {"encoding": "plaintext", "recipe": "plaintext", "qr_count": 3, "reversible": True},
+        {"encoding": "b45", "recipe": "b45", "qr_count": 3, "reversible": True},
+        {"encoding": "brotli", "recipe": "brotli", "qr_count": 2, "reversible": True},
+    ])
+
+    assert selected["encoding"] == "brotli"
+
+
+def test_fr4_brotli_is_available_when_it_makes_smaller_seals():
+    """Given highly repetitive content, when Brotli is requested, then it is selected and verifies."""
+    content = ("QRed Brotli compression option. " * 500).strip()
+    result = create_seals(
+        document_text=content,
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        encoding_strategy="brotli",
+    )
+
+    assert result.selected_recipe == "brotli"
+    assert result.encoding == "brotli"
+    assert any(report["encoding"] == "brotli" and report["reversible"] for report in result.candidate_reports)
+
+    verification = reconstruct_and_verify([chunk.encode() for chunk in result.chunks], expected_public_key=TEST_PUBLIC_KEY)
+    assert verification["status"] == "VALID"
+    assert verification["recipe"] == "brotli"
+    assert verification["content"] == canonicalize_text(content)
+
+
+def test_fr4_brotli_falls_back_when_not_smaller():
+    """Given short content, when Brotli is requested, then a smaller reversible candidate is used instead."""
+    result = create_seals(
+        document_text="Short",
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        encoding_strategy="brotli",
+    )
+
+    assert result.selected_recipe != "brotli"
+    assert result.selected_recipe == "plaintext"
+    assert any(report["encoding"] == "brotli" and report["reversible"] for report in result.candidate_reports)
 
 
 def test_fr4_recipe1_reversible_on_supported_simple_english():
@@ -1167,6 +1248,7 @@ def test_pdf_page_seal_group_ids_do_not_collide_for_duplicate_chunked_pages(tmp_
         private_key=TEST_PRIVATE_KEY,
         public_key=TEST_PUBLIC_KEY,
         output_path=str(output_path),
+        encoding_strategy="b45",
         layout={"size": 10, "spacing": 12, "margin": 5},
     )
 

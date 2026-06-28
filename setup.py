@@ -18,6 +18,7 @@ setup(
         "pytest>=8.0",
         "httpx>=0.27",
         "b45 @ git+https://github.com/greyphilosophy/b45.git@338ffcaec502b73a66d01948a7dbe4049a4ed783",
+        "brotli>=1.1.0",
     ],
     entry_points={
         "console_scripts": [

@@ -3,13 +3,14 @@
 from collections.abc import Callable
 
 from backend.crypto import verify as crypto_verify
-from backend.services.text_recipes import decode_b45ish
+from backend.services.text_recipes import decode_b45ish, decode_brotli
 
 RECIPE_DECODERS = {
     "b45": decode_b45ish,
     "base45ish": decode_b45ish,
     "recipe1": decode_b45ish,
     "simple_english": decode_b45ish,
+    "brotli": decode_brotli,
 }
 
 
@@ -163,7 +164,7 @@ def reconstruct_and_verify(
         except Exception as e:
             return {
                 "status": "ERROR",
-                "error_message": f"b45 decoding failed: {e}",
+                "error_message": f"recipe decoding failed: {e}",
             }
     signature = payload.get("signature", "")
     issuer = payload.get("issuer", "")

@@ -9,3 +9,4 @@ pymupdf>=1.27.0
 qrcode>=8.0
 Pillow>=10.0
 b45 @ git+https://github.com/greyphilosophy/b45.git@338ffcaec502b73a66d01948a7dbe4049a4ed783
+brotli>=1.1.0

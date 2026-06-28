@@ -8,6 +8,15 @@ function decodeBase64Url(value) {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
+async function decodeBrotli(value) {
+  if (typeof DecompressionStream !== "function") {
+    throw new Error("Brotli decoding is not available in this browser");
+  }
+  const stream = new Blob([decodeBase64Url(value)]).stream().pipeThrough(new DecompressionStream("br"));
+  const buffer = await new Response(stream).arrayBuffer();
+  return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+}
+
 function sealFragment(sealString) {
   const hashIndex = sealString.indexOf("#");
   return hashIndex >= 0 ? sealString.slice(hashIndex + 1) : sealString;
@@ -138,8 +147,14 @@ export async function verifyQRedSeals(seals, publicKey) {
     base45ish: decodeB45ish,
     recipe1: decodeB45ish,
     simple_english: decodeB45ish,
+    brotli: decodeBrotli,
   };
-  const restoredContent = (recipeDecoders[recipe] || ((value) => value))(content);
+  let restoredContent;
+  try {
+    restoredContent = await (recipeDecoders[recipe] || ((value) => value))(content);
+  } catch (error) {
+    return { status: "ERROR", error_message: `Recipe decoding failed: ${error.message}` };
+  }
   const signature = payload.signature || "";
   const issuer = payload.issuer || "";
   const documentId = payload.document_id || "";
