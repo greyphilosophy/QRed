@@ -1,18 +1,18 @@
 """Reversible text recipe helpers for QRed seal generation.
 
-The b45 recipe (Base45ish) is fully reversible and deterministic. It preserves
-human-readable ASCII where possible, and uses short escapes for uppercase letters,
-percent signs, plus signs, and UTF-8 byte escapes for everything else.
+The b45 transform is provided by the external ``b45`` package so QRed uses the
+same reference implementation as https://github.com/greyphilosophy/b45.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
+
+from b45 import decode as _b45_decode
+from b45 import encode as _b45_encode
 
 B45_RECIPE_ID = "b45"
 B45_LONG_RECIPE_ID = "base45ish"
-DIRECT_PUNCTUATION = {".", "-", "/", ":", "$", " "}
-HEX_DIGITS = set("0123456789ABCDEF")
 
 
 @dataclass(frozen=True)
@@ -45,83 +45,12 @@ class RecipeValidationResult:
         }
 
 
-def _flush_utf8_bytes(buffer: bytearray, output: list[str]) -> None:
-    if buffer:
-        output.append(buffer.decode("utf-8"))
-        buffer.clear()
-
-
 def encode_b45ish(text: str) -> str:
-    pieces: list[str] = []
-    for char in text:
-        if "a" <= char <= "z":
-            pieces.append(char.upper())
-        elif "A" <= char <= "Z":
-            pieces.append(f"+{char}")
-        elif char in {"%", "+"}:
-            pieces.append(char * 2)
-        elif char in DIRECT_PUNCTUATION or "0" <= char <= "9":
-            pieces.append(char)
-        else:
-            for byte in char.encode("utf-8"):
-                pieces.append(f"%{byte:02X}")
-    return "".join(pieces)
-
-
-def _decode_byte_escape(compact: str, index: int) -> tuple[int, int]:
-    if index + 2 >= len(compact):
-        raise ValueError("Truncated b45 byte escape")
-    hex_pair = compact[index + 1 : index + 3]
-    if hex_pair[0] not in HEX_DIGITS or hex_pair[1] not in HEX_DIGITS:
-        raise ValueError(f"Invalid b45 byte escape: %{hex_pair}")
-    return int(hex_pair, 16), index + 3
+    return _b45_encode(text)
 
 
 def decode_b45ish(compact: str) -> str:
-    restored: list[str] = []
-    utf8_bytes = bytearray()
-    index = 0
-
-    while index < len(compact):
-        char = compact[index]
-        if char == "+":
-            _flush_utf8_bytes(utf8_bytes, restored)
-            if index + 1 >= len(compact):
-                raise ValueError("Truncated b45 uppercase escape")
-            code = compact[index + 1]
-            if code == "+":
-                restored.append("+")
-                index += 2
-                continue
-            if not ("A" <= code <= "Z"):
-                raise ValueError(f"Invalid b45 uppercase escape: +{code}")
-            restored.append(code)
-            index += 2
-            continue
-
-        if char == "%":
-            if index + 1 >= len(compact):
-                raise ValueError("Truncated b45 percent escape")
-            if compact[index + 1] == "%":
-                _flush_utf8_bytes(utf8_bytes, restored)
-                restored.append("%")
-                index += 2
-                continue
-            byte_value, index = _decode_byte_escape(compact, index)
-            utf8_bytes.append(byte_value)
-            continue
-
-        _flush_utf8_bytes(utf8_bytes, restored)
-        if "A" <= char <= "Z":
-            restored.append(char.lower())
-        elif "0" <= char <= "9" or char in DIRECT_PUNCTUATION:
-            restored.append(char)
-        else:
-            raise ValueError(f"Invalid b45 character: {char}")
-        index += 1
-
-    _flush_utf8_bytes(utf8_bytes, restored)
-    return "".join(restored)
+    return _b45_decode(compact)
 
 
 def validate_b45(original: str) -> RecipeValidationResult:
@@ -166,7 +95,7 @@ def validate_b45(original: str) -> RecipeValidationResult:
 
 
 # Compatibility aliases kept so older call sites keep working while the recipe
-# itself moves to the b45 spec.
+# itself lives in the external b45 package.
 def encode_simple_english(text: str) -> tuple[str, list[RecipeDiagnostic]]:
     compact = encode_b45ish(text)
     return compact, []
