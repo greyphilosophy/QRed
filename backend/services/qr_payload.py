@@ -68,9 +68,9 @@ def create_scanner_safe_data(version: int, error_correction: int, payload: str |
     return util.create_bytes(buffer, base.rs_blocks(version, error_correction))
 
 
-def extract_hidden_payload_from_buffer(buffer: util.BitBuffer) -> bytes:
+def extract_hidden_payload_from_buffer(buffer: util.BitBuffer, version: int) -> bytes:
     """Test/custom-reader helper to recover bytes written after the terminator."""
-    start = len(_visible_url_buffer(1)) + 4
+    start = len(_visible_url_buffer(version)) + 4
     start += (-start) % 8
     data = bytes(buffer.buffer[start // 8:])
     magic_index = data.find(HIDDEN_PAYLOAD_MAGIC)

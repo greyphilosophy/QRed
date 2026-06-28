@@ -1356,7 +1356,22 @@ def test_scanner_safe_qr_keeps_qred_data_after_terminator_for_custom_reader():
 
     payload = "https://qred.org/#QRED1?txt=secret"
     buffer = scanner_safe_bit_buffer(10, constants.ERROR_CORRECT_M, payload)
-    assert extract_hidden_payload_from_buffer(buffer).decode("utf-8") == payload
+    assert extract_hidden_payload_from_buffer(buffer, version=10).decode("utf-8") == payload
+
+
+def test_scanner_safe_qr_hidden_extractor_uses_explicit_version_offset():
+    """Given a high-version QR, when extracting hidden data, then the version-specific count size is used."""
+    from backend.services.qr_payload import HIDDEN_PAYLOAD_MAGIC, extract_hidden_payload_from_buffer, scanner_safe_bit_buffer
+    from qrcode import constants, util
+
+    version = 27
+    payload = "https://qred.org/#QRED1?txt=version-aware"
+    buffer = scanner_safe_bit_buffer(version, constants.ERROR_CORRECT_M, payload)
+    hidden_start = 4 + util.length_in_bits(util.MODE_ALPHA_NUM, version) + 44 + 4
+    hidden_start += (-hidden_start) % 8
+
+    assert bytes(buffer.buffer[hidden_start // 8:]).startswith(HIDDEN_PAYLOAD_MAGIC)
+    assert extract_hidden_payload_from_buffer(buffer, version=version).decode("utf-8") == payload
 
 
 def test_pdf_qr_generation_embeds_seal_behind_short_visible_url(monkeypatch):
