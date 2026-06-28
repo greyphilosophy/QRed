@@ -1323,3 +1323,183 @@ def test_backend_ci_requirements_include_imported_runtime_packages():
     }
     for package in required_packages:
         assert package in requirements
+
+
+def test_scanner_safe_qr_header_counts_only_short_url():
+    """Given hidden QRed data, when encoded, then the QR character count covers only QRED.ORG."""
+    from backend.services.qr_payload import VISIBLE_QR_URL, scanner_safe_bit_buffer
+    from qrcode import constants, util
+
+    buffer = scanner_safe_bit_buffer(10, constants.ERROR_CORRECT_M, "QRED1?txt=secret")
+    assert buffer.buffer[0] >> 4 == util.MODE_ALPHA_NUM
+    count_bits = util.length_in_bits(util.MODE_ALPHA_NUM, 10)
+    count = 0
+    for index in range(4, 4 + count_bits):
+        count = (count << 1) | int(buffer.get(index))
+    assert count == len(VISIBLE_QR_URL)
+
+
+def test_scanner_safe_qr_places_qr_terminator_before_hidden_payload():
+    """Given hidden QRed data, when encoded, then a QR terminator separates URL and data."""
+    from backend.services.qr_payload import scanner_safe_bit_buffer
+    from qrcode import constants, util
+
+    buffer = scanner_safe_bit_buffer(10, constants.ERROR_CORRECT_M, "QRED1?txt=secret")
+    visible_bits = 4 + util.length_in_bits(util.MODE_ALPHA_NUM, 10) + 44
+    assert [buffer.get(visible_bits + offset) for offset in range(4)] == [False, False, False, False]
+
+
+def test_scanner_safe_qr_keeps_qred_data_after_terminator_for_custom_reader():
+    """Given hidden QRed data, when encoded, then custom readers can recover it after the terminator."""
+    from backend.services.qr_payload import extract_hidden_payload_from_buffer, scanner_safe_bit_buffer
+    from qrcode import constants
+
+    payload = "https://qred.org/#QRED1?txt=secret"
+    buffer = scanner_safe_bit_buffer(10, constants.ERROR_CORRECT_M, payload)
+    assert extract_hidden_payload_from_buffer(buffer, version=10).decode("utf-8") == payload
+
+
+def test_scanner_safe_qr_hidden_extractor_uses_explicit_version_offset():
+    """Given a high-version QR, when extracting hidden data, then the version-specific count size is used."""
+    from backend.services.qr_payload import HIDDEN_PAYLOAD_MAGIC, extract_hidden_payload_from_buffer, scanner_safe_bit_buffer
+    from qrcode import constants, util
+
+    version = 27
+    payload = "https://qred.org/#QRED1?txt=version-aware"
+    buffer = scanner_safe_bit_buffer(version, constants.ERROR_CORRECT_M, payload)
+    hidden_start = 4 + util.length_in_bits(util.MODE_ALPHA_NUM, version) + 44 + 4
+    hidden_start += (-hidden_start) % 8
+
+    assert bytes(buffer.buffer[hidden_start // 8:]).startswith(HIDDEN_PAYLOAD_MAGIC)
+    assert extract_hidden_payload_from_buffer(buffer, version=version).decode("utf-8") == payload
+
+
+def test_pdf_qr_generation_embeds_seal_behind_short_visible_url(monkeypatch):
+    """Given a PDF stamp QR, when generated, then it encodes QRED.ORG visibly and hides the seal."""
+    from backend.services import pdf_stamp
+    from backend.services.qr_payload import VISIBLE_QR_URL, create_scanner_safe_data
+
+    captured = {}
+
+    def capture(version, error_correction, payload):
+        captured["payload"] = payload
+        return create_scanner_safe_data(version, error_correction, payload)
+
+    monkeypatch.setattr(pdf_stamp, "create_scanner_safe_data", capture)
+    png_bytes = pdf_stamp.generate_qr_bytes("https://qred.org/#QRED1?txt=secret")
+
+    assert png_bytes.startswith(b"\x89PNG")
+    assert captured["payload"] == "https://qred.org/#QRED1?txt=secret"
+    assert VISIBLE_QR_URL == "QRED.ORG"
+
+
+def test_generated_scanner_safe_png_decodes_to_visible_url_for_normal_readers():
+    """Given an actual generated PNG, when decoded normally, then only QRED.ORG is visible."""
+    import io
+
+    import qrcode
+    import qrcode.main
+    from PIL import Image
+    from qrcode import base, util
+
+    from backend.services.pdf_stamp import QR_BORDER, QR_BOX_SIZE, generate_qr_bytes
+    from backend.services.qr_payload import VISIBLE_QR_URL
+
+    def function_modules(version):
+        qr = qrcode.QRCode(version=version)
+        qr.data_cache = []
+        qr.makeImpl(test=True, mask_pattern=0)
+        blank = [row[:] for row in qrcode.main.precomputed_qr_blanks[version]]
+        qr.modules = blank
+        qr.modules_count = len(blank)
+        qr.setup_type_info(test=False, mask_pattern=0)
+        if version >= 7:
+            qr.setup_type_number(test=False)
+        return qr.modules
+
+    def bits_to_int(bits):
+        value = 0
+        for bit in bits:
+            value = (value << 1) | int(bit)
+        return value
+
+    def read_bits(bits, offset, count):
+        return bits[offset:offset + count], offset + count
+
+    def decode_alphanum_payload(bits, version):
+        mode_bits, offset = read_bits(bits, 0, 4)
+        if bits_to_int(mode_bits) != util.MODE_ALPHA_NUM:
+            return None
+        count_bits, offset = read_bits(bits, offset, util.length_in_bits(util.MODE_ALPHA_NUM, version))
+        count = bits_to_int(count_bits)
+        chars = []
+        remaining = count
+        while remaining >= 2:
+            pair_bits, offset = read_bits(bits, offset, 11)
+            pair_value = bits_to_int(pair_bits)
+            chars.append(chr(util.ALPHA_NUM[pair_value // 45]))
+            chars.append(chr(util.ALPHA_NUM[pair_value % 45]))
+            remaining -= 2
+        if remaining:
+            char_bits, offset = read_bits(bits, offset, 6)
+            chars.append(chr(util.ALPHA_NUM[bits_to_int(char_bits)]))
+        terminator, _ = read_bits(bits, offset, 4)
+        if any(terminator):
+            return None
+        return "".join(chars)
+
+    def normal_decode_png(png_bytes):
+        image = Image.open(io.BytesIO(png_bytes)).convert("1")
+        module_count = (image.width // QR_BOX_SIZE) - (2 * QR_BORDER)
+        version = (module_count - 17) // 4
+        modules = []
+        for row in range(module_count):
+            module_row = []
+            for col in range(module_count):
+                x = (QR_BORDER + col) * QR_BOX_SIZE + (QR_BOX_SIZE // 2)
+                y = (QR_BORDER + row) * QR_BOX_SIZE + (QR_BOX_SIZE // 2)
+                module_row.append(image.getpixel((x, y)) == 0)
+            modules.append(module_row)
+
+        function_map = function_modules(version)
+        for mask_pattern in range(8):
+            mask_func = util.mask_func(mask_pattern)
+            bits = []
+            row = module_count - 1
+            direction = -1
+            col = module_count - 1
+            while col > 0:
+                if col <= 6:
+                    col -= 1
+                while 0 <= row < module_count:
+                    for offset in range(2):
+                        bit_col = col - offset
+                        if function_map[row][bit_col] is not None:
+                            continue
+                        bits.append(modules[row][bit_col] ^ mask_func(row, bit_col))
+                    row += direction
+                row -= direction
+                direction = -direction
+                col -= 2
+            raw_codewords = [bits_to_int(bits[index:index + 8]) for index in range(0, len(bits) - 7, 8)]
+            rs_blocks = base.rs_blocks(version, qrcode.constants.ERROR_CORRECT_M)
+            max_data_count = max(block.data_count for block in rs_blocks)
+            data_blocks = [[] for _ in rs_blocks]
+            raw_offset = 0
+            for byte_index in range(max_data_count):
+                for block_index, block in enumerate(rs_blocks):
+                    if byte_index < block.data_count:
+                        data_blocks[block_index].append(raw_codewords[raw_offset])
+                        raw_offset += 1
+            data_bits = []
+            for block in data_blocks:
+                for byte in block:
+                    data_bits.extend(((byte >> shift) & 1) == 1 for shift in range(7, -1, -1))
+            decoded = decode_alphanum_payload(data_bits, version)
+            if decoded == VISIBLE_QR_URL:
+                return decoded
+        return None
+
+    png_bytes = generate_qr_bytes("https://qred.org/#QRED1?txt=secret")
+
+    assert normal_decode_png(png_bytes) == VISIBLE_QR_URL
