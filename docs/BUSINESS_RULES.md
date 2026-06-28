@@ -22,11 +22,11 @@ This document summarizes the current business rules for QRed as implemented and 
    - strips leading and trailing empty lines.
 5. The canonical text is signed by the issuing authority using Ed25519.
 6. The signed payload is encoded into one or more machine-readable payload seals.
-7. Automatic mode evaluates all reversible supported payload candidates, currently plaintext fragment URLs, reversible recipe payloads such as `b45`, and legacy compressed `QRED1|...` payloads.
+7. Automatic mode evaluates all reversible supported payload candidates, currently plaintext fragment URLs and reversible recipe payloads such as `b45`.
 8. Only reversible candidates are selectable.
 9. Automatic mode chooses the candidate that requires the fewest QR codes.
-10. QR-count ties prefer plaintext `QRED1?...` fragment payloads, then recipe encodings, then compressed legacy `QRED1|...` payloads.
-11. Explicit strategies may request `plaintext`, `b45`, or implementation-supported legacy compression aliases such as `legacy_compression`.
+10. QR-count ties prefer plaintext `QRED1?...` fragment payloads, then recipe encodings.
+11. Explicit strategies may request `plaintext`, `b45`, or implementation-supported modular recipes.
 12. Payloads that exceed a single seal's capacity are divided into numbered chunks.
 13. Printed QR payload URLs use the shortest production verifier origin currently required for scanning: `https://qred.org/`.
 14. Fragment payload seals append QRed data after the hash, for example `https://qred.org/#QRED1?...`, so the URL path does not consume QR capacity.

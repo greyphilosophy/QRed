@@ -1,10 +1,9 @@
 """QRed Core Data Models — frozen dataclasses with pure functions."""
 
-import json
 from dataclasses import dataclass, field
 from typing import Optional
 
-FORMAT_ID = "QRED1"
+FORMAT_ID = "QRED"
 
 
 @dataclass(frozen=True)
@@ -18,7 +17,7 @@ class QRedChunk:
 
     def encode(self) -> str:
         """Encode chunk into the QRed seal format string or fragment URL."""
-        if self.data.startswith(("http://", "https://", "QRED1|", "QRED1?")):
+        if self.data.startswith(("http://", "https://", "QRED1?")):
             return self.data
         return f"{self.format_id}|{self.document_id}|{self.chunk_number}|{self.total_chunks}|{self.data}"
 
@@ -37,17 +36,7 @@ class QRedChunk:
                 total_chunks=int(params.get("n", "0")),
                 data=encoded,
             )
-        parts = encoded.split("|", 4)
-        if len(parts) < 5:
-            raise ValueError(f"Invalid QRed chunk format: {encoded}")
-        fmt_id, doc_id, chunk_num, total, data = parts
-        return cls(
-            format_id=fmt_id,
-            document_id=doc_id,
-            chunk_number=int(chunk_num),
-            total_chunks=int(total),
-            data=data,
-        )
+        raise ValueError(f"Invalid QRed chunk format: {encoded}")
 
 
 @dataclass

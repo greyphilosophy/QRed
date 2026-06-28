@@ -183,7 +183,7 @@ export function validateB45(original) {
         reason: "b45 round-trip did not restore the original text.",
         original,
         restored,
-        recommendation: "Use plaintext or legacy compression instead.",
+        recommendation: "Use plaintext or another reversible recipe instead.",
       }],
     };
   } catch (error) {
@@ -196,7 +196,7 @@ export function validateB45(original) {
         line: 1,
         reason: `b45 decoding failed: ${error.message}`,
         original,
-        recommendation: "Use plaintext or legacy compression instead.",
+        recommendation: "Use plaintext or another reversible recipe instead.",
       }],
     };
   }

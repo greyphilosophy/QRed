@@ -52,7 +52,7 @@ Recipes must satisfy:
 
 ### Legacy Compression
 
-    QRED1|...
+    (compressed pipe seals are no longer emitted or accepted)
 
 ## 5. Encoding Strategy
 
@@ -99,7 +99,7 @@ canonical text, verifies the signature, and reports one of:
 ## 9. Scanner
 
 The scanner recognizes arbitrary QR codes, plaintext QRed fragments,
-recipe payloads, legacy compressed payloads, and malformed QRed
+recipe payloads and malformed QRed
 payloads.
 
 Unknown QR codes remain viewable.

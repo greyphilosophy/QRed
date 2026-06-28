@@ -1,7 +1,6 @@
 """QRed Sealer — canonicalize, sign, compress, chunk, and encode documents into QR seals."""
 
 import base64
-import gzip
 import hashlib
 import json
 import uuid
@@ -15,7 +14,6 @@ from backend.services.text_recipes import validate_simple_english
 
 DEFAULT_BOOTSTRAP_URL = "https://qred.org/"
 MAX_QR_PAYLOAD_LENGTH = 1200
-LEGACY_CHUNK_SIZE = 200
 
 
 def generate_document_id() -> str:
@@ -43,19 +41,6 @@ def canonicalize_text(text: str) -> str:
         collapsed.pop()
     return "\n".join(collapsed)
 
-
-
-def compress_payload(payload_json: str) -> str:
-    """Compress a JSON payload and return a base64-encoded string."""
-    compressed = gzip.compress(payload_json.encode("utf-8"))
-    return base64.urlsafe_b64encode(compressed).decode("utf-8")
-
-
-def decompress_payload(compressed_str: str) -> str:
-    """Decompress a base64-encoded gzip payload back to JSON string."""
-    compressed = base64.urlsafe_b64decode(compressed_str)
-    decompressed = gzip.decompress(compressed)
-    return decompressed.decode("utf-8")
 
 
 def split_into_chunks(data: str, chunk_size: int = 200) -> list[str]:
@@ -136,12 +121,6 @@ def split_text_into_qr_urls(text: str, payload: dict, bootstrap_url: str, recipe
     ]
 
 
-def _legacy_qred_strings(payload_json: str, document_id: str) -> list[str]:
-    compressed = compress_payload(payload_json)
-    chunks = split_into_chunks(compressed, chunk_size=LEGACY_CHUNK_SIZE)
-    return [f"QRED1|{document_id}|{index}|{len(chunks)}|{chunk}" for index, chunk in enumerate(chunks)]
-
-
 def compute_key_id(public_key_b64: str) -> str:
     """Compute a stable key_id from a base64 Ed25519 public key.
 
@@ -186,9 +165,6 @@ def _select_candidate(candidates: list[dict], preferred: str = "automatic") -> d
 
     if preferred == "plaintext":
         return by_encoding["plaintext"]
-    if preferred == "legacy_compression":
-        return by_encoding["compressed"]
-
     preferred_candidate = by_recipe.get(preferred) or by_encoding.get(preferred)
     if preferred_candidate is not None:
         return preferred_candidate
@@ -197,7 +173,7 @@ def _select_candidate(candidates: list[dict], preferred: str = "automatic") -> d
         selectable,
         key=lambda candidate: (
             candidate["qr_count"],
-            0 if candidate["encoding"] == "plaintext" else 2 if candidate["encoding"] == "compressed" else 1,
+            0 if candidate["encoding"] == "plaintext" else 1,
             candidate.get("recipe", ""),
         ),
     )[0]
@@ -266,17 +242,8 @@ def create_seals(
     else:
         recipe_json = ""
 
-    compressed_strings = _legacy_qred_strings(plaintext_json, document_id)
-    compressed_report = _candidate_report(
-        "compressed",
-        len(compressed_strings),
-        True,
-        [],
-    )
-
     candidates = [
         {"encoding": "plaintext", "strings": plaintext_urls, **plaintext_report, "payload_json": plaintext_json, "recipe": "plaintext"},
-        {"encoding": "compressed", "strings": compressed_strings, **compressed_report, "payload_json": plaintext_json, "recipe": "legacy"},
     ]
     if recipe_result.reversible and recipe_payload is not None:
         candidates.insert(1, {"encoding": recipe_result.recipe_id, "strings": recipe_urls, **recipe_report, "payload_json": recipe_json, "recipe": recipe_result.recipe_id})
@@ -312,5 +279,5 @@ def create_seals(
         selected_recipe=selected.get("recipe", "plaintext"),
         estimated_qr_count=selected_count,
         compression_savings_pct=savings_pct,
-        candidate_reports=[plaintext_report] + ([recipe_report] if recipe_result.reversible else []) + [compressed_report],
+        candidate_reports=[plaintext_report] + ([recipe_report] if recipe_result.reversible else []),
     )

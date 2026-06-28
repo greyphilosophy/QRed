@@ -1,25 +1,35 @@
 import { describe, expect, it } from "vitest";
+import { createQRedSeals } from "./qredSealer.js";
 import { compareDocumentText, compareWordSequences, decodeSeal, verifyQRedSeals } from "./qredVerifier.js";
 
-const publicKey = "X0qh5pQ9Joya3katdVpggpkbb7PJ_6oCdp6CkBlfb4U=";
+const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
+const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 const wrongPublicKey = "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=";
 const staticDemoPublicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
-const seals = [
-  "QRED1|DOC-TESTBROWSER|0|2|H4sIAEGQOWoC_y2NW0-DMABG_4rpq8O03cBBsgcYoOFBNi4ykiULl5bVQYtQZMvif7dG376cc5LvDoq2EQOT5w5YwKuxriMTLEAluCRcKrYVnLJabVa0R37krqim7lctQP0_T6xWoRtutcSLEycKs9iLlGfjOJFBqX1E6oe9rdCF3P7qAlJEaY2osYbmsqLKjazhhZwG",
-  "QRED1|DOC-TESTBROWSER|1|2|onRJA_b22TrI38VtP-b-kKUOonPerJ3Ghr1I049De8WVeN2F1xnlzk0Liiw-yPehz83KKU9J4J-1C2176ZbZ_CJi295s1I1kHRll0fXqBkNsaNDQME6Qaa2wpT8_mRgvzdUjhBaEKv8iw8gEVzEC3z-Ehhd0LwEAAA==",
-];
+async function createTestSeals() {
+  const result = await createQRedSeals({
+    content: "Confidential\n\nDocument",
+    issuer: "QRed QA",
+    privateKey,
+    publicKey,
+    documentId: "DOC-TESTBROWSER",
+  });
+  return result.seals;
+}
 
 describe("qredVerifier", () => {
-  it("decodes QRed seal metadata", () => {
+  it("decodes QRed seal metadata", async () => {
+    const seals = await createTestSeals();
     expect(decodeSeal(seals[0])).toMatchObject({
       format_id: "QRED1",
       document_id: "DOC-TESTBROWSER",
       chunk_number: 0,
-      total_chunks: 2,
+      total_chunks: 1,
     });
   });
 
   it("reconstructs and verifies a valid sealed document locally", async () => {
+    const seals = await createTestSeals();
     await expect(verifyQRedSeals(seals, publicKey)).resolves.toMatchObject({
       status: "VALID",
       issuer: "QRed QA",
@@ -53,6 +63,7 @@ describe("qredVerifier", () => {
   });
 
   it("rejects signatures verified with the wrong public key", async () => {
+    const seals = await createTestSeals();
     await expect(verifyQRedSeals(seals, wrongPublicKey)).resolves.toMatchObject({
       status: "INVALID",
       document_id: "DOC-TESTBROWSER",
@@ -61,10 +72,18 @@ describe("qredVerifier", () => {
   });
 
   it("reports missing chunks without attempting signature verification", async () => {
-    await expect(verifyQRedSeals(seals.slice(0, 1), publicKey)).resolves.toMatchObject({
+    const result = await createQRedSeals({
+      content: "Confidential\n\nDocument".repeat(500),
+      issuer: "QRed QA",
+      privateKey,
+      publicKey,
+      documentId: "DOC-TESTBROWSER",
+      encodingStrategy: "plaintext",
+    });
+    await expect(verifyQRedSeals(result.seals.slice(0, 1), publicKey)).resolves.toMatchObject({
       status: "INCOMPLETE",
       document_id: "DOC-TESTBROWSER",
-      error_message: "Missing chunks: [1]",
+      error_message: "Missing chunks: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]",
     });
   });
 

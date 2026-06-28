@@ -1,10 +1,8 @@
 import { signAsync as signEd25519 } from "@noble/ed25519";
-import pako from "pako";
 import { validateSimpleEnglish } from "./textRecipes.js";
 
 export const DEFAULT_BOOTSTRAP_URL = "https://qred.org/";
 export const MAX_QR_PAYLOAD_LENGTH = 1200;
-const LEGACY_CHUNK_SIZE = 200;
 
 function decodeBase64Url(value) {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
@@ -152,10 +150,6 @@ function selectCandidate(candidates, preferred = "automatic") {
   if (preferred === "plaintext") {
     return candidates.find((candidate) => candidate.encoding === "plaintext");
   }
-  if (preferred === "legacy_compression") {
-    return candidates.find((candidate) => candidate.encoding === "compressed");
-  }
-
   return selectable
     .map((candidate, index) => ({ candidate, index }))
     .sort((a, b) => (a.candidate.qr_count - b.candidate.qr_count) || (a.index - b.index))[0].candidate;
@@ -200,12 +194,8 @@ export async function createQRedSeals({
     recipeJson = JSON.stringify(recipePayload, Object.keys(recipePayload).sort());
   }
 
-  const compressedSeals = createLegacyQRedSeals(plaintextPayload, documentId);
-  const compressedReport = candidateReport("compressed", compressedSeals.length, true, []);
-
   const candidates = [
     { encoding: "plaintext", strings: plaintextUrls, payload_json: plaintextJson, recipe: "plaintext", ...plaintextReport },
-    { encoding: "compressed", strings: compressedSeals, payload_json: plaintextJson, recipe: "legacy", ...compressedReport },
   ];
   if (recipeResult.reversible) {
     candidates.splice(1, 0, { encoding: "b45", strings: recipeUrls, payload_json: recipeJson, recipe: recipeResult.recipe_id, ...recipeReport });
@@ -228,14 +218,4 @@ export async function createQRedSeals({
     compression_savings_pct: plaintextUrls.length > selected.qr_count ? Math.round(((plaintextUrls.length - selected.qr_count) / plaintextUrls.length) * 100) : 0,
     candidate_reports: candidates.map(({ encoding, qr_count, reversible, diagnostics, recipe_id }) => ({ encoding, qr_count, reversible, diagnostics, recipe_id })),
   };
-}
-
-export function createLegacyQRedSeals(payload, documentId) {
-  const payloadJson = JSON.stringify(payload, Object.keys(payload).sort());
-  const compressed = encodeBase64Url(pako.gzip(payloadJson));
-  const chunks = [];
-  for (let index = 0; index < compressed.length; index += LEGACY_CHUNK_SIZE) {
-    chunks.push(compressed.slice(index, index + LEGACY_CHUNK_SIZE));
-  }
-  return chunks.map((chunk, index) => `QRED1|${documentId}|${index}|${chunks.length}|${chunk}`);
 }
