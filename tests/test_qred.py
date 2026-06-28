@@ -1323,3 +1323,56 @@ def test_backend_ci_requirements_include_imported_runtime_packages():
     }
     for package in required_packages:
         assert package in requirements
+
+
+def test_scanner_safe_qr_header_counts_only_short_url():
+    """Given hidden QRed data, when encoded, then the QR character count covers only QRED.ORG."""
+    from backend.services.qr_payload import VISIBLE_QR_URL, scanner_safe_bit_buffer
+    from qrcode import constants, util
+
+    buffer = scanner_safe_bit_buffer(10, constants.ERROR_CORRECT_M, "QRED1?txt=secret")
+    assert buffer.buffer[0] >> 4 == util.MODE_ALPHA_NUM
+    count_bits = util.length_in_bits(util.MODE_ALPHA_NUM, 10)
+    count = 0
+    for index in range(4, 4 + count_bits):
+        count = (count << 1) | int(buffer.get(index))
+    assert count == len(VISIBLE_QR_URL)
+
+
+def test_scanner_safe_qr_places_qr_terminator_before_hidden_payload():
+    """Given hidden QRed data, when encoded, then a QR terminator separates URL and data."""
+    from backend.services.qr_payload import scanner_safe_bit_buffer
+    from qrcode import constants, util
+
+    buffer = scanner_safe_bit_buffer(10, constants.ERROR_CORRECT_M, "QRED1?txt=secret")
+    visible_bits = 4 + util.length_in_bits(util.MODE_ALPHA_NUM, 10) + 44
+    assert [buffer.get(visible_bits + offset) for offset in range(4)] == [False, False, False, False]
+
+
+def test_scanner_safe_qr_keeps_qred_data_after_terminator_for_custom_reader():
+    """Given hidden QRed data, when encoded, then custom readers can recover it after the terminator."""
+    from backend.services.qr_payload import extract_hidden_payload_from_buffer, scanner_safe_bit_buffer
+    from qrcode import constants
+
+    payload = "https://qred.org/#QRED1?txt=secret"
+    buffer = scanner_safe_bit_buffer(10, constants.ERROR_CORRECT_M, payload)
+    assert extract_hidden_payload_from_buffer(buffer).decode("utf-8") == payload
+
+
+def test_pdf_qr_generation_embeds_seal_behind_short_visible_url(monkeypatch):
+    """Given a PDF stamp QR, when generated, then it encodes QRED.ORG visibly and hides the seal."""
+    from backend.services import pdf_stamp
+    from backend.services.qr_payload import VISIBLE_QR_URL, create_scanner_safe_data
+
+    captured = {}
+
+    def capture(version, error_correction, payload):
+        captured["payload"] = payload
+        return create_scanner_safe_data(version, error_correction, payload)
+
+    monkeypatch.setattr(pdf_stamp, "create_scanner_safe_data", capture)
+    png_bytes = pdf_stamp.generate_qr_bytes("https://qred.org/#QRED1?txt=secret")
+
+    assert png_bytes.startswith(b"\x89PNG")
+    assert captured["payload"] == "https://qred.org/#QRED1?txt=secret"
+    assert VISIBLE_QR_URL == "QRED.ORG"

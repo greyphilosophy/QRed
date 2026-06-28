@@ -8,8 +8,10 @@ from typing import Optional
 
 import fitz  # PyMuPDF
 import qrcode
+from qrcode import exceptions as qrcode_exceptions
 
 from backend.models import SealGenerationResult
+from backend.services.qr_payload import VISIBLE_QR_URL, create_scanner_safe_data
 from backend.services.sealer import canonicalize_text, create_seals
 
 logger = logging.getLogger(__name__)
@@ -34,20 +36,33 @@ def extract_text_from_pdf(pdf_path: str, page_number: Optional[int] = None) -> s
 
 
 def generate_qr_bytes(seal_string: str) -> bytes:
-    """Generate a QR code for a seal string and return compact PNG bytes."""
-    qr = qrcode.QRCode(
-        version=None,
-        error_correction=QR_ERROR_CORRECTION,
-        box_size=QR_BOX_SIZE,
-        border=QR_BORDER,
-    )
-    qr.add_data(seal_string)
-    qr.make(fit=True)
-    img = qr.make_image().convert("1")
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    return buf.getvalue()
+    """Generate a scanner-safe QR PNG for a QRed seal string.
+
+    Normal scanners decode only the short visible URL ``QRED.ORG`` because the
+    QR character count covers that URL and a standard terminator follows it.
+    The full QRed seal remains in data codewords after the terminator for the
+    qred.org custom raw-module reader.
+    """
+    for version in range(1, 41):
+        try:
+            data_cache = create_scanner_safe_data(version, QR_ERROR_CORRECTION, seal_string)
+        except qrcode_exceptions.DataOverflowError:
+            continue
+        qr = qrcode.QRCode(
+            version=version,
+            error_correction=QR_ERROR_CORRECTION,
+            box_size=QR_BOX_SIZE,
+            border=QR_BORDER,
+        )
+        qr.add_data(VISIBLE_QR_URL, optimize=0)
+        qr.data_cache = data_cache
+        qr.make(fit=False)
+        img = qr.make_image().convert("1")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        return buf.getvalue()
+    raise ValueError("QRed payload is too large for a QR code")
 
 
 def max_qr_codes_per_row(page_width: float, layout: dict) -> int:
