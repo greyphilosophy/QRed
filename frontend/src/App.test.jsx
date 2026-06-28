@@ -48,22 +48,28 @@ describe("App PDF sealing defaults", () => {
   });
 
 
-  it("puts the production verifier first and removes the standalone seal generator from the landing page", async () => {
+  it("simplifies the landing page into an AR scanner with a PDF stamping entry point", () => {
     render(React.createElement(App));
 
-    await waitFor(() => expect(screen.getByRole("heading", { name: "QRed Verifier" })).toBeTruthy());
+    expect(screen.getByRole("heading", { name: "Point at a QRed seal" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start scanning" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open PDF stamping tool" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "QRed Verifier" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Demo: Upload and Seal a PDF" })).toBeNull();
+  });
 
-    const headings = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
-    expect(headings).toEqual(["QR Code Scanner", "QRed Verifier", "Demo: Upload and Seal a PDF"]);
-    expect(screen.getByTitle("QRed Verifier").getAttribute("src")).toBe("/verify.htm");
-    expect(screen.getByRole("link", { name: "Open full verifier" }).getAttribute("href")).toBe("/verify.htm");
-    expect(screen.queryByRole("heading", { name: "Generate QRed Seals" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "Open mobile verifier" })).toBeNull();
-    expect(screen.getByText(/qred\.org\/verify\.htm/)).toBeTruthy();
+  it("opens the PDF stamping tool from the stamp button", async () => {
+    render(React.createElement(App));
+
+    fireEvent.click(screen.getByRole("button", { name: "Open PDF stamping tool" }));
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Demo: Upload and Seal a PDF" })).toBeTruthy());
+    expect(screen.getByRole("heading", { name: "Stamp a PDF with QRed seals" })).toBeTruthy();
   });
 
   it("loads default keys, obfuscates the private key, and submits them with the PDF seal request", async () => {
     render(React.createElement(App));
+    fireEvent.click(screen.getByRole("button", { name: "Open PDF stamping tool" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Use Default Keys" })).toBeTruthy());
 
@@ -123,6 +129,7 @@ describe("App PDF sealing defaults", () => {
     });
 
     render(React.createElement(App));
+    fireEvent.click(screen.getByRole("button", { name: "Open PDF stamping tool" }));
 
     await waitFor(() => expect(screen.getByLabelText("Private Key").value).toBe(defaultPrivateKey));
     const pdf = new File(["%PDF-1.4"], "static.pdf", { type: "application/pdf" });

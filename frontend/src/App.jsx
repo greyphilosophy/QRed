@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { sealPdfInBrowser } from "./pdfClientSeal.js";
 import { QrScanner } from "./QrScanner.jsx";
-import { FragmentDisplay } from "./FragmentDisplay.jsx";
 
 function normalizeApiBase(value) {
   const trimmed = (value || "/api").trim();
@@ -26,22 +25,6 @@ async function responseErrorMessage(response) {
 function isMissingBackendOriginMessage(message) {
   return message.includes("API-backed demo endpoints require a separate QRed backend origin")
     || message.includes("QRED_API_ORIGIN is not configured");
-}
-
-function VerifierFrame() {
-  return React.createElement("section", { className: "card verifier-card" },
-    React.createElement("div", { className: "verifier-card-header" },
-      React.createElement("h2", null, "QRed Verifier"),
-      React.createElement("a", { href: "/verify.htm", target: "_blank", rel: "noreferrer" }, "Open full verifier")
-    ),
-    React.createElement("p", { style: { color: "#64748b", marginBottom: "1rem" }},
-      "Scan QR seals, add manual seal text, and verify documents with the same verifier served at qred.org/verify.htm."),
-    React.createElement("iframe", {
-      title: "QRed Verifier",
-      src: "/verify.htm",
-      className: "verifier-frame",
-    })
-  );
 }
 
 function PdfSealForm() {
@@ -199,15 +182,20 @@ function PdfSealForm() {
 }
 
 function App() {
-  return React.createElement("div", { className: "container" },
-    React.createElement("h1", null, "QRed"),
-    React.createElement("p", { className: "subtitle" }, "Tamper-evident QR seals for paper documents"),
-    React.createElement(FragmentDisplay),
-    React.createElement(QrScanner),
-    React.createElement(VerifierFrame),
-    React.createElement(PdfSealForm),
-    React.createElement("p", { className: "footer" },
-      "QR payload target: https://qred.org/#data")
+  const [showPdfStampTool, setShowPdfStampTool] = useState(false);
+
+  return React.createElement("main", { className: "homepage" },
+    React.createElement(QrScanner, { onOpenPdfStampTool: () => setShowPdfStampTool(true) }),
+    showPdfStampTool && React.createElement("section", { className: "pdf-stamp-tool", id: "pdf-stamp-tool" },
+      React.createElement("div", { className: "tool-header" },
+        React.createElement("div", null,
+          React.createElement("p", { className: "eyebrow" }, "PDF stamping tool"),
+          React.createElement("h2", null, "Stamp a PDF with QRed seals")
+        ),
+        React.createElement("button", { className: "tool-close", onClick: () => setShowPdfStampTool(false), type: "button" }, "Close")
+      ),
+      React.createElement(PdfSealForm)
+    )
   );
 }
 

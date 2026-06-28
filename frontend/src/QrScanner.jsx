@@ -8,74 +8,92 @@ import { isQRedSeal, parseQRedSeal } from "./qredFragment.js";
  * using the shared qredFragment parser. For plain text, shows the raw content.
  *
  * Three states:
- * 1. Idle — shows "Scan QR Code" button (user-initiated camera access)
+ * 1. Idle — shows the AR viewport and "Start scanning" button (user-initiated camera access)
  * 2. Scanning — camera feed + jsQR loop
- * 3. Result — displays the scanned QR text, "New scan" resets to idle
+ * 3. Result — displays the scanned QR text, "New scan" resumes scanning
  */
-export function QrScanner() {
+export function QrScanner({ onOpenPdfStampTool }) {
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
 
-  if (mode === "result") {
-    if (scannedText && isQRedSeal(scannedText)) {
-      const sealData = parseQRedSeal(scannedText);
-      return React.createElement("div", { className: "card qr-scan-result" },
-        React.createElement("h2", null, "QRed Document Data"),
-        React.createElement("div", { className: "doc-text" }, sealData?.text || scannedText),
-        (sealData?.issuer || sealData?.documentId)
-          ? React.createElement("div", { className: "fragment-meta" },
-              sealData.issuer && React.createElement("div", { className: "meta-row" },
-                React.createElement("span", { className: "meta-label" }, "Issuer:"),
-                React.createElement("span", null, sealData.issuer)
-              ),
-              sealData.documentId && React.createElement("div", { className: "meta-row" },
-                React.createElement("span", { className: "meta-label" }, "Document ID:"),
-                React.createElement("span", null, sealData.documentId)
-              )
-            )
-          : null,
-        React.createElement("button", {
-          onClick: () => {
-            setMode("idle");
-            setScannedText(null);
-          },
-          style: { marginTop: "1rem" }
-        }, "New scan")
-      );
-    }
+  const controls = React.createElement("div", { className: "ar-controls" },
+    React.createElement("button", {
+      className: "ar-button ar-button-primary",
+      onClick: () => setMode("scanning"),
+    }, mode === "result" ? "Scan again" : "Start scanning"),
+    React.createElement("button", {
+      "aria-label": "Open PDF stamping tool",
+      className: "ar-button ar-button-secondary",
+      onClick: onOpenPdfStampTool,
+      type: "button",
+    },
+      React.createElement("span", { "aria-hidden": "true", className: "stamp-icon" }, "▣"),
+      React.createElement("span", null, "Stamp PDF")
+    )
+  );
 
-    return React.createElement("div", { className: "card qr-scan-result" },
-      React.createElement("h2", null, "QR Code Content"),
-      React.createElement("div", { className: "doc-text" }, scannedText),
-      React.createElement("button", {
-        onClick: () => {
-          setMode("idle");
-          setScannedText(null);
-        },
-        style: { marginTop: "1rem" }
-      }, "New scan")
+  if (mode === "result") {
+    return React.createElement("section", { className: "ar-display ar-display-result", "aria-label": "QRed AR scanner" },
+      React.createElement(ResultPanel, { scannedText }),
+      controls
     );
   }
 
   if (mode === "scanning") {
-    return React.createElement(ScannerView, {
-      onScan: (text) => {
-        setScannedText(text);
-        setMode("result");
-      },
-      onClose: () => setMode("idle"),
-    });
+    return React.createElement("section", { className: "ar-display", "aria-label": "QRed AR scanner" },
+      React.createElement(ScannerView, {
+        onScan: (text) => {
+          setScannedText(text);
+          setMode("result");
+        },
+        onClose: () => setMode("idle"),
+      }),
+      controls
+    );
   }
 
-  return React.createElement("div", { className: "card" },
-    React.createElement("h2", null, "QR Code Scanner"),
-    React.createElement("p", { style: { color: "#64748b", marginBottom: "1rem" }},
-      "Scan any QR code to view its contents, including QRed seals."
+  return React.createElement("section", { className: "ar-display", "aria-label": "QRed AR scanner" },
+    React.createElement("div", { className: "ar-idle" },
+      React.createElement("div", { className: "ar-reticle", "aria-hidden": "true" },
+        React.createElement("span", null),
+        React.createElement("span", null),
+        React.createElement("span", null),
+        React.createElement("span", null)
+      ),
+      React.createElement("div", { className: "ar-copy" },
+        React.createElement("p", { className: "eyebrow" }, "QRed AR verifier"),
+        React.createElement("h1", null, "Point at a QRed seal"),
+        React.createElement("p", null, "Use your camera to scan and verify QR document seals.")
+      )
     ),
-    React.createElement("button", {
-      onClick: () => setMode("scanning"),
-      style: { marginTop: "0.5rem" }
-    }, "Scan QR Code")
+    controls
+  );
+}
+
+function ResultPanel({ scannedText }) {
+  if (scannedText && isQRedSeal(scannedText)) {
+    const sealData = parseQRedSeal(scannedText);
+    return React.createElement("div", { className: "ar-result-panel" },
+      React.createElement("h2", null, "QRed Document Data"),
+      React.createElement("div", { className: "doc-text" }, sealData?.text || scannedText),
+      (sealData?.issuer || sealData?.documentId)
+        ? React.createElement("div", { className: "fragment-meta" },
+            sealData.issuer && React.createElement("div", { className: "meta-row" },
+              React.createElement("span", { className: "meta-label" }, "Issuer:"),
+              React.createElement("span", null, sealData.issuer)
+            ),
+            sealData.documentId && React.createElement("div", { className: "meta-row" },
+              React.createElement("span", { className: "meta-label" }, "Document ID:"),
+              React.createElement("span", null, sealData.documentId)
+            )
+          )
+        : null
+    );
+  }
+
+  return React.createElement("div", { className: "ar-result-panel" },
+    React.createElement("h2", null, "QR Code Content"),
+    React.createElement("div", { className: "doc-text" }, scannedText)
   );
 }
 
@@ -152,25 +170,26 @@ function ScannerView({ onScan, onClose }) {
   }, [onScan]);
 
   if (error) {
-    return React.createElement("div", { className: "card" },
-      React.createElement("h2", null, "QR Code Scanner"),
-      React.createElement("p", { style: { color: "#ef4444" }}, error),
+    return React.createElement("div", { className: "ar-error" },
+      React.createElement("h2", null, "Camera unavailable"),
+      React.createElement("p", null, error),
       React.createElement("button", { onClick: onClose, style: { marginTop: "1rem" }}, "Close")
     );
   }
 
-  return React.createElement("div", { className: "card qr-scanner" },
-    React.createElement("h2", null, "Scan a QR Code"),
-    React.createElement("p", { style: { color: "#64748b", marginBottom: "1rem" }},
-      "Point your camera at any QR code to see its contents."
-    ),
+  return React.createElement("div", { className: "ar-camera" },
     React.createElement("video", {
       ref: videoRef,
-      style: { width: "100%", maxHeight: "350px", borderRadius: "8px", background: "#0f172a" },
       playsInline: true,
-      autoPlay: true
+      autoPlay: true,
     }),
+    React.createElement("div", { className: "ar-reticle ar-reticle-live", "aria-hidden": "true" },
+      React.createElement("span", null),
+      React.createElement("span", null),
+      React.createElement("span", null),
+      React.createElement("span", null)
+    ),
     React.createElement("canvas", { ref: canvasRef, style: { display: "none" } }),
-    React.createElement("button", { onClick: onClose, style: { marginTop: "1rem" }}, "Close")
+    React.createElement("button", { className: "ar-close", onClick: onClose }, "Close")
   );
 }
