@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createQRedSeals } from "./qredSealer.js";
-import { compareDocumentText, compareWordSequences, decodeSeal, verifyQRedSeals } from "./qredVerifier.js";
+import { compareDocumentText, compareWordSequences, decodeSeal, extractHiddenQRedPayload, extractHiddenQRedPayloadFromImage, qredTextFromScanResult, verifyQRedSeals } from "./qredVerifier.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
@@ -18,6 +18,60 @@ async function createTestSeals() {
 }
 
 describe("qredVerifier", () => {
+  it("extracts scanner-safe QRed data from the post-terminator byte offset", () => {
+    const payload = "https://qred.org/#QRED1?doc=DOC&i=0&n=1&rc=b45&txt=HELLO";
+    const payloadBytes = new TextEncoder().encode(payload);
+    const binaryData = new Uint8Array([
+      0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
+      ...payloadBytes,
+      0xec, 0x11,
+    ]);
+
+    expect(extractHiddenQRedPayload(binaryData, 1)).toBe(payload);
+    expect(qredTextFromScanResult({ data: "QRED.ORG", binaryData, version: 1 })).toBe(payload);
+  });
+
+  it("extracts compressed and encoded QRed chunk text without a marker or prefix search", () => {
+    const payload = "rc=brotli&txt=G8YA%2BE-brotli_payload";
+    const binaryData = new Uint8Array([
+      0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
+      ...new TextEncoder().encode(payload),
+      0xec, 0x11,
+    ]);
+
+    expect(extractHiddenQRedPayload(binaryData, 1)).toBe(payload);
+  });
+
+  it("returns no hidden image payload when scan geometry is unavailable", () => {
+    expect(extractHiddenQRedPayloadFromImage(new Uint8ClampedArray(), 0, 0, { data: "QRED.ORG" })).toBeNull();
+  });
+
+  it("does not let hidden bytes override a standard non-QRed QR scan result", () => {
+    const hiddenBytes = new TextEncoder().encode("hidden QRed payload");
+    const binaryData = new Uint8Array([
+      0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
+      ...hiddenBytes,
+      0xec, 0x11,
+    ]);
+
+    expect(qredTextFromScanResult({ data: "https://example.test/plain", binaryData, version: 1 }))
+      .toBe("https://example.test/plain");
+  });
+
+  it("ignores standard QR padding bytes when no hidden carrier payload is present", () => {
+    const binaryData = new Uint8Array([
+      0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
+      0xec, 0x11, 0xec, 0x11,
+    ]);
+
+    expect(qredTextFromScanResult({ data: "QRED.ORG", binaryData, version: 1 })).toBe("QRED.ORG");
+  });
+
+  it("falls back to normal QR text when no scanner-safe hidden payload is present", () => {
+    expect(qredTextFromScanResult({ data: "https://example.test/plain", binaryData: new Uint8Array([1, 2, 3]) }))
+      .toBe("https://example.test/plain");
+  });
+
   it("decodes QRed seal metadata", async () => {
     const seals = await createTestSeals();
     expect(decodeSeal(seals[0])).toMatchObject({
