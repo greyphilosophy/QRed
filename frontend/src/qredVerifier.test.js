@@ -104,7 +104,7 @@ describe("qredVerifier", () => {
     expect(qredTextFromScanResult({ data: "QRED.ORG", binaryData, version: 1 })).toBe(payload);
   });
 
-  it("extracts compressed and encoded QRed chunk text without a marker or prefix search", () => {
+  it("extracts compressed and encoded QRed chunk text from backend framing", () => {
     const payload = "rc=brotli&txt=G8YA%2BE-brotli_payload";
     const binaryData = new Uint8Array([
       0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
@@ -113,6 +113,17 @@ describe("qredVerifier", () => {
     ]);
 
     expect(extractHiddenQRedPayload(binaryData, 1)).toBe(payload);
+  });
+
+  it("does not extract unframed legacy printable bytes", () => {
+    const binaryData = new Uint8Array([
+      0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
+      ...new TextEncoder().encode("legacy printable payload"),
+      0xec, 0x11,
+    ]);
+
+    expect(extractHiddenQRedPayload(binaryData, 1)).toBeNull();
+    expect(qredTextFromScanResult({ data: "QRED.ORG", binaryData, version: 1 })).toBe("QRED.ORG");
   });
 
   it("extracts backend-framed hidden payloads from deinterleaved QR image codewords", () => {

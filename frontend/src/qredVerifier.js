@@ -28,17 +28,6 @@ function hiddenPayloadByteOffset(version) {
   return Math.ceil(afterTerminatorBits / 8);
 }
 
-function isQrPayloadByte(byte) {
-  return byte >= 0x20 && byte <= 0x7e;
-}
-
-function printablePayloadFrom(bytes, offset) {
-  let endOffset = offset;
-  while (endOffset < bytes.length && isQrPayloadByte(bytes[endOffset])) endOffset += 1;
-  if (endOffset === offset) return null;
-  return new TextDecoder("utf-8", { fatal: true }).decode(bytes.slice(offset, endOffset));
-}
-
 function hasMagicAt(bytes, offset) {
   if (offset + HIDDEN_PAYLOAD_MAGIC.length > bytes.length) return false;
   return HIDDEN_PAYLOAD_MAGIC.every((byte, index) => bytes[offset + index] === byte);
@@ -72,7 +61,7 @@ export function extractHiddenQRedPayload(binaryData, version) {
   const bytes = bytesFrom(binaryData);
   const payloadOffset = hiddenPayloadByteOffset(version);
   if (payloadOffset >= bytes.length) return null;
-  return findFramedPayload(bytes, payloadOffset) || printablePayloadFrom(bytes, payloadOffset);
+  return findFramedPayload(bytes, payloadOffset);
 }
 
 export function qredTextFromScanResult(scanResult) {
