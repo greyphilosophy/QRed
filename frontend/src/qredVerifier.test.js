@@ -46,6 +46,27 @@ describe("qredVerifier", () => {
     expect(extractHiddenQRedPayloadFromImage(new Uint8ClampedArray(), 0, 0, { data: "QRED.ORG" })).toBeNull();
   });
 
+  it("does not let hidden bytes override a standard non-QRed QR scan result", () => {
+    const hiddenBytes = new TextEncoder().encode("hidden QRed payload");
+    const binaryData = new Uint8Array([
+      0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
+      ...hiddenBytes,
+      0xec, 0x11,
+    ]);
+
+    expect(qredTextFromScanResult({ data: "https://example.test/plain", binaryData, version: 1 }))
+      .toBe("https://example.test/plain");
+  });
+
+  it("ignores standard QR padding bytes when no hidden carrier payload is present", () => {
+    const binaryData = new Uint8Array([
+      0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
+      0xec, 0x11, 0xec, 0x11,
+    ]);
+
+    expect(qredTextFromScanResult({ data: "QRED.ORG", binaryData, version: 1 })).toBe("QRED.ORG");
+  });
+
   it("falls back to normal QR text when no scanner-safe hidden payload is present", () => {
     expect(qredTextFromScanResult({ data: "https://example.test/plain", binaryData: new Uint8Array([1, 2, 3]) }))
       .toBe("https://example.test/plain");

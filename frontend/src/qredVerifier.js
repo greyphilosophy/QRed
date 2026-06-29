@@ -1,7 +1,7 @@
 import { verifyAsync as verifyEd25519 } from "@noble/ed25519";
 import { decodeB45ish } from "./textRecipes.js";
 
-const VISIBLE_QR_TEXT = "QRED.ORG";
+export const VISIBLE_QR_TEXT = "QRED.ORG";
 
 function bytesFrom(value) {
   if (!value) return new Uint8Array();
@@ -46,8 +46,10 @@ export function extractHiddenQRedPayload(binaryData, version) {
 
 export function qredTextFromScanResult(scanResult) {
   if (!scanResult || typeof scanResult === "string") return scanResult || "";
+  const visibleText = scanResult.data || "";
+  if (visibleText !== VISIBLE_QR_TEXT) return visibleText;
   const hiddenPayload = extractHiddenQRedPayload(scanResult.binaryData, scanResult.version);
-  return hiddenPayload || scanResult.data || "";
+  return hiddenPayload || visibleText;
 }
 
 function decodeBase64Url(value) {
