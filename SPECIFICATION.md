@@ -97,7 +97,7 @@ The reference implementation encodes the payload as a JSON object:
 
 The reference implementation stores the signed payload as JSON with sorted keys and compact separators, then automatic mode evaluates all reversible supported candidates, currently:
 
-- scanner-safe QR payloads that show only the bootstrap URL to ordinary scanners while carrying the signed data in hidden QR codewords,
+- scanner-safe QR payloads that show only the bootstrap URL to ordinary scanners while making signed data recoverable only to a QRed-aware scanner reading the QR image,
 - reversible recipe payloads such as `b45`, and
 
 
@@ -125,7 +125,7 @@ The issuer registry validates key_id on registration: the caller-supplied key_id
 
 Payloads exceeding the capacity of a single seal SHALL be divided into chunks.
 
-The reference implementation emits scanner-safe QR payloads that show the bootstrap URL to ordinary scanners and hide signed payload bytes behind it; it does not document or require an uppercase marker in the payload.
+The reference implementation emits scanner-safe QR payloads that show the bootstrap URL to ordinary scanners and hide signed payload bytes in QR codewords. Ordinary camera apps deliver only the visible URL; hidden payload recovery requires a QRed-aware scanner reading the QR image itself. The implementation does not document or require an uppercase marker in the payload.
 
 The removed compressed pipe seal format is intentionally omitted from this specification because there is no backward-compatibility requirement yet.
 
@@ -137,7 +137,7 @@ A QRed document SHALL contain a bootstrap seal.
 
 The bootstrap seal SHALL provide sufficient information to locate a verification application.
 
-The reference implementation uses `https://qred.org/` as the default visible bootstrap URL. Payload QR codes visibly scan as that URL and hide signed payload bytes in QR codewords after the scanner-visible terminator.
+The reference implementation uses `https://qred.org/` as the default visible bootstrap URL. Payload QR codes visibly scan as that URL in ordinary camera apps, which pass only the URL to the browser. Signed payload bytes are hidden in QR codewords after the scanner-visible terminator and are recoverable only by a QRed-aware scanner reading the QR image.
 
 `https://qred.org/verify/v1` was an obsolete draft bootstrap URL and is not the current implementation default. New generated payload QR codes SHOULD expose `https://qred.org/` as their visible scan result unless an issuer explicitly configures another bootstrap URL.
 
