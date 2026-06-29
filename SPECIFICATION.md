@@ -23,11 +23,11 @@ The payload seals contain the signed document data required to reconstruct and v
 1. Source document is provided.
 2. A canonical text representation is produced.
 3. The canonical text is digitally signed using Ed25519.
-4. In automatic mode, implementations SHALL evaluate all reversible supported payload candidates, currently plaintext fragment URLs and reversible recipe payloads such as `b45`.
+4. In automatic mode, implementations SHALL evaluate all reversible supported payload candidates, currently scanner-safe hidden payloads behind the bootstrap URL and reversible recipe payloads such as `b45`.
 5. Only reversible candidates are selectable.
 6. Automatic mode SHALL choose the candidate with the smallest QR count.
-7. QR-count ties SHALL prefer plaintext, then recipe encodings.
-8. Explicit encoding strategies MAY request `plaintext`, `b45`, or additional modular recipes supported by the implementation.
+7. QR-count ties SHALL prefer scanner-safe hidden payloads behind the bootstrap URL, then recipe encodings.
+8. Explicit encoding strategies MAY request scanner-safe hidden payloads, `b45`, or additional modular recipes supported by the implementation.
 9. The chosen payload form is divided into chunks and encoded into machine-readable seals.
 10. The payload seals are placed on the document.
 
@@ -97,11 +97,11 @@ The reference implementation encodes the payload as a JSON object:
 
 The reference implementation stores the signed payload as JSON with sorted keys and compact separators, then automatic mode evaluates all reversible supported candidates, currently:
 
-- plaintext `QRED1?...` fragment URLs that carry the canonical text directly,
+- scanner-safe QR payloads that show only the bootstrap URL to ordinary scanners while making signed data recoverable only to a QRed-aware scanner reading the QR image,
 - reversible recipe payloads such as `b45`, and
 
 
-Only reversible candidates are selectable. Automatic mode selects the candidate with the smallest QR count. Ties prefer plaintext, then recipe encodings. Explicit strategies may request `plaintext`, `b45`, or additional modular recipes supported by the implementation.
+Only reversible candidates are selectable. Automatic mode selects the candidate with the smallest QR count. Ties prefer scanner-safe hidden payloads behind the bootstrap URL, then recipe encodings. Explicit strategies may request scanner-safe hidden payloads, `b45`, or additional modular recipes supported by the implementation.
 
 ---
 
@@ -125,21 +125,9 @@ The issuer registry validates key_id on registration: the caller-supplied key_id
 
 Payloads exceeding the capacity of a single seal SHALL be divided into chunks.
 
-The reference implementation emits plaintext fragment URLs and modular recipe fragment URLs; it does not emit or accept the removed compressed pipe seal format.
+The reference implementation emits scanner-safe QR payloads that show the bootstrap URL to ordinary scanners and hide signed payload bytes in QR codewords. Ordinary camera apps deliver only the visible URL; hidden payload recovery requires a QRed-aware scanner reading the QR image itself. The implementation does not document or require an uppercase marker in the payload.
 
-Compressed QRed chunks are encoded as a pipe-delimited string:
-
-```
-
-```
-
-Where:
-
-- `QRED1` = format identifier
-- `DOC-ABC123DEF456` = document identifier
-- `0` = chunk number (0-indexed)
-- `3` = total chunks
-- `<base64_gzip_data>` = chunk data
+The removed compressed pipe seal format is intentionally omitted from this specification because there is no backward-compatibility requirement yet.
 
 ---
 
@@ -149,11 +137,11 @@ A QRed document SHALL contain a bootstrap seal.
 
 The bootstrap seal SHALL provide sufficient information to locate a verification application.
 
-The reference implementation uses `https://qred.org/` as the default generated QRed payload URL base. Payload QR codes append QRed fragment data to that base, for example `https://qred.org/#QRED1?...`.
+The reference implementation uses `https://qred.org/` as the default visible bootstrap URL. Payload QR codes visibly scan as that URL in ordinary camera apps, which pass only the URL to the browser. Signed payload bytes are hidden in QR codewords after the scanner-visible terminator and are recoverable only by a QRed-aware scanner reading the QR image.
 
-`https://qred.org/verify/v1` was an obsolete draft bootstrap URL and is not the current implementation default. New generated payload URLs SHOULD use `https://qred.org/` unless an issuer explicitly configures another bootstrap base.
+`https://qred.org/verify/v1` was an obsolete draft bootstrap URL and is not the current implementation default. New generated payload QR codes SHOULD expose `https://qred.org/` as their visible scan result unless an issuer explicitly configures another bootstrap URL.
 
-The human-facing verifier route MAY also be served at `/verify.htm` (for example, `https://qred.org/verify.htm`) as a deployed verifier page. This route is distinct from the default payload URL base used for newly generated QRed payload QR codes.
+The human-facing verifier route MAY also be served at `/verify.htm` (for example, `https://qred.org/verify.htm`) as a deployed verifier page. This route is distinct from the default visible bootstrap URL used for newly generated QRed payload QR codes.
 
 Future versions may support additional bootstrap mechanisms.
 

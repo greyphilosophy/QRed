@@ -2,12 +2,12 @@
 
 > **For Hermes:** Use `subagent-driven-development` to implement this plan task-by-task.
 
-**Goal:** Make plaintext the default QRed format, keep the scanner universal, and reserve QRED1+/compact formats for cases where plaintext is too large or multipart.
+**Goal:** Make plaintext the default QRed format, keep the scanner universal, and reserve hidden-payload formats/compact formats for cases where plaintext is too large or multipart.
 
 **Architecture:**
 - The frontend should stay SPA-based, but the app shape should be scanner-first: scan any QR payload, display its contents, then offer verification as the next step.
 - Parsing logic must remain shared between the scanner, fragment display, and verifier so the QR payload model has a single source of truth.
-- The backend should emit plaintext sealed payloads by default, with a compact QRED format only when the data no longer fits as readable text.
+- The backend should emit plaintext sealed payloads by default, with a compact hidden-payload format only when the data no longer fits as readable text.
 
 **Tech Stack:** React/Vite frontend, Python backend services, jsQR for scanning, existing QRed verifier/signing pipeline, pytest for regression tests.
 
@@ -28,14 +28,14 @@
 Add a short section stating:
 - plaintext is the default QR payload format
 - scanners must display arbitrary QR contents
-- `QRED1?...` is reserved for compact/compressed/multipart cases
+- scanner-safe hidden payloads is reserved for compact/compressed/multipart cases
 - verification is an upgrade path after reading contents
 
 **Step 2: Make the parser explicit about payload types**
 
 Ensure `qredFragment.js` returns a structured shape that can distinguish:
 - plain text payloads
-- QRED seal payloads
+- hidden seal payloads
 - future compact payloads
 
 **Step 3: Verify the parser still handles raw fragments safely**
@@ -67,7 +67,7 @@ Update the home page copy and layout so the main sequence is:
 The scanner should:
 - accept any QR payload
 - show raw contents for plain text/URLs/Wi-Fi/vCard/etc.
-- show QRed-specific metadata only when a QRED payload is detected
+- show QRed-specific metadata only when a QRed payload is detected
 
 **Step 3: Update fragment display copy**
 
@@ -97,9 +97,9 @@ Implement the default payload shape as readable text blocks, for example:
 - `Signature: ...`
 - `Merkle Root: ...`
 
-**Step 2: Preserve compact QRED fallback**
+**Step 2: Preserve compact hidden-payload fallback**
 
-Only switch to `QRED1?...` or later compact formats when:
+Only switch to scanner-safe hidden payloads or later compact formats when:
 - the plaintext payload does not fit in one QR
 - multipart encoding is required
 - metadata density forces compact representation
@@ -137,7 +137,7 @@ Use the same shared parser for:
 
 Make sure the shared module owns:
 - raw fragment parsing
-- QRED detection
+- QRed hidden-payload detection
 - plaintext fallback behavior
 
 **Step 3: Update tests for parser drift**
@@ -145,7 +145,7 @@ Make sure the shared module owns:
 Add tests for:
 - raw plaintext payloads
 - URLs with encoded characters
-- QRED1 payloads
+- hidden payloads
 - malformed fragment strings
 
 **Step 4: Verify the frontend test suite**
@@ -174,7 +174,7 @@ Cover:
 **Step 2: Add frontend parser tests**
 
 Cover:
-- `QRED1?...` fragments
+- scanner-safe hidden payloads fragments
 - plain text fragments
 - URL/hash strings that should not be mistaken for document text
 - scanner display for arbitrary QR payloads
@@ -233,7 +233,7 @@ If the repo has doc checks, run them; otherwise confirm the edited markdown rend
 
 - Plaintext is the default QR payload for normal sealed documents.
 - Universal scanning works for any QR payload, not just QRed seals.
-- QRED1+ remains supported for compact or multipart cases.
+- hidden-payload formats remains supported for compact or multipart cases.
 - Parser logic is shared across scanner, fragment display, and verifier.
 - Tests cover both plaintext and compact payload parsing.
 - The UI reads naturally as: scanner first, verifier second, stamper third.
@@ -246,5 +246,5 @@ If the repo has doc checks, run them; otherwise confirm the edited markdown rend
 - [ ] `python -m pytest -q`
 - [ ] Scanner shows arbitrary QR payload text
 - [ ] Plaintext QRed payloads are readable without special decoding
-- [ ] QRED1 payloads still parse correctly
+- [ ] hidden payloads still parse correctly
 - [ ] Verification still works for signed payloads

@@ -54,17 +54,17 @@
 
 ## 6. Payload Formats
 
-1.  QRed shall support plaintext payloads.
+1.  QRed shall support scanner-safe hidden payloads that visibly scan as the bootstrap URL in ordinary camera apps, while requiring a QRed-aware QR-image scan to recover hidden signed data.
 2.  QRed shall support reversible text recipes.
-3.  QRed shall support compressed payloads for compatibility.
+3.  QRed does not need compressed legacy payload compatibility until users create a compatibility requirement.
 4.  Payloads shall contain sufficient information to reconstruct and
     verify certified contents.
 
 ## 7. Encoding Selection
 
-1.  Plaintext shall be preferred when it is not worse than alternatives.
+1.  Scanner-safe hidden payloads behind the bootstrap URL shall be preferred when they are not worse than alternatives.
 2.  Automatic mode shall evaluate all supported reversible recipes.
-3.  Automatic mode shall evaluate compressed encodings.
+3.  Automatic mode may add encodings freely until compatibility requirements exist.
 4.  Only reversible encodings may be selected.
 5.  Selection shall prioritize:
     -   reversibility,
