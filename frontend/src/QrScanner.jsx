@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
+import { extractHiddenQRedPayloadFromImage, qredTextFromScanResult } from "./qredVerifier.js";
 
 /**
  * QrScanner — Camera-based QR code scanner that can scan ANY QR code and
@@ -118,7 +119,7 @@ function ScannerView({ onScan, onClose }) {
           const code = jsQR(imageData.data, canvas.width, canvas.height, { inverted: false });
           if (code && code.data) {
             stop();
-            onScan(code.data);
+            onScan(extractHiddenQRedPayloadFromImage(imageData.data, canvas.width, canvas.height, code) || qredTextFromScanResult(code));
             return;
           }
         }
