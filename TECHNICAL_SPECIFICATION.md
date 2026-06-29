@@ -38,9 +38,13 @@ Signatures are computed over restored canonical text.
 
 ## 4. Payload Formats
 
-### Plaintext
+### Scanner-safe hidden payload
 
-    https://qred.org/#QRED1?...
+Ordinary QR scanners see only:
+
+    https://qred.org/
+
+QRed-aware readers recover the signed payload bytes hidden behind that visible bootstrap URL.
 
 ### Recipe
 
@@ -98,9 +102,7 @@ canonical text, verifies the signature, and reports one of:
 
 ## 9. Scanner
 
-The scanner recognizes arbitrary QR codes, plaintext QRed fragments,
-recipe payloads and malformed QRed
-payloads.
+The scanner recognizes arbitrary QR codes, scanner-safe QRed payloads with hidden signed data, recipe payloads, and malformed QRed payloads.
 
 Unknown QR codes remain viewable.
 
@@ -121,9 +123,10 @@ Production verifier URL:
 
     https://qred.org/
 
-Fragment payloads:
+Payload QR codes:
 
-    https://qred.org/#QRED1?...
+    visible scan result: https://qred.org/
+    hidden data: signed payload bytes
 
 The verifier should operate entirely within the browser after payload
 acquisition.

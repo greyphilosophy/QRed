@@ -51,7 +51,7 @@ QRed/
 
 ## API Endpoints
 
-Use `http://localhost:8190` for local API requests. Generated QRed payload QR codes use `https://qred.org/` as the production URL base by default.
+Use `http://localhost:8190` for local API requests. Generated QRed payload QR codes show `https://qred.org/` as the visible production bootstrap URL by default while hiding signed payload bytes behind that scan result.
 
 ### POST /api/seals
 Generate QRed seals for a document.

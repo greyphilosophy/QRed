@@ -39,7 +39,7 @@ make install   # pip install -r requirements.txt
 make run       # uvicorn on port 8190
 ```
 
-Then use the REST API. The local backend listens on `http://localhost:8190`, and generated QRed payload QR codes use `https://qred.org/` as the production URL base by default:
+Then use the REST API. The local backend listens on `http://localhost:8190`, and generated QRed payload QR codes show `https://qred.org/` as the visible production bootstrap URL by default while hiding signed payload bytes behind that scan result:
 
 ```bash
 # Generate seals
@@ -55,7 +55,7 @@ curl -X POST http://localhost:8190/api/seals \
 # Verify seals
 curl -X POST http://localhost:8190/api/verify \
   -H 'Content-Type: application/json' \
-  -d '{"seals": ["https://qred.org/#QRED1?..."]}'
+  -d '{"seals": ["<scanner-safe hidden payload QR>"]}'
 ```
 
 ## Run tests
@@ -127,7 +127,7 @@ Before considering production deployment complete, verify all of the following:
 - The homepage loads successfully at `https://qred.org/`.
 - The verifier route loads successfully at `https://qred.org/verify.htm`.
 - The scanner page can submit collected payload seals and issuer public key data to the verification API.
-- Generated QRed payload URLs in sealed PDFs and API responses use `https://qred.org/` as the URL base.
+- Generated QRed payload QR codes in sealed PDFs and API responses show `https://qred.org/` to ordinary scanners and carry signed payload data in hidden QR codewords.
 
 A quick HTTP check for the required verifier route is:
 
@@ -143,7 +143,7 @@ curl -I https://www.qred.org/verify.htm
 
 ## Bootstrap URL and verifier route
 
-New QRed-generated payload QR codes use `https://qred.org/` as the default URL base and append the QRed payload in the fragment (for example, `https://qred.org/#QRED1?...`). The `/verify.htm` path is retained only as the human-facing verifier route. If the verifier application is reorganized, either keep this route serving the verifier or update the production deployment documentation at the same time.
+New QRed-generated payload QR codes use `https://qred.org/` as the visible bootstrap URL. The signed payload is hidden in QR codewords behind that visible URL and must not be described as a URL marker or fragment. The `/verify.htm` path is retained only as the human-facing verifier route. If the verifier application is reorganized, either keep this route serving the verifier or update the production deployment documentation at the same time.
 
 # Motivation
 
@@ -162,7 +162,7 @@ This allows recipients to verify:
 1. A document is converted into a canonical text representation.
 3. The canonical text is digitally signed by the issuing authority.
 4. The implementation chooses the smaller QR count between:
-   - plaintext, scanner-readable `QRED1?...` fragment URLs, and
+   - scanner-safe QR payloads that show only the bootstrap URL to ordinary scanners while carrying the signed data in hidden QR codewords, and
    - reversible recipe payloads such as `b45`.
 5. The chosen payload format is divided into one or more QR code seals.
 6. A bootstrap QR code containing a URL to a verifier web application is added to the document.
@@ -213,7 +213,7 @@ A typical QRed document contains:
 
 The bootstrap QR launches the verifier web application.
 
-The payload QR codes contain the signed document data required to reconstruct and validate the certified contents.
+The payload QR codes visibly scan as the bootstrap URL while hiding the signed document data required to reconstruct and validate the certified contents behind that URL.
 
 # Security Model
 

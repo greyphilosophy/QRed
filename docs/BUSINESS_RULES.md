@@ -22,14 +22,14 @@ This document summarizes the current business rules for QRed as implemented and 
    - strips leading and trailing empty lines.
 5. The canonical text is signed by the issuing authority using Ed25519.
 6. The signed payload is encoded into one or more machine-readable payload seals.
-7. Automatic mode evaluates all reversible supported payload candidates, currently plaintext fragment URLs and reversible recipe payloads such as `b45`.
+7. Automatic mode evaluates all reversible supported payload candidates, currently scanner-safe hidden payloads behind the bootstrap URL and reversible recipe payloads such as `b45`.
 8. Only reversible candidates are selectable.
 9. Automatic mode chooses the candidate that requires the fewest QR codes.
-10. QR-count ties prefer plaintext `QRED1?...` fragment payloads, then recipe encodings.
-11. Explicit strategies may request `plaintext`, `b45`, or implementation-supported modular recipes.
+10. QR-count ties prefer scanner-safe hidden payloads behind the bootstrap URL, then recipe encodings.
+11. Explicit strategies may request scanner-safe hidden payloads, `b45`, or implementation-supported modular recipes.
 12. Payloads that exceed a single seal's capacity are divided into numbered chunks.
-13. Printed QR payload URLs use the shortest production verifier origin currently required for scanning: `https://qred.org/`.
-14. Fragment payload seals append QRed data after the hash, for example `https://qred.org/#QRED1?...`, so the URL path does not consume QR capacity.
+13. Printed payload QR codes expose the shortest production verifier origin currently required for scanning: `https://qred.org/`.
+14. Payload QR codes present the bootstrap URL (`https://qred.org/`) to ordinary scanners and store signed payload bytes in hidden QR codewords behind that visible URL, so payload data does not appear as a URL marker, path, or fragment.
 15. The `/verify.htm` route may remain available as a human-facing verifier page, but newly generated QR payloads must not add `/verify.htm` unless a future compatibility requirement explicitly requires it.
 
 ## Payload and Metadata Rules
@@ -39,7 +39,7 @@ This document summarizes the current business rules for QRed as implemented and 
 3. The reference key ID is the first 16 lowercase hexadecimal characters of the SHA-256 digest of the Ed25519 public key bytes.
 4. The issuer private key must never be embedded in generated seals.
 5. Unsupported major format versions are rejected.
-6. Implementations may support multiple versions simultaneously when backward compatibility is practical.
+6. Implementations do not need to preserve backward compatibility until a compatibility requirement exists.
 
 ## Issuer and Key Trust Rules
 
@@ -54,7 +54,7 @@ This document summarizes the current business rules for QRed as implemented and 
 
 ## Verification Rules
 
-1. The verification workflow scans one or more QRed payload URLs, loads the verifier from the short `https://qred.org/` origin when needed, reconstructs the payload, validates payload completeness, verifies the signature, displays certified contents, and reports a result.
+1. The verification workflow scans one or more QRed payload QR codes, recovers hidden signed data when present, loads the verifier from the short `https://qred.org/` origin when needed, reconstructs the payload, validates payload completeness, verifies the signature, displays certified contents, and reports a result.
 2. Payload reconstruction requires all chunks for the same document or grouping namespace.
 3. Missing chunks produce an `INCOMPLETE` result.
 4. Malformed, unsupported, or unreadable seal data produces an `ERROR` result when it cannot be reconstructed.
@@ -80,7 +80,7 @@ This document summarizes the current business rules for QRed as implemented and 
 
 ## Deployment and Operations Rules
 
-1. Generated QR payload URLs are expected to use `https://qred.org/` as their production base URL.
+1. Generated QR payloads are expected to expose `https://qred.org/` as their visible production bootstrap URL while hiding signed payload bytes behind that visible scan result.
 2. Production should use Cloudflare Pages for the frontend verifier deployment.
 3. GoDaddy forwarding must not be used as the primary production mechanism for `qred.org` verification traffic.
 4. If API-backed production features are enabled, the frontend Worker must be configured with the backend API origin or the browser build must be configured with the backend API base URL.
