@@ -5,7 +5,7 @@ from __future__ import annotations
 from qrcode import base, exceptions, util
 
 VISIBLE_QR_URL = "QRED.ORG"
-HIDDEN_PAYLOAD_MAGIC = b"QRED1\0"
+HIDDEN_PAYLOAD_LENGTH_BYTES = 2
 
 
 def _data_bit_limit(version: int, error_correction: int) -> int:
@@ -25,7 +25,7 @@ def encoded_hidden_payload_bytes(payload: str | bytes) -> bytes:
     raw = payload.encode("utf-8") if isinstance(payload, str) else bytes(payload)
     if len(raw) > 65535:
         raise ValueError("Hidden QRed payload is too large")
-    return HIDDEN_PAYLOAD_MAGIC + len(raw).to_bytes(2, "big") + raw
+    return len(raw).to_bytes(HIDDEN_PAYLOAD_LENGTH_BYTES, "big") + raw
 
 
 def scanner_safe_bit_buffer(version: int, error_correction: int, payload: str | bytes) -> util.BitBuffer:
@@ -73,9 +73,8 @@ def extract_hidden_payload_from_buffer(buffer: util.BitBuffer, version: int) -> 
     start = len(_visible_url_buffer(version)) + 4
     start += (-start) % 8
     data = bytes(buffer.buffer[start // 8:])
-    magic_index = data.find(HIDDEN_PAYLOAD_MAGIC)
-    if magic_index < 0:
+    if len(data) < HIDDEN_PAYLOAD_LENGTH_BYTES:
         return b""
-    offset = magic_index + len(HIDDEN_PAYLOAD_MAGIC)
-    length = int.from_bytes(data[offset:offset + 2], "big")
-    return data[offset + 2:offset + 2 + length]
+    length = int.from_bytes(data[:HIDDEN_PAYLOAD_LENGTH_BYTES], "big")
+    offset = HIDDEN_PAYLOAD_LENGTH_BYTES
+    return data[offset:offset + length]
