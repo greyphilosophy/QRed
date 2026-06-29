@@ -6,6 +6,80 @@ const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 const wrongPublicKey = "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=";
 const staticDemoPublicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
+
+const hiddenPayloadMagic = new TextEncoder().encode("QRED1\0");
+
+function backendFramedPayloadBytes(payload) {
+  const payloadBytes = new TextEncoder().encode(payload);
+  return new Uint8Array([
+    ...hiddenPayloadMagic,
+    (payloadBytes.length >> 8) & 0xff,
+    payloadBytes.length & 0xff,
+    ...payloadBytes,
+  ]);
+}
+
+function versionOneDataOffset() {
+  return 8;
+}
+
+const formatBits = 0x77c4;
+const formatBitPositions = [
+  [8, 0], [8, 1], [8, 2], [8, 3], [8, 4], [8, 5], [8, 7], [8, 8], [7, 8], [5, 8], [4, 8], [3, 8], [2, 8], [1, 8], [0, 8],
+  [20, 8], [19, 8], [18, 8], [17, 8], [16, 8], [15, 8], [14, 8], [8, 13], [8, 14], [8, 15], [8, 16], [8, 17], [8, 18], [8, 19], [8, 20],
+];
+
+function qrMaskBit(mask, row, col) {
+  return mask === 0 ? (row + col) % 2 === 0 : false;
+}
+
+function isVersionOneFunctionModule(row, col) {
+  return (row < 9 && col < 9) || (row < 9 && col >= 13) || (row >= 13 && col < 9) || row === 6 || col === 6;
+}
+
+function matrixFromCodewords(codewords) {
+  const size = 21;
+  const matrix = Array.from({ length: size }, () => Array(size).fill(false));
+  const bits = Array.from(codewords, (byte) => Array.from({ length: 8 }, (_, bit) => (byte >> (7 - bit)) & 1)).flat();
+  let bitIndex = 0;
+  let upward = true;
+  for (let right = size - 1; right > 0; right -= 2) {
+    if (right === 6) right -= 1;
+    for (let vertical = 0; vertical < size; vertical += 1) {
+      const row = upward ? size - 1 - vertical : vertical;
+      for (const col of [right, right - 1]) {
+        if (isVersionOneFunctionModule(row, col)) continue;
+        const bit = bits[bitIndex] || 0;
+        matrix[row][col] = Boolean(bit ^ (qrMaskBit(0, row, col) ? 1 : 0));
+        bitIndex += 1;
+      }
+    }
+    upward = !upward;
+  }
+  for (const [index, [row, col]] of formatBitPositions.entries()) {
+    matrix[row][col] = Boolean((formatBits >> (14 - (index % 15))) & 1);
+  }
+  return matrix;
+}
+
+function imageDataFromMatrix(matrix, modulePixels = 2) {
+  const size = matrix.length;
+  const width = size * modulePixels;
+  const imageData = new Uint8ClampedArray(width * width * 4);
+  for (let row = 0; row < width; row += 1) {
+    for (let col = 0; col < width; col += 1) {
+      const dark = matrix[Math.floor(row / modulePixels)][Math.floor(col / modulePixels)];
+      const value = dark ? 0 : 255;
+      const index = ((row * width) + col) * 4;
+      imageData[index] = value;
+      imageData[index + 1] = value;
+      imageData[index + 2] = value;
+      imageData[index + 3] = 255;
+    }
+  }
+  return { imageData, width, height: width };
+}
+
 async function createTestSeals() {
   const result = await createQRedSeals({
     content: "Confidential\n\nDocument",
@@ -20,10 +94,9 @@ async function createTestSeals() {
 describe("qredVerifier", () => {
   it("extracts scanner-safe QRed data from the post-terminator byte offset", () => {
     const payload = "https://qred.org/#QRED1?doc=DOC&i=0&n=1&rc=b45&txt=HELLO";
-    const payloadBytes = new TextEncoder().encode(payload);
     const binaryData = new Uint8Array([
       0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
-      ...payloadBytes,
+      ...backendFramedPayloadBytes(payload),
       0xec, 0x11,
     ]);
 
@@ -35,11 +108,32 @@ describe("qredVerifier", () => {
     const payload = "rc=brotli&txt=G8YA%2BE-brotli_payload";
     const binaryData = new Uint8Array([
       0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
-      ...new TextEncoder().encode(payload),
+      ...backendFramedPayloadBytes(payload),
       0xec, 0x11,
     ]);
 
     expect(extractHiddenQRedPayload(binaryData, 1)).toBe(payload);
+  });
+
+  it("extracts backend-framed hidden payloads from deinterleaved QR image codewords", () => {
+    const payload = "IMG";
+    const dataCodewords = new Uint8Array(19);
+    dataCodewords.set([0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40], 0);
+    dataCodewords.set(backendFramedPayloadBytes(payload), versionOneDataOffset());
+    const allCodewords = new Uint8Array(26);
+    allCodewords.set(dataCodewords);
+    const { imageData, width, height } = imageDataFromMatrix(matrixFromCodewords(allCodewords));
+
+    expect(extractHiddenQRedPayloadFromImage(imageData, width, height, {
+      data: "QRED.ORG",
+      version: 1,
+      location: {
+        topLeftCorner: { x: 0, y: 0 },
+        topRightCorner: { x: width, y: 0 },
+        bottomLeftCorner: { x: 0, y: height },
+        bottomRightCorner: { x: width, y: height },
+      },
+    })).toBe(payload);
   });
 
   it("returns no hidden image payload when scan geometry is unavailable", () => {

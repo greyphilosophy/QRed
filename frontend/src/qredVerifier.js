@@ -2,6 +2,8 @@ import { verifyAsync as verifyEd25519 } from "@noble/ed25519";
 import { decodeB45ish } from "./textRecipes.js";
 
 export const VISIBLE_QR_TEXT = "QRED.ORG";
+const HIDDEN_PAYLOAD_MAGIC = new TextEncoder().encode("QRED1\0");
+const HIDDEN_PAYLOAD_LENGTH_BYTES = 2;
 
 function bytesFrom(value) {
   if (!value) return new Uint8Array();
@@ -37,11 +39,40 @@ function printablePayloadFrom(bytes, offset) {
   return new TextDecoder("utf-8", { fatal: true }).decode(bytes.slice(offset, endOffset));
 }
 
+function hasMagicAt(bytes, offset) {
+  if (offset + HIDDEN_PAYLOAD_MAGIC.length > bytes.length) return false;
+  return HIDDEN_PAYLOAD_MAGIC.every((byte, index) => bytes[offset + index] === byte);
+}
+
+function framedPayloadFrom(bytes, offset) {
+  const lengthOffset = offset + HIDDEN_PAYLOAD_MAGIC.length;
+  const payloadOffset = lengthOffset + HIDDEN_PAYLOAD_LENGTH_BYTES;
+  if (payloadOffset > bytes.length) return null;
+
+  const payloadLength = (bytes[lengthOffset] << 8) | bytes[lengthOffset + 1];
+  const payloadEnd = payloadOffset + payloadLength;
+  if (payloadEnd > bytes.length) return null;
+
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes.slice(payloadOffset, payloadEnd));
+  } catch {
+    return null;
+  }
+}
+
+function findFramedPayload(bytes, startOffset) {
+  const lastMagicOffset = bytes.length - HIDDEN_PAYLOAD_MAGIC.length - HIDDEN_PAYLOAD_LENGTH_BYTES;
+  for (let offset = startOffset; offset <= lastMagicOffset; offset += 1) {
+    if (hasMagicAt(bytes, offset)) return framedPayloadFrom(bytes, offset);
+  }
+  return null;
+}
+
 export function extractHiddenQRedPayload(binaryData, version) {
   const bytes = bytesFrom(binaryData);
   const payloadOffset = hiddenPayloadByteOffset(version);
   if (payloadOffset >= bytes.length) return null;
-  return printablePayloadFrom(bytes, payloadOffset);
+  return findFramedPayload(bytes, payloadOffset) || printablePayloadFrom(bytes, payloadOffset);
 }
 
 export function qredTextFromScanResult(scanResult) {
