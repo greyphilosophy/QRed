@@ -7,12 +7,9 @@ const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 const wrongPublicKey = "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=";
 const staticDemoPublicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 
-const hiddenPayloadMagic = new TextEncoder().encode("QRED1\0");
-
 function backendFramedPayloadBytes(payload) {
   const payloadBytes = new TextEncoder().encode(payload);
   return new Uint8Array([
-    ...hiddenPayloadMagic,
     (payloadBytes.length >> 8) & 0xff,
     payloadBytes.length & 0xff,
     ...payloadBytes,
@@ -92,7 +89,7 @@ async function createTestSeals() {
 }
 
 describe("qredVerifier", () => {
-  it("extracts scanner-safe QRed data from the post-terminator byte offset", () => {
+  it("extracts length-framed scanner-safe QRed data from the post-terminator byte offset", () => {
     const payload = "https://qred.org/#QRED1?doc=DOC&i=0&n=1&rc=b45&txt=HELLO";
     const binaryData = new Uint8Array([
       0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
@@ -104,7 +101,7 @@ describe("qredVerifier", () => {
     expect(qredTextFromScanResult({ data: "QRED.ORG", binaryData, version: 1 })).toBe(payload);
   });
 
-  it("extracts compressed and encoded QRed chunk text from backend framing", () => {
+  it("extracts compressed and encoded QRed chunk text from compact backend framing", () => {
     const payload = "rc=brotli&txt=G8YA%2BE-brotli_payload";
     const binaryData = new Uint8Array([
       0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
@@ -126,7 +123,7 @@ describe("qredVerifier", () => {
     expect(qredTextFromScanResult({ data: "QRED.ORG", binaryData, version: 1 })).toBe("QRED.ORG");
   });
 
-  it("extracts backend-framed hidden payloads from deinterleaved QR image codewords", () => {
+  it("extracts length-framed hidden payloads from deinterleaved QR image codewords", () => {
     const payload = "IMG";
     const dataCodewords = new Uint8Array(19);
     dataCodewords.set([0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40], 0);

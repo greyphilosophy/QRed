@@ -1410,7 +1410,7 @@ def test_scanner_safe_qr_keeps_qred_data_after_terminator_for_custom_reader():
 
 def test_scanner_safe_qr_hidden_extractor_uses_explicit_version_offset():
     """Given a high-version QR, when extracting hidden data, then the version-specific count size is used."""
-    from backend.services.qr_payload import HIDDEN_PAYLOAD_MAGIC, extract_hidden_payload_from_buffer, scanner_safe_bit_buffer
+    from backend.services.qr_payload import HIDDEN_PAYLOAD_LENGTH_BYTES, extract_hidden_payload_from_buffer, scanner_safe_bit_buffer
     from qrcode import constants, util
 
     version = 27
@@ -1419,7 +1419,8 @@ def test_scanner_safe_qr_hidden_extractor_uses_explicit_version_offset():
     hidden_start = 4 + util.length_in_bits(util.MODE_ALPHA_NUM, version) + 44 + 4
     hidden_start += (-hidden_start) % 8
 
-    assert bytes(buffer.buffer[hidden_start // 8:]).startswith(HIDDEN_PAYLOAD_MAGIC)
+    hidden = bytes(buffer.buffer[hidden_start // 8:])
+    assert int.from_bytes(hidden[:HIDDEN_PAYLOAD_LENGTH_BYTES], "big") == len(payload.encode("utf-8"))
     assert extract_hidden_payload_from_buffer(buffer, version=version).decode("utf-8") == payload
 
 
