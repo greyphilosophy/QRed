@@ -160,6 +160,23 @@
         z-index: 4;
       }
 
+      .ar-scan-feedback {
+        backdrop-filter: blur(14px);
+        background: rgba(15, 23, 42, 0.78);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 16px;
+        bottom: calc(clamp(1rem, 3vw, 2rem) + 5rem);
+        color: #e2e8f0;
+        font-weight: 700;
+        left: 50%;
+        max-width: min(86vw, 560px);
+        padding: 0.85rem 1rem;
+        position: absolute;
+        text-align: center;
+        transform: translateX(-50%);
+        z-index: 5;
+      }
+
       .ar-result-panel, .ar-error {
         backdrop-filter: blur(18px);
         background: rgba(15, 23, 42, 0.76);
@@ -242,6 +259,7 @@
       @media (max-width: 640px) {
         .demo-grid { grid-template-columns: 1fr; }
         .ar-controls { border-radius: 28px; flex-direction: column; }
+        .ar-scan-feedback { bottom: calc(clamp(1rem, 3vw, 2rem) + 8.5rem); }
       }
 
       .footer {
