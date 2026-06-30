@@ -76,12 +76,12 @@ Configure the Cloudflare Pages project with these settings:
 | Setting | Value |
 | --- | --- |
 | Project root / root directory | `frontend` |
-| Build command | `npm ci && npm run build` |
+| Build command | `npm ci && npm run build:pages` |
 | Build output directory | `build` |
-| Deploy command, if the Cloudflare UI requires one | `npm ci && npm run build` |
+| Deploy command, if the Cloudflare UI requires one | `npm ci && npm run build:pages` |
 | Production URL expectation | `https://qred.org/verify.htm` |
 
-Use `npm ci && npm run build` only after setting the project root to `frontend`, where `package.json` and `package-lock.json` live. If Cloudflare runs from the repository root, use the root `npm run build` script and publish `frontend/build`; the root `wrangler.jsonc` declares that Pages output directory. If the UI requires manual settings instead, use `cd frontend && npm ci && npm run build` and set the build output directory to `frontend/build`.
+Use `npm ci && npm run build:pages` after setting the project root to `frontend`, where `package.json` and `package-lock.json` live. The `build:pages` script builds the static frontend and copies `frontend/worker/index.js` to `build/_worker.js`, which is required for Cloudflare Pages to run the `/api/*` Worker routes in production. If Cloudflare runs from the repository root, use the root `npm run build` script and publish `frontend/build`; the root `wrangler.jsonc` declares that Pages output directory. If the UI requires manual settings instead, use `cd frontend && npm ci && npm run build:pages` and set the build output directory to `frontend/build`.
 
 The production frontend is a Cloudflare Pages deployment with a small Worker in `frontend/worker/index.js`. By default, the browser build sends API requests to the relative `/api` path, which lets the Worker proxy requests. Configure the Worker variable `QRED_API_ORIGIN` to the origin of the separately deployed QRed FastAPI backend if production should support API-backed demo features such as seal generation, PDF stamping, registry calls, or server-side verification. Alternatively, set the frontend build-time variable `VITE_API_BASE_URL` to the backend origin (for example, `https://api.qred.org`) so the browser calls that API directly instead of relying on the Worker proxy. Leave both `QRED_API_ORIGIN` and `VITE_API_BASE_URL` unset only for a static verifier/demo deployment; in that mode the Worker serves `/api/keys/default` and `/api/keys/demo` locally so the homepage can load demo issuer keys, while other `/api/*` routes return a 503 explaining that the backend origin is missing.
 

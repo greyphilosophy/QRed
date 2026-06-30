@@ -9,7 +9,8 @@
     "test": "vitest run",
     "lint": "eslint src/ --ext .jsx,.tsx",
     "test:ci": "vitest run --passWithNoTests",
-    "build:worker": "npm run build"
+    "build:worker": "npm run build",
+    "build:pages": "npm run build && cp worker/index.js build/_worker.js"
   },
   "dependencies": {
     "@noble/ed25519": "^3.1.0",
