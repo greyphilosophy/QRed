@@ -160,6 +160,37 @@
         z-index: 4;
       }
 
+      .ar-camera-loading {
+        align-items: center;
+        backdrop-filter: blur(16px);
+        background: rgba(15, 23, 42, 0.78);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 999px;
+        color: #e2e8f0;
+        display: inline-flex;
+        font-weight: 800;
+        gap: 0.75rem;
+        left: 50%;
+        padding: 0.85rem 1.1rem;
+        position: absolute;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 5;
+      }
+
+      .ar-camera-spinner {
+        animation: ar-spin 0.85s linear infinite;
+        border: 3px solid rgba(147, 197, 253, 0.35);
+        border-top-color: #93c5fd;
+        border-radius: 999px;
+        height: 1.35rem;
+        width: 1.35rem;
+      }
+
+      @keyframes ar-spin {
+        to { transform: rotate(360deg); }
+      }
+
       .ar-scan-feedback {
         backdrop-filter: blur(14px);
         background: rgba(15, 23, 42, 0.78);

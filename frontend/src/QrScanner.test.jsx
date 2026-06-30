@@ -3,7 +3,7 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import jsQR from "jsqr";
-import { applyContinuousCameraFocus, decodeCanvasFrame, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
+import { applyContinuousCameraFocus, decodeCanvasFrame, isCameraFrameReady, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
 
 vi.mock("jsqr", () => ({ default: vi.fn() }));
 
@@ -111,6 +111,21 @@ describe("QrScanner manual photo capture", () => {
     expect(screen.getByRole("button", { name: "Scan photo" })).toBeTruthy();
     await waitFor(() => expect(screen.getByText(/Camera access needed: denied/)).toBeTruthy());
   });
+
+  it("shows a loading indicator while the camera is starting", () => {
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn(() => new Promise(() => {})),
+      },
+    });
+
+    render(React.createElement(QrScanner, { onOpenPdfStampTool: vi.fn() }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Start scanning" }));
+
+    expect(screen.getByRole("status", { name: /Starting camera/ })).toBeTruthy();
+  });
 });
 
 
@@ -126,6 +141,19 @@ describe("decodeCanvasFrame", () => {
     const video = { readyState, videoWidth: width, videoHeight: height };
     return { canvas, ctx, video };
   }
+
+  it("reports manual captures as pending until a camera frame is available", () => {
+    const { canvas, video } = frame({ readyState: 1 });
+    video.videoWidth = 0;
+    video.videoHeight = 0;
+
+    expect(isCameraFrameReady(video, canvas)).toBe(false);
+    expect(decodeCanvasFrame(video, canvas, { manual: true })).toEqual({
+      status: "pending",
+      message: "Camera is preparing the photo. Hold steady…",
+    });
+    expect(jsQR).not.toHaveBeenCalled();
+  });
 
   it("accepts camera frames once current frame data is available", () => {
     const { canvas, ctx, video } = frame({ readyState: 2 });
