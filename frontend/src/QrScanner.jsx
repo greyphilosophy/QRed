@@ -14,12 +14,20 @@ import { VISIBLE_QR_TEXT, extractHiddenQRedPayloadFromImage, qredTextFromScanRes
 export function QrScanner({ onOpenPdfStampTool }) {
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
+  const [captureRequest, setCaptureRequest] = useState(0);
 
+  const scanButtonLabel = mode === "scanning" ? "Scan photo" : mode === "result" ? "Scan again" : "Start scanning";
   const controls = React.createElement("div", { className: "ar-controls" },
     React.createElement("button", {
       className: "ar-button ar-button-primary",
-      onClick: () => setMode("scanning"),
-    }, mode === "result" ? "Scan again" : "Start scanning"),
+      onClick: () => {
+        if (mode === "scanning") {
+          setCaptureRequest((request) => request + 1);
+          return;
+        }
+        setMode("scanning");
+      },
+    }, scanButtonLabel),
     React.createElement("button", {
       "aria-label": "Open PDF stamping tool",
       className: "ar-button ar-button-secondary",
@@ -46,6 +54,7 @@ export function QrScanner({ onOpenPdfStampTool }) {
           setMode("result");
         },
         onClose: () => setMode("idle"),
+        captureRequest,
       }),
       controls
     );
@@ -120,9 +129,28 @@ export async function applyContinuousCameraFocus(stream) {
   }
 }
 
-function ScannerView({ onScan, onClose }) {
+export function decodeCanvasFrame(video, canvas) {
+  if (!video || !canvas || video.readyState !== 4) return { status: "continue" };
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return { status: "continue" };
+
+  if (video.videoWidth && video.videoHeight && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+  }
+  if (!canvas.width || !canvas.height) return { status: "continue" };
+
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const code = jsQR(imageData.data, canvas.width, canvas.height, { inversionAttempts: "attemptBoth" });
+  return qrScanAction(imageData.data, canvas.width, canvas.height, code);
+}
+
+function ScannerView({ onScan, onClose, captureRequest }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const handleScanActionRef = useRef(() => false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -146,29 +174,21 @@ function ScannerView({ onScan, onClose }) {
       }
     }
 
+    handleScanActionRef.current = (scanAction) => {
+      if (scanAction.status === "found") {
+        stop();
+        onScan(scanAction.text);
+        return true;
+      }
+      return false;
+    };
+
     function scanFrame() {
       if (stopped) return;
 
-      const video = videoRef.current;
-      if (video && video.readyState === 4) {
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const ctx = canvas.getContext("2d");
-          if (video.videoWidth && video.videoHeight && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-          }
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = jsQR(imageData.data, canvas.width, canvas.height, { inversionAttempts: "attemptBoth" });
-          const scanAction = qrScanAction(imageData.data, canvas.width, canvas.height, code);
-          if (scanAction.status === "found") {
-            stop();
-            onScan(scanAction.text);
-            return;
-          }
-        }
-      }
+      const scanAction = decodeCanvasFrame(videoRef.current, canvasRef.current);
+      if (handleScanActionRef.current(scanAction)) return;
+
       animId = requestAnimationFrame(scanFrame);
     }
 
@@ -192,8 +212,18 @@ function ScannerView({ onScan, onClose }) {
         }
       });
 
-    return stop;
+    return () => {
+      handleScanActionRef.current = () => false;
+      stop();
+    };
   }, [onScan]);
+
+  useEffect(() => {
+    if (captureRequest <= 0 || error) return;
+
+    const scanAction = decodeCanvasFrame(videoRef.current, canvasRef.current);
+    handleScanActionRef.current(scanAction);
+  }, [captureRequest, error, onScan]);
 
   if (error) {
     return React.createElement("div", { className: "ar-error" },

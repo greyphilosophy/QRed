@@ -1,6 +1,8 @@
 /* @vitest-environment jsdom */
-import { describe, expect, it, vi } from "vitest";
-import { applyContinuousCameraFocus, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
+import React from "react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { applyContinuousCameraFocus, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
 
 describe("QrScanner camera controls", () => {
   it("requests the rear camera at a high ideal resolution", () => {
@@ -80,5 +82,30 @@ describe("QrScanner scan loop decisions", () => {
       status: "found",
       text: "https://example.test",
     });
+  });
+});
+
+
+describe("QrScanner manual photo capture", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    delete navigator.mediaDevices;
+  });
+
+  it("turns the primary scanner button into a photo capture button once the camera starts", async () => {
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockRejectedValue(new Error("denied")),
+      },
+    });
+
+    render(React.createElement(QrScanner, { onOpenPdfStampTool: vi.fn() }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Start scanning" }));
+
+    expect(screen.getByRole("button", { name: "Scan photo" })).toBeTruthy();
+    await waitFor(() => expect(screen.getByText(/Camera access needed: denied/)).toBeTruthy());
   });
 });
