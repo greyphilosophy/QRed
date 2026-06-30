@@ -129,8 +129,11 @@ export async function applyContinuousCameraFocus(stream) {
   }
 }
 
-export function decodeCanvasFrame(video, canvas) {
-  if (!video || !canvas || video.readyState !== 4) return { status: "continue" };
+export function decodeCanvasFrame(video, canvas, options = {}) {
+  const manual = Boolean(options.manual);
+  if (!video || !canvas || video.readyState < 2) {
+    return manual ? { status: "feedback", message: "Camera is still preparing the photo. Try again in a moment." } : { status: "continue" };
+  }
 
   const ctx = canvas.getContext("2d");
   if (!ctx) return { status: "continue" };
@@ -144,6 +147,18 @@ export function decodeCanvasFrame(video, canvas) {
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const code = jsQR(imageData.data, canvas.width, canvas.height, { inversionAttempts: "attemptBoth" });
+
+  if (manual && !code?.data) {
+    return { status: "feedback", message: "No QR code found in this photo. Center a QR seal in the frame and try again." };
+  }
+  if (manual && code.data === VISIBLE_QR_TEXT) {
+    const hiddenPayload = extractHiddenQRedPayloadFromImage(imageData.data, canvas.width, canvas.height, code);
+    if (!hiddenPayload || hiddenPayload === VISIBLE_QR_TEXT) {
+      return { status: "feedback", message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again." };
+    }
+    return { status: "found", text: hiddenPayload };
+  }
+
   return qrScanAction(imageData.data, canvas.width, canvas.height, code);
 }
 
@@ -152,6 +167,7 @@ function ScannerView({ onScan, onClose, captureRequest }) {
   const canvasRef = useRef(null);
   const handleScanActionRef = useRef(() => false);
   const [error, setError] = useState(null);
+  const [feedback, setFeedback] = useState(null);
 
   useEffect(() => {
     let animId = null;
@@ -176,9 +192,13 @@ function ScannerView({ onScan, onClose, captureRequest }) {
 
     handleScanActionRef.current = (scanAction) => {
       if (scanAction.status === "found") {
+        setFeedback(null);
         stop();
         onScan(scanAction.text);
         return true;
+      }
+      if (scanAction.status === "feedback") {
+        setFeedback(scanAction.message);
       }
       return false;
     };
@@ -221,7 +241,7 @@ function ScannerView({ onScan, onClose, captureRequest }) {
   useEffect(() => {
     if (captureRequest <= 0 || error) return;
 
-    const scanAction = decodeCanvasFrame(videoRef.current, canvasRef.current);
+    const scanAction = decodeCanvasFrame(videoRef.current, canvasRef.current, { manual: true });
     handleScanActionRef.current(scanAction);
   }, [captureRequest, error, onScan]);
 
@@ -246,6 +266,7 @@ function ScannerView({ onScan, onClose, captureRequest }) {
       React.createElement("span", null)
     ),
     React.createElement("canvas", { ref: canvasRef, style: { display: "none" } }),
+    feedback ? React.createElement("div", { className: "ar-scan-feedback", role: "status", "aria-live": "polite" }, feedback) : null,
     React.createElement("button", { className: "ar-close", onClick: onClose }, "Close")
   );
 }

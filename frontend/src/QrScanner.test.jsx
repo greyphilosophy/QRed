@@ -2,7 +2,10 @@
 import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyContinuousCameraFocus, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
+import jsQR from "jsqr";
+import { applyContinuousCameraFocus, decodeCanvasFrame, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
+
+vi.mock("jsqr", () => ({ default: vi.fn() }));
 
 describe("QrScanner camera controls", () => {
   it("requests the rear camera at a high ideal resolution", () => {
@@ -107,5 +110,48 @@ describe("QrScanner manual photo capture", () => {
 
     expect(screen.getByRole("button", { name: "Scan photo" })).toBeTruthy();
     await waitFor(() => expect(screen.getByText(/Camera access needed: denied/)).toBeTruthy());
+  });
+});
+
+
+describe("decodeCanvasFrame", () => {
+  afterEach(() => {
+    vi.mocked(jsQR).mockReset();
+  });
+
+  function frame({ readyState = 2, width = 320, height = 240 } = {}) {
+    const imageData = { data: new Uint8ClampedArray(width * height * 4) };
+    const ctx = { drawImage: vi.fn(), getImageData: vi.fn(() => imageData) };
+    const canvas = { width, height, getContext: vi.fn(() => ctx) };
+    const video = { readyState, videoWidth: width, videoHeight: height };
+    return { canvas, ctx, video };
+  }
+
+  it("accepts camera frames once current frame data is available", () => {
+    const { canvas, ctx, video } = frame({ readyState: 2 });
+    vi.mocked(jsQR).mockReturnValue({ data: "https://example.test" });
+
+    expect(decodeCanvasFrame(video, canvas)).toEqual({ status: "found", text: "https://example.test" });
+    expect(ctx.drawImage).toHaveBeenCalledWith(video, 0, 0, 320, 240);
+  });
+
+  it("gives manual photo feedback when no QR is found", () => {
+    const { canvas, video } = frame();
+    vi.mocked(jsQR).mockReturnValue(null);
+
+    expect(decodeCanvasFrame(video, canvas, { manual: true })).toEqual({
+      status: "feedback",
+      message: "No QR code found in this photo. Center a QR seal in the frame and try again.",
+    });
+  });
+
+  it("gives manual photo feedback when a bootstrap QR has no hidden QRed payload", () => {
+    const { canvas, video } = frame();
+    vi.mocked(jsQR).mockReturnValue({ data: "QRED.ORG" });
+
+    expect(decodeCanvasFrame(video, canvas, { manual: true })).toEqual({
+      status: "feedback",
+      message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again.",
+    });
   });
 });
