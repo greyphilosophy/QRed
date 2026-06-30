@@ -59,14 +59,14 @@ function matrixFromCodewords(codewords) {
   return matrix;
 }
 
-function imageDataFromMatrix(matrix, modulePixels = 2) {
+function imageDataFromMatrix(matrix, modulePixels = 2, darkValue = 0, lightValue = 255) {
   const size = matrix.length;
   const width = size * modulePixels;
   const imageData = new Uint8ClampedArray(width * width * 4);
   for (let row = 0; row < width; row += 1) {
     for (let col = 0; col < width; col += 1) {
       const dark = matrix[Math.floor(row / modulePixels)][Math.floor(col / modulePixels)];
-      const value = dark ? 0 : 255;
+      const value = dark ? darkValue : lightValue;
       const index = ((row * width) + col) * 4;
       imageData[index] = value;
       imageData[index + 1] = value;
@@ -131,6 +131,27 @@ describe("qredVerifier", () => {
     const allCodewords = new Uint8Array(26);
     allCodewords.set(dataCodewords);
     const { imageData, width, height } = imageDataFromMatrix(matrixFromCodewords(allCodewords));
+
+    expect(extractHiddenQRedPayloadFromImage(imageData, width, height, {
+      data: "QRED.ORG",
+      version: 1,
+      location: {
+        topLeftCorner: { x: 0, y: 0 },
+        topRightCorner: { x: width, y: 0 },
+        bottomLeftCorner: { x: 0, y: height },
+        bottomRightCorner: { x: width, y: height },
+      },
+    })).toBe(payload);
+  });
+
+  it("recovers hidden payloads from low-contrast photographed modules with adaptive thresholding", () => {
+    const payload = "LOW";
+    const dataCodewords = new Uint8Array(19);
+    dataCodewords.set([0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40], 0);
+    dataCodewords.set(backendFramedPayloadBytes(payload), versionOneDataOffset());
+    const allCodewords = new Uint8Array(26);
+    allCodewords.set(dataCodewords);
+    const { imageData, width, height } = imageDataFromMatrix(matrixFromCodewords(allCodewords), 2, 140, 180);
 
     expect(extractHiddenQRedPayloadFromImage(imageData, width, height, {
       data: "QRED.ORG",
