@@ -22,7 +22,7 @@ function buildPdfManifest(file, digest) {
 }
 
 export async function qrPngBytes(value) {
-  const dataUrl = await qredQrPngDataUrl(value, { errorCorrectionLevel: "M", margin: 2, width: 360 });
+  const dataUrl = await qredQrPngDataUrl(value, { margin: 2, width: 360 });
   const base64 = dataUrl.split(",")[1];
   const binary = atob(base64);
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));

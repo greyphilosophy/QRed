@@ -114,6 +114,16 @@ describe("browser PDF sealing", () => {
     expect(scannedQrValue).toMatchObject({ data: VISIBLE_QR_TEXT });
   });
 
+  it("chooses error correction dynamically while allowing callers to pin a level", () => {
+    const autoData = createQRedQrData("small payload");
+    const pinnedData = createQRedQrData("small payload", { errorCorrectionLevel: "M" });
+
+    expect(autoData.errorCorrectionLevel.bit).toBe(2);
+    expect(pinnedData.errorCorrectionLevel.bit).toBe(0);
+    expect(extractHiddenQRedPayload(autoData.bytes, autoData.version)).toBe("small payload");
+    expect(extractHiddenQRedPayload(pinnedData.bytes, pinnedData.version)).toBe("small payload");
+  });
+
   it("generates spec-compatible QRED.ORG alphanumeric QR codes with hidden payload padding that scanners can read", async () => {
     const file = await makeLetterPdfFile();
     const { stampedQrValues } = await sealPdfInBrowser({

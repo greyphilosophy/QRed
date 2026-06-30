@@ -11,7 +11,8 @@ import PngRenderer from "qrcode/lib/renderer/png";
 import { VISIBLE_QR_TEXT } from "./qredVerifier.js";
 
 const HIDDEN_PAYLOAD_LENGTH_BYTES = 2;
-const DEFAULT_QR_OPTIONS = { errorCorrectionLevel: "M", margin: 2, width: 360 };
+const DEFAULT_QR_OPTIONS = { errorCorrectionLevel: "auto", margin: 2, width: 360 };
+const ERROR_CORRECTION_LEVELS_DESC = ["H", "Q", "M", "L"];
 
 function characterCountBitLength(version) {
   return Mode.getCharCountIndicator(Mode.ALPHANUMERIC, version);
@@ -34,6 +35,30 @@ function chooseVersion(payloadBytes, errorCorrectionLevel) {
     const required = qredHiddenPayloadByteOffset(version) + HIDDEN_PAYLOAD_LENGTH_BYTES + payloadBytes.length;
     if (required <= dataCapacityBytes(version, errorCorrectionLevel)) return version;
   }
+  return null;
+}
+
+function resolveErrorCorrectionLevel(value) {
+  if (!value || value === "auto") {
+    return null;
+  }
+  return ECLevel.from(value, ECLevel.M);
+}
+
+function chooseQrShape(payloadBytes, requestedErrorCorrectionLevel) {
+  const fixedErrorCorrectionLevel = resolveErrorCorrectionLevel(requestedErrorCorrectionLevel);
+  if (fixedErrorCorrectionLevel) {
+    const version = chooseVersion(payloadBytes, fixedErrorCorrectionLevel);
+    if (version) return { version, errorCorrectionLevel: fixedErrorCorrectionLevel };
+    throw new Error("The amount of QRed payload data is too big to be stored in a QR Code");
+  }
+
+  for (const level of ERROR_CORRECTION_LEVELS_DESC) {
+    const errorCorrectionLevel = ECLevel.from(level, ECLevel.M);
+    const version = chooseVersion(payloadBytes, errorCorrectionLevel);
+    if (version) return { version, errorCorrectionLevel };
+  }
+
   throw new Error("The amount of QRed payload data is too big to be stored in a QR Code");
 }
 
@@ -104,11 +129,10 @@ function setupData(matrix, data) {
   }
 }
 
-export function createQRedQrData(value) {
+export function createQRedQrData(value, options = DEFAULT_QR_OPTIONS) {
   const payloadBytes = new TextEncoder().encode(value);
   if (payloadBytes.length > 0xffff) throw new Error("QRed payload is too large to frame");
-  const errorCorrectionLevel = ECLevel.M;
-  const version = chooseVersion(payloadBytes, errorCorrectionLevel);
+  const { version, errorCorrectionLevel } = chooseQrShape(payloadBytes, options.errorCorrectionLevel);
   const buffer = new BitBuffer();
   const visible = new AlphanumericData(VISIBLE_QR_TEXT);
   buffer.put(visible.mode.bit, 4);
@@ -122,13 +146,13 @@ export function createQRedQrData(value) {
   const capacityBits = dataCapacityBytes(version, errorCorrectionLevel) * 8;
   for (let i = 0; buffer.getLengthInBits() < capacityBits; i += 1) buffer.put(i % 2 ? 0x11 : 0xec, 8);
 
-  return { version, bytes: new Uint8Array(buffer.buffer), codewords: createCodewords(buffer, version, errorCorrectionLevel) };
+  return { version, errorCorrectionLevel, bytes: new Uint8Array(buffer.buffer), codewords: createCodewords(buffer, version, errorCorrectionLevel) };
 }
 
-export function createQRedQrSymbol(value) {
-  const { version, codewords } = createQRedQrData(value);
+export function createQRedQrSymbol(value, options = DEFAULT_QR_OPTIONS) {
+  const { version, errorCorrectionLevel, codewords } = createQRedQrData(value, options);
   const visible = new AlphanumericData(VISIBLE_QR_TEXT);
-  const qr = QRCode.create(VISIBLE_QR_TEXT, { errorCorrectionLevel: "M", version });
+  const qr = QRCode.create(VISIBLE_QR_TEXT, { errorCorrectionLevel, version });
   MaskPattern.applyMask(qr.maskPattern, qr.modules);
   setupData(qr.modules, codewords);
   MaskPattern.applyMask(qr.maskPattern, qr.modules);
@@ -167,5 +191,5 @@ async function renderModulesToPngBytes(qr, options = DEFAULT_QR_OPTIONS) {
 }
 
 export async function qredQrPngDataUrl(value, options = DEFAULT_QR_OPTIONS) {
-  return renderModulesToPngBytes(createQRedQrSymbol(value), options);
+  return renderModulesToPngBytes(createQRedQrSymbol(value, options), options);
 }
