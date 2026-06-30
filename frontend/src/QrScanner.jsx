@@ -95,10 +95,11 @@ export const QR_CAMERA_CONSTRAINTS = {
 
 export function qrScanAction(imageData, width, height, code) {
   if (!code?.data) return { status: "continue" };
-  if (code.data !== VISIBLE_QR_TEXT) return { status: "found", text: qredTextFromScanResult(code) };
 
-  const hiddenPayload = extractHiddenQRedPayloadFromImage(imageData, width, height, code) || qredTextFromScanResult(code);
+  const looksLikeQRed = code.data === VISIBLE_QR_TEXT || code.data.includes("QRED1") || code.data.includes("qred.org");
+  const hiddenPayload = looksLikeQRed ? extractHiddenQRedPayloadFromImage(imageData, width, height, code) || qredTextFromScanResult(code) : null;
   if (hiddenPayload && hiddenPayload !== VISIBLE_QR_TEXT) return { status: "found", text: hiddenPayload };
+  if (code.data !== VISIBLE_QR_TEXT) return { status: "found", text: qredTextFromScanResult(code) };
 
   return { status: "continue" };
 }
@@ -155,9 +156,10 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
   if (manual && !code?.data) {
     return { status: "feedback", message: "No QR code found in this photo. Center a QR seal in the frame and try again." };
   }
-  if (manual && code.data === VISIBLE_QR_TEXT) {
+  if (manual && (code.data === VISIBLE_QR_TEXT || code.data.includes("QRED1") || code.data.includes("qred.org"))) {
     const hiddenPayload = extractHiddenQRedPayloadFromImage(imageData.data, canvas.width, canvas.height, code);
     if (!hiddenPayload || hiddenPayload === VISIBLE_QR_TEXT) {
+      if (code.data !== VISIBLE_QR_TEXT) return { status: "found", text: qredTextFromScanResult(code) };
       return { status: "feedback", message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again." };
     }
     return { status: "found", text: hiddenPayload };

@@ -99,6 +99,7 @@ describe("qredVerifier", () => {
 
     expect(extractHiddenQRedPayload(binaryData, 1)).toBe(payload);
     expect(qredTextFromScanResult({ data: "QRED.ORG", binaryData, version: 1 })).toBe(payload);
+    expect(qredTextFromScanResult({ data: "https://qred.org/#QRED1?sig?garbled", binaryData, version: 1 })).toBe(payload);
   });
 
   it("extracts compressed and encoded QRed chunk text from compact backend framing", () => {

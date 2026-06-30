@@ -78,6 +78,10 @@ describe("QrScanner scan loop decisions", () => {
       status: "found",
       text: payload,
     });
+    expect(qrScanAction(new Uint8ClampedArray(), 0, 0, { data: "https://qred.org/#QRED1?sig?garbled", binaryData, version: 1 })).toEqual({
+      status: "found",
+      text: payload,
+    });
   });
 
   it("stops scanning on ordinary non-QRed QR content", () => {
