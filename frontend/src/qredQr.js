@@ -7,7 +7,6 @@ import ReedSolomonEncoder from "qrcode/lib/core/reed-solomon-encoder";
 import Mode from "qrcode/lib/core/mode";
 import AlphanumericData from "qrcode/lib/core/alphanumeric-data";
 import MaskPattern from "qrcode/lib/core/mask-pattern";
-import PngRenderer from "qrcode/lib/renderer/png";
 import { VISIBLE_QR_TEXT } from "./qredVerifier.js";
 
 const HIDDEN_PAYLOAD_LENGTH_BYTES = 2;
@@ -184,6 +183,7 @@ function renderModulesToDataUrl(qr, options = DEFAULT_QR_OPTIONS) {
 async function renderModulesToPngBytes(qr, options = DEFAULT_QR_OPTIONS) {
   const dataUrl = renderModulesToDataUrl(qr, options);
   if (dataUrl) return dataUrl;
+  const { default: PngRenderer } = await import("qrcode/lib/renderer/png");
   const buffer = await new Promise((resolve, reject) => {
     PngRenderer.renderToBuffer(qr, options, (error, output) => (error ? reject(error) : resolve(output)));
   });
