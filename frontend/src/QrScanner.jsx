@@ -150,6 +150,7 @@ export function decodeCanvasFrame(video, canvas) {
 function ScannerView({ onScan, onClose, captureRequest }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const handleScanActionRef = useRef(() => false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -173,20 +174,20 @@ function ScannerView({ onScan, onClose, captureRequest }) {
       }
     }
 
-    function handleScanAction(scanAction) {
+    handleScanActionRef.current = (scanAction) => {
       if (scanAction.status === "found") {
         stop();
         onScan(scanAction.text);
         return true;
       }
       return false;
-    }
+    };
 
     function scanFrame() {
       if (stopped) return;
 
       const scanAction = decodeCanvasFrame(videoRef.current, canvasRef.current);
-      if (handleScanAction(scanAction)) return;
+      if (handleScanActionRef.current(scanAction)) return;
 
       animId = requestAnimationFrame(scanFrame);
     }
@@ -211,16 +212,17 @@ function ScannerView({ onScan, onClose, captureRequest }) {
         }
       });
 
-    return stop;
+    return () => {
+      handleScanActionRef.current = () => false;
+      stop();
+    };
   }, [onScan]);
 
   useEffect(() => {
     if (captureRequest <= 0 || error) return;
 
     const scanAction = decodeCanvasFrame(videoRef.current, canvasRef.current);
-    if (scanAction.status === "found") {
-      onScan(scanAction.text);
-    }
+    handleScanActionRef.current(scanAction);
   }, [captureRequest, error, onScan]);
 
   if (error) {
