@@ -4,7 +4,8 @@ import { PDFDocument } from "pdf-lib";
 import { PNG } from "pngjs";
 import { describe, expect, it } from "vitest";
 import { planQrStampLayout, qrPngBytes, sealPdfInBrowser } from "./pdfClientSeal.js";
-import { verifyQRedSeals } from "./qredVerifier.js";
+import { createQRedQrData, qredVisibleBitsLength } from "./qredQr.js";
+import { extractHiddenQRedPayload, verifyQRedSeals, VISIBLE_QR_TEXT } from "./qredVerifier.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
@@ -38,7 +39,11 @@ async function printBlobToPdf(blob) {
 function scanQrPng(bytes) {
   const png = PNG.sync.read(Buffer.from(bytes));
   const qr = jsQR(new Uint8ClampedArray(png.data), png.width, png.height);
-  return qr?.data || null;
+  return qr || null;
+}
+
+function bitAt(bytes, index) {
+  return (bytes[Math.floor(index / 8)] >>> (7 - (index % 8))) & 1;
 }
 
 describe("browser PDF sealing", () => {
@@ -106,6 +111,28 @@ describe("browser PDF sealing", () => {
     expect(printedLayout.qrSize / 72).toBeGreaterThanOrEqual(177 / 72);
 
     const scannedQrValue = scanQrPng(await qrPngBytes(stampedQrValues[0]));
-    expect(scannedQrValue).toBe(stampedQrValues[0]);
+    expect(scannedQrValue).toMatchObject({ data: VISIBLE_QR_TEXT });
+  });
+
+  it("generates spec-compatible QRED.ORG alphanumeric QR codes with hidden payload padding that scanners can read", async () => {
+    const file = await makeLetterPdfFile();
+    const { stampedQrValues } = await sealPdfInBrowser({
+      file,
+      issuer: "QRed Spec Authority",
+      privateKey,
+      publicKey,
+    });
+
+    const scanResult = scanQrPng(await qrPngBytes(stampedQrValues[0]));
+    expect(scanResult).toMatchObject({ data: VISIBLE_QR_TEXT });
+    const qrData = createQRedQrData(stampedQrValues[0]);
+    const visibleBits = qredVisibleBitsLength(qrData.version);
+    expect(scanResult.version).toBe(qrData.version);
+    expect(Array.from({ length: 4 }, (_, index) => bitAt(qrData.bytes, visibleBits + index))).toEqual([0, 0, 0, 0]);
+    expect(extractHiddenQRedPayload(qrData.bytes, qrData.version)).toBe(stampedQrValues[0]);
+    await expect(verifyQRedSeals([extractHiddenQRedPayload(qrData.bytes, qrData.version)], publicKey)).resolves.toMatchObject({
+      status: "VALID",
+      issuer: "QRed Spec Authority",
+    });
   });
 });
