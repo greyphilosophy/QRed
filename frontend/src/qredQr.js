@@ -10,6 +10,7 @@ import MaskPattern from "qrcode/lib/core/mask-pattern";
 import { VISIBLE_QR_TEXT } from "./qredVerifier.js";
 
 const HIDDEN_PAYLOAD_LENGTH_BYTES = 2;
+const MIN_MODULE_PIXELS = 4;
 const DEFAULT_QR_OPTIONS = { errorCorrectionLevel: "auto", margin: 4, width: 360 };
 const ERROR_CORRECTION_LEVELS_DESC = ["H", "Q", "M", "L"];
 
@@ -159,12 +160,18 @@ export function createQRedQrSymbol(value, options = DEFAULT_QR_OPTIONS) {
   return qr;
 }
 
+export function qredRasterPlan(moduleCount, options = DEFAULT_QR_OPTIONS) {
+  const margin = options.margin ?? 2;
+  const requestedWidth = options.width ?? 360;
+  const modulesWithMargin = moduleCount + (margin * 2);
+  const tile = Math.max(MIN_MODULE_PIXELS, Math.floor(requestedWidth / modulesWithMargin));
+  return { margin, tile, width: modulesWithMargin * tile };
+}
+
 function renderModulesToDataUrl(qr, options = DEFAULT_QR_OPTIONS) {
   if (typeof document === "undefined") return null;
-  const margin = options.margin ?? 2;
-  const width = options.width ?? 360;
   const modules = qr.modules;
-  const tile = width / (modules.size + (margin * 2));
+  const { margin, tile, width } = qredRasterPlan(modules.size, options);
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = width;
@@ -174,7 +181,7 @@ function renderModulesToDataUrl(qr, options = DEFAULT_QR_OPTIONS) {
   context.fillStyle = "#000";
   for (let row = 0; row < modules.size; row += 1) {
     for (let col = 0; col < modules.size; col += 1) {
-      if (modules.get(row, col)) context.fillRect((col + margin) * tile, (row + margin) * tile, Math.ceil(tile), Math.ceil(tile));
+      if (modules.get(row, col)) context.fillRect((col + margin) * tile, (row + margin) * tile, tile, tile);
     }
   }
   return canvas.toDataURL("image/png");

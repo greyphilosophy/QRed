@@ -4,7 +4,8 @@ import { PDFDocument } from "pdf-lib";
 import { PNG } from "pngjs";
 import { describe, expect, it } from "vitest";
 import { planQrStampLayout, qrPngBytes, sealPdfInBrowser } from "./pdfClientSeal.js";
-import { createQRedQrData, qredVisibleBitsLength } from "./qredQr.js";
+import { qrScanAction } from "./QrScanner.jsx";
+import { createQRedQrData, qredQrPngDataUrl, qredRasterPlan, qredVisibleBitsLength } from "./qredQr.js";
 import { extractHiddenQRedPayload, verifyQRedSeals, VISIBLE_QR_TEXT } from "./qredVerifier.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
@@ -40,6 +41,13 @@ function scanQrPng(bytes) {
   const png = PNG.sync.read(Buffer.from(bytes));
   const qr = jsQR(new Uint8ClampedArray(png.data), png.width, png.height);
   return qr || null;
+}
+
+async function scanQRedPngDataUrl(dataUrl) {
+  const png = PNG.sync.read(Buffer.from(dataUrl.split(",")[1], "base64"));
+  const imageData = new Uint8ClampedArray(png.data);
+  const code = jsQR(imageData, png.width, png.height);
+  return qrScanAction(imageData, png.width, png.height, code);
 }
 
 function bitAt(bytes, index) {
@@ -143,6 +151,35 @@ describe("browser PDF sealing", () => {
     await expect(verifyQRedSeals([extractHiddenQRedPayload(qrData.bytes, qrData.version)], publicKey)).resolves.toMatchObject({
       status: "VALID",
       issuer: "QRed Spec Authority",
+    });
+  });
+
+  it("renders dense QR symbols with integer modules large enough for real scanners", () => {
+    expect(qredRasterPlan(177, { margin: 4, width: 360 })).toEqual({
+      margin: 4,
+      tile: 4,
+      width: 740,
+    });
+    expect(qredRasterPlan(57, { margin: 4, width: 360 })).toEqual({
+      margin: 4,
+      tile: 5,
+      width: 325,
+    });
+  });
+
+  it("round-trips The Walrus and the Carpenter text through a generated QR and our scanner", async () => {
+    const walrusText = [
+      "The sun was shining on the sea,",
+      "Shining with all his might:",
+      "He did his very best to make",
+      "The billows smooth and bright —",
+      "And this was odd, because it was",
+      "The middle of the night.",
+    ].join("\n");
+
+    await expect(scanQRedPngDataUrl(await qredQrPngDataUrl(walrusText))).resolves.toEqual({
+      status: "found",
+      text: walrusText,
     });
   });
 });

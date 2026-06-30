@@ -52,9 +52,11 @@ export function extractHiddenQRedPayload(binaryData, version) {
 export function qredTextFromScanResult(scanResult) {
   if (!scanResult || typeof scanResult === "string") return scanResult || "";
   const visibleText = scanResult.data || "";
-  if (visibleText !== VISIBLE_QR_TEXT) return visibleText;
   const hiddenPayload = extractHiddenQRedPayload(scanResult.binaryData, scanResult.version);
-  return hiddenPayload || visibleText;
+  if (visibleText === VISIBLE_QR_TEXT || visibleText.includes("QRED1") || visibleText.includes("qred.org")) {
+    return hiddenPayload || visibleText;
+  }
+  return visibleText;
 }
 
 function decodeBase64Url(value) {
