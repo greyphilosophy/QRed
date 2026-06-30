@@ -129,10 +129,14 @@ export async function applyContinuousCameraFocus(stream) {
   }
 }
 
+export function isCameraFrameReady(video, canvas) {
+  return Boolean(video && canvas && video.readyState >= 2 && video.videoWidth && video.videoHeight);
+}
+
 export function decodeCanvasFrame(video, canvas, options = {}) {
   const manual = Boolean(options.manual);
-  if (!video || !canvas || video.readyState < 2) {
-    return manual ? { status: "feedback", message: "Camera is still preparing the photo. Try again in a moment." } : { status: "continue" };
+  if (!isCameraFrameReady(video, canvas)) {
+    return manual ? { status: "pending", message: "Camera is preparing the photo. Hold steady…" } : { status: "continue" };
   }
 
   const ctx = canvas.getContext("2d");
@@ -166,8 +170,17 @@ function ScannerView({ onScan, onClose, captureRequest }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const handleScanActionRef = useRef(() => false);
+  const pendingManualCaptureRef = useRef(false);
+  const cameraReadyRef = useRef(false);
   const [error, setError] = useState(null);
   const [feedback, setFeedback] = useState(null);
+  const [cameraReady, setCameraReady] = useState(false);
+
+  function markCameraReady(ready) {
+    if (cameraReadyRef.current === ready) return;
+    cameraReadyRef.current = ready;
+    setCameraReady(ready);
+  }
 
   useEffect(() => {
     let animId = null;
@@ -200,13 +213,27 @@ function ScannerView({ onScan, onClose, captureRequest }) {
       if (scanAction.status === "feedback") {
         setFeedback(scanAction.message);
       }
+      if (scanAction.status === "pending") {
+        pendingManualCaptureRef.current = true;
+        setFeedback(scanAction.message);
+        markCameraReady(false);
+      }
       return false;
     };
 
     function scanFrame() {
       if (stopped) return;
 
-      const scanAction = decodeCanvasFrame(videoRef.current, canvasRef.current);
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const frameReady = isCameraFrameReady(video, canvas);
+      if (frameReady) markCameraReady(true);
+      const scanAction = pendingManualCaptureRef.current && frameReady
+        ? decodeCanvasFrame(video, canvas, { manual: true })
+        : decodeCanvasFrame(video, canvas);
+      if (pendingManualCaptureRef.current && scanAction.status !== "pending") {
+        pendingManualCaptureRef.current = false;
+      }
       if (handleScanActionRef.current(scanAction)) return;
 
       animId = requestAnimationFrame(scanFrame);
@@ -233,6 +260,8 @@ function ScannerView({ onScan, onClose, captureRequest }) {
       });
 
     return () => {
+      pendingManualCaptureRef.current = false;
+      cameraReadyRef.current = false;
       handleScanActionRef.current = () => false;
       stop();
     };
@@ -266,7 +295,15 @@ function ScannerView({ onScan, onClose, captureRequest }) {
       React.createElement("span", null)
     ),
     React.createElement("canvas", { ref: canvasRef, style: { display: "none" } }),
-    feedback ? React.createElement("div", { className: "ar-scan-feedback", role: "status", "aria-live": "polite" }, feedback) : null,
+    !cameraReady ? React.createElement(CameraLoadingIndicator, { message: feedback || "Starting camera…" }) : null,
+    feedback && cameraReady ? React.createElement("div", { className: "ar-scan-feedback", role: "status", "aria-live": "polite" }, feedback) : null,
     React.createElement("button", { className: "ar-close", onClick: onClose }, "Close")
+  );
+}
+
+function CameraLoadingIndicator({ message }) {
+  return React.createElement("div", { "aria-label": message, className: "ar-camera-loading", role: "status", "aria-live": "polite" },
+    React.createElement("span", { className: "ar-camera-spinner", "aria-hidden": "true" }),
+    React.createElement("span", null, message)
   );
 }
