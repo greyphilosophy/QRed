@@ -13,7 +13,7 @@ from backend.services.text_recipes import validate_brotli, validate_simple_engli
 
 
 DEFAULT_BOOTSTRAP_URL = "https://qred.org/"
-MAX_QR_PAYLOAD_LENGTH = 600
+MAX_QR_PAYLOAD_LENGTH = 1200
 
 
 def generate_document_id() -> str:
