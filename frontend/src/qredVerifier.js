@@ -463,22 +463,61 @@ function deinterleaveDataCodewords(interleaved, version, ecLevelBits = 0) {
 
 function lerp(a, b, t) { return a + ((b - a) * t); }
 
-function sampleQrMatrix(imageData, width, height, location, version) {
+function sampleLuminance(imageData, width, height, x, y) {
+  const clampedX = Math.max(0, Math.min(width - 1, Math.round(x)));
+  const clampedY = Math.max(0, Math.min(height - 1, Math.round(y)));
+  const index = ((clampedY * width) + clampedX) * 4;
+  return (imageData[index] + imageData[index + 1] + imageData[index + 2]) / 3;
+}
+
+function moduleCenter(location, row, col, size, rowOffset = 0.5, colOffset = 0.5) {
+  const v = (row + rowOffset) / size;
+  const u = (col + colOffset) / size;
+  const leftX = lerp(location.topLeftCorner.x, location.bottomLeftCorner.x, v);
+  const leftY = lerp(location.topLeftCorner.y, location.bottomLeftCorner.y, v);
+  const rightX = lerp(location.topRightCorner.x, location.bottomRightCorner.x, v);
+  const rightY = lerp(location.topRightCorner.y, location.bottomRightCorner.y, v);
+  return { x: lerp(leftX, rightX, u), y: lerp(leftY, rightY, u) };
+}
+
+function sampledModuleLuminance(imageData, width, height, location, row, col, size, rowOffset, colOffset) {
+  const center = moduleCenter(location, row, col, size, rowOffset, colOffset);
+  const samples = [
+    sampleLuminance(imageData, width, height, center.x, center.y),
+    sampleLuminance(imageData, width, height, center.x - 0.35, center.y),
+    sampleLuminance(imageData, width, height, center.x + 0.35, center.y),
+    sampleLuminance(imageData, width, height, center.x, center.y - 0.35),
+    sampleLuminance(imageData, width, height, center.x, center.y + 0.35),
+  ].sort((a, b) => a - b);
+  return samples[Math.floor(samples.length / 2)];
+}
+
+function adaptiveThreshold(luminances) {
+  const sorted = [...luminances].sort((a, b) => a - b);
+  if (sorted.length === 0) return 128;
+  const darkest = sorted[Math.floor(sorted.length * 0.1)];
+  const lightest = sorted[Math.floor(sorted.length * 0.9)];
+  return (darkest + lightest) / 2;
+}
+
+function sampleQrMatrix(imageData, width, height, location, version, options = {}) {
   const size = 17 + (4 * version);
-  const matrix = [];
+  const rowOffset = options.rowOffset ?? 0.5;
+  const colOffset = options.colOffset ?? 0.5;
+  const luminances = [];
   for (let row = 0; row < size; row += 1) {
-    const v = (row + 0.5) / size;
-    const leftX = lerp(location.topLeftCorner.x, location.bottomLeftCorner.x, v);
-    const leftY = lerp(location.topLeftCorner.y, location.bottomLeftCorner.y, v);
-    const rightX = lerp(location.topRightCorner.x, location.bottomRightCorner.x, v);
-    const rightY = lerp(location.topRightCorner.y, location.bottomRightCorner.y, v);
+    for (let col = 0; col < size; col += 1) {
+      luminances.push(sampledModuleLuminance(imageData, width, height, location, row, col, size, rowOffset, colOffset));
+    }
+  }
+  const threshold = options.threshold ?? adaptiveThreshold(luminances);
+  const matrix = [];
+  let index = 0;
+  for (let row = 0; row < size; row += 1) {
     const line = [];
     for (let col = 0; col < size; col += 1) {
-      const u = (col + 0.5) / size;
-      const x = Math.max(0, Math.min(width - 1, Math.round(lerp(leftX, rightX, u))));
-      const y = Math.max(0, Math.min(height - 1, Math.round(lerp(leftY, rightY, u))));
-      const index = ((y * width) + x) * 4;
-      line.push(((imageData[index] + imageData[index + 1] + imageData[index + 2]) / 3) < 128);
+      line.push(luminances[index] < threshold);
+      index += 1;
     }
     matrix.push(line);
   }
@@ -487,7 +526,23 @@ function sampleQrMatrix(imageData, width, height, location, version) {
 
 export function extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) {
   if (!scanResult?.location || !scanResult.version) return null;
-  const matrix = sampleQrMatrix(imageData, width, height, scanResult.location, scanResult.version);
-  const { codewords, ecLevelBits } = codewordsFromMatrix(matrix, scanResult.version);
-  return extractHiddenQRedPayload(deinterleaveDataCodewords(codewords, scanResult.version, ecLevelBits), scanResult.version);
+  // quirc-style hidden payload recovery reads the raw module/codeword stream after
+  // normal QR decoding locates the symbol. Try a few center-biased grids and
+  // thresholds so photographed seals still yield hidden bytes when focus,
+  // perspective correction, or exposure are slightly off.
+  const sampleOptions = [
+    {},
+    { threshold: 128 },
+    { rowOffset: 0.45, colOffset: 0.5 },
+    { rowOffset: 0.55, colOffset: 0.5 },
+    { rowOffset: 0.5, colOffset: 0.45 },
+    { rowOffset: 0.5, colOffset: 0.55 },
+  ];
+  for (const options of sampleOptions) {
+    const matrix = sampleQrMatrix(imageData, width, height, scanResult.location, scanResult.version, options);
+    const { codewords, ecLevelBits } = codewordsFromMatrix(matrix, scanResult.version);
+    const payload = extractHiddenQRedPayload(deinterleaveDataCodewords(codewords, scanResult.version, ecLevelBits), scanResult.version);
+    if (payload) return payload;
+  }
+  return null;
 }
