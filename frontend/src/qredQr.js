@@ -10,7 +10,7 @@ import MaskPattern from "qrcode/lib/core/mask-pattern";
 import { VISIBLE_QR_TEXT } from "./qredVerifier.js";
 
 const HIDDEN_PAYLOAD_LENGTH_BYTES = 2;
-const DEFAULT_QR_OPTIONS = { errorCorrectionLevel: "auto", margin: 2, width: 360 };
+const DEFAULT_QR_OPTIONS = { errorCorrectionLevel: "auto", margin: 4, width: 360 };
 const ERROR_CORRECTION_LEVELS_DESC = ["H", "Q", "M", "L"];
 
 function characterCountBitLength(version) {
