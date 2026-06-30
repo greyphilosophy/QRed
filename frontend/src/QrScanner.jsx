@@ -76,6 +76,50 @@ function ResultPanel({ scannedText }) {
   );
 }
 
+export const QR_CAMERA_CONSTRAINTS = {
+  video: {
+    facingMode: { ideal: "environment" },
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+  },
+};
+
+export function qrScanAction(imageData, width, height, code) {
+  if (!code?.data) return { status: "continue" };
+  if (code.data !== VISIBLE_QR_TEXT) return { status: "found", text: qredTextFromScanResult(code) };
+
+  const hiddenPayload = extractHiddenQRedPayloadFromImage(imageData, width, height, code) || qredTextFromScanResult(code);
+  if (hiddenPayload && hiddenPayload !== VISIBLE_QR_TEXT) return { status: "found", text: hiddenPayload };
+
+  return { status: "continue" };
+}
+
+export async function applyContinuousCameraFocus(stream) {
+  const [track] = stream?.getVideoTracks?.() || [];
+  if (!track || typeof track.applyConstraints !== "function") return;
+
+  const capabilities = typeof track.getCapabilities === "function" ? track.getCapabilities() : {};
+  const advanced = [];
+  if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes("continuous")) {
+    advanced.push({ focusMode: "continuous" });
+  }
+  if (Array.isArray(capabilities.exposureMode) && capabilities.exposureMode.includes("continuous")) {
+    advanced.push({ exposureMode: "continuous" });
+  }
+  if (Array.isArray(capabilities.whiteBalanceMode) && capabilities.whiteBalanceMode.includes("continuous")) {
+    advanced.push({ whiteBalanceMode: "continuous" });
+  }
+
+  if (advanced.length > 0) {
+    try {
+      await track.applyConstraints({ advanced });
+    } catch {
+      // Some mobile browsers advertise camera focus controls but reject them.
+      // Keep scanning with the selected environment camera rather than failing.
+    }
+  }
+}
+
 function ScannerView({ onScan, onClose }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -116,13 +160,11 @@ function ScannerView({ onScan, onClose }) {
           }
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = jsQR(imageData.data, canvas.width, canvas.height, { inverted: false });
-          if (code && code.data) {
+          const code = jsQR(imageData.data, canvas.width, canvas.height, { inversionAttempts: "attemptBoth" });
+          const scanAction = qrScanAction(imageData.data, canvas.width, canvas.height, code);
+          if (scanAction.status === "found") {
             stop();
-            const hiddenPayload = code.data === VISIBLE_QR_TEXT
-              ? extractHiddenQRedPayloadFromImage(imageData.data, canvas.width, canvas.height, code)
-              : null;
-            onScan(hiddenPayload || qredTextFromScanResult(code));
+            onScan(scanAction.text);
             return;
           }
         }
@@ -130,13 +172,15 @@ function ScannerView({ onScan, onClose }) {
       animId = requestAnimationFrame(scanFrame);
     }
 
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-      .then((s) => {
+    navigator.mediaDevices.getUserMedia(QR_CAMERA_CONSTRAINTS)
+      .then(async (s) => {
         if (stopped) {
           s.getTracks().forEach((track) => track.stop());
           return;
         }
         stream = s;
+        await applyContinuousCameraFocus(stream);
+        if (stopped) return;
         const video = videoRef.current;
         video.srcObject = s;
         video.play();
@@ -144,7 +188,7 @@ function ScannerView({ onScan, onClose }) {
       })
       .catch((e) => {
         if (!stopped) {
-          setError("Camera access needed: " + (e.message || "facingMode: environment"));
+          setError("Camera access needed: " + (e.message || "environment camera"));
         }
       });
 

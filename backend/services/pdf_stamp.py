@@ -16,7 +16,7 @@ from backend.services.sealer import canonicalize_text, create_seals
 
 logger = logging.getLogger(__name__)
 
-QR_BORDER = 1
+QR_BORDER = 4
 QR_BOX_SIZE = 4
 QR_ERROR_CORRECTION = qrcode.constants.ERROR_CORRECT_M
 DEFAULT_BOOTSTRAP_URL = "https://qred.org/"
