@@ -2,7 +2,7 @@ import { signAsync as signEd25519 } from "@noble/ed25519";
 import { validateSimpleEnglish } from "./textRecipes.js";
 
 export const DEFAULT_BOOTSTRAP_URL = "https://qred.org/";
-export const MAX_QR_PAYLOAD_LENGTH = 1200;
+export const MAX_QR_PAYLOAD_LENGTH = 600;
 
 function decodeBase64Url(value) {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");

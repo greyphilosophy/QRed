@@ -118,7 +118,7 @@ describe("browser PDF sealing", () => {
     const autoData = createQRedQrData("small payload");
     const pinnedData = createQRedQrData("small payload", { errorCorrectionLevel: "M" });
 
-    expect(autoData.errorCorrectionLevel.bit).toBe(2);
+    expect(autoData.errorCorrectionLevel.bit).toBe(0);
     expect(pinnedData.errorCorrectionLevel.bit).toBe(0);
     expect(extractHiddenQRedPayload(autoData.bytes, autoData.version)).toBe("small payload");
     expect(extractHiddenQRedPayload(pinnedData.bytes, pinnedData.version)).toBe("small payload");

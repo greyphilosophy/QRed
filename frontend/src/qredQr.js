@@ -11,7 +11,8 @@ import { VISIBLE_QR_TEXT } from "./qredVerifier.js";
 
 const HIDDEN_PAYLOAD_LENGTH_BYTES = 2;
 const DEFAULT_QR_OPTIONS = { errorCorrectionLevel: "auto", margin: 4, width: 360 };
-const ERROR_CORRECTION_LEVELS_DESC = ["H", "Q", "M", "L"];
+// Prefer medium correction in auto mode so printed seals use fewer modules and are easier for phone cameras to resolve.
+const ERROR_CORRECTION_LEVELS_BY_SCAN_DENSITY = ["M", "Q", "H", "L"];
 
 function characterCountBitLength(version) {
   return Mode.getCharCountIndicator(Mode.ALPHANUMERIC, version);
@@ -52,7 +53,7 @@ function chooseQrShape(payloadBytes, requestedErrorCorrectionLevel) {
     throw new Error("The amount of QRed payload data is too big to be stored in a QR Code");
   }
 
-  for (const level of ERROR_CORRECTION_LEVELS_DESC) {
+  for (const level of ERROR_CORRECTION_LEVELS_BY_SCAN_DENSITY) {
     const errorCorrectionLevel = ECLevel.from(level, ECLevel.M);
     const version = chooseVersion(payloadBytes, errorCorrectionLevel);
     if (version) return { version, errorCorrectionLevel };
