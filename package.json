@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "build": "cd frontend && npm ci && npm run build",
-    "build:worker": "cd frontend && npm ci && npm run build:worker"
+    "build": "cd frontend && npm ci && npm run build:pages",
+    "build:worker": "cd frontend && npm ci && npm run build:pages"
   }
 }
