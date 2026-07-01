@@ -104,7 +104,37 @@ export function qrScanAction(imageData, width, height, code) {
   return { status: "continue" };
 }
 
+export function findPreferredZoomCamera(devices = []) {
+  return devices.find((device) => device.kind === "videoinput" && /(telephoto|zoom|\b[23]x\b)/i.test(device.label || "")) || null;
+}
+
+export async function getPreferredCameraStream(mediaDevices = navigator.mediaDevices) {
+  const stream = await mediaDevices.getUserMedia(QR_CAMERA_CONSTRAINTS);
+  if (typeof mediaDevices.enumerateDevices !== "function") return stream;
+
+  let preferredCamera;
+  try {
+    preferredCamera = findPreferredZoomCamera(await mediaDevices.enumerateDevices());
+  } catch {
+    return stream;
+  }
+  const [currentTrack] = stream.getVideoTracks?.() || [];
+  if (!preferredCamera?.deviceId || currentTrack?.label === preferredCamera.label) return stream;
+
+  stream.getTracks().forEach((track) => track.stop());
+  return mediaDevices.getUserMedia({
+    video: {
+      ...QR_CAMERA_CONSTRAINTS.video,
+      deviceId: { exact: preferredCamera.deviceId },
+    },
+  });
+}
+
 export async function applyContinuousCameraFocus(stream) {
+  return applyCameraQualityControls(stream);
+}
+
+export async function applyCameraQualityControls(stream) {
   const [track] = stream?.getVideoTracks?.() || [];
   if (!track || typeof track.applyConstraints !== "function") return;
 
@@ -119,12 +149,18 @@ export async function applyContinuousCameraFocus(stream) {
   if (Array.isArray(capabilities.whiteBalanceMode) && capabilities.whiteBalanceMode.includes("continuous")) {
     advanced.push({ whiteBalanceMode: "continuous" });
   }
+  if (capabilities.torch) {
+    advanced.push({ torch: true });
+  }
+  if (typeof capabilities.zoom?.max === "number") {
+    advanced.push({ zoom: capabilities.zoom.max });
+  }
 
   if (advanced.length > 0) {
     try {
       await track.applyConstraints({ advanced });
     } catch {
-      // Some mobile browsers advertise camera focus controls but reject them.
+      // Some mobile browsers advertise camera controls but reject them.
       // Keep scanning with the selected environment camera rather than failing.
     }
   }
@@ -241,14 +277,14 @@ function ScannerView({ onScan, onClose, captureRequest }) {
       animId = requestAnimationFrame(scanFrame);
     }
 
-    navigator.mediaDevices.getUserMedia(QR_CAMERA_CONSTRAINTS)
+    getPreferredCameraStream()
       .then(async (s) => {
         if (stopped) {
           s.getTracks().forEach((track) => track.stop());
           return;
         }
         stream = s;
-        await applyContinuousCameraFocus(stream);
+        await applyCameraQualityControls(stream);
         if (stopped) return;
         const video = videoRef.current;
         video.srcObject = s;
