@@ -181,8 +181,19 @@ export async function applyCameraQualityControls(stream, options = {}) {
   }
 }
 
+export const MANUAL_CAPTURE_PENDING_TIMEOUT_MS = 4000;
+
 export function isCameraFrameReady(video, canvas) {
   return Boolean(video && canvas && video.readyState >= 2 && video.videoWidth && video.videoHeight);
+}
+
+export function manualCapturePendingAction(startedAt, now = performance.now()) {
+  if (typeof startedAt !== "number") return null;
+  if (now - startedAt < MANUAL_CAPTURE_PENDING_TIMEOUT_MS) return null;
+  return {
+    status: "feedback",
+    message: "The camera is open, but this browser is not delivering photo frames yet. Wait a moment, then try Scan photo again; if this keeps happening, close and reopen the scanner or check camera permissions.",
+  };
 }
 
 export function decodeCanvasFrame(video, canvas, options = {}) {
@@ -224,6 +235,7 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
   const canvasRef = useRef(null);
   const handleScanActionRef = useRef(() => false);
   const pendingManualCaptureRef = useRef(false);
+  const pendingManualCaptureStartedAtRef = useRef(null);
   const cameraReadyRef = useRef(false);
   const streamRef = useRef(null);
   const torchEnabledRef = useRef(torchEnabled);
@@ -271,6 +283,7 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
       }
       if (scanAction.status === "pending") {
         pendingManualCaptureRef.current = true;
+        pendingManualCaptureStartedAtRef.current ??= performance.now();
         setFeedback(scanAction.message);
         markCameraReady(false);
       }
@@ -284,11 +297,16 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
       const canvas = canvasRef.current;
       const frameReady = isCameraFrameReady(video, canvas);
       if (frameReady) markCameraReady(true);
-      const scanAction = pendingManualCaptureRef.current && frameReady
-        ? decodeCanvasFrame(video, canvas, { manual: true })
-        : decodeCanvasFrame(video, canvas);
+      const timedOutManualCapture = pendingManualCaptureRef.current && !frameReady
+        ? manualCapturePendingAction(pendingManualCaptureStartedAtRef.current)
+        : null;
+      const scanAction = timedOutManualCapture
+        || (pendingManualCaptureRef.current && frameReady
+          ? decodeCanvasFrame(video, canvas, { manual: true })
+          : decodeCanvasFrame(video, canvas));
       if (pendingManualCaptureRef.current && scanAction.status !== "pending") {
         pendingManualCaptureRef.current = false;
+        pendingManualCaptureStartedAtRef.current = null;
       }
       if (handleScanActionRef.current(scanAction)) return;
 
@@ -307,7 +325,12 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
         if (stopped) return;
         const video = videoRef.current;
         video.srcObject = s;
-        video.play();
+        const playResult = video.play();
+        if (playResult && typeof playResult.catch === "function") {
+          playResult.catch((e) => {
+            if (!stopped) setError("Camera preview could not start: " + (e.message || "tap Start scanning again"));
+          });
+        }
         scanFrame();
       })
       .catch((e) => {
@@ -318,6 +341,7 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
 
     return () => {
       pendingManualCaptureRef.current = false;
+      pendingManualCaptureStartedAtRef.current = null;
       cameraReadyRef.current = false;
       handleScanActionRef.current = () => false;
       stop();

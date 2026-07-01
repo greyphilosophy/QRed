@@ -1,9 +1,9 @@
 /* @vitest-environment jsdom */
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import jsQR from "jsqr";
-import { applyCameraQualityControls, applyContinuousCameraFocus, decodeCanvasFrame, findPreferredZoomCamera, getPreferredCameraStream, isCameraFrameReady, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
+import { applyCameraQualityControls, applyContinuousCameraFocus, decodeCanvasFrame, findPreferredZoomCamera, getPreferredCameraStream, isCameraFrameReady, manualCapturePendingAction, MANUAL_CAPTURE_PENDING_TIMEOUT_MS, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
 
 vi.mock("jsqr", () => ({ default: vi.fn() }));
 
@@ -183,6 +183,7 @@ describe("QrScanner scan loop decisions", () => {
 describe("QrScanner manual photo capture", () => {
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.restoreAllMocks();
     delete navigator.mediaDevices;
   });
@@ -229,6 +230,59 @@ describe("QrScanner manual photo capture", () => {
     play.mockRestore();
   });
 
+
+  it("keeps the stalled-frame guidance visible after a manual capture timeout", async () => {
+    let animationFrameCallback = null;
+    const requestAnimationFrameSpy = vi.spyOn(globalThis, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        animationFrameCallback = callback;
+        return 1;
+      });
+    const cancelAnimationFrameSpy = vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
+    const now = vi.spyOn(performance, "now");
+    const stream = {
+      getTracks: () => [{ stop: vi.fn() }],
+      getVideoTracks: () => [{ getCapabilities: () => ({}) }],
+    };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue(stream),
+      },
+    });
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+
+    render(React.createElement(QrScanner, { onOpenPdfStampTool: vi.fn() }));
+    fireEvent.click(screen.getByRole("button", { name: "Start scanning" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    now.mockReturnValue(1000);
+    fireEvent.click(screen.getByRole("button", { name: "Scan photo" }));
+    expect(screen.getByRole("status", { name: /Camera is preparing the photo/ })).toBeTruthy();
+
+    now.mockReturnValue(1000 + MANUAL_CAPTURE_PENDING_TIMEOUT_MS);
+    await act(async () => {
+      animationFrameCallback(performance.now());
+    });
+
+    expect(screen.getByRole("status", { name: /not delivering photo frames yet/ })).toBeTruthy();
+
+    now.mockReturnValue(1000 + MANUAL_CAPTURE_PENDING_TIMEOUT_MS + 500);
+    await act(async () => {
+      animationFrameCallback(performance.now());
+    });
+
+    expect(screen.getByRole("status", { name: /not delivering photo frames yet/ })).toBeTruthy();
+    expect(screen.queryByRole("status", { name: /Camera is preparing the photo/ })).toBeNull();
+
+    play.mockRestore();
+    now.mockRestore();
+    requestAnimationFrameSpy.mockRestore();
+    cancelAnimationFrameSpy.mockRestore();
+  });
+
   it("shows a loading indicator while the camera is starting", () => {
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
@@ -270,6 +324,16 @@ describe("decodeCanvasFrame", () => {
       message: "Camera is preparing the photo. Hold steady…",
     });
     expect(jsQR).not.toHaveBeenCalled();
+  });
+
+  it("explains when a manual capture waits too long for camera frames", () => {
+    const startedAt = 1000;
+
+    expect(manualCapturePendingAction(startedAt, startedAt + MANUAL_CAPTURE_PENDING_TIMEOUT_MS - 1)).toBeNull();
+    expect(manualCapturePendingAction(startedAt, startedAt + MANUAL_CAPTURE_PENDING_TIMEOUT_MS)).toEqual({
+      status: "feedback",
+      message: "The camera is open, but this browser is not delivering photo frames yet. Wait a moment, then try Scan photo again; if this keeps happening, close and reopen the scanner or check camera permissions.",
+    });
   });
 
   it("accepts camera frames once current frame data is available", () => {
