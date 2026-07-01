@@ -203,6 +203,32 @@ describe("QrScanner manual photo capture", () => {
     await waitFor(() => expect(screen.getByText(/Camera access needed: denied/)).toBeTruthy());
   });
 
+  it("applies torch constraints when the flashlight toggle is enabled during scanning", async () => {
+    const applyConstraints = vi.fn().mockResolvedValue(undefined);
+    const stream = {
+      getTracks: () => [{ stop: vi.fn() }],
+      getVideoTracks: () => [{
+        applyConstraints,
+        getCapabilities: () => ({ torch: true }),
+      }],
+    };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue(stream),
+      },
+    });
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+
+    render(React.createElement(QrScanner, { onOpenPdfStampTool: vi.fn() }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Start scanning" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Flashlight off" }));
+
+    await waitFor(() => expect(applyConstraints).toHaveBeenCalledWith({ advanced: [{ torch: true }] }));
+    play.mockRestore();
+  });
+
   it("shows a loading indicator while the camera is starting", () => {
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,

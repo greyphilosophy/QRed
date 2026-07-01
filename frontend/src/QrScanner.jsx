@@ -15,6 +15,7 @@ export function QrScanner({ onOpenPdfStampTool }) {
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
   const [captureRequest, setCaptureRequest] = useState(0);
+  const [torchEnabled, setTorchEnabled] = useState(false);
 
   const scanButtonLabel = mode === "scanning" ? "Scan photo" : mode === "result" ? "Scan again" : "Start scanning";
   const controls = React.createElement("div", { className: "ar-controls" },
@@ -28,6 +29,12 @@ export function QrScanner({ onOpenPdfStampTool }) {
         setMode("scanning");
       },
     }, scanButtonLabel),
+    mode === "scanning" ? React.createElement("button", {
+      "aria-pressed": torchEnabled,
+      className: "ar-button ar-button-secondary",
+      onClick: () => setTorchEnabled((enabled) => !enabled),
+      type: "button",
+    }, torchEnabled ? "Flashlight on" : "Flashlight off") : null,
     React.createElement("button", {
       "aria-label": "Open PDF stamping tool",
       className: "ar-button ar-button-secondary",
@@ -55,6 +62,7 @@ export function QrScanner({ onOpenPdfStampTool }) {
         },
         onClose: () => setMode("idle"),
         captureRequest,
+        torchEnabled,
       }),
       controls
     );
@@ -154,8 +162,8 @@ export async function applyCameraQualityControls(stream, options = {}) {
   if (Array.isArray(capabilities.whiteBalanceMode) && capabilities.whiteBalanceMode.includes("continuous")) {
     advanced.push({ whiteBalanceMode: "continuous" });
   }
-  if (options.enableTorch && capabilities.torch) {
-    advanced.push({ torch: true });
+  if (typeof options.enableTorch === "boolean" && capabilities.torch) {
+    advanced.push({ torch: options.enableTorch });
   }
   if (typeof capabilities.zoom?.max === "number") {
     const minZoom = typeof capabilities.zoom.min === "number" ? capabilities.zoom.min : 1;
@@ -211,12 +219,14 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
   return qrScanAction(imageData.data, canvas.width, canvas.height, code);
 }
 
-function ScannerView({ onScan, onClose, captureRequest }) {
+function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const handleScanActionRef = useRef(() => false);
   const pendingManualCaptureRef = useRef(false);
   const cameraReadyRef = useRef(false);
+  const streamRef = useRef(null);
+  const torchEnabledRef = useRef(torchEnabled);
   const [error, setError] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const [cameraReady, setCameraReady] = useState(false);
@@ -237,6 +247,7 @@ function ScannerView({ onScan, onClose, captureRequest }) {
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
         stream = null;
+        streamRef.current = null;
       }
       const video = videoRef.current;
       if (video && video.srcObject) {
@@ -291,7 +302,8 @@ function ScannerView({ onScan, onClose, captureRequest }) {
           return;
         }
         stream = s;
-        await applyCameraQualityControls(stream);
+        streamRef.current = s;
+        await applyCameraQualityControls(stream, { enableTorch: torchEnabledRef.current });
         if (stopped) return;
         const video = videoRef.current;
         video.srcObject = s;
@@ -311,6 +323,11 @@ function ScannerView({ onScan, onClose, captureRequest }) {
       stop();
     };
   }, [onScan]);
+
+  useEffect(() => {
+    torchEnabledRef.current = torchEnabled;
+    if (streamRef.current) applyCameraQualityControls(streamRef.current, { enableTorch: torchEnabled });
+  }, [torchEnabled]);
 
   useEffect(() => {
     if (captureRequest <= 0 || error) return;
