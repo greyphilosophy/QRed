@@ -121,20 +121,25 @@ export async function getPreferredCameraStream(mediaDevices = navigator.mediaDev
   const [currentTrack] = stream.getVideoTracks?.() || [];
   if (!preferredCamera?.deviceId || currentTrack?.label === preferredCamera.label) return stream;
 
-  stream.getTracks().forEach((track) => track.stop());
-  return mediaDevices.getUserMedia({
-    video: {
-      ...QR_CAMERA_CONSTRAINTS.video,
-      deviceId: { exact: preferredCamera.deviceId },
-    },
-  });
+  try {
+    const preferredStream = await mediaDevices.getUserMedia({
+      video: {
+        ...QR_CAMERA_CONSTRAINTS.video,
+        deviceId: { exact: preferredCamera.deviceId },
+      },
+    });
+    stream.getTracks().forEach((track) => track.stop());
+    return preferredStream;
+  } catch {
+    return stream;
+  }
 }
 
 export async function applyContinuousCameraFocus(stream) {
   return applyCameraQualityControls(stream);
 }
 
-export async function applyCameraQualityControls(stream) {
+export async function applyCameraQualityControls(stream, options = {}) {
   const [track] = stream?.getVideoTracks?.() || [];
   if (!track || typeof track.applyConstraints !== "function") return;
 
@@ -149,11 +154,13 @@ export async function applyCameraQualityControls(stream) {
   if (Array.isArray(capabilities.whiteBalanceMode) && capabilities.whiteBalanceMode.includes("continuous")) {
     advanced.push({ whiteBalanceMode: "continuous" });
   }
-  if (capabilities.torch) {
+  if (options.enableTorch && capabilities.torch) {
     advanced.push({ torch: true });
   }
   if (typeof capabilities.zoom?.max === "number") {
-    advanced.push({ zoom: capabilities.zoom.max });
+    const minZoom = typeof capabilities.zoom.min === "number" ? capabilities.zoom.min : 1;
+    const targetZoom = Math.max(minZoom, Math.min(options.zoomTarget || 2, capabilities.zoom.max));
+    if (targetZoom > minZoom) advanced.push({ zoom: targetZoom });
   }
 
   if (advanced.length > 0) {

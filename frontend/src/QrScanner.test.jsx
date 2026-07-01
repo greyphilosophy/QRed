@@ -18,7 +18,7 @@ describe("QrScanner camera controls", () => {
     });
   });
 
-  it("enables continuous focus, exposure, white balance, torch, and zoom when supported", async () => {
+  it("enables continuous focus, exposure, white balance, and moderate zoom when supported", async () => {
     const applyConstraints = vi.fn().mockResolvedValue(undefined);
     const stream = {
       getVideoTracks: () => [{
@@ -40,13 +40,26 @@ describe("QrScanner camera controls", () => {
         { focusMode: "continuous" },
         { exposureMode: "continuous" },
         { whiteBalanceMode: "continuous" },
-        { torch: true },
-        { zoom: 3 },
+        { zoom: 2 },
       ],
     });
   });
 
-  it("keeps the old focus helper wired to the full quality controls", async () => {
+  it("keeps the old focus helper wired to non-surprising quality controls", async () => {
+    const applyConstraints = vi.fn().mockResolvedValue(undefined);
+    const stream = {
+      getVideoTracks: () => [{
+        applyConstraints,
+        getCapabilities: () => ({ zoom: { min: 1, max: 3 } }),
+      }],
+    };
+
+    await applyContinuousCameraFocus(stream);
+
+    expect(applyConstraints).toHaveBeenCalledWith({ advanced: [{ zoom: 2 }] });
+  });
+
+  it("only enables the torch when explicitly requested", async () => {
     const applyConstraints = vi.fn().mockResolvedValue(undefined);
     const stream = {
       getVideoTracks: () => [{
@@ -55,7 +68,7 @@ describe("QrScanner camera controls", () => {
       }],
     };
 
-    await applyContinuousCameraFocus(stream);
+    await applyCameraQualityControls(stream, { enableTorch: true });
 
     expect(applyConstraints).toHaveBeenCalledWith({ advanced: [{ torch: true }] });
   });
@@ -86,6 +99,27 @@ describe("QrScanner camera controls", () => {
         deviceId: { exact: "tele" },
       },
     });
+  });
+
+  it("falls back to the initially working camera when the preferred camera cannot open", async () => {
+    const firstStop = vi.fn();
+    const firstStream = {
+      getTracks: () => [{ stop: firstStop }],
+      getVideoTracks: () => [{ label: "Back Wide Camera" }],
+    };
+    const mediaDevices = {
+      getUserMedia: vi.fn()
+        .mockResolvedValueOnce(firstStream)
+        .mockRejectedValueOnce(new Error("exact device unavailable")),
+      enumerateDevices: vi.fn().mockResolvedValue([
+        { kind: "videoinput", label: "Back Wide Camera", deviceId: "wide" },
+        { kind: "videoinput", label: "Back Telephoto Camera", deviceId: "tele" },
+      ]),
+    };
+
+    await expect(getPreferredCameraStream(mediaDevices)).resolves.toBe(firstStream);
+
+    expect(firstStop).not.toHaveBeenCalled();
   });
 
   it("recognizes zoom camera labels", () => {
