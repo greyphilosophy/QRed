@@ -15,6 +15,7 @@ export function QrScanner({ onOpenPdfStampTool }) {
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
   const [captureRequest, setCaptureRequest] = useState(0);
+  const [torchEnabled, setTorchEnabled] = useState(false);
 
   const scanButtonLabel = mode === "scanning" ? "Scan photo" : mode === "result" ? "Scan again" : "Start scanning";
   const controls = React.createElement("div", { className: "ar-controls" },
@@ -28,6 +29,12 @@ export function QrScanner({ onOpenPdfStampTool }) {
         setMode("scanning");
       },
     }, scanButtonLabel),
+    mode === "scanning" ? React.createElement("button", {
+      "aria-pressed": torchEnabled,
+      className: "ar-button ar-button-secondary",
+      onClick: () => setTorchEnabled((enabled) => !enabled),
+      type: "button",
+    }, torchEnabled ? "Flashlight on" : "Flashlight off") : null,
     React.createElement("button", {
       "aria-label": "Open PDF stamping tool",
       className: "ar-button ar-button-secondary",
@@ -55,6 +62,7 @@ export function QrScanner({ onOpenPdfStampTool }) {
         },
         onClose: () => setMode("idle"),
         captureRequest,
+        torchEnabled,
       }),
       controls
     );
@@ -104,7 +112,42 @@ export function qrScanAction(imageData, width, height, code) {
   return { status: "continue" };
 }
 
+export function findPreferredZoomCamera(devices = []) {
+  return devices.find((device) => device.kind === "videoinput" && /(telephoto|zoom|\b[23]x\b)/i.test(device.label || "")) || null;
+}
+
+export async function getPreferredCameraStream(mediaDevices = navigator.mediaDevices) {
+  const stream = await mediaDevices.getUserMedia(QR_CAMERA_CONSTRAINTS);
+  if (typeof mediaDevices.enumerateDevices !== "function") return stream;
+
+  let preferredCamera;
+  try {
+    preferredCamera = findPreferredZoomCamera(await mediaDevices.enumerateDevices());
+  } catch {
+    return stream;
+  }
+  const [currentTrack] = stream.getVideoTracks?.() || [];
+  if (!preferredCamera?.deviceId || currentTrack?.label === preferredCamera.label) return stream;
+
+  try {
+    const preferredStream = await mediaDevices.getUserMedia({
+      video: {
+        ...QR_CAMERA_CONSTRAINTS.video,
+        deviceId: { exact: preferredCamera.deviceId },
+      },
+    });
+    stream.getTracks().forEach((track) => track.stop());
+    return preferredStream;
+  } catch {
+    return stream;
+  }
+}
+
 export async function applyContinuousCameraFocus(stream) {
+  return applyCameraQualityControls(stream);
+}
+
+export async function applyCameraQualityControls(stream, options = {}) {
   const [track] = stream?.getVideoTracks?.() || [];
   if (!track || typeof track.applyConstraints !== "function") return;
 
@@ -119,12 +162,20 @@ export async function applyContinuousCameraFocus(stream) {
   if (Array.isArray(capabilities.whiteBalanceMode) && capabilities.whiteBalanceMode.includes("continuous")) {
     advanced.push({ whiteBalanceMode: "continuous" });
   }
+  if (typeof options.enableTorch === "boolean" && capabilities.torch) {
+    advanced.push({ torch: options.enableTorch });
+  }
+  if (typeof capabilities.zoom?.max === "number") {
+    const minZoom = typeof capabilities.zoom.min === "number" ? capabilities.zoom.min : 1;
+    const targetZoom = Math.max(minZoom, Math.min(options.zoomTarget || 2, capabilities.zoom.max));
+    if (targetZoom > minZoom) advanced.push({ zoom: targetZoom });
+  }
 
   if (advanced.length > 0) {
     try {
       await track.applyConstraints({ advanced });
     } catch {
-      // Some mobile browsers advertise camera focus controls but reject them.
+      // Some mobile browsers advertise camera controls but reject them.
       // Keep scanning with the selected environment camera rather than failing.
     }
   }
@@ -168,12 +219,14 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
   return qrScanAction(imageData.data, canvas.width, canvas.height, code);
 }
 
-function ScannerView({ onScan, onClose, captureRequest }) {
+function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const handleScanActionRef = useRef(() => false);
   const pendingManualCaptureRef = useRef(false);
   const cameraReadyRef = useRef(false);
+  const streamRef = useRef(null);
+  const torchEnabledRef = useRef(torchEnabled);
   const [error, setError] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const [cameraReady, setCameraReady] = useState(false);
@@ -194,6 +247,7 @@ function ScannerView({ onScan, onClose, captureRequest }) {
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
         stream = null;
+        streamRef.current = null;
       }
       const video = videoRef.current;
       if (video && video.srcObject) {
@@ -241,14 +295,15 @@ function ScannerView({ onScan, onClose, captureRequest }) {
       animId = requestAnimationFrame(scanFrame);
     }
 
-    navigator.mediaDevices.getUserMedia(QR_CAMERA_CONSTRAINTS)
+    getPreferredCameraStream()
       .then(async (s) => {
         if (stopped) {
           s.getTracks().forEach((track) => track.stop());
           return;
         }
         stream = s;
-        await applyContinuousCameraFocus(stream);
+        streamRef.current = s;
+        await applyCameraQualityControls(stream, { enableTorch: torchEnabledRef.current });
         if (stopped) return;
         const video = videoRef.current;
         video.srcObject = s;
@@ -268,6 +323,11 @@ function ScannerView({ onScan, onClose, captureRequest }) {
       stop();
     };
   }, [onScan]);
+
+  useEffect(() => {
+    torchEnabledRef.current = torchEnabled;
+    if (streamRef.current) applyCameraQualityControls(streamRef.current, { enableTorch: torchEnabled });
+  }, [torchEnabled]);
 
   useEffect(() => {
     if (captureRequest <= 0 || error) return;

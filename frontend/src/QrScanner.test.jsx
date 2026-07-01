@@ -3,7 +3,7 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import jsQR from "jsqr";
-import { applyContinuousCameraFocus, decodeCanvasFrame, isCameraFrameReady, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
+import { applyCameraQualityControls, applyContinuousCameraFocus, decodeCanvasFrame, findPreferredZoomCamera, getPreferredCameraStream, isCameraFrameReady, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
 
 vi.mock("jsqr", () => ({ default: vi.fn() }));
 
@@ -18,7 +18,7 @@ describe("QrScanner camera controls", () => {
     });
   });
 
-  it("enables continuous focus, exposure, and white balance when supported", async () => {
+  it("enables continuous focus, exposure, white balance, and moderate zoom when supported", async () => {
     const applyConstraints = vi.fn().mockResolvedValue(undefined);
     const stream = {
       getVideoTracks: () => [{
@@ -27,19 +27,106 @@ describe("QrScanner camera controls", () => {
           focusMode: ["manual", "continuous"],
           exposureMode: ["continuous"],
           whiteBalanceMode: ["none", "continuous"],
+          torch: true,
+          zoom: { min: 1, max: 3, step: 0.1 },
         }),
       }],
     };
 
-    await applyContinuousCameraFocus(stream);
+    await applyCameraQualityControls(stream);
 
     expect(applyConstraints).toHaveBeenCalledWith({
       advanced: [
         { focusMode: "continuous" },
         { exposureMode: "continuous" },
         { whiteBalanceMode: "continuous" },
+        { zoom: 2 },
       ],
     });
+  });
+
+  it("keeps the old focus helper wired to non-surprising quality controls", async () => {
+    const applyConstraints = vi.fn().mockResolvedValue(undefined);
+    const stream = {
+      getVideoTracks: () => [{
+        applyConstraints,
+        getCapabilities: () => ({ zoom: { min: 1, max: 3 } }),
+      }],
+    };
+
+    await applyContinuousCameraFocus(stream);
+
+    expect(applyConstraints).toHaveBeenCalledWith({ advanced: [{ zoom: 2 }] });
+  });
+
+  it("only enables the torch when explicitly requested", async () => {
+    const applyConstraints = vi.fn().mockResolvedValue(undefined);
+    const stream = {
+      getVideoTracks: () => [{
+        applyConstraints,
+        getCapabilities: () => ({ torch: true }),
+      }],
+    };
+
+    await applyCameraQualityControls(stream, { enableTorch: true });
+
+    expect(applyConstraints).toHaveBeenCalledWith({ advanced: [{ torch: true }] });
+  });
+
+  it("prefers labeled zoom or telephoto cameras after permission unlocks labels", async () => {
+    const firstStop = vi.fn();
+    const firstStream = {
+      getTracks: () => [{ stop: firstStop }],
+      getVideoTracks: () => [{ label: "Back Wide Camera" }],
+    };
+    const zoomStream = { getTracks: () => [], getVideoTracks: () => [{ label: "Back Telephoto Camera" }] };
+    const mediaDevices = {
+      getUserMedia: vi.fn()
+        .mockResolvedValueOnce(firstStream)
+        .mockResolvedValueOnce(zoomStream),
+      enumerateDevices: vi.fn().mockResolvedValue([
+        { kind: "videoinput", label: "Back Wide Camera", deviceId: "wide" },
+        { kind: "videoinput", label: "Back Telephoto Camera", deviceId: "tele" },
+      ]),
+    };
+
+    await expect(getPreferredCameraStream(mediaDevices)).resolves.toBe(zoomStream);
+
+    expect(firstStop).toHaveBeenCalled();
+    expect(mediaDevices.getUserMedia).toHaveBeenNthCalledWith(2, {
+      video: {
+        ...QR_CAMERA_CONSTRAINTS.video,
+        deviceId: { exact: "tele" },
+      },
+    });
+  });
+
+  it("falls back to the initially working camera when the preferred camera cannot open", async () => {
+    const firstStop = vi.fn();
+    const firstStream = {
+      getTracks: () => [{ stop: firstStop }],
+      getVideoTracks: () => [{ label: "Back Wide Camera" }],
+    };
+    const mediaDevices = {
+      getUserMedia: vi.fn()
+        .mockResolvedValueOnce(firstStream)
+        .mockRejectedValueOnce(new Error("exact device unavailable")),
+      enumerateDevices: vi.fn().mockResolvedValue([
+        { kind: "videoinput", label: "Back Wide Camera", deviceId: "wide" },
+        { kind: "videoinput", label: "Back Telephoto Camera", deviceId: "tele" },
+      ]),
+    };
+
+    await expect(getPreferredCameraStream(mediaDevices)).resolves.toBe(firstStream);
+
+    expect(firstStop).not.toHaveBeenCalled();
+  });
+
+  it("recognizes zoom camera labels", () => {
+    expect(findPreferredZoomCamera([
+      { kind: "videoinput", label: "Back Wide Camera", deviceId: "wide" },
+      { kind: "videoinput", label: "Back 3x Camera", deviceId: "zoom" },
+    ])).toEqual({ kind: "videoinput", label: "Back 3x Camera", deviceId: "zoom" });
   });
 
   it("keeps scanning when browsers reject advertised focus controls", async () => {
@@ -114,6 +201,32 @@ describe("QrScanner manual photo capture", () => {
 
     expect(screen.getByRole("button", { name: "Scan photo" })).toBeTruthy();
     await waitFor(() => expect(screen.getByText(/Camera access needed: denied/)).toBeTruthy());
+  });
+
+  it("applies torch constraints when the flashlight toggle is enabled during scanning", async () => {
+    const applyConstraints = vi.fn().mockResolvedValue(undefined);
+    const stream = {
+      getTracks: () => [{ stop: vi.fn() }],
+      getVideoTracks: () => [{
+        applyConstraints,
+        getCapabilities: () => ({ torch: true }),
+      }],
+    };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue(stream),
+      },
+    });
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+
+    render(React.createElement(QrScanner, { onOpenPdfStampTool: vi.fn() }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Start scanning" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Flashlight off" }));
+
+    await waitFor(() => expect(applyConstraints).toHaveBeenCalledWith({ advanced: [{ torch: true }] }));
+    play.mockRestore();
   });
 
   it("shows a loading indicator while the camera is starting", () => {
