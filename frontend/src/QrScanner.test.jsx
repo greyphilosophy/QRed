@@ -1,6 +1,6 @@
 /* @vitest-environment jsdom */
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import jsQR from "jsqr";
 import { applyCameraQualityControls, applyContinuousCameraFocus, decodeCanvasFrame, findPreferredZoomCamera, getPreferredCameraStream, isCameraFrameReady, manualCapturePendingAction, MANUAL_CAPTURE_PENDING_TIMEOUT_MS, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
@@ -183,6 +183,7 @@ describe("QrScanner scan loop decisions", () => {
 describe("QrScanner manual photo capture", () => {
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.restoreAllMocks();
     delete navigator.mediaDevices;
   });
@@ -227,6 +228,59 @@ describe("QrScanner manual photo capture", () => {
 
     await waitFor(() => expect(applyConstraints).toHaveBeenCalledWith({ advanced: [{ torch: true }] }));
     play.mockRestore();
+  });
+
+
+  it("keeps the stalled-frame guidance visible after a manual capture timeout", async () => {
+    let animationFrameCallback = null;
+    const requestAnimationFrameSpy = vi.spyOn(globalThis, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        animationFrameCallback = callback;
+        return 1;
+      });
+    const cancelAnimationFrameSpy = vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
+    const now = vi.spyOn(performance, "now");
+    const stream = {
+      getTracks: () => [{ stop: vi.fn() }],
+      getVideoTracks: () => [{ getCapabilities: () => ({}) }],
+    };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue(stream),
+      },
+    });
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+
+    render(React.createElement(QrScanner, { onOpenPdfStampTool: vi.fn() }));
+    fireEvent.click(screen.getByRole("button", { name: "Start scanning" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    now.mockReturnValue(1000);
+    fireEvent.click(screen.getByRole("button", { name: "Scan photo" }));
+    expect(screen.getByRole("status", { name: /Camera is preparing the photo/ })).toBeTruthy();
+
+    now.mockReturnValue(1000 + MANUAL_CAPTURE_PENDING_TIMEOUT_MS);
+    await act(async () => {
+      animationFrameCallback(performance.now());
+    });
+
+    expect(screen.getByRole("status", { name: /not delivering photo frames yet/ })).toBeTruthy();
+
+    now.mockReturnValue(1000 + MANUAL_CAPTURE_PENDING_TIMEOUT_MS + 500);
+    await act(async () => {
+      animationFrameCallback(performance.now());
+    });
+
+    expect(screen.getByRole("status", { name: /not delivering photo frames yet/ })).toBeTruthy();
+    expect(screen.queryByRole("status", { name: /Camera is preparing the photo/ })).toBeNull();
+
+    play.mockRestore();
+    now.mockRestore();
+    requestAnimationFrameSpy.mockRestore();
+    cancelAnimationFrameSpy.mockRestore();
   });
 
   it("shows a loading indicator while the camera is starting", () => {
