@@ -12,24 +12,29 @@ Covers:
 - Ed25519 public-key cryptography (private key signs, public key verifies)
 """
 
+from pathlib import Path
+import json
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
 from backend.app import create_app
-from backend.crypto import generate_keypair
+from backend.crypto import compute_key_id, generate_keypair
 from backend.services.sealer import (
     canonicalize_text,
-    compress_payload,
-    decompress_payload,
-    estimate_qr_version,
+    create_seals,
     generate_document_id,
     split_into_chunks,
+    DEFAULT_BOOTSTRAP_URL,
 )
 from backend.services.verifier import (
     decode_seal,
     reconstruct_and_verify,
 )
 from backend.models import QRedChunk
+import backend.services.sealer as sealer_module
+from backend.services.text_recipes import validate_simple_english
 
 app = create_app()
 client = TestClient(app)
@@ -75,6 +80,18 @@ def verify_with_key(seals: list) -> dict:
     })
     assert resp.status_code == 200
     return resp.json()
+
+
+def build_untrusted_seals(content: str, issuer: str, keypair: dict) -> list[str]:
+    """Build current-format seals for verifier hardening tests."""
+    result = create_seals(
+        document_text=content,
+        issuer=issuer,
+        private_key=keypair["private_key"],
+        public_key=keypair["public_key"],
+        encoding_strategy="plaintext",
+    )
+    return [chunk.encode() for chunk in result.chunks]
 
 
 # ===========================
@@ -261,12 +278,12 @@ def test_fr4_seals_have_correct_format():
     })
     assert response.status_code == 200
     for seal in response.json()["seals"]:
-        assert seal.startswith("QRED1|")
-        assert len(seal.split("|")) == 5
+        assert seal.startswith("https://qred.org/#QRED1?")
+        assert "doc=" in seal and "txt=" in seal
 
 
-def test_fr4_bootstrap_url_versioned():
-    """Given seal generation, when checking bootstrap URL, then it includes version"""
+def test_fr4_bootstrap_url_uses_production_verifier():
+    """Given seal generation, when checking bootstrap URL, then it targets the production verifier"""
     response = client.post("/api/seals", json={
         "content": "Test",
         "issuer": TEST_ISSUER,
@@ -274,8 +291,7 @@ def test_fr4_bootstrap_url_versioned():
         "public_key": TEST_PUBLIC_KEY,
     })
     assert response.status_code == 200
-    # Response should include the versioned bootstrap URL
-    assert "v1" in response.json()["bootstrap_url"]
+    assert response.json()["bootstrap_url"] == DEFAULT_BOOTSTRAP_URL
 
 
 def test_fr4_custom_document_id():
@@ -305,9 +321,142 @@ def test_fr4_seal_response_has_required_fields():
         assert field in data, f"Missing field: {field}"
 
 
-# ===========================
-# FR5: Bootstrap Seal
-# ===========================
+def test_fr4_prefers_smallest_modular_reversible_candidate_for_large_content():
+    """Given repetitive content, automatic mode chooses the smallest reversible modular candidate."""
+    content = "lorem ipsum dolor sit amet " * 200
+    result = create_seals(
+        document_text=content,
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+    )
+    reversible_reports = {
+        report["encoding"]: report
+        for report in result.candidate_reports
+        if report["reversible"]
+    }
+    brotli_qr_count = reversible_reports["brotli"]["qr_count"]
+    other_qr_counts = [
+        report["qr_count"]
+        for encoding, report in reversible_reports.items()
+        if encoding != "brotli"
+    ]
+
+    assert brotli_qr_count < min(other_qr_counts)
+    assert result.total_chunks == brotli_qr_count
+    assert result.encoding == "brotli"
+    assert all(chunk.encode().startswith("https://qred.org/#QRED1?") for chunk in result.chunks)
+
+
+def test_fr4_automatic_prefers_readability_when_qr_counts_tie():
+    """Given equal QR counts, automatic mode chooses the most readable representation."""
+    result = create_seals(
+        document_text="Short",
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+    )
+
+    assert result.total_chunks == 1
+    assert result.selected_recipe == "plaintext"
+
+def test_fr4_automatic_tiebreaks_by_readability_after_minimizing_qr_count():
+    """Given b45 and Brotli need equal QR counts, automatic mode prefers b45 readability."""
+    selected = sealer_module._select_candidate([
+        {"encoding": "plaintext", "recipe": "plaintext", "qr_count": 3, "reversible": True},
+        {"encoding": "b45", "recipe": "b45", "qr_count": 2, "reversible": True},
+        {"encoding": "brotli", "recipe": "brotli", "qr_count": 2, "reversible": True},
+    ])
+
+    assert selected["encoding"] == "b45"
+
+
+def test_fr4_automatic_selects_brotli_when_it_reduces_qr_count():
+    """Given Brotli is the only two-QR candidate, automatic mode selects Brotli."""
+    selected = sealer_module._select_candidate([
+        {"encoding": "plaintext", "recipe": "plaintext", "qr_count": 3, "reversible": True},
+        {"encoding": "b45", "recipe": "b45", "qr_count": 3, "reversible": True},
+        {"encoding": "brotli", "recipe": "brotli", "qr_count": 2, "reversible": True},
+    ])
+
+    assert selected["encoding"] == "brotli"
+
+
+def test_fr4_brotli_is_available_when_it_makes_smaller_seals():
+    """Given highly repetitive content, when Brotli is requested, then it is selected and verifies."""
+    content = ("QRed Brotli compression option. " * 500).strip()
+    result = create_seals(
+        document_text=content,
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        encoding_strategy="brotli",
+    )
+
+    assert result.selected_recipe == "brotli"
+    assert result.encoding == "brotli"
+    assert any(report["encoding"] == "brotli" and report["reversible"] for report in result.candidate_reports)
+
+    verification = reconstruct_and_verify([chunk.encode() for chunk in result.chunks], expected_public_key=TEST_PUBLIC_KEY)
+    assert verification["status"] == "VALID"
+    assert verification["recipe"] == "brotli"
+    assert verification["content"] == canonicalize_text(content)
+
+
+def test_fr4_brotli_falls_back_when_not_smaller():
+    """Given short content, when Brotli is requested, then a smaller reversible candidate is used instead."""
+    result = create_seals(
+        document_text="Short",
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        encoding_strategy="brotli",
+    )
+
+    assert result.selected_recipe != "brotli"
+    assert result.selected_recipe == "plaintext"
+    assert any(report["encoding"] == "brotli" and report["reversible"] for report in result.candidate_reports)
+
+
+def test_fr4_recipe1_reversible_on_supported_simple_english():
+    """Given supported simple English, when applying Recipe 1, then it round-trips exactly"""
+    result = validate_simple_english("the document and the page")
+    assert result.reversible is True
+    assert result.restored == "the document and the page"
+    assert result.compact
+
+
+def test_fr4_b45_roundtrip_preserves_escapes():
+    """Given representative content, when using b45, then escapes preserve every byte exactly"""
+    original = "Hello, Alfred!\nhttps://qred.org/#QRED1\né"
+    result = validate_simple_english(original)
+    assert result.reversible is True
+    assert result.restored == original
+    assert "+3" in result.compact
+    assert "%0A" in result.compact
+    assert "%C3%A9" in result.compact
+
+
+def test_fr4_b45_literal_plus_roundtrips():
+    """Given literal plus signs, when using b45, then ++ decodes back to +"""
+    original = "C++"
+    result = validate_simple_english(original)
+    assert result.reversible is True
+    assert result.restored == original
+    assert result.compact.startswith("+C")
+    assert "++++" in result.compact
+
+
+def test_fr4_b45_unicode_digits_are_escaped():
+    """Given non-ASCII digits, when using b45, then they are UTF-8 escaped rather than kept literal"""
+    original = "Section １"
+    result = validate_simple_english(original)
+    assert result.reversible is True
+    assert result.restored == original
+    assert "１" not in result.compact
+    assert "%EF%BC%91" in result.compact
+
+
 
 def test_fr5_bootstrap_seal_present():
     """Given seal generation, when checking response, then bootstrap URL is present"""
@@ -362,12 +511,42 @@ def test_fr6_no_valid_seals_returns_error():
     assert result["status"] == "ERROR"
 
 
+def test_fr6_mixed_document_ids_returns_invalid():
+    """Given seals from different documents, when verified, then INVALID is deterministic."""
+    first_doc_seals = generate_and_get_seals("First generated document")
+    second_doc_seals = generate_and_get_seals("Second generated document")
+
+    result = verify_with_key([first_doc_seals[0], second_doc_seals[0]])
+
+    assert result["status"] == "INVALID"
+    assert result["error_message"] == "Mixed document IDs"
+
+
 def test_fr6_decode_seal():
     """Given a valid seal, when decoded, then QRedChunk is returned"""
     seals = generate_and_get_seals("Test")
     for seal in seals:
         chunk = QRedChunk.decode(seal)
         assert chunk.format_id == "QRED1"
+
+
+def test_fr6_b45_recipe_metadata_is_used_for_verification():
+    """Given b45-encoded seals, when verified, then the recipe metadata is preserved and decoded before signature verification"""
+    content = "C++ plus １"
+    result = create_seals(
+        document_text=content,
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        encoding_strategy="b45",
+    )
+    assert result.selected_recipe == "b45"
+
+    verification = reconstruct_and_verify([chunk.encode() for chunk in result.chunks], expected_public_key=TEST_PUBLIC_KEY)
+
+    assert verification["status"] == "VALID"
+    assert verification["recipe"] == "b45"
+    assert verification["content"] == canonicalize_text(content)
 
 
 # ===========================
@@ -378,6 +557,39 @@ def test_fr7_valid_signature():
     """Given a properly sealed document, when verified with correct key, then VALID"""
     seals = generate_and_get_seals("Verified document content")
     result = verify_with_key(seals)
+    assert result["status"] == "VALID"
+
+
+def test_fr7_rejects_embedded_public_key_without_trusted_source():
+    """Given a legacy embedded-key payload, verification requires a trusted key source."""
+    seals = build_untrusted_seals("Verified document content", TEST_ISSUER, KEYPAIR)
+
+    result = reconstruct_and_verify(seals)
+
+    assert result["status"] == "ERROR"
+    assert "trusted public key" in result["error_message"]
+
+
+def test_fr7_registry_lookup_can_supply_trusted_public_key():
+    """Given registry lookup resolves issuer/key_id, local verification succeeds."""
+    response = client.post("/api/seals", json={
+        "content": "Verified document content",
+        "issuer": TEST_ISSUER,
+        "private_key": TEST_PRIVATE_KEY,
+        "public_key": TEST_PUBLIC_KEY,
+    })
+    assert response.status_code == 200
+    key_id = response.json()["key_id"]
+
+    result = reconstruct_and_verify(
+        response.json()["seals"],
+        registry_lookup=lambda issuer, lookup_key_id: (
+            TEST_PUBLIC_KEY
+            if issuer == TEST_ISSUER and lookup_key_id == key_id
+            else None
+        ),
+    )
+
     assert result["status"] == "VALID"
 
 
@@ -429,7 +641,7 @@ def test_fr9_valid_status():
 
 def test_fr9_status_is_valid_or_invalid_or_incomplete_or_error():
     """Given any verification, when checking status, then it is one of the 4 statuses"""
-    result = verify_with_key(["QRED1|DOC|0|1|bad"])
+    result = verify_with_key(["not-a-supported-seal"])
     assert result["status"] in {"VALID", "INVALID", "INCOMPLETE", "ERROR"}
 
 
@@ -459,13 +671,13 @@ def test_fr10_version_in_seal_format():
     """Given generated seals, when checking format ID, then version is included"""
     seals = generate_and_get_seals("Test")
     for seal in seals:
-        assert seal.startswith("QRED1|")
+        assert seal.startswith("https://qred.org/#QRED1?")
 
 
 def test_fr10_rejects_wrong_version():
-    """Given a seal with wrong version ID, when decoded, then format ID differs"""
-    chunk = QRedChunk.decode("QRED2|DOC|0|1|data")
-    assert chunk.format_id == "QRED2"
+    """Given a removed pipe-format seal, when decoded, then it is rejected."""
+    with pytest.raises(ValueError):
+        QRedChunk.decode("QRED2|DOC|0|1|data")
 
 
 # ===========================
@@ -510,13 +722,6 @@ def test_sr5_offline_verification():
 # ===========================
 # Utility Function Tests
 # ===========================
-
-def test_compress_decompress_roundtrip():
-    """Given a payload, when compressed and decompressed, then content matches"""
-    payload = '{"content": "Hello World", "issuer": "Test"}'
-    compressed = compress_payload(payload)
-    assert decompress_payload(compressed) == payload
-
 
 def test_split_into_chunks_reconstructs():
     """Given data split into chunks, when rejoined, then original is recovered"""
@@ -569,19 +774,40 @@ def test_generate_document_id():
     assert a and b and a != b
 
 
-def test_qred_chunk_roundtrip():
-    """Given a chunk, when encoded and decoded, then fields match"""
-    chunk = QRedChunk(document_id="DOC1", chunk_number=2, total_chunks=5, data="hello")
-    decoded = QRedChunk.decode(chunk.encode())
-    assert decoded.document_id == "DOC1"
-    assert decoded.chunk_number == 2
-    assert decoded.total_chunks == 5
-    assert decoded.data == "hello"
-
-
 def test_decode_invalid_seal_returns_none():
     """Given a garbage seal, when decoded, then None returned"""
     assert decode_seal("garbage") is None
+
+
+def test_qred_chunk_encode_rejects_pipe_format_fallback():
+    """Given raw chunk data, encode rejects removed pipe-format serialization."""
+    chunk = QRedChunk(document_id="DOC1", chunk_number=0, total_chunks=1, data="raw-data")
+
+    with pytest.raises(ValueError, match="Invalid QRed chunk data"):
+        chunk.encode()
+
+
+def test_decode_seal_returns_none_for_malformed_numeric_fields():
+    """Given non-integer chunk fields, when decoded, then None returned."""
+    assert decode_seal("QRED1?doc=DOC&i=not-a-number&n=1&txt=data") is None
+    assert decode_seal("QRED1?doc=DOC&i=0&n=not-a-number&txt=data") is None
+
+
+@pytest.mark.parametrize("seal", [
+    "QRED1?doc=DOC&i=not-a-number&n=1&txt=data",
+    "QRED1?doc=DOC&i=0&n=not-a-number&txt=data",
+])
+def test_api_verify_returns_structured_error_for_malformed_numeric_fields(seal):
+    """Given malformed numeric chunk fields, when verified, then response is non-500 ERROR."""
+    response = client.post("/api/verify", json={
+        "seals": [seal],
+        "public_key": TEST_PUBLIC_KEY,
+    })
+    body = response.json()
+
+    assert response.status_code != 500
+    assert body["status"] == "ERROR"
+    assert body["error_message"] == "No valid chunks found"
 
 
 def test_api_returns_422_on_missing_fields():
@@ -872,3 +1098,645 @@ def test_registry_random_bytes_as_public_key():
     # Could be malformed base64 or key_id mismatch — either way, 400
     detail = response.json()["detail"]
     assert "Invalid public_key" in detail or "key_id does not match" in detail
+
+# ===========================
+# Browser PDF Demo BDD Scenarios
+# ===========================
+
+def create_sample_pdf(path, pages=2):
+    """Create a small PDF fixture with text on each page."""
+    import fitz
+    doc = fitz.open()
+    try:
+        for index in range(pages):
+            page = doc.new_page()
+            page.insert_text((72, 72), f"QRed demo page {index + 1}")
+        doc.save(path)
+    finally:
+        doc.close()
+
+
+def test_demo_keypair_endpoint_supports_browser_demo():
+    """Given the browser demo needs keys, when requested, then an ephemeral keypair is returned"""
+    response = client.get("/api/keys/demo")
+    assert response.status_code == 200
+    data = response.json()
+    assert {"private_key", "public_key", "key_id"}.issubset(data)
+
+
+
+def test_default_keypair_endpoint_uses_environment_keys(monkeypatch):
+    """Given configured default keys, when requested, then the stable keypair is returned"""
+    monkeypatch.setenv("QRED_DEFAULT_PRIVATE_KEY", TEST_PRIVATE_KEY)
+    monkeypatch.setenv("QRED_DEFAULT_PUBLIC_KEY", TEST_PUBLIC_KEY)
+
+    response = client.get("/api/keys/default")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["private_key"] == TEST_PRIVATE_KEY
+    assert data["public_key"] == TEST_PUBLIC_KEY
+    assert data["key_id"] == compute_key_id(TEST_PUBLIC_KEY)
+    assert data["source"] == "environment"
+
+
+def test_default_keypair_endpoint_falls_back_to_ephemeral_keys(monkeypatch):
+    """Given no configured default keys, when requested, then an ephemeral keypair is returned"""
+    monkeypatch.delenv("QRED_DEFAULT_PRIVATE_KEY", raising=False)
+    monkeypatch.delenv("QRED_DEFAULT_PUBLIC_KEY", raising=False)
+
+    response = client.get("/api/keys/default")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert {"private_key", "public_key", "key_id"}.issubset(data)
+    assert data["source"] == "ephemeral"
+
+
+def test_pdf_stamp_assigns_bootstrap_and_payload_to_each_page():
+    """Given multiple PDF pages, when assigning stamps, then each page gets a payload URL"""
+    from backend.services.pdf_stamp import planned_page_payloads
+    seals = ["https://qred.org/#QRED1?doc=DOC&i=0&n=2&txt=aaa", "https://qred.org/#QRED1?doc=DOC&i=1&n=2&txt=bbb"]
+    pages = planned_page_payloads(seals, "https://qred.org/", source_page_count=2, max_qr_codes=2)
+    assert pages[0][0] == seals[0]
+    assert pages[1][0] == seals[1]
+
+
+def test_pdf_stamp_plan_appends_overflow_pages_without_dropping_seals():
+    """Given too many seals for source pages, when planning stamps, then overflow pages keep all chunks"""
+    from backend.services.pdf_stamp import planned_page_payloads
+    seals = [f"https://qred.org/#QRED1?doc=DOC&i={index}&n=5&txt=data{index}" for index in range(5)]
+    pages = planned_page_payloads(seals, "https://qred.org/", source_page_count=1, max_qr_codes=3)
+    placed = [payload for page in pages for payload in page if "#QRED1?" in payload]
+    assert placed == seals
+    assert len(pages) == 2
+
+
+def test_pdf_path_sealing_uses_verify_htm_bootstrap(tmp_path):
+    """Given a local PDF, when sealed, then the response targets qred.org fragments"""
+    from backend.services.pdf_stamp import seal_pdf
+    pdf_path = tmp_path / "demo.pdf"
+    output_path = tmp_path / "demo.sealed.pdf"
+    create_sample_pdf(pdf_path)
+    result = seal_pdf(
+        str(pdf_path),
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        output_path=str(output_path),
+    )
+    assert output_path.exists()
+    assert result["bootstrap_url"] == "https://qred.org/"
+    assert result["total_seals"] >= 1
+    assert len(result["page_seal_strings"]) == 2
+
+
+def test_pdf_path_sealing_creates_independently_verifiable_page_seals(tmp_path):
+    """Given a multi-page PDF, when sealed, then each page has standalone verifiable seals."""
+    from backend.services.pdf_stamp import seal_pdf
+    pdf_path = tmp_path / "pages.pdf"
+    output_path = tmp_path / "pages.sealed.pdf"
+    create_sample_pdf(pdf_path, pages=2)
+
+    result = seal_pdf(
+        str(pdf_path),
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        output_path=str(output_path),
+    )
+
+    assert len(result["page_seal_strings"]) == 2
+    first_page_result = reconstruct_and_verify(result["page_seal_strings"][0], TEST_PUBLIC_KEY)
+    second_page_result = reconstruct_and_verify(result["page_seal_strings"][1], TEST_PUBLIC_KEY)
+    assert first_page_result["status"] == "VALID"
+    assert "QRed demo page 1" in first_page_result["content"]
+    assert "Page SHA256:" in first_page_result["content"]
+    assert "Page:" not in first_page_result["content"]
+    assert second_page_result["status"] == "VALID"
+    assert "QRed demo page 2" in second_page_result["content"]
+    assert "Page SHA256:" in second_page_result["content"]
+    assert "Page:" not in second_page_result["content"]
+    assert first_page_result["document_id"] != second_page_result["document_id"]
+
+
+
+def test_pdf_page_seals_share_merkle_root_to_detect_page_swaps(tmp_path):
+    """Given two sealed PDFs, when pages are compared, then swapped-in pages expose a different Merkle root."""
+    from backend.services.pdf_stamp import seal_pdf
+
+    first_pdf = tmp_path / "first.pdf"
+    second_pdf = tmp_path / "second.pdf"
+    create_sample_pdf(first_pdf, pages=2)
+    create_sample_pdf(second_pdf, pages=3)
+
+    first = seal_pdf(
+        str(first_pdf),
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        output_path=str(tmp_path / "first.sealed.pdf"),
+    )
+    second = seal_pdf(
+        str(second_pdf),
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        output_path=str(tmp_path / "second.sealed.pdf"),
+    )
+
+    assert re.fullmatch(r"[0-9a-f]{64}", first["document_id"])
+    first_doc_ids = [decode_seal(seal)["document_id"] for page in first["page_seal_strings"] for seal in page]
+    assert all(re.fullmatch(r"[0-9a-f]{64}", doc_id) for doc_id in first_doc_ids)
+
+    first_page = reconstruct_and_verify(first["page_seal_strings"][0], TEST_PUBLIC_KEY)
+    first_second_page = reconstruct_and_verify(first["page_seal_strings"][1], TEST_PUBLIC_KEY)
+    swapped_page = reconstruct_and_verify(second["page_seal_strings"][1], TEST_PUBLIC_KEY)
+
+    root_pattern = r"Document Merkle Root: ([0-9a-f]{64})"
+    first_root = re.search(root_pattern, first_page["content"]).group(1)
+    first_second_root = re.search(root_pattern, first_second_page["content"]).group(1)
+    swapped_root = re.search(root_pattern, swapped_page["content"]).group(1)
+
+    assert first_page["status"] == "VALID"
+    assert first_second_page["status"] == "VALID"
+    assert swapped_page["status"] == "VALID"
+    assert first_root == first_second_root
+    assert swapped_root != first_root
+    assert "Document ID:" not in first_page["content"]
+    assert "Document ID:" not in swapped_page["content"]
+
+
+def test_pdf_page_seal_group_ids_do_not_collide_for_duplicate_chunked_pages(tmp_path):
+    """Given identical long pages, when sealed, then each chunked page payload has a unique QR doc id."""
+    import fitz
+    from backend.services.pdf_stamp import seal_pdf
+
+    pdf_path = tmp_path / "duplicate-long-pages.pdf"
+    output_path = tmp_path / "duplicate-long-pages.sealed.pdf"
+    repeated_text = "Identical chunked page content. " * 400
+    doc = fitz.open()
+    try:
+        for _ in range(2):
+            page = doc.new_page(width=612, height=4000)
+            page.insert_textbox(fitz.Rect(72, 72, 540, 3900), repeated_text, fontsize=12)
+        doc.save(pdf_path)
+    finally:
+        doc.close()
+
+    result = seal_pdf(
+        str(pdf_path),
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        output_path=str(output_path),
+        encoding_strategy="b45",
+        layout={"size": 10, "spacing": 12, "margin": 5},
+    )
+
+    assert len(result["page_seal_strings"]) == 2
+    first_page_doc_ids = {decode_seal(seal)["document_id"] for seal in result["page_seal_strings"][0]}
+    second_page_doc_ids = {decode_seal(seal)["document_id"] for seal in result["page_seal_strings"][1]}
+    assert len(result["page_seal_strings"][0]) > 1
+    assert len(result["page_seal_strings"][1]) > 1
+    assert len(first_page_doc_ids) == 1
+    assert len(second_page_doc_ids) == 1
+    assert first_page_doc_ids != second_page_doc_ids
+
+    first_page_result = reconstruct_and_verify(result["page_seal_strings"][0], TEST_PUBLIC_KEY)
+    second_page_result = reconstruct_and_verify(result["page_seal_strings"][1], TEST_PUBLIC_KEY)
+    assert first_page_result["status"] == "VALID"
+    assert second_page_result["status"] == "VALID"
+    assert first_page_result["content"] == second_page_result["content"]
+
+def test_sealed_wiki_pdf_qr_scan_recovers_page_text_merkle_root_and_signature(tmp_path):
+    """Given a printed-to-PDF wiki page, when sealed and QR-scanned, then page integrity data verifies."""
+    import io
+
+    import fitz
+    import qrcode
+    import qrcode.main
+    from PIL import Image
+    from qrcode import base, util
+
+    from backend.services.pdf_stamp import QR_BORDER, QR_BOX_SIZE, generate_qr_bytes, seal_pdf
+    from backend.services.qr_payload import HIDDEN_PAYLOAD_LENGTH_BYTES, VISIBLE_QR_URL
+
+    def bits_to_int(bits):
+        value = 0
+        for bit in bits:
+            value = (value << 1) | int(bit)
+        return value
+
+    def read_bits(bits, offset, count):
+        return bits[offset:offset + count], offset + count
+
+    def function_modules(version):
+        qr = qrcode.QRCode(version=version)
+        qr.data_cache = []
+        qr.makeImpl(test=True, mask_pattern=0)
+        blank = [row[:] for row in qrcode.main.precomputed_qr_blanks[version]]
+        qr.modules = blank
+        qr.modules_count = len(blank)
+        qr.setup_type_info(test=False, mask_pattern=0)
+        if version >= 7:
+            qr.setup_type_number(test=False)
+        return qr.modules
+
+    def decode_visible_alphanum(bits, version):
+        mode_bits, offset = read_bits(bits, 0, 4)
+        if bits_to_int(mode_bits) != util.MODE_ALPHA_NUM:
+            return None
+        count_bits, offset = read_bits(bits, offset, util.length_in_bits(util.MODE_ALPHA_NUM, version))
+        count = bits_to_int(count_bits)
+        chars = []
+        remaining = count
+        while remaining >= 2:
+            pair_bits, offset = read_bits(bits, offset, 11)
+            pair_value = bits_to_int(pair_bits)
+            chars.append(chr(util.ALPHA_NUM[pair_value // 45]))
+            chars.append(chr(util.ALPHA_NUM[pair_value % 45]))
+            remaining -= 2
+        if remaining:
+            char_bits, offset = read_bits(bits, offset, 6)
+            chars.append(chr(util.ALPHA_NUM[bits_to_int(char_bits)]))
+        return "".join(chars)
+
+    def scan_hidden_payload_from_png(png_bytes):
+        image = Image.open(io.BytesIO(png_bytes)).convert("1")
+        module_count = (image.width // QR_BOX_SIZE) - (2 * QR_BORDER)
+        version = (module_count - 17) // 4
+        modules = []
+        for row in range(module_count):
+            module_row = []
+            for col in range(module_count):
+                x = (QR_BORDER + col) * QR_BOX_SIZE + (QR_BOX_SIZE // 2)
+                y = (QR_BORDER + row) * QR_BOX_SIZE + (QR_BOX_SIZE // 2)
+                module_row.append(image.getpixel((x, y)) == 0)
+            modules.append(module_row)
+
+        function_map = function_modules(version)
+        for mask_pattern in range(8):
+            mask_func = util.mask_func(mask_pattern)
+            bits = []
+            row = module_count - 1
+            direction = -1
+            col = module_count - 1
+            while col > 0:
+                if col <= 6:
+                    col -= 1
+                while 0 <= row < module_count:
+                    for offset in range(2):
+                        bit_col = col - offset
+                        if function_map[row][bit_col] is not None:
+                            continue
+                        bits.append(modules[row][bit_col] ^ mask_func(row, bit_col))
+                    row += direction
+                row -= direction
+                direction = -direction
+                col -= 2
+
+            raw_codewords = [bits_to_int(bits[index:index + 8]) for index in range(0, len(bits) - 7, 8)]
+            rs_blocks = base.rs_blocks(version, qrcode.constants.ERROR_CORRECT_M)
+            max_data_count = max(block.data_count for block in rs_blocks)
+            data_blocks = [[] for _ in rs_blocks]
+            raw_offset = 0
+            for byte_index in range(max_data_count):
+                for block_index, block in enumerate(rs_blocks):
+                    if byte_index < block.data_count:
+                        data_blocks[block_index].append(raw_codewords[raw_offset])
+                        raw_offset += 1
+            data_codewords = [byte for block in data_blocks for byte in block]
+            data_bits = []
+            for byte in data_codewords:
+                data_bits.extend(((byte >> shift) & 1) == 1 for shift in range(7, -1, -1))
+            if decode_visible_alphanum(data_bits, version) != VISIBLE_QR_URL:
+                continue
+
+            hidden_start = 4 + util.length_in_bits(util.MODE_ALPHA_NUM, version) + 44 + 4
+            hidden_start += (-hidden_start) % 8
+            hidden_bytes = bytes(data_codewords[hidden_start // 8:])
+            hidden_length = int.from_bytes(hidden_bytes[:HIDDEN_PAYLOAD_LENGTH_BYTES], "big")
+            start = HIDDEN_PAYLOAD_LENGTH_BYTES
+            return hidden_bytes[start:start + hidden_length].decode("utf-8")
+        raise AssertionError("Could not scan hidden QRed payload from generated QR PNG")
+
+    pdf_path = tmp_path / "qr-code-wiki-first-page.pdf"
+    output_path = tmp_path / "qr-code-wiki-first-page.sealed.pdf"
+    wiki_text = (
+        "QR code - Wikipedia\n\n"
+        "A QR code is a type of matrix barcode, or two-dimensional barcode, invented in 1994.\n"
+        "The initialism QR stands for quick response.\n"
+    )
+    doc = fitz.open()
+    try:
+        page = doc.new_page(width=612, height=792)
+        page.insert_textbox(fitz.Rect(72, 72, 540, 720), wiki_text, fontsize=12)
+        doc.save(pdf_path)
+    finally:
+        doc.close()
+
+    sealed = seal_pdf(
+        str(pdf_path),
+        issuer=TEST_ISSUER,
+        private_key=TEST_PRIVATE_KEY,
+        public_key=TEST_PUBLIC_KEY,
+        output_path=str(output_path),
+    )
+    scanned_seals = [scan_hidden_payload_from_png(generate_qr_bytes(seal)) for seal in sealed["page_seal_strings"][0]]
+    verification = reconstruct_and_verify(scanned_seals, TEST_PUBLIC_KEY)
+    decoded_first_seal = decode_seal(scanned_seals[0])
+
+    assert output_path.exists()
+    assert verification["status"] == "VALID"
+    assert "QR code - Wikipedia" in verification["content"]
+    assert "A QR code is a type of matrix barcode" in verification["content"]
+    assert re.search(r"Document Merkle Root: [0-9a-f]{64}", verification["content"])
+    assert re.fullmatch(r"[A-Za-z0-9_\-=]+", decoded_first_seal["signature"])
+
+def test_pdf_seal_api_end_to_end_can_verify_returned_seals(tmp_path):
+    """Given a one-page PDF, when sealed through the API, then returned seals verify through the API."""
+    pdf_path = tmp_path / "e2e.pdf"
+    output_path = tmp_path / "e2e.sealed.pdf"
+    create_sample_pdf(pdf_path, pages=1)
+
+    seal_response = client.post(
+        "/api/pdf/seal",
+        params={
+            "pdf_path": str(pdf_path),
+            "output_path": str(output_path),
+            "issuer": TEST_ISSUER,
+            "private_key": TEST_PRIVATE_KEY,
+            "public_key": TEST_PUBLIC_KEY,
+        },
+    )
+
+    assert seal_response.status_code == 200
+    sealed = seal_response.json()
+    assert output_path.exists()
+    assert sealed["bootstrap_url"] == "https://qred.org/"
+    assert sealed["total_seals"] == len(sealed["seal_strings"]) >= 1
+
+    verify_response = client.post(
+        "/api/verify",
+        json={
+            "seals": sealed["seal_strings"],
+            "public_key": TEST_PUBLIC_KEY,
+        },
+    )
+
+    assert verify_response.status_code == 200
+    verification = verify_response.json()
+    assert verification["status"] == "VALID"
+    assert verification["issuer"] == TEST_ISSUER
+    assert "QRed demo page 1" in verification["content"]
+    assert "Document Merkle Root:" in verification["content"]
+    assert re.fullmatch(r"[0-9a-f]{64}", verification["document_id"])
+
+
+def test_pdf_upload_endpoint_returns_sealed_pdf_download(tmp_path):
+    """Given a browser PDF upload, when sealing, then a PDF download is returned"""
+    pdf_path = tmp_path / "upload.pdf"
+    create_sample_pdf(pdf_path)
+    with pdf_path.open("rb") as pdf_file:
+        response = client.post(
+            "/api/pdf/upload-seal",
+            data={
+                "issuer": TEST_ISSUER,
+                "private_key": TEST_PRIVATE_KEY,
+                "public_key": TEST_PUBLIC_KEY,
+            },
+            files={"file": ("upload.pdf", pdf_file, "application/pdf")},
+        )
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["x-qred-bootstrap-url"] == "https://qred.org/"
+    assert response.content.startswith(b"%PDF")
+
+def test_pdf_upload_rejects_non_pdf_content(tmp_path):
+    """Given a fake PDF upload, when sealing, then it is rejected as unsupported media"""
+    fake_pdf = tmp_path / "fake.pdf"
+    fake_pdf.write_bytes(b"not a pdf")
+    with fake_pdf.open("rb") as pdf_file:
+        response = client.post(
+            "/api/pdf/upload-seal",
+            data={
+                "issuer": TEST_ISSUER,
+                "private_key": TEST_PRIVATE_KEY,
+                "public_key": TEST_PUBLIC_KEY,
+            },
+            files={"file": ("fake.pdf", pdf_file, "application/pdf")},
+        )
+    assert response.status_code == 415
+
+def test_mobile_verifier_verifies_locally_without_posting_document_content():
+    """Given mobile verifier HTML, when inspected, then it verifies in-browser without posting seals to /api/verify."""
+    from pathlib import Path
+    html = Path("frontend/verifier.html").read_text()
+    assert 'fetch("/api/verify"' not in html
+    assert 'verifyQRedSeals(seals, publicKey)' in html
+    assert 'showResult("VALID", payload)' not in html
+    assert 'publicKeyInput' in html
+    assert 'fetch("/api/keys/default")' in html
+    assert 'No default trusted key found; showing unverified QR text.' in html
+
+def test_pdf_stamp_plan_rejects_layout_that_cannot_fit_bootstrap_and_payload():
+    """Given a too-narrow layout, when planning stamps, then it fails instead of overflowing"""
+    from backend.services.pdf_stamp import planned_page_payloads
+    with pytest.raises(ValueError, match="one QRed payload QR"):
+        planned_page_payloads(["https://qred.org/#QRED1?doc=DOC&i=0&n=1&txt=data"], "https://qred.org/", 1, 0)
+
+
+def test_backend_ci_requirements_include_imported_runtime_packages():
+    """Given CI installs backend requirements, then imported app dependencies are present."""
+    requirements = Path("backend/requirements.txt").read_text().lower()
+    required_packages = {
+        "cryptography",
+        "pymupdf",
+        "qrcode",
+        "pillow",
+        "python-multipart",
+    }
+    for package in required_packages:
+        assert package in requirements
+
+
+def test_scanner_safe_qr_header_counts_only_short_url():
+    """Given hidden QRed data, when encoded, then the QR character count covers only QRED.ORG."""
+    from backend.services.qr_payload import VISIBLE_QR_URL, scanner_safe_bit_buffer
+    from qrcode import constants, util
+
+    buffer = scanner_safe_bit_buffer(10, constants.ERROR_CORRECT_M, "QRED1?txt=secret")
+    assert buffer.buffer[0] >> 4 == util.MODE_ALPHA_NUM
+    count_bits = util.length_in_bits(util.MODE_ALPHA_NUM, 10)
+    count = 0
+    for index in range(4, 4 + count_bits):
+        count = (count << 1) | int(buffer.get(index))
+    assert count == len(VISIBLE_QR_URL)
+
+
+def test_scanner_safe_qr_places_qr_terminator_before_hidden_payload():
+    """Given hidden QRed data, when encoded, then a QR terminator separates URL and data."""
+    from backend.services.qr_payload import scanner_safe_bit_buffer
+    from qrcode import constants, util
+
+    buffer = scanner_safe_bit_buffer(10, constants.ERROR_CORRECT_M, "QRED1?txt=secret")
+    visible_bits = 4 + util.length_in_bits(util.MODE_ALPHA_NUM, 10) + 44
+    assert [buffer.get(visible_bits + offset) for offset in range(4)] == [False, False, False, False]
+
+
+def test_scanner_safe_qr_keeps_qred_data_after_terminator_for_custom_reader():
+    """Given hidden QRed data, when encoded, then custom readers can recover it after the terminator."""
+    from backend.services.qr_payload import extract_hidden_payload_from_buffer, scanner_safe_bit_buffer
+    from qrcode import constants
+
+    payload = "https://qred.org/#QRED1?txt=secret"
+    buffer = scanner_safe_bit_buffer(10, constants.ERROR_CORRECT_M, payload)
+    assert extract_hidden_payload_from_buffer(buffer, version=10).decode("utf-8") == payload
+
+
+def test_scanner_safe_qr_hidden_extractor_uses_explicit_version_offset():
+    """Given a high-version QR, when extracting hidden data, then the version-specific count size is used."""
+    from backend.services.qr_payload import HIDDEN_PAYLOAD_LENGTH_BYTES, extract_hidden_payload_from_buffer, scanner_safe_bit_buffer
+    from qrcode import constants, util
+
+    version = 27
+    payload = "https://qred.org/#QRED1?txt=version-aware"
+    buffer = scanner_safe_bit_buffer(version, constants.ERROR_CORRECT_M, payload)
+    hidden_start = 4 + util.length_in_bits(util.MODE_ALPHA_NUM, version) + 44 + 4
+    hidden_start += (-hidden_start) % 8
+
+    hidden = bytes(buffer.buffer[hidden_start // 8:])
+    assert int.from_bytes(hidden[:HIDDEN_PAYLOAD_LENGTH_BYTES], "big") == len(payload.encode("utf-8"))
+    assert extract_hidden_payload_from_buffer(buffer, version=version).decode("utf-8") == payload
+
+
+def test_pdf_qr_generation_embeds_seal_behind_short_visible_url(monkeypatch):
+    """Given a PDF stamp QR, when generated, then it encodes QRED.ORG visibly and hides the seal."""
+    from backend.services import pdf_stamp
+    from backend.services.qr_payload import VISIBLE_QR_URL, create_scanner_safe_data
+
+    captured = {}
+
+    def capture(version, error_correction, payload):
+        captured["payload"] = payload
+        return create_scanner_safe_data(version, error_correction, payload)
+
+    monkeypatch.setattr(pdf_stamp, "create_scanner_safe_data", capture)
+    png_bytes = pdf_stamp.generate_qr_bytes("https://qred.org/#QRED1?txt=secret")
+
+    assert png_bytes.startswith(b"\x89PNG")
+    assert captured["payload"] == "https://qred.org/#QRED1?txt=secret"
+    assert VISIBLE_QR_URL == "QRED.ORG"
+
+
+def test_generated_scanner_safe_png_decodes_to_visible_url_for_normal_readers():
+    """Given an actual generated PNG, when decoded normally, then only QRED.ORG is visible."""
+    import io
+
+    import qrcode
+    import qrcode.main
+    from PIL import Image
+    from qrcode import base, util
+
+    from backend.services.pdf_stamp import QR_BORDER, QR_BOX_SIZE, generate_qr_bytes
+    from backend.services.qr_payload import VISIBLE_QR_URL
+
+    def function_modules(version):
+        qr = qrcode.QRCode(version=version)
+        qr.data_cache = []
+        qr.makeImpl(test=True, mask_pattern=0)
+        blank = [row[:] for row in qrcode.main.precomputed_qr_blanks[version]]
+        qr.modules = blank
+        qr.modules_count = len(blank)
+        qr.setup_type_info(test=False, mask_pattern=0)
+        if version >= 7:
+            qr.setup_type_number(test=False)
+        return qr.modules
+
+    def bits_to_int(bits):
+        value = 0
+        for bit in bits:
+            value = (value << 1) | int(bit)
+        return value
+
+    def read_bits(bits, offset, count):
+        return bits[offset:offset + count], offset + count
+
+    def decode_alphanum_payload(bits, version):
+        mode_bits, offset = read_bits(bits, 0, 4)
+        if bits_to_int(mode_bits) != util.MODE_ALPHA_NUM:
+            return None
+        count_bits, offset = read_bits(bits, offset, util.length_in_bits(util.MODE_ALPHA_NUM, version))
+        count = bits_to_int(count_bits)
+        chars = []
+        remaining = count
+        while remaining >= 2:
+            pair_bits, offset = read_bits(bits, offset, 11)
+            pair_value = bits_to_int(pair_bits)
+            chars.append(chr(util.ALPHA_NUM[pair_value // 45]))
+            chars.append(chr(util.ALPHA_NUM[pair_value % 45]))
+            remaining -= 2
+        if remaining:
+            char_bits, offset = read_bits(bits, offset, 6)
+            chars.append(chr(util.ALPHA_NUM[bits_to_int(char_bits)]))
+        terminator, _ = read_bits(bits, offset, 4)
+        if any(terminator):
+            return None
+        return "".join(chars)
+
+    def normal_decode_png(png_bytes):
+        image = Image.open(io.BytesIO(png_bytes)).convert("1")
+        module_count = (image.width // QR_BOX_SIZE) - (2 * QR_BORDER)
+        version = (module_count - 17) // 4
+        modules = []
+        for row in range(module_count):
+            module_row = []
+            for col in range(module_count):
+                x = (QR_BORDER + col) * QR_BOX_SIZE + (QR_BOX_SIZE // 2)
+                y = (QR_BORDER + row) * QR_BOX_SIZE + (QR_BOX_SIZE // 2)
+                module_row.append(image.getpixel((x, y)) == 0)
+            modules.append(module_row)
+
+        function_map = function_modules(version)
+        for mask_pattern in range(8):
+            mask_func = util.mask_func(mask_pattern)
+            bits = []
+            row = module_count - 1
+            direction = -1
+            col = module_count - 1
+            while col > 0:
+                if col <= 6:
+                    col -= 1
+                while 0 <= row < module_count:
+                    for offset in range(2):
+                        bit_col = col - offset
+                        if function_map[row][bit_col] is not None:
+                            continue
+                        bits.append(modules[row][bit_col] ^ mask_func(row, bit_col))
+                    row += direction
+                row -= direction
+                direction = -direction
+                col -= 2
+            raw_codewords = [bits_to_int(bits[index:index + 8]) for index in range(0, len(bits) - 7, 8)]
+            rs_blocks = base.rs_blocks(version, qrcode.constants.ERROR_CORRECT_M)
+            max_data_count = max(block.data_count for block in rs_blocks)
+            data_blocks = [[] for _ in rs_blocks]
+            raw_offset = 0
+            for byte_index in range(max_data_count):
+                for block_index, block in enumerate(rs_blocks):
+                    if byte_index < block.data_count:
+                        data_blocks[block_index].append(raw_codewords[raw_offset])
+                        raw_offset += 1
+            data_bits = []
+            for block in data_blocks:
+                for byte in block:
+                    data_bits.extend(((byte >> shift) & 1) == 1 for shift in range(7, -1, -1))
+            decoded = decode_alphanum_payload(data_bits, version)
+            if decoded == VISIBLE_QR_URL:
+                return decoded
+        return None
+
+    png_bytes = generate_qr_bytes("https://qred.org/#QRED1?txt=secret")
+
+    assert normal_decode_png(png_bytes) == VISIBLE_QR_URL

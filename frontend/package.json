@@ -5,22 +5,33 @@
   "description": "QRed Verifier - Web-based QR document verification with mobile camera scanning",
   "scripts": {
     "start": "vite",
-    "build": "vite build",
+    "build": "vite build && cp build/verifier.html build/verify.htm",
     "test": "vitest run",
     "lint": "eslint src/ --ext .jsx,.tsx",
-    "test:ci": "vitest run --passWithNoTests"
+    "test:ci": "vitest run --passWithNoTests",
+    "build:worker": "npm run build",
+    "build:pages": "npm run build && cp worker/index.js build/_worker.js"
   },
   "dependencies": {
+    "@noble/ed25519": "^3.1.0",
+    "jsqr": "^1.4.0",
+    "pdf-lib": "^1.17.1",
+    "qrcode": "^1.5.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "qrcode": "^1.5.0",
-    "jsqr": "^1.4.0",
-    "@noble/curves": "^2.2.4"
+    "tesseract.js": "^5.1.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@testing-library/react": "^14.1.0",
     "@vitejs/plugin-react": "^4.2.0",
+    "eslint": "^10.5.0",
+    "globals": "^17.6.0",
+    "jpeg-js": "^0.4.4",
+    "jsdom": "^24.1.3",
+    "pngjs": "^7.0.0",
     "vite": "^5.1.0",
-    "vitest": "^1.3.0",
-    "@testing-library/react": "^14.1.0"
-  }
+    "vitest": "^1.3.0"
+  },
+  "type": "module"
 }

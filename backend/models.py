@@ -1,10 +1,9 @@
 """QRed Core Data Models — frozen dataclasses with pure functions."""
 
-import json
 from dataclasses import dataclass, field
 from typing import Optional
 
-FORMAT_ID = "QRED1"
+FORMAT_ID = "QRED"
 
 
 @dataclass(frozen=True)
@@ -17,23 +16,31 @@ class QRedChunk:
     data: str = ""
 
     def encode(self) -> str:
-        """Encode chunk into the QRed seal format string."""
-        return f"{self.format_id}|{self.document_id}|{self.chunk_number}|{self.total_chunks}|{self.data}"
+        """Return an already-built QRed fragment URL or fragment payload.
+
+        Pipe-format chunk serialization has been removed, so callers must
+        provide data that is already in a supported fragment form.
+        """
+        if self.data.startswith(("http://", "https://", "QRED1?")):
+            return self.data
+        raise ValueError(f"Invalid QRed chunk data: {self.data}")
 
     @classmethod
     def decode(cls, encoded: str) -> "QRedChunk":
-        """Decode a QRed seal string back into a chunk."""
-        parts = encoded.split("|", 4)
-        if len(parts) < 5:
-            raise ValueError(f"Invalid QRed chunk format: {encoded}")
-        fmt_id, doc_id, chunk_num, total, data = parts
-        return cls(
-            format_id=fmt_id,
-            document_id=doc_id,
-            chunk_number=int(chunk_num),
-            total_chunks=int(total),
-            data=data,
-        )
+        """Decode a QRed seal string or fragment URL back into a chunk."""
+        if "#QRED1?" in encoded or encoded.startswith("QRED1?"):
+            from urllib.parse import parse_qs
+
+            fragment = encoded.split("#", 1)[1] if "#" in encoded else encoded
+            params = {key: values[0] for key, values in parse_qs(fragment[len("QRED1?"):], keep_blank_values=True).items()}
+            return cls(
+                format_id="QRED1",
+                document_id=params.get("doc", ""),
+                chunk_number=int(params.get("i", "0")),
+                total_chunks=int(params.get("n", "0")),
+                data=encoded,
+            )
+        raise ValueError(f"Invalid QRed chunk format: {encoded}")
 
 
 @dataclass
@@ -69,6 +76,12 @@ class SealGenerationResult:
     total_chunks: int = 0
     issuer: str = ""
     key_id: str = ""
+    encoding: str = "plaintext"
+    encoding_strategy: str = "automatic"
+    selected_recipe: str = "plaintext"
+    estimated_qr_count: int = 0
+    compression_savings_pct: int = 0
+    candidate_reports: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -79,4 +92,10 @@ class SealGenerationResult:
             "payload_json": self.payload_json,
             "issuer": self.issuer,
             "key_id": self.key_id,
+            "encoding": self.encoding,
+            "encoding_strategy": self.encoding_strategy,
+            "selected_recipe": self.selected_recipe,
+            "estimated_qr_count": self.estimated_qr_count,
+            "compression_savings_pct": self.compression_savings_pct,
+            "candidate_reports": self.candidate_reports,
         }

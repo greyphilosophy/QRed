@@ -90,7 +90,7 @@ def show_api_examples():
     print()
     print("  Verify seals:")
     print("  POST /api/verify")
-    print("  Body: {seals: [\"QRED1|...\", ...]}")
+    print("  Body: {seals: [\"https://qred.org/#QRED1?...\", ...]}")
     print()
     print("  Register an issuer key:")
     print("  POST /api/registry/{issuer_id}/{key_id}")

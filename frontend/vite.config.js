@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -7,12 +8,18 @@ export default defineConfig({
     port: 3000,
     proxy: {
       "/api": {
-        target: "http://localhost:8000",
+        target: process.env.VITE_API_PROXY_TARGET || "http://localhost:8190",
         changeOrigin: true,
       },
     },
   },
   build: {
     outDir: "build",
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, "index.html"),
+        verifier: resolve(__dirname, "verifier.html"),
+      },
+    },
   },
 });

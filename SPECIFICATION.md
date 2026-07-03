@@ -23,10 +23,13 @@ The payload seals contain the signed document data required to reconstruct and v
 1. Source document is provided.
 2. A canonical text representation is produced.
 3. The canonical text is digitally signed using Ed25519.
-4. The signed payload is compressed using gzip.
-5. The compressed payload is divided into fixed-size chunks.
-6. Chunks are encoded into machine-readable seals.
-7. The bootstrap seal and payload seals are placed on the document.
+4. In automatic mode, implementations SHALL evaluate all reversible supported payload candidates, currently scanner-safe hidden payloads behind the bootstrap URL and reversible recipe payloads such as `b45`.
+5. Only reversible candidates are selectable.
+6. Automatic mode SHALL choose the candidate with the smallest QR count.
+7. QR-count ties SHALL prefer scanner-safe hidden payloads behind the bootstrap URL, then recipe encodings.
+8. Explicit encoding strategies MAY request scanner-safe hidden payloads, `b45`, or additional modular recipes supported by the implementation.
+9. The chosen payload form is divided into chunks and encoded into machine-readable seals.
+10. The payload seals are placed on the document.
 
 ---
 
@@ -37,7 +40,6 @@ The payload seals contain the signed document data required to reconstruct and v
 3. Verification application scans payload seals.
 4. Payload is reconstructed from all chunks.
 5. Payload integrity is validated (all chunks present).
-6. Compressed payload is decompressed.
 7. Digital signature is verified using the issuer's public key.
 8. Certified contents are displayed.
 9. Verification result is reported.
@@ -93,7 +95,13 @@ The reference implementation encodes the payload as a JSON object:
 }
 ```
 
-The JSON is serialized with sorted keys and compact separators, then gzip-compressed and base64-encoded.
+The reference implementation stores the signed payload as JSON with sorted keys and compact separators, then automatic mode evaluates all reversible supported candidates, currently:
+
+- scanner-safe QR payloads that show only the bootstrap URL to ordinary scanners while making signed data recoverable only to a QRed-aware scanner reading the QR image,
+- reversible recipe payloads such as `b45`, and
+
+
+Only reversible candidates are selectable. Automatic mode selects the candidate with the smallest QR count. Ties prefer scanner-safe hidden payloads behind the bootstrap URL, then recipe encodings. Explicit strategies may request scanner-safe hidden payloads, `b45`, or additional modular recipes supported by the implementation.
 
 ---
 
@@ -117,21 +125,9 @@ The issuer registry validates key_id on registration: the caller-supplied key_id
 
 Payloads exceeding the capacity of a single seal SHALL be divided into chunks.
 
-The reference implementation splits the compressed base64 payload into fixed-size data chunks (200 bytes each).
+The reference implementation emits scanner-safe QR payloads that show the bootstrap URL to ordinary scanners and hide signed payload bytes in QR codewords. Ordinary camera apps deliver only the visible URL; hidden payload recovery requires a QRed-aware scanner reading the QR image itself. The implementation does not document or require an uppercase marker in the payload.
 
-Each QRed chunk is encoded as a pipe-delimited string:
-
-```
-QRED1|DOC-ABC123DEF456|0|3|<base64_gzip_data>
-```
-
-Where:
-
-- `QRED1` = format identifier
-- `DOC-ABC123DEF456` = document identifier
-- `0` = chunk number (0-indexed)
-- `3` = total chunks
-- `<base64_gzip_data>` = chunk data
+The removed compressed pipe seal format is intentionally omitted from this specification because there is no backward-compatibility requirement yet.
 
 ---
 
@@ -141,11 +137,11 @@ A QRed document SHALL contain a bootstrap seal.
 
 The bootstrap seal SHALL provide sufficient information to locate a verification application.
 
-The reference implementation uses a default bootstrap URL:
+The reference implementation uses `https://qred.org/` as the default visible bootstrap URL. Payload QR codes visibly scan as that URL in ordinary camera apps, which pass only the URL to the browser. Signed payload bytes are hidden in QR codewords after the scanner-visible terminator and are recoverable only by a QRed-aware scanner reading the QR image.
 
-```
-https://qred.org/verify/v1
-```
+`https://qred.org/verify/v1` was an obsolete draft bootstrap URL and is not the current implementation default. New generated payload QR codes SHOULD expose `https://qred.org/` as their visible scan result unless an issuer explicitly configures another bootstrap URL.
+
+The human-facing verifier route MAY also be served at `/verify.htm` (for example, `https://qred.org/verify.htm`) as a deployed verifier page. This route is distinct from the default visible bootstrap URL used for newly generated QRed payload QR codes.
 
 Future versions may support additional bootstrap mechanisms.
 
@@ -184,6 +180,13 @@ The reference implementation uses an in-memory dictionary. Production implementa
 PDF sealing layout is implementation-defined in v0.2 and may be standardized later.
 
 The reference implementation produces seal strings suitable for QR code generation. The physical arrangement of seals on the document — including position, size, and number of QR codes per page — is left to the implementer.
+
+For PDF sealing, the reference implementation seals each source page as an independently verifiable QRed payload. Before signing a page payload, it prefixes the canonical page text with integrity metadata containing:
+
+- `Page SHA256`: the SHA-256 digest of that page's canonical text.
+- `Document Merkle Root`: a Merkle-style root computed over the ordered list of page content hashes for the source PDF.
+
+The Merkle root binds all page seals from the same source PDF without embedding a document identifier or page number in the signed text. For PDF page seals, the public QRed `doc` chunk-grouping parameter is a transport namespace derived from the Merkle root, the page content hash, and a per-seal occurrence number instead of a generated document ID. A verifier or recipient can compare the roots shown by scanned page seals: pages from the same sealed PDF share a root, while a swapped-in page from another PDF exposes a different root.
 
 Future versions may standardize:
 
@@ -246,10 +249,10 @@ Compromise of an issuer's private key compromises trust in documents issued by t
 Potential future enhancements include:
 
 - Standardized PDF sealing layout
-- Multi-page document support
+- Standardized multi-page document root formats
 - Alternative seal formats
 - Standardized canonicalization
 - Offline public key distribution
 - Revocation support
 - Embedded document thumbnails
-- Merkle-tree payload structures
+- Full Merkle proof payload structures

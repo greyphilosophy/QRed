@@ -1,284 +1,65 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
-import jsQR from "jsqr";
+import React, { useEffect, useState } from "react";
+import { sealPdfInBrowser } from "./pdfClientSeal.js";
+import { QrScanner } from "./QrScanner.jsx";
 
-// ── QR Scanner Component ─────────────────────────────────────────────────
+function normalizeApiBase(value) {
+  const trimmed = (value || "/api").trim();
+  const withoutTrailingSlash = trimmed.replace(/\/+$/, "");
+  return withoutTrailingSlash || "/api";
+}
 
-function QrScanner({ onScan, scannedCount, totalExpected }) {
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const streamRef = useRef(null);
-  const [cameraActive, setCameraActive] = useState(false);
-  const [cameraError, setCameraError] = useState(null);
+const API_BASE = normalizeApiBase(import.meta.env.VITE_API_BASE_URL);
 
-  const isScanning = useRef(false);
-  const lastScanTime = useRef(0);
-  const animFrameRef = useRef(null);
+async function responseErrorMessage(response) {
+  const text = await response.text();
+  if (!text) return `${response.status} ${response.statusText}`.trim();
 
-  // Debounce: don't report scans closer than 500ms to avoid duplicates
-  const SCAN_DEBOUNCE_MS = 500;
+  try {
+    const data = JSON.parse(text);
+    return data.message || data.error || text;
+  } catch {
+    return text;
+  }
+}
 
-  const startCamera = async () => {
+function isMissingBackendOriginMessage(message) {
+  return message.includes("API-backed demo endpoints require a separate QRed backend origin")
+    || message.includes("QRED_API_ORIGIN is not configured");
+}
+
+function PdfSealForm() {
+  const [file, setFile] = useState(null);
+  const [issuer, setIssuer] = useState("QRed Demo Authority");
+  const [privateKey, setPrivateKey] = useState("");
+  const [publicKey, setPublicKey] = useState("");
+  const [message, setMessage] = useState("");
+  const [keyStatus, setKeyStatus] = useState("Loading default keys...");
+  const [loadingKeys, setLoadingKeys] = useState(false);
+  const [encodingStrategy, setEncodingStrategy] = useState("automatic");
+  const [showPrivateKey, setShowPrivateKey] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  async function loadDefaultKeys() {
+    setLoadingKeys(true);
+    setKeyStatus("Loading default keys...");
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
-      });
-      streamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-        setCameraActive(true);
-        isScanning.current = true;
-        startScanning();
+      const response = await fetch(API_BASE + "/keys/default");
+      if (!response.ok) throw new Error(await responseErrorMessage(response));
+      const keys = await response.json();
+      setPrivateKey(keys.private_key);
+      setPublicKey(keys.public_key);
+      if (keys.source === "environment" || keys.source === "worker-environment") {
+        setKeyStatus("Default keys loaded from server environment.");
+      } else if (keys.source === "worker-static-demo") {
+        setKeyStatus("Static demo keys loaded from qred.org. Configure QRED_DEFAULT_PRIVATE_KEY, QRED_DEFAULT_PUBLIC_KEY, and QRED_DEFAULT_KEY_ID on the Worker to use stable custom defaults.");
+      } else {
+        setKeyStatus("Ephemeral demo keys loaded. Set QRED_DEFAULT_PRIVATE_KEY and QRED_DEFAULT_PUBLIC_KEY on the API server to use stable defaults.");
       }
-    } catch (err) {
-      setCameraError(err.message || "Camera access needed!");
-    }
-  };
-
-  const startScanning = () => {
-    const scan = () => {
-      if (!isScanning.current || !videoRef.current || !canvasRef.current) return;
-
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const ctx = canvas.getContext("2d", { willReadFrequently: true });
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
-        const code = jsQR(imageData.data, canvas.width, canvas.height);
-        if (code && code.data.startsWith("QRED")) {
-          // Debounce: avoid reporting the same code multiple times
-          const now = Date.now();
-          if (now - lastScanTime.current >= SCAN_DEBOUNCE_MS) {
-            onScan(code.data);
-            lastScanTime.current = now;
-            navigator.vibrate?.(100);
-          }
-        }
-      }
-
-      // Continue the scan loop
-      animFrameRef.current = requestAnimationFrame(scan);
-    };
-    animFrameRef.current = requestAnimationFrame(scan);
-  };
-
-  const stopCamera = () => {
-    isScanning.current = false;
-    if (animFrameRef.current) {
-      cancelAnimationFrame(animFrameRef.current);
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    setCameraActive(false);
-  };
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      isScanning.current = false;
-      if (animFrameRef.current) {
-        cancelAnimationFrame(animFrameRef.current);
-      }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(t => t.stop());
-      }
-    };
-  }, []);
-
-  // Progress bar
-  const progressPct = totalExpected > 0 ? Math.round((scannedCount / totalExpected) * 100) : 0;
-
-  return React.createElement("div", null,
-    React.createElement("h2", { style: { marginBottom: "1rem", textAlign: "center" }}, "📷 Scan QRed Seals"),
-    React.createElement("p", { style: { textAlign: "center", color: "#64748b", marginBottom: "1rem" }},
-      scannedCount > 0
-        ? `${scannedCount} chunk${scannedCount !== 1 ? 's' : ''} scanned${totalExpected > 0 ? ` (${scannedCount}/${totalExpected})` : ''}`
-        : "Point your camera at the QR codes..."
-    ),
-
-    // Progress bar
-    totalExpected > 0 ? React.createElement("div", {
-      style: { background: "#e2e8f0", borderRadius: "999px", height: "8px", width: "100%", marginBottom: "1rem", overflow: "hidden" }
-    },
-      React.createElement("div", {
-        style: {
-          background: "#10b981",
-          height: "100%",
-          width: `${progressPct}%`,
-          transition: "width 0.3s",
-          borderRadius: "999px",
-        }
-      })
-    ) : null,
-
-    // Camera viewfinder
-    React.createElement("div", {
-      style: {
-        position: "relative",
-        width: "100%",
-        maxWidth: "400px",
-        aspectRatio: "4/3",
-        margin: "0 auto",
-        overflow: "hidden",
-        borderRadius: "12px",
-        background: "#1e293b",
-      }
-    },
-      React.createElement("video", {
-        ref: videoRef,
-        playsInline: true,
-        muted: true,
-        style: { width: "100%", height: "100%", objectFit: "cover" }
-      }),
-      React.createElement("canvas", { ref: canvasRef, style: { display: "none" } }),
-      !cameraActive && React.createElement("div", {
-        style: {
-          position: "absolute",
-          top: "50%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          color: "#94a3b0",
-          fontSize: "1.5rem",
-          textAlign: "center",
-        }
-      }, "📸 Camera view")
-    ),
-
-    cameraError && React.createElement("p", { style: { color: "#ef4444", marginTop: "1rem", textAlign: "center" }}, cameraError),
-
-    cameraActive
-      ? React.createElement("button", {
-          onClick: stopCamera,
-          style: { marginTop: "1rem", background: "#ef4444", color: "white", border: "none", padding: "0.75rem 1.5rem", borderRadius: "8px", cursor: "pointer", fontSize: "1rem", fontWeight: 600 }
-        }, "Stop Camera")
-      : React.createElement("button", {
-          onClick: startCamera,
-          style: { marginTop: "1rem", background: "#3b82f6", color: "white", border: "none", padding: "0.75rem 1.5rem", borderRadius: "8px", cursor: "pointer", fontSize: "1rem", fontWeight: 600 }
-        }, "Start Camera")
-  );
-}
-
-// ── Result Display ───────────────────────────────────────────────────────
-
-function renderResult(result) {
-  if (result.status === "SELF_SIGNED") {
-    return React.createElement("div", {
-      style: {
-        background: "#fffbeb",
-        border: "1px solid #f59e0b",
-        borderRadius: "8px",
-        padding: "1.5rem",
-      }
-    },
-      React.createElement("span", {
-        style: {
-          display: "inline-block",
-          padding: "0.25rem 0.75rem",
-          borderRadius: "999px",
-          fontSize: "0.85rem",
-          fontWeight: 600,
-          background: "#f59e0b",
-          color: "white",
-          marginBottom: "0.5rem",
-        }
-      }, "SELF_SIGNED (Integrity Verified)"),
-      React.createElement("p", { style: { color: "#d97706", fontSize: "0.8rem", marginBottom: "1rem" }},
-        "⚠️ " + (result.warning || "Issuer identity is self-signed — compare the embedded public key fingerprint against a trusted registry for full authenticity")),
-      React.createElement("p", { style: { marginBottom: "0.5rem" }},
-        React.createElement("strong", null, "Issuer: "), result.issuer),
-      React.createElement("p", { style: { marginBottom: "0.5rem" }},
-        React.createElement("strong", null, "Document ID: "), result.document_id),
-      React.createElement("p", { style: { marginBottom: "0.5rem" }},
-        React.createElement("strong", null, "Timestamp: "), new Date(result.timestamp).toLocaleString()),
-      React.createElement("div", {
-        style: { background: "#f1f5f9", borderRadius: "8px", padding: "1rem", marginTop: "1rem", whiteSpace: "pre-wrap", fontSize: "0.9rem" }
-      }, result.content)
-    );
-  }
-  if (result.status === "SELF_SIGNED_INVALID") {
-    return React.createElement("div", {
-      style: {
-        background: "#fef2f2",
-        border: "1px solid #ef4444",
-        borderRadius: "8px",
-        padding: "1.5rem",
-      }
-    },
-      React.createElement("span", {
-        style: {
-          display: "inline-block",
-          padding: "0.25rem 0.75rem",
-          borderRadius: "999px",
-          fontSize: "0.85rem",
-          fontWeight: 600,
-          background: "#ef4444",
-          color: "white",
-          marginBottom: "1rem",
-        }
-      }, "SELF_SIGNED_INVALID"),
-      React.createElement("p", { style: { color: "#d97706", fontSize: "0.8rem", marginBottom: "1rem" }},
-        "Content was reconstructed but the embedded signature did not match the embedded public key.")
-    );
-  }
-  // INCOMPLETE or ERROR
-  return React.createElement("div", {
-    style: {
-      background: result.status === "INCOMPLETE" ? "#fffbeb" : "#fef2f2",
-      border: `1px solid ${result.status === "INCOMPLETE" ? "#f59e0b" : "#ef4444"}`,
-      borderRadius: "8px",
-      padding: "1.5rem",
-    }
-  },
-    React.createElement("span", {
-      style: {
-        display: "inline-block",
-        padding: "0.25rem 0.75rem",
-        borderRadius: "999px",
-        fontSize: "0.85rem",
-        fontWeight: 600,
-        background: result.status === "INCOMPLETE" ? "#f59e0b" : "#ef4444",
-        color: "white",
-        marginBottom: "1rem",
-      }
-    }, result.status),
-    React.createElement("p", null, result.error_message || "Verification failed")
-  );
-}
-
-// ── Main App ─────────────────────────────────────────────────────────────
-
-function App() {
-  const [mode, setMode] = useState("scan");
-  const [sealInput, setSealInput] = useState("");
-  const [verificationResult, setVerificationResult] = useState(null);
-  const [error, setError] = useState(null);
-
-  // Chunk tracking: Map<docId, Map<chunkNum, sealString>>
-  const [chunks, setChunks] = useState(new Map());
-  const [totalExpected, setTotalExpected] = useState(0);
-
-  function handleScannedSeal(sealStr) {
-    const parts = sealStr.split("|");
-    if (parts.length < 5) return;
-
-    const docId = parts[1];
-    const chunkNum = parts[2];
-    const totalStr = parts[3];
-    const total = parseInt(totalStr, 10);
-
-    if (total > 0) {
-      setTotalExpected(total);
+    } catch (error) {
+      setKeyStatus(`Default key loading failed: ${error.message}`);
+    } finally {
+      setLoadingKeys(false);
     }
 
     setChunks(prev => {
@@ -295,163 +76,139 @@ function App() {
     });
   }
 
-  function getAllSeals() {
-    const seals = [];
-    for (const [docId, docChunks] of chunks) {
-      for (const seal of docChunks.values()) {
-        seals.push(seal);
-      }
+  useEffect(() => {
+    if (!privateKey || !publicKey) {
+      loadDefaultKeys();
     }
-    return seals;
-  }
+  }, []);
 
-  function getTotalScanned() {
-    let count = 0;
-    for (const [docId, docChunks] of chunks) {
-      count += docChunks.size;
+  async function sealPdf() {
+    if (!file || !issuer || !privateKey || !publicKey) {
+      setMessage("Choose a PDF and provide issuer keys before sealing.");
+      return;
     }
-    return count;
-  }
+    setLoading(true);
+    setMessage("Stamping QRed seals onto each PDF page...");
+    const form = new FormData();
+    form.append("file", file);
+    form.append("issuer", issuer);
+    form.append("private_key", privateKey);
+    form.append("public_key", publicKey);
+    form.append("bootstrap_url", "https://qred.org/");
+    form.append("encoding_strategy", encodingStrategy);
 
-  function hasCompleteDocument() {
-    for (const [docId, docChunks] of chunks) {
-      if (docChunks.size >= totalExpected && totalExpected > 0) {
-        return docId;
-      }
-    }
-    return null;
-  }
-
-  async function verifySeals(seals) {
     try {
-      setError(null);
-      const resp = await fetch("/api/verify/self-contained", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ seals }),
-      });
-      const data = await resp.json();
-
-      if (data.status === "SELF_SIGNED") {
-        setVerificationResult({
-          status: "SELF_SIGNED",
-          warning: data.warning,
-          issuer: data.issuer,
-          document_id: data.document_id,
-          timestamp: data.timestamp,
-          content: data.content,
-        });
-      } else if (data.status === "SELF_SIGNED_INVALID") {
-        setVerificationResult({
-          status: "SELF_SIGNED_INVALID",
-          warning: null,
-        });
-      } else {
-        setVerificationResult({
-          status: data.status,
-          error_message: data.error_message || "Verification failed",
-        });
+      const response = await fetch(API_BASE + "/pdf/upload-seal", { method: "POST", body: form });
+      if (!response.ok) throw new Error(await responseErrorMessage(response));
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
+      link.click();
+      URL.revokeObjectURL(url);
+      setMessage([
+        `Selected encoding: ${response.headers.get("X-QRed-Encoding") || "plaintext"}`,
+        `Selected recipe: ${response.headers.get("X-QRed-Selected-Recipe") || "plaintext"}`,
+        `Estimated QR count: ${response.headers.get("X-QRed-Estimated-QR-Count") || response.headers.get("X-QRed-Total-Seals") || "0"}`,
+        `Compression savings: ${response.headers.get("X-QRed-Compression-Savings-Pct") || "0"}%`,
+        `Document ID: ${response.headers.get("X-QRed-Document-Id")}`,
+      ].join("\n"));
+    } catch (error) {
+      if (!isMissingBackendOriginMessage(error.message)) {
+        setMessage(`PDF sealing failed: ${error.message}`);
+        return;
       }
-    } catch (err) {
-      setError(err.message);
+
+      try {
+        setMessage("Backend PDF sealing is not configured; sealing in this browser instead...");
+        const { blob, sealResult } = await sealPdfInBrowser({
+          file,
+          issuer,
+          privateKey,
+          publicKey,
+          bootstrapUrl: "https://qred.org/",
+          encodingStrategy,
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
+        link.click();
+        URL.revokeObjectURL(url);
+        setMessage([
+          `Sealed ${file.name} in this browser. Document ID: ${sealResult.document_id}`,
+          `Selected encoding: ${sealResult.encoding || encodingStrategy}`,
+          `Selected recipe: ${sealResult.selected_recipe || "plaintext"}`,
+          `Estimated QR count: ${sealResult.estimated_qr_count || sealResult.total_seals || 0}`,
+          `Compression savings: ${sealResult.compression_savings_pct || 0}%`,
+          `Document ID: ${sealResult.document_id}`,
+        ].join("\n"));
+      } catch (fallbackError) {
+        setMessage(`PDF sealing failed: ${fallbackError.message}`);
+      }
+    } finally {
+      setLoading(false);
     }
   }
 
-  function handleTextVerify() {
-    const seals = sealInput.trim().split("\n").map(s => s.trim()).filter(s => s.length > 0);
-    if (seals.length > 0) {
-      verifySeals(seals);
-    }
-  }
-
-  function clearAll() {
-    setChunks(new Map());
-    setTotalExpected(0);
-    setVerificationResult(null);
-    setError(null);
-  }
-
-  const scannedCount = getTotalScanned();
-
-  return React.createElement("div", { style: { fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif", maxWidth: "600px", margin: "0 auto", padding: "2rem 1rem" }},
-    React.createElement("h1", { style: { textAlign: "center", marginBottom: "0.5rem", fontSize: "2rem" }}, "QRed"),
-    React.createElement("p", { style: { textAlign: "center", color: "#64748b", marginBottom: "2rem" }},
-      "Tamper-evident document verification"),
-
-    // Mode tabs
-    React.createElement("div", { style: { display: "flex", gap: "0.5rem", marginBottom: "2rem" }},
-      React.createElement("button", {
-        onClick: () => setMode("scan"),
-        style: {
-          flex: 1,
-          padding: "0.75rem",
-          borderRadius: "8px",
-          border: "none",
-          background: mode === "scan" ? "#3b82f6" : "#e2e8f0",
-          color: mode === "scan" ? "white" : "#64748b",
-          cursor: "pointer",
-          fontWeight: 600,
-        }
-      }, "📷 Scan"),
-      React.createElement("button", {
-        onClick: () => setMode("text"),
-        style: {
-          flex: 1,
-          padding: "0.75rem",
-          borderRadius: "8px",
-          border: "none",
-          background: mode === "text" ? "#3b82f6" : "#e2e8f0",
-          color: mode === "text" ? "white" : "#64748b",
-          cursor: "pointer",
-          fontWeight: 600,
-        }
-      }, "📝 Paste")
+  return React.createElement("div", { className: "card" },
+    React.createElement("h2", null, "Demo: Upload and Seal a PDF"),
+    React.createElement("p", { style: { color: "#64748b", marginBottom: "1rem" }},
+      "Select a PDF, stamp every page with a verifier QR plus payload QR seals, and download the sealed copy."),
+    React.createElement("div", { className: "demo-grid" },
+      React.createElement("div", { className: "demo-input" },
+        React.createElement("label", null, "PDF file"),
+        React.createElement("input", { "aria-label": "PDF file", type: "file", accept: "application/pdf", onChange: (e) => setFile(e.target.files?.[0] || null) })
+      ),
+      React.createElement("div", { className: "demo-input" },
+        React.createElement("label", null, "Issuer"),
+        React.createElement("input", { "aria-label": "Issuer", value: issuer, onChange: (e) => setIssuer(e.target.value) })
+      ),
+      React.createElement("div", { className: "demo-input" },
+        React.createElement("label", null, "Private Key"),
+        React.createElement("input", { "aria-label": "Private Key", type: showPrivateKey ? "text" : "password", value: privateKey, onChange: (e) => setPrivateKey(e.target.value), placeholder: "Default private key", autoComplete: "off" }),
+        React.createElement("button", { type: "button", onClick: () => setShowPrivateKey((value) => !value), style: { marginTop: "0.5rem" }}, showPrivateKey ? "Hide private key" : "Show private key")
+      ),
+      React.createElement("div", { className: "demo-input" },
+        React.createElement("label", null, "Public Key"),
+        React.createElement("input", { "aria-label": "Public Key", value: publicKey, onChange: (e) => setPublicKey(e.target.value), placeholder: "Default public key" })
+      ),
+      React.createElement("div", { className: "demo-input" },
+        React.createElement("label", null, "Encoding Strategy"),
+        React.createElement("select", { "aria-label": "Encoding Strategy", value: encodingStrategy, onChange: (e) => setEncodingStrategy(e.target.value), title: "Automatic tries every reversible recipe and chooses the smallest successful encoding." },
+          React.createElement("option", { value: "automatic" }, "Automatic (recommended)"),
+          React.createElement("option", { value: "plaintext" }, "Plaintext"),
+          React.createElement("option", { value: "b45" }, "Recipe 1 – b45"),
+          React.createElement("option", { value: "brotli" }, "Brotli (when smaller)")
+        ),
+        React.createElement("small", { style: { color: "#64748b", display: "block", marginTop: "0.5rem" } },
+          "Automatic tries every reversible recipe and chooses the smallest successful encoding."
+        )
+      )
     ),
+    React.createElement("p", { style: { marginTop: "1rem", color: keyStatus.includes("failed") ? "#ef4444" : "#64748b" }}, keyStatus),
+    React.createElement("button", { onClick: loadDefaultKeys, disabled: loadingKeys, style: { marginRight: "1rem", marginTop: "1rem" }}, loadingKeys ? "Loading Default Keys..." : "Use Default Keys"),
+    React.createElement("button", { onClick: sealPdf, disabled: loading || loadingKeys, style: { marginTop: "1rem" }}, loading ? "Sealing..." : "Upload PDF and Stamp QR Seals"),
+    message && React.createElement("p", { style: { marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155" }}, message)
+  );
+}
 
-    // Scanner mode
-    mode === "scan" && React.createElement(QrScanner, {
-      onScan: handleScannedSeal,
-      scannedCount: scannedCount,
-      totalExpected: totalExpected,
-    }),
+function App() {
+  const [showPdfStampTool, setShowPdfStampTool] = useState(false);
 
-    // Text mode
-    mode === "text" && React.createElement("div", { style: { background: "white", borderRadius: "12px", padding: "1.5rem", marginBottom: "1.5rem", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" }},
-      React.createElement("h2", { style: { marginBottom: "1rem" }}, "Paste QRed Seals"),
-      React.createElement("textarea", {
-        value: sealInput,
-        onChange: (e) => setSealInput(e.target.value),
-        placeholder: "Paste QRed seal strings here...\nOne per line.",
-        style: { width: "100%", minHeight: "120px", border: "2px solid #e2e8f0", borderRadius: "8px", padding: "0.75rem", fontFamily: "monospace", fontSize: "0.9rem", resize: "vertical", marginBottom: "1rem" }
-      }),
-      React.createElement("button", {
-        onClick: handleTextVerify,
-        style: { background: "#3b82f6", color: "white", border: "none", padding: "0.75rem 1.5rem", borderRadius: "8px", cursor: "pointer", fontSize: "1rem", fontWeight: 600 }
-      }, "Verify")
-    ),
-
-    // Scan status
-    scannedCount > 0 && React.createElement("div", {
-      style: { background: "#f1f5f9", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }
-    },
-      React.createElement("p", null, `${scannedCount} seal${scannedCount !== 1 ? 's' : ''} scanned`),
-      totalExpected > 0 ? React.createElement("p", { style: { color: scannedCount >= totalExpected ? "#10b981" : "#f59e0b" }},
-        scannedCount >= totalExpected
-          ? "✓ All chunks collected"
-          : `${scannedCount} / ${totalExpected} chunks`
-      ) : null,
-      React.createElement("button", {
-        onClick: clearAll,
-        style: { marginTop: "0.5rem", background: "#e2e8f0", color: "#64748b", border: "none", padding: "0.5rem 1rem", borderRadius: "8px", cursor: "pointer", fontSize: "0.85rem" }
-      }, "Clear Scans")
-    ),
-
-    // Verification result
-    verificationResult ? renderResult(verificationResult) : null,
-    error && React.createElement("p", { style: { color: "#ef4444", textAlign: "center" }}, error),
-
-    React.createElement("p", { style: { textAlign: "center", marginTop: "2rem", fontSize: "0.85rem", color: "#64748b" }},
-      "Powered by QRed · Ed25519")
+  return React.createElement("main", { className: "homepage" },
+    React.createElement(QrScanner, { onOpenPdfStampTool: () => setShowPdfStampTool(true) }),
+    showPdfStampTool && React.createElement("section", { className: "pdf-stamp-tool", id: "pdf-stamp-tool" },
+      React.createElement("div", { className: "tool-header" },
+        React.createElement("div", null,
+          React.createElement("p", { className: "eyebrow" }, "PDF stamping tool"),
+          React.createElement("h2", null, "Stamp a PDF with QRed seals")
+        ),
+        React.createElement("button", { className: "tool-close", onClick: () => setShowPdfStampTool(false), type: "button" }, "Close")
+      ),
+      React.createElement(PdfSealForm)
+    )
   );
 }
 
