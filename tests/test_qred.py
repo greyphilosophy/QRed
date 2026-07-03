@@ -590,12 +590,15 @@ def test_api_returns_422_on_missing_fields():
     assert response.status_code == 422
 
 
-def test_api_verify_public_key_optional():
-    """Given a POST to /api/verify without public_key, when sent, then 200 (uses embedded key)"""
-    # The public_key field is now optional — if omitted, the payload's embedded key is used
-    # Sending with empty string should succeed for self-contained verification
+def test_api_verify_requires_non_empty_public_key():
+    """Given a POST to /api/verify with empty public_key, when sent, then 422"""
     response = client.post("/api/verify", json={"seals": ["garbage"], "public_key": ""})
-    assert response.status_code == 200
+    assert response.status_code == 422
+
+def test_api_verify_requires_public_key():
+    """Given a POST to /api/verify without public_key, when sent, then 422"""
+    response = client.post("/api/verify", json={"seals": ["garbage"]})
+    assert response.status_code == 422
 
 
 def test_ed25519_keypair_generation():

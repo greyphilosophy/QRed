@@ -15,9 +15,17 @@ router = APIRouter()
 
 
 class VerifyRequest(BaseModel):
-    """Request body for trusted verification."""
+    """Request body for trusted verification — public_key is required."""
     seals: list[str] = Field(..., min_length=1, description="QRed seal strings")
-    public_key: str = Field(..., description="Issuer's Ed25519 public key (from trusted registry)")
+    public_key: str = Field(..., min_length=1, description="Issuer's Ed25519 public key (from trusted registry)")
+
+
+class SelfContainedVerifyRequest(BaseModel):
+    """Request body for self-contained (embedded-key) verification.
+    
+    Only requires seals — the embedded public key in the payload is used.
+    """
+    seals: list[str] = Field(..., min_length=1, description="QRed seal strings")
 
 
 class VerifyResponse(BaseModel):
@@ -65,7 +73,7 @@ def verify_seals(request: VerifyRequest) -> VerifyResponse:
 
 
 @router.post("/verify/self-contained", response_model=SelfContainedVerifyResponse)
-def verify_self_contained(request: VerifyRequest) -> SelfContainedVerifyResponse:
+def verify_self_contained(request: SelfContainedVerifyRequest) -> SelfContainedVerifyResponse:
     """Verify QRed seals using the embedded public key (self-signed integrity).
     
     This endpoint uses the public_key embedded in the payload rather than a
@@ -77,7 +85,6 @@ def verify_self_contained(request: VerifyRequest) -> SelfContainedVerifyResponse
     expensive. For full trust, compare the embedded key fingerprint against
     a trusted registry result.
     """
-    # Use empty string to trigger embedded-key verification
     result = reconstruct_and_verify(request.seals, "")
     
     status_map = {
