@@ -1,8 +1,9 @@
 """QRed Verification API routes.
 
-Accepts QRed seal strings and optionally the issuer's public key. 
-If no public key is provided, the payload's embedded public_key is used
-(self-contained verification — ideal for mobile where round-trips are expensive).
+Accepts QRed seal strings and the issuer's public key (required for trusted
+verification). Also provides a self-contained verification endpoint that uses
+the payload's embedded public_key, explicitly labeling the result as SELF_SIGNED
+to distinguish it from registry-trusted verification.
 """
 
 from fastapi import APIRouter
@@ -14,9 +15,9 @@ router = APIRouter()
 
 
 class VerifyRequest(BaseModel):
-    """Request body for verifying QRed seals."""
+    """Request body for trusted verification."""
     seals: list[str] = Field(..., min_length=1, description="QRed seal strings")
-    public_key: str = Field("", description="Issuer's Ed25519 public key (optional — embedded key used if absent)")
+    public_key: str = Field(..., description="Issuer's Ed25519 public key (from trusted registry)")
 
 
 class VerifyResponse(BaseModel):
@@ -29,16 +30,30 @@ class VerifyResponse(BaseModel):
     content: str = ""
 
 
+class SelfContainedVerifyResponse(BaseModel):
+    """Response for self-contained (embedded-key) verification.
+    
+    Status is SELF_SIGNED to indicate that integrity is verified but the issuer
+    identity is only as trustworthy as the embedded public key.
+    """
+    status: str
+    verification_method: str = "self_signed"
+    document_id: str = ""
+    error_message: str = ""
+    issuer: str = ""
+    timestamp: str = ""
+    content: str = ""
+    warning: str = "Issuer identity is self-signed — pin to a trusted key fingerprint for full authenticity"
+
+
 @router.post("/verify", response_model=VerifyResponse)
 def verify_seals(request: VerifyRequest) -> VerifyResponse:
-    """Verify QRed seals.
+    """Verify QRed seals using a trusted issuer public key.
 
-    If public_key is provided, it overrides the embedded key.
-    If omitted, the verifier uses the public_key embedded in the payload
-    (self-contained verification, optimized for mobile).
+    This is the primary verification endpoint. The public key should be obtained
+    from a trusted issuer key registry matching the issuer_id in the payload.
     """
-    pk = request.public_key if request.public_key else None
-    result = reconstruct_and_verify(request.seals, pk)
+    result = reconstruct_and_verify(request.seals, request.public_key)
     return VerifyResponse(
         status=result.get("status", "ERROR"),
         document_id=result.get("document_id", ""),
@@ -46,4 +61,44 @@ def verify_seals(request: VerifyRequest) -> VerifyResponse:
         issuer=result.get("issuer", ""),
         timestamp=result.get("timestamp", ""),
         content=result.get("content", ""),
+    )
+
+
+@router.post("/verify/self-contained", response_model=SelfContainedVerifyResponse)
+def verify_self_contained(request: VerifyRequest) -> SelfContainedVerifyResponse:
+    """Verify QRed seals using the embedded public key (self-signed integrity).
+    
+    This endpoint uses the public_key embedded in the payload rather than a
+    trusted registry lookup. The result is labeled SELF_SIGNED to indicate
+    that content integrity is verified but issuer authenticity depends on
+    pinning the embedded key fingerprint.
+    
+    Use this for mobile/offline verification where a registry round-trip is
+    expensive. For full trust, compare the embedded key fingerprint against
+    a trusted registry result.
+    """
+    # Use empty string to trigger embedded-key verification
+    result = reconstruct_and_verify(request.seals, "")
+    
+    status_map = {
+        "VALID": "SELF_SIGNED",
+        "INVALID": "SELF_SIGNED_INVALID",
+        "INCOMPLETE": "SELF_SIGNED_INCOMPLETE",
+        "ERROR": "ERROR",
+    }
+    mapped_status = status_map.get(result.get("status"), "ERROR")
+    
+    warning = ""
+    if mapped_status.startswith("SELF_SIGNED"):
+        warning = "Issuer identity is self-signed — compare the embedded public key fingerprint against a trusted registry for full authenticity"
+    
+    return SelfContainedVerifyResponse(
+        status=mapped_status,
+        verification_method="self_signed",
+        document_id=result.get("document_id", ""),
+        error_message=result.get("error_message", ""),
+        issuer=result.get("issuer", ""),
+        timestamp=result.get("timestamp", ""),
+        content=result.get("content", ""),
+        warning=warning,
     )
