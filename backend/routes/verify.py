@@ -1,8 +1,8 @@
 """QRed Verification API routes.
 
-Accepts QRed seal strings and the issuer's public key (obtained from a trusted
-issuer registry), reconstructs the payload, verifies the Ed25519 signature,
-and returns the verification result.
+Accepts QRed seal strings and optionally the issuer's public key. 
+If no public key is provided, the payload's embedded public_key is used
+(self-contained verification — ideal for mobile where round-trips are expensive).
 """
 
 from fastapi import APIRouter
@@ -16,7 +16,7 @@ router = APIRouter()
 class VerifyRequest(BaseModel):
     """Request body for verifying QRed seals."""
     seals: list[str] = Field(..., min_length=1, description="QRed seal strings")
-    public_key: str = Field(..., description="Issuer's Ed25519 public key (from trusted registry)")
+    public_key: str = Field("", description="Issuer's Ed25519 public key (optional — embedded key used if absent)")
 
 
 class VerifyResponse(BaseModel):
@@ -31,12 +31,14 @@ class VerifyResponse(BaseModel):
 
 @router.post("/verify", response_model=VerifyResponse)
 def verify_seals(request: VerifyRequest) -> VerifyResponse:
-    """Verify QRed seals using the issuer's public key.
+    """Verify QRed seals.
 
-    The public key should be obtained from a trusted issuer key registry
-    matching the issuer_id in the payload.
+    If public_key is provided, it overrides the embedded key.
+    If omitted, the verifier uses the public_key embedded in the payload
+    (self-contained verification, optimized for mobile).
     """
-    result = reconstruct_and_verify(request.seals, request.public_key or None)
+    pk = request.public_key if request.public_key else None
+    result = reconstruct_and_verify(request.seals, pk)
     return VerifyResponse(
         status=result.get("status", "ERROR"),
         document_id=result.get("document_id", ""),

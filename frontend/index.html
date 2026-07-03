@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#f8fafc" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <title>QRed — Document Verifier</title>
     <style>
       :root {
@@ -14,15 +17,26 @@
         --color-card: #ffffff;
         --color-text: #1e293b;
         --color-text-secondary: #64748b;
+        --safe-top: env(safe-area-inset-top);
+        --safe-bottom: env(safe-area-inset-bottom);
       }
 
       * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      html {
+        -webkit-text-size-adjust: 100%;
+        -webkit-tap-highlight-color: transparent;
+      }
 
       body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         background: var(--color-bg);
         color: var(--color-text);
         min-height: 100vh;
+        min-height: -webkit-fill-available;
+        padding-bottom: var(--safe-bottom);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
       }
 
       .container {
@@ -71,10 +85,13 @@
         cursor: pointer;
         font-size: 1rem;
         font-weight: 600;
-        transition: background 0.2s;
+        transition: background 0.2s, transform 0.1s;
+        -webkit-tap-highlight-color: transparent;
       }
 
       button:hover { background: #2563eb; }
+      button:active { transform: scale(0.97); }
+      button:disabled { opacity: 0.6; cursor: not-a-mouse; }
 
       .result { display: none; }
       .result.valid {
@@ -184,6 +201,106 @@
         margin-top: 2rem;
         font-size: 0.85rem;
         color: var(--color-text-secondary);
+      }
+
+      /* ── Mobile-specific optimizations ─────────────────────────────── */
+
+      /* Touch targets: minimum 48px height for thumb tapping */
+      button, .status-badge {
+        min-height: 48px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      /* Camera viewfinder: landscape orientation hint */
+      .camera-viewfinder {
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      }
+
+      /* Scan progress bar animation */
+      @keyframes scan-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.6; }
+      }
+
+      .scanning-indicator {
+        animation: scan-pulse 1.5s ease-in-out infinite;
+      }
+
+      /* Chunk progress grid (visual dots) */
+      .chunk-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: center;
+        margin: 1rem 0;
+      }
+
+      .chunk-dot {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        font-weight: 600;
+        transition: all 0.3s;
+      }
+
+      .chunk-dot.scanned {
+        background: var(--color-success);
+        color: white;
+        transform: scale(1.1);
+      }
+
+      .chunk-dot.pending {
+        background: #e2e8f0;
+        color: var(--color-text-secondary);
+      }
+
+      /* Responsive: stack demo grid on small screens */
+      @media (max-width: 480px) {
+        .container {
+          padding: 1rem 0.75rem;
+        }
+
+        h1 { font-size: 1.5rem; }
+
+        .card {
+          padding: 1rem;
+          border-radius: 8px;
+        }
+
+        .demo-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .result { padding: 1rem; }
+        .content-box { padding: 0.75rem; }
+
+        /* Larger tap targets on mobile */
+        button {
+          padding: 1rem 1.5rem;
+          font-size: 1.1rem;
+        }
+      }
+
+      /* Dark mode (for mobile users who prefer it) */
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --color-bg: #0f172a;
+          --color-card: #1e293b;
+          --color-text: #f8fafc;
+          --color-text-secondary: #94a3b0;
+        }
+
+        textarea { background: #1e293b; color: #f8fafc; border-color: #334155; }
+        .content-box { background: #334155; color: #f8fafc; }
+        .chunk-dot.pending { background: #334155; color: #94a3b0; }
       }
     </style>
   </head>

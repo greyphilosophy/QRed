@@ -1,8 +1,8 @@
 {
   "name": "qred-frontend",
   "private": true,
-  "version": "0.1.0",
-  "description": "QRed Verifier - Web-based QR document verification",
+  "version": "0.2.0",
+  "description": "QRed Verifier - Web-based QR document verification with mobile camera scanning",
   "scripts": {
     "start": "vite",
     "build": "vite build",
@@ -14,7 +14,8 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "qrcode": "^1.5.0",
-    "jsqr": "^1.4.0"
+    "jsqr": "^1.4.0",
+    "@noble/curves": "^2.2.4"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.0",

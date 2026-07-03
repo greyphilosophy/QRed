@@ -51,8 +51,45 @@ def decompress_payload(compressed_str: str) -> str:
     return decompressed.decode("utf-8")
 
 
-def split_into_chunks(data: str, chunk_size: int = 200) -> list[str]:
-    """Split compressed payload data into fixed-size chunks."""
+# QR Code character capacity by version (Error Correction Level M)
+# Higher capacity = larger physical QR code, but fewer codes to scan
+QR_CAPACITY_BY_VERSION = {
+    1: 255,     # 21x21 modules — very small (~2cm printed)
+    5: 530,     # 45x45 modules — comfortable mobile scan
+    10: 889,    # 77x77 modules — larger, fewer codes (optimal for mobile)
+    14: 1405,   # 105x105 modules — largest practical single QR
+    20: 1965,   # 143x143 modules — max practical for mobile cameras
+}
+
+# Default chunk size: targets QR Version 10 (~889 chars)
+# This balances physical size with scan count for mobile users
+DEFAULT_CHUNK_SIZE = 889
+
+
+def estimate_qr_version(data_len: int) -> int:
+    """Estimate the QR Code version needed for a given data length.
+    Returns the minimum version number (1-40) to hold the data at EC Level M.
+    """
+    if data_len <= 255:
+        return 1
+    elif data_len <= 530:
+        return 5
+    elif data_len <= 889:
+        return 10
+    elif data_len <= 1405:
+        return 14
+    elif data_len <= 1965:
+        return 20
+    else:
+        return 20  # cap at version 20 for practical mobile scanning
+
+
+def split_into_chunks(data: str, chunk_size: int = DEFAULT_CHUNK_SIZE) -> list[str]:
+    """Split compressed payload data into fixed-size chunks.
+    
+    Default chunk_size of 889 bytes targets QR Version 10, giving
+    3-4 scans per typical document instead of 8-15 at the old 200-byte default.
+    """
     chunks = []
     total_chunks = max(1, (len(data) + chunk_size - 1) // chunk_size)
     for i in range(total_chunks):
@@ -98,11 +135,12 @@ def create_seals(
     # Sign with Ed25519
     signature = sign(canonical, private_key)
 
-    # Build payload with key_id (not public_key)
+    # Build payload WITH embedded public key for client-side verification
     timestamp = datetime.now(timezone.utc).isoformat()
     payload = {
         "version": "1",
         "issuer": issuer,
+        "public_key": public_key,
         "key_id": key_id,
         "document_id": document_id,
         "timestamp": timestamp,

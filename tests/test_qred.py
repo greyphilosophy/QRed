@@ -21,6 +21,7 @@ from backend.services.sealer import (
     canonicalize_text,
     compress_payload,
     decompress_payload,
+    estimate_qr_version,
     generate_document_id,
     split_into_chunks,
 )
@@ -525,6 +526,43 @@ def test_split_into_chunks_reconstructs():
     assert "".join(chunks) == data
 
 
+def test_split_into_chunks_default_is_mobile_optimized():
+    """Given default chunk_size, when splitting, then it targets QR v10 capacity"""
+    data = "x" * 5000
+    chunks = split_into_chunks(data)  # uses DEFAULT_CHUNK_SIZE = 889
+    assert len(chunks) == 6  # ceil(5000 / 889) = 6
+    assert "".join(chunks) == data
+
+
+def test_split_into_chunks_default_fewer_than_old_200_byte_default():
+    """Given same data, when using new default vs old 200-byte, then fewer chunks"""
+    data = "x" * 3000
+    old_chunks = split_into_chunks(data, chunk_size=200)
+    new_chunks = split_into_chunks(data, chunk_size=889)
+    assert len(new_chunks) < len(old_chunks)
+
+
+def test_estimate_qr_version_small():
+    """Given 100 bytes of data, when estimating QR version, then returns 1"""
+    assert estimate_qr_version(100) == 1
+
+def test_estimate_qr_version_medium():
+    """Given 500 bytes of data, when estimating QR version, then returns 5"""
+    assert estimate_qr_version(500) == 5
+
+def test_estimate_qr_version_large():
+    """Given 889 bytes of data, when estimating QR version, then returns 10"""
+    assert estimate_qr_version(889) == 10
+
+def test_estimate_qr_version_very_large():
+    """Given 1405 bytes of data, when estimating QR version, then returns 14"""
+    assert estimate_qr_version(1405) == 14
+
+def test_estimate_qr_version_max():
+    """Given 2000 bytes of data, when estimating QR version, then caps at 20"""
+    assert estimate_qr_version(2000) == 20
+
+
 def test_generate_document_id():
     """When generating a document ID, then it is non-empty and unique"""
     a, b = generate_document_id(), generate_document_id()
@@ -552,10 +590,12 @@ def test_api_returns_422_on_missing_fields():
     assert response.status_code == 422
 
 
-def test_api_verify_requires_public_key():
-    """Given a POST to /api/verify without public_key, when sent, then 422"""
-    response = client.post("/api/verify", json={"seals": ["garbage"]})
-    assert response.status_code == 422
+def test_api_verify_public_key_optional():
+    """Given a POST to /api/verify without public_key, when sent, then 200 (uses embedded key)"""
+    # The public_key field is now optional — if omitted, the payload's embedded key is used
+    # Sending with empty string should succeed for self-contained verification
+    response = client.post("/api/verify", json={"seals": ["garbage"], "public_key": ""})
+    assert response.status_code == 200
 
 
 def test_ed25519_keypair_generation():
