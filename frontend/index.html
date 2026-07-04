@@ -3,6 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#3b82f6" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="#3b82f6" />
     <title>QRed — Document Verifier</title>
     <style>
       :root {
@@ -121,6 +125,12 @@
       .ar-reticle span:nth-child(2) { border-width: 4px 4px 0 0; right: 0; top: 0; }
       .ar-reticle span:nth-child(3) { border-width: 0 0 4px 4px; bottom: 0; left: 0; }
       .ar-reticle span:nth-child(4) { border-width: 0 4px 4px 0; bottom: 0; right: 0; }
+
+      .ar-reticle-live { animation: reticle-pulse 3s ease-in-out infinite; }
+      @keyframes reticle-pulse {
+        0%, 100% { opacity: 0.6; transform: translateX(-50%) scale(1); }
+        50%      { opacity: 1;   transform: translateX(-50%) scale(1.05); }
+      }
 
       .ar-controls {
         backdrop-filter: blur(18px);

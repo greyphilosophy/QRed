@@ -1,0 +1,11 @@
+{
+  "name": "QRed — Document Verifier",
+  "short_name": "QRed",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#3b82f6",
+  "orientation": "portrait-primary",
+  "categories": ["utilities"],
+  "description": "Scan and verify QRed document seals with your camera"
+}
