@@ -96,8 +96,8 @@ function ResultPanel({ scannedText }) {
 export const QR_CAMERA_CONSTRAINTS = {
   video: {
     facingMode: { ideal: "environment" },
-    width: { ideal: 1920 },
-    height: { ideal: 1080 },
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
   },
 };
 
@@ -196,6 +196,17 @@ export function manualCapturePendingAction(startedAt, now = performance.now()) {
   };
 }
 
+// ROI cropping: only decode the center 50% of the frame for jsQR
+const ROI_FACTOR = 0.5;
+
+function getROICropRegion(videoWidth, videoHeight) {
+  const roiW = Math.floor(videoWidth * ROI_FACTOR);
+  const roiH = Math.floor(videoHeight * ROI_FACTOR);
+  const x = Math.floor((videoWidth - roiW) / 2);
+  const y = Math.floor((videoHeight - roiH) / 2);
+  return { x, y, width: roiW, height: roiH };
+}
+
 export function decodeCanvasFrame(video, canvas, options = {}) {
   const manual = Boolean(options.manual);
   if (!isCameraFrameReady(video, canvas)) {
@@ -205,29 +216,41 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return { status: "continue" };
 
-  if (video.videoWidth && video.videoHeight && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-  }
-  if (!canvas.width || !canvas.height) return { status: "continue" };
+  const vWidth = video.videoWidth;
+  const vHeight = video.videoHeight;
 
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const code = jsQR(imageData.data, canvas.width, canvas.height, { inversionAttempts: "attemptBoth" });
-
-  if (manual && !code?.data) {
-    return { status: "feedback", message: "No QR code found in this photo. Center a QR seal in the frame and try again." };
+  // Cache canvas dimensions — only resize when video dimensions actually change
+  const canvasNeedResize = canvas.width !== vWidth || canvas.height !== vHeight;
+  if (canvasNeedResize) {
+    canvas.width = vWidth;
+    canvas.height = vHeight;
   }
-  if (manual && (code.data === VISIBLE_QR_TEXT || code.data.includes("QRED1") || code.data.includes("qred.org"))) {
-    const hiddenPayload = extractHiddenQRedPayloadFromImage(imageData.data, canvas.width, canvas.height, code);
-    if (!hiddenPayload || hiddenPayload === VISIBLE_QR_TEXT) {
-      if (code.data !== VISIBLE_QR_TEXT) return { status: "found", text: qredTextFromScanResult(code) };
-      return { status: "feedback", message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again." };
+
+  // Draw only the ROI crop for performance (center 50%)
+  const roi = getROICropRegion(vWidth, vHeight);
+  ctx.drawImage(video, roi.x, roi.y, roi.width, roi.height, 0, 0, roi.width, roi.height);
+
+  // Decode the ROI region for jsQR
+  if (roi.width > 0 && roi.height > 0) {
+    const imageData = ctx.getImageData(0, 0, roi.width, roi.height);
+    const code = jsQR(imageData.data, roi.width, roi.height, { inversionAttempts: "attemptBoth" });
+
+    if (manual && !code?.data) {
+      return { status: "feedback", message: "No QR code found in this photo. Center a QR seal in the frame and try again." };
     }
-    return { status: "found", text: hiddenPayload };
+    if (manual && (code.data === VISIBLE_QR_TEXT || code.data.includes("QRED1") || code.data.includes("qred.org"))) {
+      const hiddenPayload = extractHiddenQRedPayloadFromImage(imageData.data, roi.width, roi.height, code);
+      if (!hiddenPayload || hiddenPayload === VISIBLE_QR_TEXT) {
+        if (code.data !== VISIBLE_QR_TEXT) return { status: "found", text: qredTextFromScanResult(code) };
+        return { status: "feedback", message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again." };
+      }
+      return { status: "found", text: hiddenPayload };
+    }
+
+    return qrScanAction(imageData.data, roi.width, roi.height, code);
   }
 
-  return qrScanAction(imageData.data, canvas.width, canvas.height, code);
+  return { status: "continue" };
 }
 
 function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
@@ -242,6 +265,8 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
   const [error, setError] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const [cameraReady, setCameraReady] = useState(false);
+  // Adaptive scan rate tracking
+  const lastScanTimeRef = useRef(0);
 
   function markCameraReady(ready) {
     if (cameraReadyRef.current === ready) return;
@@ -293,6 +318,15 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
     function scanFrame() {
       if (stopped) return;
 
+      // Throttle: gate at the top so we don't decode more than ~8fps
+      const now = performance.now();
+      const MIN_FRAME_INTERVAL_MS = 125;
+      const nextFrameTime = lastScanTimeRef.current + MIN_FRAME_INTERVAL_MS;
+      if (now < nextFrameTime) {
+        setTimeout(scanFrame, nextFrameTime - now);
+        return;
+      }
+
       const video = videoRef.current;
       const canvas = canvasRef.current;
       const frameReady = isCameraFrameReady(video, canvas);
@@ -310,6 +344,7 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
       }
       if (handleScanActionRef.current(scanAction)) return;
 
+      lastScanTimeRef.current = now;
       animId = requestAnimationFrame(scanFrame);
     }
 

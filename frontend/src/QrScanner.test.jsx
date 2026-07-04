@@ -8,12 +8,12 @@ import { applyCameraQualityControls, applyContinuousCameraFocus, decodeCanvasFra
 vi.mock("jsqr", () => ({ default: vi.fn() }));
 
 describe("QrScanner camera controls", () => {
-  it("requests the rear camera at a high ideal resolution", () => {
+  it("requests the rear camera at an efficient resolution for mobile scanning", () => {
     expect(QR_CAMERA_CONSTRAINTS).toEqual({
       video: {
         facingMode: { ideal: "environment" },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
       },
     });
   });
@@ -341,7 +341,8 @@ describe("decodeCanvasFrame", () => {
     vi.mocked(jsQR).mockReturnValue({ data: "https://example.test" });
 
     expect(decodeCanvasFrame(video, canvas)).toEqual({ status: "found", text: "https://example.test" });
-    expect(ctx.drawImage).toHaveBeenCalledWith(video, 0, 0, 320, 240);
+    // ROI crop: center 50% of 320x240 → draw from video(80,60) at 160x120 onto canvas(0,0)
+    expect(ctx.drawImage).toHaveBeenCalledWith(video, 80, 60, 160, 120, 0, 0, 160, 120);
   });
 
   it("gives manual photo feedback when no QR is found", () => {
