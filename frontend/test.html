@@ -178,9 +178,6 @@ const QR_MODULE_COUNT_BY_VERSION = [
   157, 161, 165, 169, 173, 177, 181
 ];
 
-// ── EC level names ──
-const EC_LEVEL_NAME = ['L', 'M', 'Q', 'H'];
-
 // ── QRed hidden payload extraction ──
 // These functions mirror the logic in qredVerifier.js
 
@@ -248,11 +245,14 @@ function detectQRCodeFromImage(imgElement) {
   ctx.drawImage(imgElement, 0, 0);
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-  // Try normal
-  let code = jsQR(imageData.data, imageData.width, imageData.height, {
+  return jsQR(imageData.data, imageData.width, imageData.height, {
     inversionAttempts: 'attemptBoth'
   });
-  return code;
+}
+
+// ── HTML escaping ──
+function escapeHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ── Result rendering ──
@@ -260,42 +260,31 @@ function renderResultCard(file, code, imgElement, error) {
   const card = document.createElement('div');
   card.className = 'result-card';
 
-  if (error) {
+  // Safe image dimensions (handles imgElement == null on error path)
+  const imgWidth = imgElement?.naturalWidth || imgElement?.width || '—';
+  const imgHeight = imgElement?.naturalHeight || imgHeight?.height || '—';
+
+  // Error / no QR code detected — show safe preview
+  if (error || !code) {
     card.classList.add('error');
     card.innerHTML = `
       <h3>⚠️ No QR code detected</h3>
       <img class="preview-img" src="${URL.createObjectURL(file)}" alt="Photo preview">
       <div class="detail-grid">
-        <span class="label">File</span><span class="value">${file.name}</span>
+        <span class="label">File</span><span class="value">${escapeHtml(file.name)}</span>
         <span class="label">Size</span><span class="value">${(file.size / 1024).toFixed(1)} KB</span>
-        <span class="label">Dimensions</span><span class="value">${imgElement.naturalWidth || '—'} × ${imgElement.naturalHeight || '—'}</span>
-        <span class="label">Status</span><span class="value" style="color: #ef4444;">Unreadable</span>
+        <span class="label">Dimensions</span><span class="value">${imgWidth} × ${imgHeight}</span>
       </div>
     `;
     return card;
-  }
+}
 
-  if (!code) {
-    card.classList.add('error');
-    card.innerHTML = `
-      <h3>⚠️ No QR code detected</h3>
-      <img class="preview-img" src="${URL.createObjectURL(file)}" alt="Photo preview">
-      <div class="detail-grid">
-        <span class="label">File</span><span class="value">${file.name}</span>
-        <span class="label">Size</span><span class="value">${(file.size / 1024).toFixed(1)} KB</span>
-        <span class="label">Dimensions</span><span class="value">${imgElement.naturalWidth || '—'} × ${imgElement.naturalHeight || '—'}</span>
-      </div>
-    `;
-    return card;
-  }
-
-  // Successfully decoded QR code
+  // Successfully decoded QR code — use only jsQR documented return keys:
+  //   binaryData, data, chunks, version, location
   card.classList.add('success');
 
   const version = code.version || '—';
   const moduleCount = version !== '—' ? QR_MODULE_COUNT_BY_VERSION[version] : '—';
-  const ecLevel = EC_LEVEL_NAME[code.errorCorrectionBits] || '—';
-  const dataMode = code.mode || '—';
 
   // Check if this looks like a QRed QR
   const looksLikeQRed = code.data === VISIBLE_QR_TEXT || code.data.includes('QRED1') || code.data.includes('qred.org');
@@ -342,17 +331,26 @@ function renderResultCard(file, code, imgElement, error) {
     `;
   }
 
+  // Show scanable location info from jsQR
+  let locationSection = '';
+  if (code.location) {
+    const tl = code.location.topLeftCorner;
+    const br = code.location.bottomRightCorner;
+    locationSection = `
+      <span class="label">Detected in</span><span class="value">(${Math.round(tl.x)}, ${Math.round(tl.y)}) → (${Math.round(br.x)}, ${Math.round(br.y)})</span>
+    `;
+  }
+
   card.innerHTML = `
     <h3>✅ QR Code Decoded</h3>
     <img class="preview-img" src="${URL.createObjectURL(file)}" alt="Photo preview">
     <div class="detail-grid">
-      <span class="label">File</span><span class="value">${file.name}</span>
+      <span class="label">File</span><span class="value">${escapeHtml(file.name)}</span>
       <span class="label">Visible text</span><span class="value" style="color: var(--primary);">${escapeHtml(code.data)}</span>
       <span class="label">QR Version</span><span class="value">${version}</span>
       <span class="label">Module count</span><span class="value">${moduleCount} × ${moduleCount}</span>
-      <span class="label">Error correction</span><span class="value">${ecLevel}</span>
-      <span class="label">Data mode</span><span class="value">${dataMode}</span>
       <span class="label">Raw binary bytes</span><span class="value">${code.binaryData ? code.binaryData.length : 0}</span>
+      ${locationSection}
       <span class="label">QRed indicator</span><span class="value">${looksLikeQRed ? '<span class="badge badge-success">Yes</span>' : '<span class="badge badge-info">No</span>'}</span>
     </div>
     ${hiddenSection}
@@ -360,10 +358,6 @@ function renderResultCard(file, code, imgElement, error) {
   `;
 
   return card;
-}
-
-function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ── File processing ──
