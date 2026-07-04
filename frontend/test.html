@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QRed — QR Photo Analyzer</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --primary: #3b82f6;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --text: #f8fafc;
+    --text-dim: #94a3b8;
+    --radius: 12px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    padding: 1.5rem 2rem;
+    text-align: center;
+    border-bottom: 1px solid #334155;
+    background: var(--surface);
+  }
+  header h1 { font-size: 1.5rem; font-weight: 700; }
+  header p { color: var(--text-dim); font-size: 0.9rem; margin-top: 0.25rem; }
+  main {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 2rem;
+  }
+  .upload-zone {
+    border: 2px dashed #334155;
+    border-radius: var(--radius);
+    padding: 3rem 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .upload-zone:hover, .upload-zone.dragover {
+    border-color: var(--primary);
+    background: rgba(59, 130, 246, 0.05);
+  }
+  .upload-zone .icon { font-size: 3rem; opacity: 0.5; }
+  .upload-zone p { margin-top: 0.5rem; color: var(--text-dim); }
+  .upload-zone .hint { font-size: 0.8rem; margin-top: 0.25rem; color: var(--text-dim); opacity: 0.7; }
+  #fileInput { display: none; }
+  .results { margin-top: 2rem; }
+  .result-card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    border: 1px solid #334155;
+  }
+  .result-card.error { border-color: #ef4444; }
+  .result-card h3 {
+    font-size: 1.1rem;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .result-card.error h3 { color: #ef4444; }
+  .result-card.success h3 { color: var(--success); }
+  .result-card.info h3 { color: var(--primary); }
+  .detail-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.5rem 1rem;
+    font-size: 0.9rem;
+  }
+  .detail-grid .label {
+    color: var(--text-dim);
+    text-align: right;
+  }
+  .detail-grid .value {
+    font-family: "SF Mono", "Fira Code", monospace;
+    word-break: break-all;
+  }
+  .preview-img {
+    max-width: 200px;
+    max-height: 200px;
+    border-radius: 8px;
+    border: 1px solid #334155;
+    margin-bottom: 1rem;
+  }
+  .hex-dump {
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 1rem;
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--success);
+  }
+  .badge {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .badge-success { background: rgba(16, 185, 129, 0.15); color: var(--success); }
+  .badge-warning { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
+  .badge-info { background: rgba(59, 130, 246, 0.15); color: var(--primary); }
+  .badge-error { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+  .hidden-payload-section {
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-top: 1rem;
+  }
+  .hidden-payload-section h4 {
+    font-size: 0.9rem;
+    color: var(--primary);
+    margin-bottom: 0.5rem;
+  }
+  .hidden-payload-section .payload-text {
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 0.85rem;
+    word-break: break-all;
+    color: var(--text);
+  }
+  .hidden-payload-section .payload-text.empty {
+    color: var(--text-dim);
+    font-style: italic;
+  }
+  footer {
+    text-align: center;
+    padding: 1rem;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    opacity: 0.6;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>QRed — QR Photo Analyzer</h1>
+  <p>Upload a photo containing a QR code to inspect all data including hidden payloads</p>
+</header>
+
+<main>
+  <div class="upload-zone" id="uploadZone">
+    <div class="icon">📷</div>
+    <p>Click to select photos or drag &amp; drop</p>
+    <p class="hint">JPG, PNG, WEBP — single or multiple files</p>
+    <input type="file" id="fileInput" accept="image/*" multiple>
+  </div>
+
+  <div id="results" class="results"></div>
+</main>
+
+<footer>QRed — Tamper-Evident Document Sealing</footer>
+
+<script type="module">
+import jsQR from 'https://esm.sh/jsqr@1.4.0';
+
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+const resultsDiv = document.getElementById('results');
+
+// ── QR code size limits by version ──
+const QR_MODULE_COUNT_BY_VERSION = [
+  0, 21, 25, 29, 33, 37, 41, 45, 49, 53, 57, 61, 65, 69, 73, 77, 81, 85, 89,
+  93, 97, 101, 105, 109, 113, 117, 121, 125, 129, 133, 137, 141, 145, 149, 153,
+  157, 161, 165, 169, 173, 177, 181
+];
+
+// ── QRed hidden payload extraction ──
+// These functions mirror the logic in qredVerifier.js
+
+const VISIBLE_QR_TEXT = 'QRED.ORG';
+
+function alphanumericDataBitLength(text) {
+  const pairs = Math.floor(text.length / 2);
+  const remainder = text.length % 2;
+  return (pairs * 11) + (remainder * 6);
+}
+
+function qrCharacterCountBitLength(version) {
+  if (!version || version <= 9) return 9;
+  if (version <= 26) return 11;
+  return 13;
+}
+
+function hiddenPayloadByteOffset(version) {
+  const visibleBits = 4 + qrCharacterCountBitLength(version) + alphanumericDataBitLength(VISIBLE_QR_TEXT);
+  const afterTerminatorBits = visibleBits + 4;
+  return Math.ceil(afterTerminatorBits / 8);
+}
+
+function framedPayloadFrom(bytes, lengthOffset) {
+  const HIDDEN_PAYLOAD_LENGTH_BYTES = 2;
+  const payloadOffset = lengthOffset + HIDDEN_PAYLOAD_LENGTH_BYTES;
+  if (payloadOffset > bytes.length) return null;
+  const payloadLength = (bytes[lengthOffset] << 8) | bytes[lengthOffset + 1];
+  const payloadEnd = payloadOffset + payloadLength;
+  if (payloadEnd > bytes.length) return null;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes.slice(payloadOffset, payloadEnd));
+  } catch {
+    return null;
+  }
+}
+
+function extractHiddenQRedPayload(binaryData, version) {
+  if (!binaryData || binaryData.length === 0) return null;
+  const bytes = binaryData instanceof Uint8Array ? binaryData : new Uint8Array(binaryData);
+  const payloadOffset = hiddenPayloadByteOffset(version);
+  if (payloadOffset >= bytes.length) return null;
+  return framedPayloadFrom(bytes, payloadOffset);
+}
+
+// ── Hex dump formatter ──
+function formatHexDump(bytes, offset = 0, maxBytes = 256) {
+  const slice = bytes.slice(0, maxBytes);
+  const lines = [];
+  for (let i = 0; i < slice.length; i += 16) {
+    const chunk = slice.slice(i, i + 16);
+    const hex = Array.from(chunk).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    const ascii = Array.from(chunk).map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.').join('');
+    lines.push(`${(offset + i).toString(16).padStart(4, '0')}  ${hex.padEnd(48, ' ')}  ${ascii}`);
+  }
+  return lines.join('\n');
+}
+
+// ── QR code detection from image ──
+function detectQRCodeFromImage(imgElement) {
+  const canvas = document.createElement('canvas');
+  canvas.width = imgElement.naturalWidth || imgElement.width;
+  canvas.height = imgElement.naturalHeight || imgElement.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(imgElement, 0, 0);
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+  return jsQR(imageData.data, imageData.width, imageData.height, {
+    inversionAttempts: 'attemptBoth'
+  });
+}
+
+// ── HTML escaping ──
+function escapeHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ── Result rendering ──
+function renderResultCard(file, code, imgElement, error) {
+  const card = document.createElement('div');
+  card.className = 'result-card';
+
+  // Safe image dimensions (handles imgElement == null on error path)
+  const imgWidth = imgElement?.naturalWidth || imgElement?.width || '—';
+  const imgHeight = imgElement?.naturalHeight || imgElement?.height || '—';
+
+  // Error / no QR code detected — show safe preview
+  if (error || !code) {
+    card.classList.add('error');
+    card.innerHTML = `
+      <h3>⚠️ No QR code detected</h3>
+      <img class="preview-img" src="${URL.createObjectURL(file)}" alt="Photo preview">
+      <div class="detail-grid">
+        <span class="label">File</span><span class="value">${escapeHtml(file.name)}</span>
+        <span class="label">Size</span><span class="value">${(file.size / 1024).toFixed(1)} KB</span>
+        <span class="label">Dimensions</span><span class="value">${imgWidth} × ${imgHeight}</span>
+      </div>
+    `;
+    return card;
+}
+
+  // Successfully decoded QR code — use only jsQR documented return keys:
+  //   binaryData, data, chunks, version, location
+  card.classList.add('success');
+
+  const version = code.version || '—';
+  const moduleCount = version !== '—' ? QR_MODULE_COUNT_BY_VERSION[version] : '—';
+
+  // Check if this looks like a QRed QR
+  const looksLikeQRed = code.data === VISIBLE_QR_TEXT || code.data.includes('QRED1') || code.data.includes('qred.org');
+  const hiddenPayload = looksLikeQRed && code.binaryData ? extractHiddenQRedPayload(code.binaryData, version) : null;
+  const payloadOffset = looksLikeQRed ? hiddenPayloadByteOffset(version) : '—';
+
+  let hiddenSection = '';
+  if (looksLikeQRed) {
+    if (hiddenPayload) {
+      hiddenSection = `
+        <div class="hidden-payload-section">
+          <h4>🔍 Hidden QRed Payload Found</h4>
+          <p style="margin-bottom: 0.5rem;">
+            <span class="badge badge-success">Hidden payload: YES</span>
+          </p>
+          <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.5rem;">
+            Payload byte offset: ${payloadOffset} | Payload length: ${hiddenPayload.length} bytes
+          </p>
+          <div class="payload-text">${escapeHtml(hiddenPayload)}</div>
+        </div>
+      `;
+    } else {
+      hiddenSection = `
+        <div class="hidden-payload-section">
+          <h4>🔍 QRed QR detected — checking for hidden payload...</h4>
+          <p style="margin-bottom: 0.5rem;">
+            <span class="badge badge-warning">Hidden payload: NOT FOUND</span>
+          </p>
+          <p style="font-size: 0.85rem; color: var(--text-dim);">
+            This QR code has the QRed visible text but no hidden payload was detected in the expected offset. The QR may be a bootstrap-only code, or the photo may not have captured the hidden data area clearly.
+          </p>
+        </div>
+      `;
+    }
+  }
+
+  // Build hex dump of raw binary data
+  let hexDumpSection = '';
+  if (code.binaryData && code.binaryData.length > 0) {
+    const hexDump = formatHexDump(code.binaryData, 0, Math.min(code.binaryData.length, 512));
+    hexDumpSection = `
+      <h4 style="margin-top: 1rem;">Raw Binary Data (first ${Math.min(code.binaryData.length, 512)} bytes)</h4>
+      <div class="hex-dump">${escapeHtml(hexDump)}</div>
+    `;
+  }
+
+  // Show scanable location info from jsQR
+  let locationSection = '';
+  if (code.location) {
+    const tl = code.location.topLeftCorner;
+    const br = code.location.bottomRightCorner;
+    locationSection = `
+      <span class="label">Detected in</span><span class="value">(${Math.round(tl.x)}, ${Math.round(tl.y)}) → (${Math.round(br.x)}, ${Math.round(br.y)})</span>
+    `;
+  }
+
+  card.innerHTML = `
+    <h3>✅ QR Code Decoded</h3>
+    <img class="preview-img" src="${URL.createObjectURL(file)}" alt="Photo preview">
+    <div class="detail-grid">
+      <span class="label">File</span><span class="value">${escapeHtml(file.name)}</span>
+      <span class="label">Visible text</span><span class="value" style="color: var(--primary);">${escapeHtml(code.data)}</span>
+      <span class="label">QR Version</span><span class="value">${version}</span>
+      <span class="label">Module count</span><span class="value">${moduleCount} × ${moduleCount}</span>
+      <span class="label">Raw binary bytes</span><span class="value">${code.binaryData ? code.binaryData.length : 0}</span>
+      ${locationSection}
+      <span class="label">QRed indicator</span><span class="value">${looksLikeQRed ? '<span class="badge badge-success">Yes</span>' : '<span class="badge badge-info">No</span>'}</span>
+    </div>
+    ${hiddenSection}
+    ${hexDumpSection}
+  `;
+
+  return card;
+}
+
+// ── File processing ──
+async function processFiles(files) {
+  resultsDiv.innerHTML = '';
+  const fileArray = Array.from(files);
+
+  for (const file of fileArray) {
+    const card = await processOneFile(file);
+    resultsDiv.appendChild(card);
+  }
+}
+
+function processOneFile(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+
+    img.onload = () => {
+      try {
+        const code = detectQRCodeFromImage(img);
+        if (!code) {
+          resolve(renderResultCard(file, null, img, true));
+          return;
+        }
+        resolve(renderResultCard(file, code, img, false));
+      } catch (err) {
+        resolve(renderResultCard(file, null, img, true));
+      }
+    };
+
+    img.onerror = () => {
+      resolve(renderResultCard(file, null, null, true));
+    };
+
+    img.src = url;
+  });
+}
+
+// ── Event handlers ──
+uploadZone.addEventListener('click', () => fileInput.click());
+
+uploadZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  uploadZone.classList.add('dragover');
+});
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  uploadZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) {
+    processFiles(e.dataTransfer.files);
+  }
+});
+
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files.length) {
+    processFiles(e.target.files);
+  }
+});
+</script>
+</body>
+</html>
