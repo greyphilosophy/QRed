@@ -262,7 +262,7 @@ function renderResultCard(file, code, imgElement, error) {
 
   // Safe image dimensions (handles imgElement == null on error path)
   const imgWidth = imgElement?.naturalWidth || imgElement?.width || '—';
-  const imgHeight = imgElement?.naturalHeight || imgHeight?.height || '—';
+  const imgHeight = imgElement?.naturalHeight || imgElement?.height || '—';
 
   // Error / no QR code detected — show safe preview
   if (error || !code) {
