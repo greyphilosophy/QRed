@@ -318,6 +318,15 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
     function scanFrame() {
       if (stopped) return;
 
+      // Throttle: gate at the top so we don't decode more than ~8fps
+      const now = performance.now();
+      const MIN_FRAME_INTERVAL_MS = 125;
+      const nextFrameTime = lastScanTimeRef.current + MIN_FRAME_INTERVAL_MS;
+      if (now < nextFrameTime) {
+        setTimeout(scanFrame, nextFrameTime - now);
+        return;
+      }
+
       const video = videoRef.current;
       const canvas = canvasRef.current;
       const frameReady = isCameraFrameReady(video, canvas);
@@ -334,17 +343,6 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
         pendingManualCaptureStartedAtRef.current = null;
       }
       if (handleScanActionRef.current(scanAction)) return;
-
-      // Adaptive frame rate: throttle to ~8fps to reduce mobile CPU/battery
-      // Only schedule the next frame every ~125ms
-      const now = performance.now();
-      const MIN_FRAME_INTERVAL_MS = 125;
-      const nextFrameTime = lastScanTimeRef.current + MIN_FRAME_INTERVAL_MS;
-      if (now < nextFrameTime) {
-        // Use setTimeout to fire at the right cadence, then resume the raf loop
-        setTimeout(scanFrame, nextFrameTime - now);
-        return;
-      }
 
       lastScanTimeRef.current = now;
       animId = requestAnimationFrame(scanFrame);
