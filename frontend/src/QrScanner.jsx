@@ -298,6 +298,10 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
 
     handleScanActionRef.current = (scanAction) => {
       if (scanAction.status === "found") {
+        // Haptic feedback on successful decode
+        if (typeof navigator.vibrate === "function") {
+          navigator.vibrate(80);
+        }
         setFeedback(null);
         stop();
         onScan(scanAction.text);

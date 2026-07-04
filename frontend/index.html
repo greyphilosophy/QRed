@@ -122,6 +122,12 @@
       .ar-reticle span:nth-child(3) { border-width: 0 0 4px 4px; bottom: 0; left: 0; }
       .ar-reticle span:nth-child(4) { border-width: 0 4px 4px 0; bottom: 0; right: 0; }
 
+      .ar-reticle-live { animation: reticle-pulse 3s ease-in-out infinite; }
+      @keyframes reticle-pulse {
+        0%, 100% { opacity: 0.6; transform: translateX(-50%) scale(1); }
+        50%      { opacity: 1;   transform: translateX(-50%) scale(1.05); }
+      }
+
       .ar-controls {
         backdrop-filter: blur(18px);
         background: rgba(15, 23, 42, 0.72);
