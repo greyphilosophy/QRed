@@ -42,6 +42,9 @@
     text-align: center;
     cursor: pointer;
     transition: border-color 0.2s, background 0.2s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
   .upload-zone:hover, .upload-zone.dragover {
     border-color: var(--primary);
@@ -52,7 +55,9 @@
   .upload-zone .hint { font-size: 0.8rem; margin-top: 0.25rem; color: var(--text-dim); opacity: 0.7; }
   #fileInput { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
   .upload-button {
-    display: inline-block;
+    display: block;
+    width: 100%;
+    max-width: 260px;
     margin-top: 1rem;
     padding: 0.85rem 1.2rem;
     border: 0;
@@ -61,6 +66,9 @@
     color: white;
     font-weight: 700;
     cursor: pointer;
+    white-space: normal;
+    line-height: 1.2;
+    text-align: center;
   }
   .upload-button:hover { filter: brightness(1.05); }
   .results { margin-top: 2rem; }
@@ -71,7 +79,8 @@
     margin-bottom: 1.5rem;
     border: 1px solid #334155;
   }
-  .result-card.error { border-color: #ef4444; }
+  .result-card.loading { border-color: var(--warning); }
+  .result-card.loading h3 { color: var(--warning); }
   .result-card h3 {
     font-size: 1.1rem;
     margin-bottom: 1rem;
@@ -647,8 +656,19 @@ async function processFiles(files) {
   const fileArray = Array.from(files);
 
   for (const file of fileArray) {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'result-card loading';
+    placeholder.innerHTML = `
+      <h3>⏳ Processing photo…</h3>
+      <div class="detail-grid">
+        <span class="label">File</span><span class="value">${escapeHtml(file.name)}</span>
+        <span class="label">Status</span><span class="value">Loading image and decoding QR…</span>
+      </div>
+    `;
+    resultsDiv.appendChild(placeholder);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
     const card = await processOneFile(file);
-    resultsDiv.appendChild(card);
+    placeholder.replaceWith(card);
   }
 }
 
@@ -657,21 +677,27 @@ function processOneFile(file) {
     const img = new Image();
     const url = URL.createObjectURL(file);
 
-    img.onload = () => {
+    const finish = (card) => {
+      URL.revokeObjectURL(url);
+      resolve(card);
+    };
+
+    img.onload = async () => {
       try {
+        await new Promise((resolvePaint) => requestAnimationFrame(resolvePaint));
         const code = detectQRCodeFromImage(img);
         if (!code) {
-          resolve(renderResultCard(file, null, img, true));
+          finish(renderResultCard(file, null, img, true));
           return;
         }
-        resolve(renderResultCard(file, code, img, false));
+        finish(renderResultCard(file, code, img, false));
       } catch (err) {
-        resolve(renderResultCard(file, null, img, true));
+        finish(renderResultCard(file, null, img, true));
       }
     };
 
     img.onerror = () => {
-      resolve(renderResultCard(file, null, null, true));
+      finish(renderResultCard(file, null, null, true));
     };
 
     img.src = url;
