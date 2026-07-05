@@ -12,5 +12,6 @@ describe("frontend/test.html", () => {
     expect(html).not.toContain("import { qredTextFromPhotoScanResult } from './src/qredVerifier.js';");
     expect(html).toContain("function qredTextFromPhotoScanResult(");
     expect(html).toContain("function qredTextFromScanResult(");
+    expect(html).toContain("return extractHiddenQRedPayloadFromImage(");
   });
 });
