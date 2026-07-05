@@ -152,12 +152,12 @@
 </header>
 
 <main>
-  <div class="upload-zone" id="uploadZone">
+  <label class="upload-zone" id="uploadZone" for="fileInput">
     <div class="icon">📷</div>
     <p>Click to select photos or drag &amp; drop</p>
     <p class="hint">JPG, PNG, WEBP — single or multiple files</p>
     <input type="file" id="fileInput" accept="image/*" multiple>
-  </div>
+  </label>
 
   <div id="results" class="results"></div>
 </main>
@@ -640,7 +640,6 @@ function processOneFile(file) {
 }
 
 // ── Event handlers ──
-uploadZone.addEventListener('click', () => fileInput.click());
 
 uploadZone.addEventListener('dragover', (e) => {
   e.preventDefault();
