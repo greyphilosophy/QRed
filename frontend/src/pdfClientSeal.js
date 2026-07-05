@@ -21,6 +21,23 @@ function buildPdfManifest(file, digest) {
   ].join("\n");
 }
 
+async function extractPdfText(file) {
+  try {
+    const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+    const pages = [];
+    for (let index = 1; index <= pdf.numPages; index += 1) {
+      const page = await pdf.getPage(index);
+      const content = await page.getTextContent();
+      const text = content.items.map((item) => item.str).join(" ").trim();
+      if (text) pages.push(text);
+    }
+    return pages.join("\n\n").trim();
+  } catch {
+    return "";
+  }
+}
+
 export async function qrPngBytes(value) {
   const dataUrl = await qredQrPngDataUrl(value, { margin: 4, width: 360 });
   const base64 = dataUrl.split(",")[1];
@@ -49,8 +66,9 @@ export async function sealPdfInBrowser({
   encodingStrategy = "automatic",
 }) {
   const digest = await fileDigestHex(file);
+  const pdfText = await extractPdfText(file);
   const sealResult = await createQRedSeals({
-    content: buildPdfManifest(file, digest),
+    content: pdfText || buildPdfManifest(file, digest),
     issuer,
     privateKey,
     publicKey,

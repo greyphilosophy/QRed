@@ -96,7 +96,7 @@ describe("browser PDF sealing", () => {
     await expect(verifyQRedSeals(stampedQrValues, publicKey)).resolves.toMatchObject({
       status: "VALID",
       issuer: "QRed Letter Authority",
-      content: expect.stringContaining("PDF file: letter.pdf"),
+      content: expect.stringContaining("Dear verifier,"),
     });
   });
 
@@ -136,7 +136,7 @@ describe("browser PDF sealing", () => {
     const firstSealScan = await scanQRedPngDataUrl(await qredQrPngDataUrl(sealResult.seals[0]));
     expect(firstSealScan).toMatchObject({
       status: "found",
-      text: expect.stringContaining("PDF file: letter.pdf"),
+      text: expect.stringContaining("Dear verifier,"),
     });
   });
 
