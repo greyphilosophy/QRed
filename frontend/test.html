@@ -306,15 +306,44 @@ function qredTextFromScanResult(scanResult) {
   const visibleText = scanResult.data || '';
   const hiddenPayload = extractHiddenQRedPayload(scanResult.binaryData, scanResult.version);
   if (visibleText === VISIBLE_QR_TEXT || visibleText.includes('QRED1') || visibleText.includes('qred.org')) {
-    return hiddenPayload || visibleText;
+    return qredDisplayTextFromScannedPayload(hiddenPayload || visibleText);
   }
   return visibleText;
 }
 
+function sealFragment(sealString) {
+  const hashIndex = String(sealString || '').indexOf('#');
+  return hashIndex >= 0 ? sealString.slice(hashIndex + 1) : String(sealString || '');
+}
+
+function decodePlaintextFragment(fragment) {
+  if (!fragment.startsWith('QRED1?')) return null;
+  const params = new URLSearchParams(fragment.slice('QRED1?'.length));
+  const chunkNumber = Number.parseInt(params.get('i') || '', 10);
+  const totalChunks = Number.parseInt(params.get('n') || '', 10);
+  const documentId = params.get('doc') || '';
+  if (!documentId || !Number.isInteger(chunkNumber) || !Number.isInteger(totalChunks)) return null;
+  return params.get('txt') || '';
+}
+
+function qredDisplayTextFromScannedPayload(payload) {
+  const plaintext = decodePlaintextFragment(sealFragment(payload));
+  return plaintext || (payload || '');
+}
+
 function qredTextFromPhotoScanResult(imageData, width, height, scanResult) {
   const visibleText = qredTextFromScanResult(scanResult);
-  if (!imageData || !width || !height) return visibleText;
-  return extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) || visibleText;
+  if (!imageData || !width || !height) return qredDisplayTextFromScannedPayload(visibleText);
+  const recoveredPayload = extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) || visibleText;
+  return qredDisplayTextFromScannedPayload(recoveredPayload);
+}
+
+if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debugQRed')) {
+  window.__qredStandaloneTestHooks = {
+    qredDisplayTextFromScannedPayload,
+    qredTextFromPhotoScanResult,
+    qredTextFromScanResult,
+  };
 }
 
 // ── QR image hidden payload recovery ──

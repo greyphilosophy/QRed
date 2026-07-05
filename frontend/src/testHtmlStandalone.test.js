@@ -13,6 +13,7 @@ describe("frontend/test.html", () => {
     expect(html).toContain("<span class=\"upload-button\">Choose photos</span>");
     expect(html).not.toContain("uploadButton.addEventListener('click', () => fileInput.click());");
     expect(html).toContain("function qredTextFromPhotoScanResult(");
-    expect(html).toContain("return extractHiddenQRedPayloadFromImage(");
+    expect(html).toContain("function qredDisplayTextFromScannedPayload(");
+    expect(html).toContain("window.__qredStandaloneTestHooks");
   });
 });
