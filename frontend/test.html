@@ -229,7 +229,7 @@
   <div id="results" class="results"></div>
 </main>
 
-<footer>QRed — Tamper-Evident Document Sealing <span class="app-version" id="appVersion">v1.0.5</span></footer>
+<footer>QRed — Tamper-Evident Document Sealing <span class="app-version" id="appVersion">v1.0.6</span></footer>
 
 <script type="module">
 let jsQR = null;
@@ -525,13 +525,6 @@ function sampleQrMatrix(imageData, width, height, location, version, options = {
     matrix.push(line);
   }
   return matrix;
-}
-function extractHiddenQRedPayload(binaryData, version) {
-  if (!binaryData || binaryData.length === 0) return null;
-  const bytes = binaryData instanceof Uint8Array ? binaryData : new Uint8Array(binaryData);
-  const payloadOffset = hiddenPayloadByteOffset(version);
-  if (payloadOffset >= bytes.length) return null;
-  return framedPayloadFrom(bytes, payloadOffset);
 }
 function extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) {
   if (!scanResult?.location || !scanResult.version) return null;
