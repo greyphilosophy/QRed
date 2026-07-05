@@ -693,7 +693,21 @@ function setUploadStatus(message, tone = 'ready') {
   uploadZone.classList.toggle('scanning', tone === 'loading');
 }
 
-async function processFiles(files) {
+async function handleSelectedFiles(files, source = 'change') {
+  const fileArray = Array.from(files || []);
+  if (fileArray.length === 0) return;
+
+  const firstFileName = fileArray[0]?.name || 'photo';
+  setUploadStatus(
+    source === 'click'
+      ? `Opening picker for ${firstFileName}…`
+      : `Selected ${fileArray.length} photo${fileArray.length === 1 ? '' : 's'}…`,
+    'loading',
+  );
+  await processFiles(fileArray, source);
+}
+
+async function processFiles(files, source = 'change') {
   resultsDiv.innerHTML = '';
   const fileArray = Array.from(files);
   if (fileArray.length === 0) return;
@@ -763,14 +777,19 @@ uploadZone.addEventListener('drop', (e) => {
   e.preventDefault();
   uploadZone.classList.remove('dragover');
   if (e.dataTransfer.files.length) {
-    processFiles(e.dataTransfer.files);
+    handleSelectedFiles(e.dataTransfer.files, 'drop');
+  }
+});
+
+fileInput.addEventListener('input', (e) => {
+  if (e.target.files.length) {
+    handleSelectedFiles(e.target.files, 'input');
   }
 });
 
 fileInput.addEventListener('change', (e) => {
   if (e.target.files.length) {
-    setUploadStatus(`Selected ${e.target.files.length} photo${e.target.files.length === 1 ? '' : 's'}…`, 'loading');
-    processFiles(e.target.files);
+    handleSelectedFiles(e.target.files, 'change');
   }
 });
 </script>
