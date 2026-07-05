@@ -499,6 +499,55 @@ function escapeHtml(str) {
 }
 
 // ── Result rendering ──
+function updateHiddenPayloadSection(card, code, imgElement, version, payloadOffset) {
+  const section = card.querySelector('[data-hidden-payload-state]');
+  if (!section) return;
+
+  const qrCanvas = document.createElement('canvas');
+  qrCanvas.width = imgElement?.naturalWidth || imgElement?.width || 0;
+  qrCanvas.height = imgElement?.naturalHeight || imgElement?.height || 0;
+  const qrCtx = qrCanvas.getContext('2d');
+  if (!imgElement || !qrCtx || qrCanvas.width === 0 || qrCanvas.height === 0) {
+    section.innerHTML = `
+      <h4>🔍 QRed QR detected — checking for hidden payload...</h4>
+      <p style="margin-bottom: 0.5rem;">
+        <span class="badge badge-warning">Hidden payload: NOT FOUND</span>
+      </p>
+      <p style="font-size: 0.85rem; color: var(--text-dim);">
+        This QR code has the QRed visible text but no hidden payload was detected in the expected offset. The QR may be a bootstrap-only code, or the photo may not have captured the hidden data area clearly.
+      </p>
+    `;
+    return;
+  }
+
+  qrCtx.drawImage(imgElement, 0, 0);
+  const qrImageData = qrCtx.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
+  const recoveredText = qredTextFromPhotoScanResult(qrImageData.data, qrImageData.width, qrImageData.height, code);
+  if (recoveredText !== code.data) {
+    section.innerHTML = `
+      <h4>🔍 Hidden QRed Payload Found</h4>
+      <p style="margin-bottom: 0.5rem;">
+        <span class="badge badge-success">Hidden payload: YES</span>
+      </p>
+      <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.5rem;">
+        Payload byte offset: ${payloadOffset} | Payload length: ${recoveredText.length} bytes
+      </p>
+      <div class="payload-text">${escapeHtml(recoveredText)}</div>
+    `;
+    return;
+  }
+
+  section.innerHTML = `
+    <h4>🔍 QRed QR detected — checking for hidden payload...</h4>
+    <p style="margin-bottom: 0.5rem;">
+      <span class="badge badge-warning">Hidden payload: NOT FOUND</span>
+    </p>
+    <p style="font-size: 0.85rem; color: var(--text-dim);">
+      This QR code has the QRed visible text but no hidden payload was detected in the expected offset. The QR may be a bootstrap-only code, or the photo may not have captured the hidden data area clearly.
+    </p>
+  `;
+}
+
 function renderResultCard(file, code, imgElement, error) {
   const card = document.createElement('div');
   card.className = 'result-card';
@@ -531,50 +580,21 @@ function renderResultCard(file, code, imgElement, error) {
 
   // Check if this looks like a QRed QR
   const looksLikeQRed = code.data === VISIBLE_QR_TEXT || code.data.includes('QRED1') || code.data.includes('qred.org');
-  const qrCanvas = document.createElement('canvas');
-  qrCanvas.width = imgElement?.naturalWidth || imgElement?.width || 0;
-  qrCanvas.height = imgElement?.naturalHeight || imgElement?.height || 0;
-  const qrCtx = qrCanvas.getContext('2d');
-  if (imgElement && qrCtx) {
-    qrCtx.drawImage(imgElement, 0, 0);
-  }
-  const qrImageData = qrCtx && qrCanvas.width > 0 && qrCanvas.height > 0
-    ? qrCtx.getImageData(0, 0, qrCanvas.width, qrCanvas.height)
-    : null;
-  const recoveredText = looksLikeQRed && qrImageData
-    ? qredTextFromPhotoScanResult(qrImageData.data, qrImageData.width, qrImageData.height, code)
-    : qredTextFromScanResult(code);
-  const hiddenPayload = looksLikeQRed && recoveredText !== code.data ? recoveredText : null;
   const payloadOffset = looksLikeQRed ? hiddenPayloadByteOffset(version) : '—';
 
   let hiddenSection = '';
   if (looksLikeQRed) {
-    if (hiddenPayload) {
-      hiddenSection = `
-        <div class="hidden-payload-section">
-          <h4>🔍 Hidden QRed Payload Found</h4>
-          <p style="margin-bottom: 0.5rem;">
-            <span class="badge badge-success">Hidden payload: YES</span>
-          </p>
-          <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.5rem;">
-            Payload byte offset: ${payloadOffset} | Payload length: ${hiddenPayload.length} bytes
-          </p>
-          <div class="payload-text">${escapeHtml(hiddenPayload)}</div>
-        </div>
-      `;
-    } else {
-      hiddenSection = `
-        <div class="hidden-payload-section">
-          <h4>🔍 QRed QR detected — checking for hidden payload...</h4>
-          <p style="margin-bottom: 0.5rem;">
-            <span class="badge badge-warning">Hidden payload: NOT FOUND</span>
-          </p>
-          <p style="font-size: 0.85rem; color: var(--text-dim);">
-            This QR code has the QRed visible text but no hidden payload was detected in the expected offset. The QR may be a bootstrap-only code, or the photo may not have captured the hidden data area clearly.
-          </p>
-        </div>
-      `;
-    }
+    hiddenSection = `
+      <div class="hidden-payload-section" data-hidden-payload-state="pending">
+        <h4>🔍 QRed QR detected — checking for hidden payload...</h4>
+        <p style="margin-bottom: 0.5rem;">
+          <span class="badge badge-info">Hidden payload: LOADING</span>
+        </p>
+        <p style="font-size: 0.85rem; color: var(--text-dim);">
+          Recovering the hidden photo payload…
+        </p>
+      </div>
+    `;
   }
 
   // Build hex dump of raw binary data
@@ -597,9 +617,10 @@ function renderResultCard(file, code, imgElement, error) {
     `;
   }
 
+  const previewUrl = URL.createObjectURL(file);
   card.innerHTML = `
     <h3>✅ QR Code Decoded</h3>
-    <img class="preview-img" src="${URL.createObjectURL(file)}" alt="Photo preview">
+    <img class="preview-img" src="${previewUrl}" alt="Photo preview">
     <div class="detail-grid">
       <span class="label">File</span><span class="value">${escapeHtml(file.name)}</span>
       <span class="label">Visible text</span><span class="value" style="color: var(--primary);">${escapeHtml(code.data)}</span>
@@ -612,6 +633,10 @@ function renderResultCard(file, code, imgElement, error) {
     ${hiddenSection}
     ${hexDumpSection}
   `;
+
+  if (looksLikeQRed) {
+    setTimeout(() => updateHiddenPayloadSection(card, code, imgElement, version, payloadOffset), 0);
+  }
 
   return card;
 }
