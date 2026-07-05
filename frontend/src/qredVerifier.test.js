@@ -189,6 +189,20 @@ describe("qredVerifier", () => {
     expect(qredTextFromPhotoScanResult(image.data, image.width, image.height, code)).toBe(payload);
   });
 
+  it("decodes plaintext seal payloads into the original document text", () => {
+    const payload = "https://qred.org/#QRED1?v=1&alg=Ed25519&doc=DOC-PLAINTEXT&i=0&n=1&iss=QRed+QA&kid=deadbeef&ts=2026-07-05T00%3A00%3A00.000Z&txt=PDF+file%3A+letter.pdf%0ASize%3A+965+bytes";
+    const payloadBytes = new TextEncoder().encode(payload);
+    const binaryData = new Uint8Array([
+      0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
+      (payloadBytes.length >> 8) & 0xff,
+      payloadBytes.length & 0xff,
+      ...payloadBytes,
+      0xec, 0x11,
+    ]);
+
+    expect(qredTextFromPhotoScanResult(null, 0, 0, { data: "QRED.ORG", binaryData, version: 1 })).toBe("PDF file: letter.pdf\nSize: 965 bytes");
+  });
+
   it("returns no hidden image payload when scan geometry is unavailable", () => {
     expect(extractHiddenQRedPayloadFromImage(new Uint8ClampedArray(), 0, 0, { data: "QRED.ORG" })).toBeNull();
   });

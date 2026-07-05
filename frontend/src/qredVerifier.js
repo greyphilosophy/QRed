@@ -59,10 +59,17 @@ export function qredTextFromScanResult(scanResult) {
   return visibleText;
 }
 
+export function qredDisplayTextFromScannedPayload(payload) {
+  const decoded = decodeSeal(payload);
+  if (decoded?.recipe === "plaintext" && decoded.data) return decoded.data;
+  return payload || "";
+}
+
 export function qredTextFromPhotoScanResult(imageData, width, height, scanResult) {
   const visibleText = qredTextFromScanResult(scanResult);
-  if (!imageData || !width || !height) return visibleText;
-  return extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) || visibleText;
+  if (!imageData || !width || !height) return qredDisplayTextFromScannedPayload(visibleText);
+  const hiddenPayload = extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) || visibleText;
+  return qredDisplayTextFromScannedPayload(hiddenPayload);
 }
 
 function decodeBase64Url(value) {
