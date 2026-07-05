@@ -229,30 +229,13 @@
   <div id="results" class="results"></div>
 </main>
 
-<footer>QRed — Tamper-Evident Document Sealing <span class="app-version" id="appVersion">v1.0.6</span></footer>
+<footer>QRed — Tamper-Evident Document Sealing <span class="app-version" id="appVersion">v1.0.7</span></footer>
 
+<script src="./jsQR.js"></script>
 <script type="module">
-let jsQR = null;
-let jsQRLoadPromise = null;
+const jsQR = globalThis.jsQR || null;
 let awaitingFileSelection = false;
 
-async function loadJsQR() {
-  if (jsQR !== null) return jsQR;
-  if (!jsQRLoadPromise) {
-    jsQRLoadPromise = import('https://esm.sh/jsqr@1.4.0')
-      .then((mod) => {
-        jsQR = mod.default;
-        return jsQR;
-      })
-      .catch(() => {
-        jsQR = false;
-        return null;
-      });
-  }
-  return jsQRLoadPromise;
-}
-
-loadJsQR();
 const uploadZone = document.getElementById('uploadZone');
 const fileInput = document.getElementById('fileInput');
 const uploadStatus = document.getElementById('uploadStatus');
@@ -583,6 +566,19 @@ async function detectQRCodeFromImage(imgElement) {
 }
 
 // ── HTML escaping ──
+function formatHexDump(bytes, start = 0, length = bytes?.length ?? 0) {
+  const source = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  const end = Math.min(source.length, start + length);
+  const lines = [];
+  for (let offset = start; offset < end; offset += 16) {
+    const chunk = Array.from(source.slice(offset, Math.min(end, offset + 16)));
+    const hex = chunk.map((value) => value.toString(16).padStart(2, '0')).join(' ');
+    const ascii = chunk.map((value) => (value >= 32 && value <= 126 ? String.fromCharCode(value) : '.')).join('');
+    lines.push(`${offset.toString(16).padStart(8, '0')}  ${hex.padEnd(47, ' ')}  ${ascii}`);
+  }
+  return lines.join('\n');
+}
+
 function escapeHtml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
