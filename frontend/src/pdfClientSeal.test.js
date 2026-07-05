@@ -122,6 +122,24 @@ describe("browser PDF sealing", () => {
     expect(scannedQrValue).toMatchObject({ data: VISIBLE_QR_TEXT });
   });
 
+  it("shows plaintext document text when a PDF is sealed with the plaintext recipe", async () => {
+    const file = await makeLetterPdfFile();
+
+    const { sealResult } = await sealPdfInBrowser({
+      file,
+      issuer: "QRed Plaintext Authority",
+      privateKey,
+      publicKey,
+      encodingStrategy: "plaintext",
+    });
+
+    const firstSealScan = await scanQRedPngDataUrl(await qredQrPngDataUrl(sealResult.seals[0]));
+    expect(firstSealScan).toMatchObject({
+      status: "found",
+      text: expect.stringContaining("PDF file: letter.pdf"),
+    });
+  });
+
   it("chooses error correction dynamically while allowing callers to pin a level", () => {
     const autoData = createQRedQrData("small payload");
     const pinnedData = createQRedQrData("small payload", { errorCorrectionLevel: "M" });

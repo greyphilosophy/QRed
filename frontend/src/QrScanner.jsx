@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
-import { VISIBLE_QR_TEXT, extractHiddenQRedPayloadFromImage, qredTextFromScanResult } from "./qredVerifier.js";
+import { VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredTextFromScanResult } from "./qredVerifier.js";
 
 /**
  * QrScanner — Camera-based QR code scanner that can scan ANY QR code and
@@ -104,10 +104,8 @@ export const QR_CAMERA_CONSTRAINTS = {
 export function qrScanAction(imageData, width, height, code) {
   if (!code?.data) return { status: "continue" };
 
-  const looksLikeQRed = code.data === VISIBLE_QR_TEXT || code.data.includes("QRED1") || code.data.includes("qred.org");
-  const hiddenPayload = looksLikeQRed ? extractHiddenQRedPayloadFromImage(imageData, width, height, code) || qredTextFromScanResult(code) : null;
-  if (hiddenPayload && hiddenPayload !== VISIBLE_QR_TEXT) return { status: "found", text: hiddenPayload };
-  if (code.data !== VISIBLE_QR_TEXT) return { status: "found", text: qredTextFromScanResult(code) };
+  const text = qredTextFromPhotoScanResult(imageData, width, height, code);
+  if (text && text !== VISIBLE_QR_TEXT) return { status: "found", text };
 
   return { status: "continue" };
 }
@@ -239,12 +237,12 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
       return { status: "feedback", message: "No QR code found in this photo. Center a QR seal in the frame and try again." };
     }
     if (manual && (code.data === VISIBLE_QR_TEXT || code.data.includes("QRED1") || code.data.includes("qred.org"))) {
-      const hiddenPayload = extractHiddenQRedPayloadFromImage(imageData.data, roi.width, roi.height, code);
-      if (!hiddenPayload || hiddenPayload === VISIBLE_QR_TEXT) {
-        if (code.data !== VISIBLE_QR_TEXT) return { status: "found", text: qredTextFromScanResult(code) };
+      const text = qredTextFromPhotoScanResult(imageData.data, roi.width, roi.height, code);
+      if (text && text !== VISIBLE_QR_TEXT) return { status: "found", text };
+      if (code.data === VISIBLE_QR_TEXT) {
         return { status: "feedback", message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again." };
       }
-      return { status: "found", text: hiddenPayload };
+      return { status: "found", text: qredTextFromScanResult(code) };
     }
 
     return qrScanAction(imageData.data, roi.width, roi.height, code);

@@ -1,3 +1,8 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import process from "node:process";
+import jpeg from "jpeg-js";
+import jsQR from "jsqr";
 import { describe, expect, it } from "vitest";
 import { createQRedSeals } from "./qredSealer.js";
 import { compareDocumentText, compareWordSequences, decodeSeal, extractHiddenQRedPayload, extractHiddenQRedPayloadFromImage, qredTextFromPhotoScanResult, qredTextFromScanResult, verifyQRedSeals } from "./qredVerifier.js";
@@ -6,6 +11,14 @@ const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 const wrongPublicKey = "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=";
 const staticDemoPublicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
+
+const noisyFixturePath = resolve(process.cwd(), "../tests/qred_hidden_payload_photo.jpg");
+
+function decodePhotograph(path) {
+  const bytes = readFileSync(path);
+  const decoded = jpeg.decode(bytes, { useTArray: true });
+  return { data: new Uint8ClampedArray(decoded.data), width: decoded.width, height: decoded.height };
+}
 
 function backendFramedPayloadBytes(payload) {
   const payloadBytes = new TextEncoder().encode(payload);
@@ -164,6 +177,30 @@ describe("qredVerifier", () => {
         bottomRightCorner: { x: width, y: height },
       },
     })).toBe(payload);
+  });
+
+  it("recovers hidden payloads from a photographed QRed image that still decodes the visible QR", () => {
+    const payload = "IMG";
+    const image = decodePhotograph(noisyFixturePath);
+    const code = jsQR(image.data, image.width, image.height, { inversionAttempts: "attemptBoth" });
+
+    expect(code, `jsQR did not detect a QR code in ${noisyFixturePath}`).toBeTruthy();
+    expect(extractHiddenQRedPayloadFromImage(image.data, image.width, image.height, code)).toBe(payload);
+    expect(qredTextFromPhotoScanResult(image.data, image.width, image.height, code)).toBe(payload);
+  });
+
+  it("decodes plaintext seal payloads into the original document text", () => {
+    const payload = "https://qred.org/#QRED1?v=1&alg=Ed25519&doc=DOC-PLAINTEXT&i=0&n=1&iss=QRed+QA&kid=deadbeef&ts=2026-07-05T00%3A00%3A00.000Z&txt=PDF+file%3A+letter.pdf%0ASize%3A+965+bytes";
+    const payloadBytes = new TextEncoder().encode(payload);
+    const binaryData = new Uint8Array([
+      0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
+      (payloadBytes.length >> 8) & 0xff,
+      payloadBytes.length & 0xff,
+      ...payloadBytes,
+      0xec, 0x11,
+    ]);
+
+    expect(qredTextFromPhotoScanResult(null, 0, 0, { data: "QRED.ORG", binaryData, version: 1 })).toBe("PDF file: letter.pdf\nSize: 965 bytes");
   });
 
   it("returns no hidden image payload when scan geometry is unavailable", () => {
