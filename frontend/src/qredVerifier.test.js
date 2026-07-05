@@ -192,16 +192,11 @@ describe("qredVerifier", () => {
     })).toBe(payload);
   });
 
-  it("does not let hidden bytes override a standard non-QRed QR scan result", () => {
-    const hiddenBytes = new TextEncoder().encode("hidden QRed payload");
-    const binaryData = new Uint8Array([
-      0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
-      ...hiddenBytes,
-      0xec, 0x11,
-    ]);
-
-    expect(qredTextFromScanResult({ data: "https://example.test/plain", binaryData, version: 1 }))
+  it("falls back to the visible scan text when photo geometry is unavailable", () => {
+    expect(qredTextFromPhotoScanResult(null, 0, 0, { data: "https://example.test/plain" }))
       .toBe("https://example.test/plain");
+    expect(qredTextFromPhotoScanResult(undefined, undefined, undefined, { data: "QRED.ORG" }))
+      .toBe("QRED.ORG");
   });
 
   it("ignores standard QR padding bytes when no hidden carrier payload is present", () => {

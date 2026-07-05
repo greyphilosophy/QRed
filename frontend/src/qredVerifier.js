@@ -60,8 +60,9 @@ export function qredTextFromScanResult(scanResult) {
 }
 
 export function qredTextFromPhotoScanResult(imageData, width, height, scanResult) {
-  const hiddenPayload = extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult);
-  return hiddenPayload || qredTextFromScanResult(scanResult);
+  const visibleText = qredTextFromScanResult(scanResult);
+  if (!imageData || !width || !height) return visibleText;
+  return extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) || visibleText;
 }
 
 function decodeBase64Url(value) {

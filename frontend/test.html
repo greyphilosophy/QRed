@@ -301,7 +301,7 @@ function renderResultCard(file, code, imgElement, error) {
     : null;
   const recoveredText = looksLikeQRed && qrImageData
     ? qredTextFromPhotoScanResult(qrImageData.data, qrImageData.width, qrImageData.height, code)
-    : qredTextFromPhotoScanResult(null, 0, 0, code);
+    : qredTextFromScanResult(code);
   const hiddenPayload = looksLikeQRed && recoveredText !== code.data ? recoveredText : null;
   const payloadOffset = looksLikeQRed ? hiddenPayloadByteOffset(version) : '—';
 
