@@ -666,7 +666,6 @@ async function processFiles(files) {
       </div>
     `;
     resultsDiv.appendChild(placeholder);
-    await new Promise((resolve) => requestAnimationFrame(resolve));
     const card = await processOneFile(file);
     placeholder.replaceWith(card);
   }
@@ -682,9 +681,8 @@ function processOneFile(file) {
       resolve(card);
     };
 
-    img.onload = async () => {
+    img.onload = () => {
       try {
-        await new Promise((resolvePaint) => requestAnimationFrame(resolvePaint));
         const code = detectQRCodeFromImage(img);
         if (!code) {
           finish(renderResultCard(file, null, img, true));
