@@ -538,19 +538,30 @@ export function extractHiddenQRedPayloadFromImage(imageData, width, height, scan
   // normal QR decoding locates the symbol. Try a few center-biased grids and
   // thresholds so photographed seals still yield hidden bytes when focus,
   // perspective correction, or exposure are slightly off.
-  const sampleOptions = [
-    {},
-    { threshold: 128 },
-    { rowOffset: 0.45, colOffset: 0.5 },
-    { rowOffset: 0.55, colOffset: 0.5 },
-    { rowOffset: 0.5, colOffset: 0.45 },
-    { rowOffset: 0.5, colOffset: 0.55 },
-  ];
+  const sampleOptions = [];
+  for (const threshold of [undefined, 96, 112, 128, 144, 160]) {
+    for (const rowOffset of [0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65]) {
+      for (const colOffset of [0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65]) {
+        const option = { rowOffset, colOffset };
+        if (threshold !== undefined) option.threshold = threshold;
+        sampleOptions.push(option);
+      }
+    }
+  }
+  const counts = new Map();
+  let bestPayload = null;
+  let bestCount = 0;
   for (const options of sampleOptions) {
     const matrix = sampleQrMatrix(imageData, width, height, scanResult.location, scanResult.version, options);
     const { codewords, ecLevelBits } = codewordsFromMatrix(matrix, scanResult.version);
     const payload = extractHiddenQRedPayload(deinterleaveDataCodewords(codewords, scanResult.version, ecLevelBits), scanResult.version);
-    if (payload) return payload;
+    if (!payload) continue;
+    const nextCount = (counts.get(payload) || 0) + 1;
+    counts.set(payload, nextCount);
+    if (nextCount > bestCount) {
+      bestCount = nextCount;
+      bestPayload = payload;
+    }
   }
-  return null;
+  return bestPayload;
 }

@@ -1,3 +1,8 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import process from "node:process";
+import jpeg from "jpeg-js";
+import jsQR from "jsqr";
 import { describe, expect, it } from "vitest";
 import { createQRedSeals } from "./qredSealer.js";
 import { compareDocumentText, compareWordSequences, decodeSeal, extractHiddenQRedPayload, extractHiddenQRedPayloadFromImage, qredTextFromPhotoScanResult, qredTextFromScanResult, verifyQRedSeals } from "./qredVerifier.js";
@@ -6,6 +11,14 @@ const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 const wrongPublicKey = "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=";
 const staticDemoPublicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
+
+const noisyFixturePath = resolve(process.cwd(), "../tests/qred_hidden_payload_photo.jpg");
+
+function decodePhotograph(path) {
+  const bytes = readFileSync(path);
+  const decoded = jpeg.decode(bytes, { useTArray: true });
+  return { data: new Uint8ClampedArray(decoded.data), width: decoded.width, height: decoded.height };
+}
 
 function backendFramedPayloadBytes(payload) {
   const payloadBytes = new TextEncoder().encode(payload);
@@ -164,6 +177,16 @@ describe("qredVerifier", () => {
         bottomRightCorner: { x: width, y: height },
       },
     })).toBe(payload);
+  });
+
+  it("recovers hidden payloads from a photographed QRed image that still decodes the visible QR", () => {
+    const payload = "IMG";
+    const image = decodePhotograph(noisyFixturePath);
+    const code = jsQR(image.data, image.width, image.height, { inversionAttempts: "attemptBoth" });
+
+    expect(code, `jsQR did not detect a QR code in ${noisyFixturePath}`).toBeTruthy();
+    expect(extractHiddenQRedPayloadFromImage(image.data, image.width, image.height, code)).toBe(payload);
+    expect(qredTextFromPhotoScanResult(image.data, image.width, image.height, code)).toBe(payload);
   });
 
   it("returns no hidden image payload when scan geometry is unavailable", () => {
