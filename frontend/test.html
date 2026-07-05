@@ -229,11 +229,29 @@
   <div id="results" class="results"></div>
 </main>
 
-<footer>QRed — Tamper-Evident Document Sealing <span class="app-version" id="appVersion">v1.0.3</span></footer>
+<footer>QRed — Tamper-Evident Document Sealing <span class="app-version" id="appVersion">v1.0.4</span></footer>
 
 <script type="module">
-import jsQR from 'https://esm.sh/jsqr@1.4.0';
+let jsQR = null;
+let jsQRLoadPromise = null;
 
+async function loadJsQR() {
+  if (jsQR !== null) return jsQR;
+  if (!jsQRLoadPromise) {
+    jsQRLoadPromise = import('https://esm.sh/jsqr@1.4.0')
+      .then((mod) => {
+        jsQR = mod.default;
+        return jsQR;
+      })
+      .catch(() => {
+        jsQR = false;
+        return null;
+      });
+  }
+  return jsQRLoadPromise;
+}
+
+loadJsQR();
 const uploadZone = document.getElementById('uploadZone');
 const fileInput = document.getElementById('fileInput');
 const uploadStatus = document.getElementById('uploadStatus');
@@ -534,17 +552,40 @@ function extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult)
 }
 
 // ── QR code detection from image ──
-function detectQRCodeFromImage(imgElement) {
-  const canvas = document.createElement('canvas');
-  canvas.width = imgElement.naturalWidth || imgElement.width;
-  canvas.height = imgElement.naturalHeight || imgElement.height;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(imgElement, 0, 0);
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+async function detectQRCodeFromImage(imgElement) {
+  if (jsQR) {
+    const canvas = document.createElement('canvas');
+    canvas.width = imgElement.naturalWidth || imgElement.width;
+    canvas.height = imgElement.naturalHeight || imgElement.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(imgElement, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    return jsQR(imageData.data, imageData.width, imageData.height, {
+      inversionAttempts: 'attemptBoth',
+    });
+  }
 
-  return jsQR(imageData.data, imageData.width, imageData.height, {
-    inversionAttempts: 'attemptBoth'
-  });
+  const Detector = window.BarcodeDetector || globalThis.BarcodeDetector;
+  if (Detector) {
+    const detector = new Detector({ formats: ['qr_code'] });
+    const results = await detector.detect(imgElement);
+    const qr = results?.[0];
+    if (!qr) return null;
+    const [firstPoint, secondPoint, thirdPoint, fourthPoint] = qr.cornerPoints || [];
+    return {
+      data: qr.rawValue || '',
+      binaryData: new Uint8Array(),
+      version: null,
+      location: firstPoint && secondPoint && thirdPoint && fourthPoint ? {
+        topLeftCorner: firstPoint,
+        topRightCorner: secondPoint,
+        bottomRightCorner: thirdPoint,
+        bottomLeftCorner: fourthPoint,
+      } : null,
+    };
+  }
+
+  return null;
 }
 
 // ── HTML escaping ──
@@ -757,9 +798,9 @@ function processOneFile(file) {
       resolve(card);
     };
 
-    img.onload = () => {
+    img.onload = async () => {
       try {
-        const code = detectQRCodeFromImage(img);
+        const code = await detectQRCodeFromImage(img);
         if (!code) {
           finish(renderResultCard(file, null, img, true));
           return;
