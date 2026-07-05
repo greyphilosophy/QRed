@@ -9,5 +9,7 @@ describe("frontend/test.html", () => {
     const html = readFileSync(testHtmlPath, "utf8");
 
     expect(html).not.toContain("import { qredTextFromPhotoScanResult } from './src/qredVerifier.js';");
+    expect(html).toContain("function qredTextFromPhotoScanResult(");
+    expect(html).toContain("function qredTextFromScanResult(");
   });
 });

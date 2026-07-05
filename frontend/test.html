@@ -233,6 +233,12 @@ function qredTextFromScanResult(scanResult) {
   return visibleText;
 }
 
+function qredTextFromPhotoScanResult(imageData, width, height, scanResult) {
+  const visibleText = qredTextFromScanResult(scanResult);
+  if (!imageData || !width || !height) return visibleText;
+  return visibleText;
+}
+
 // ── Hex dump formatter ──
 function formatHexDump(bytes, offset = 0, maxBytes = 256) {
   const slice = bytes.slice(0, maxBytes);
