@@ -6,9 +6,12 @@ import { describe, expect, it } from "vitest";
 const testHtmlPath = resolve(process.cwd(), "test.html");
 
 describe("frontend/test.html responsiveness", () => {
-  it("does not block the upload path on requestAnimationFrame before decoding the selected photo", () => {
+  it("shows an immediate upload status when a photo is selected", () => {
     const html = readFileSync(testHtmlPath, "utf8");
 
-    expect(html).not.toContain("await new Promise((resolve) => requestAnimationFrame(resolve));");
+    expect(html).toContain("<p class=\"upload-status ready\" id=\"uploadStatus\">Ready to scan</p>");
+    expect(html).toContain("setUploadStatus(`Selected ${e.target.files.length} photo");
+    expect(html).toContain("setUploadStatus(`Scanning photo ${index + 1} of ${fileArray.length}…`, 'loading');");
+    expect(html).toContain("setUploadStatus(`Done scanning ${fileArray.length} photo");
   });
 });

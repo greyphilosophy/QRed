@@ -53,6 +53,15 @@
   .upload-zone .icon { font-size: 3rem; opacity: 0.5; }
   .upload-zone p { margin-top: 0.5rem; color: var(--text-dim); }
   .upload-zone .hint { font-size: 0.8rem; margin-top: 0.25rem; color: var(--text-dim); opacity: 0.7; }
+  .upload-status {
+    margin-top: 0.85rem;
+    font-size: 0.9rem;
+    color: var(--text-dim);
+    min-height: 1.25em;
+  }
+  .upload-status.loading { color: var(--warning); }
+  .upload-status.ready { color: var(--text-dim); }
+  .upload-status.done { color: var(--success); }
   #fileInput { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
   .upload-button {
     display: block;
@@ -178,6 +187,7 @@
     <p>Click to select photos or drag &amp; drop</p>
     <p class="hint">JPG, PNG, WEBP — single or multiple files</p>
     <span class="upload-button">Choose photos</span>
+    <p class="upload-status ready" id="uploadStatus">Ready to scan</p>
     <input type="file" id="fileInput" accept="image/*" multiple>
   </label>
 
@@ -191,6 +201,7 @@ import jsQR from 'https://esm.sh/jsqr@1.4.0';
 
 const uploadZone = document.getElementById('uploadZone');
 const fileInput = document.getElementById('fileInput');
+const uploadStatus = document.getElementById('uploadStatus');
 const resultsDiv = document.getElementById('results');
 
 // ── QR code size limits by version ──
@@ -650,11 +661,23 @@ function renderResultCard(file, code, imgElement, error) {
 }
 
 // ── File processing ──
+function setUploadStatus(message, tone = 'ready') {
+  if (!uploadStatus) return;
+  uploadStatus.textContent = message;
+  uploadStatus.classList.remove('loading', 'ready', 'done');
+  uploadStatus.classList.add(tone);
+}
+
 async function processFiles(files) {
   resultsDiv.innerHTML = '';
   const fileArray = Array.from(files);
+  if (fileArray.length === 0) return;
 
-  for (const file of fileArray) {
+  setUploadStatus(`Scanning ${fileArray.length} photo${fileArray.length === 1 ? '' : 's'}…`, 'loading');
+
+  for (let index = 0; index < fileArray.length; index += 1) {
+    const file = fileArray[index];
+    setUploadStatus(`Scanning photo ${index + 1} of ${fileArray.length}…`, 'loading');
     const placeholder = document.createElement('div');
     placeholder.className = 'result-card loading';
     placeholder.innerHTML = `
@@ -668,6 +691,8 @@ async function processFiles(files) {
     const card = await processOneFile(file);
     placeholder.replaceWith(card);
   }
+
+  setUploadStatus(`Done scanning ${fileArray.length} photo${fileArray.length === 1 ? '' : 's'}.`, 'done');
 }
 
 function processOneFile(file) {
@@ -718,6 +743,7 @@ uploadZone.addEventListener('drop', (e) => {
 
 fileInput.addEventListener('change', (e) => {
   if (e.target.files.length) {
+    setUploadStatus(`Selected ${e.target.files.length} photo${e.target.files.length === 1 ? '' : 's'}…`, 'loading');
     processFiles(e.target.files);
   }
 });
