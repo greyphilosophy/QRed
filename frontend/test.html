@@ -50,7 +50,19 @@
   .upload-zone .icon { font-size: 3rem; opacity: 0.5; }
   .upload-zone p { margin-top: 0.5rem; color: var(--text-dim); }
   .upload-zone .hint { font-size: 0.8rem; margin-top: 0.25rem; color: var(--text-dim); opacity: 0.7; }
-  #fileInput { display: none; }
+  #fileInput { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+  .upload-button {
+    display: inline-block;
+    margin-top: 1rem;
+    padding: 0.85rem 1.2rem;
+    border: 0;
+    border-radius: 999px;
+    background: var(--primary);
+    color: white;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .upload-button:hover { filter: brightness(1.05); }
   .results { margin-top: 2rem; }
   .result-card {
     background: var(--surface);
@@ -152,12 +164,13 @@
 </header>
 
 <main>
-  <label class="upload-zone" id="uploadZone" for="fileInput">
+  <div class="upload-zone" id="uploadZone">
     <div class="icon">📷</div>
     <p>Click to select photos or drag &amp; drop</p>
     <p class="hint">JPG, PNG, WEBP — single or multiple files</p>
+    <button type="button" class="upload-button" id="uploadButton">Choose photos</button>
     <input type="file" id="fileInput" accept="image/*" multiple>
-  </label>
+  </div>
 
   <div id="results" class="results"></div>
 </main>
@@ -168,6 +181,7 @@
 import jsQR from 'https://esm.sh/jsqr@1.4.0';
 
 const uploadZone = document.getElementById('uploadZone');
+const uploadButton = document.getElementById('uploadButton');
 const fileInput = document.getElementById('fileInput');
 const resultsDiv = document.getElementById('results');
 
@@ -640,6 +654,8 @@ function processOneFile(file) {
 }
 
 // ── Event handlers ──
+
+uploadButton.addEventListener('click', () => fileInput.click());
 
 uploadZone.addEventListener('dragover', (e) => {
   e.preventDefault();
