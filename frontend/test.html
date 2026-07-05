@@ -229,7 +229,7 @@
   <div id="results" class="results"></div>
 </main>
 
-<footer>QRed — Tamper-Evident Document Sealing <span class="app-version" id="appVersion">v1.0.2</span> <span class="commit-version" id="appCommit">ad691b2</span></footer>
+<footer>QRed — Tamper-Evident Document Sealing <span class="app-version" id="appVersion">v1.0.3</span></footer>
 
 <script type="module">
 import jsQR from 'https://esm.sh/jsqr@1.4.0';
@@ -715,6 +715,7 @@ async function handleSelectedFiles(files, source = 'change') {
       : `Selected ${fileArray.length} photo${fileArray.length === 1 ? '' : 's'}…`,
     'loading',
   );
+  await new Promise((resolve) => setTimeout(resolve, 0));
   await processFiles(fileArray, source);
 }
 
