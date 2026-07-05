@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createQRedSeals } from "./qredSealer.js";
-import { compareDocumentText, compareWordSequences, decodeSeal, extractHiddenQRedPayload, extractHiddenQRedPayloadFromImage, qredTextFromScanResult, verifyQRedSeals } from "./qredVerifier.js";
+import { compareDocumentText, compareWordSequences, decodeSeal, extractHiddenQRedPayload, extractHiddenQRedPayloadFromImage, qredTextFromPhotoScanResult, qredTextFromScanResult, verifyQRedSeals } from "./qredVerifier.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
@@ -168,6 +168,28 @@ describe("qredVerifier", () => {
 
   it("returns no hidden image payload when scan geometry is unavailable", () => {
     expect(extractHiddenQRedPayloadFromImage(new Uint8ClampedArray(), 0, 0, { data: "QRED.ORG" })).toBeNull();
+  });
+
+  it("recovers a hidden payload from the QR image even when jsQR only exposes visible text bytes", () => {
+    const payload = "IMG-ONLY";
+    const dataCodewords = new Uint8Array(19);
+    dataCodewords.set([0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40], 0);
+    dataCodewords.set(backendFramedPayloadBytes(payload), versionOneDataOffset());
+    const allCodewords = new Uint8Array(26);
+    allCodewords.set(dataCodewords);
+    const { imageData, width, height } = imageDataFromMatrix(matrixFromCodewords(allCodewords));
+
+    expect(qredTextFromPhotoScanResult(imageData, width, height, {
+      data: "QRED.ORG",
+      binaryData: new Uint8Array([0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40]),
+      version: 1,
+      location: {
+        topLeftCorner: { x: 0, y: 0 },
+        topRightCorner: { x: width, y: 0 },
+        bottomLeftCorner: { x: 0, y: height },
+        bottomRightCorner: { x: width, y: height },
+      },
+    })).toBe(payload);
   });
 
   it("does not let hidden bytes override a standard non-QRed QR scan result", () => {
