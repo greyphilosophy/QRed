@@ -173,13 +173,13 @@
 </header>
 
 <main>
-  <div class="upload-zone" id="uploadZone">
+  <label class="upload-zone" id="uploadZone" for="fileInput">
     <div class="icon">📷</div>
     <p>Click to select photos or drag &amp; drop</p>
     <p class="hint">JPG, PNG, WEBP — single or multiple files</p>
-    <button type="button" class="upload-button" id="uploadButton">Choose photos</button>
+    <span class="upload-button">Choose photos</span>
     <input type="file" id="fileInput" accept="image/*" multiple>
-  </div>
+  </label>
 
   <div id="results" class="results"></div>
 </main>
@@ -190,7 +190,6 @@
 import jsQR from 'https://esm.sh/jsqr@1.4.0';
 
 const uploadZone = document.getElementById('uploadZone');
-const uploadButton = document.getElementById('uploadButton');
 const fileInput = document.getElementById('fileInput');
 const resultsDiv = document.getElementById('results');
 
@@ -703,8 +702,6 @@ function processOneFile(file) {
 }
 
 // ── Event handlers ──
-
-uploadButton.addEventListener('click', () => fileInput.click());
 
 uploadZone.addEventListener('dragover', (e) => {
   e.preventDefault();

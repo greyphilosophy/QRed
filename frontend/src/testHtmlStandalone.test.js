@@ -9,8 +9,9 @@ describe("frontend/test.html", () => {
   it("stays self-contained so the upload button works when opened as a static file", () => {
     const html = readFileSync(testHtmlPath, "utf8");
 
-    expect(html).toContain("<button type=\"button\" class=\"upload-button\" id=\"uploadButton\">Choose photos</button>");
-    expect(html).toContain("uploadButton.addEventListener('click', () => fileInput.click());");
+    expect(html).toContain("<label class=\"upload-zone\" id=\"uploadZone\" for=\"fileInput\">");
+    expect(html).toContain("<span class=\"upload-button\">Choose photos</span>");
+    expect(html).not.toContain("uploadButton.addEventListener('click', () => fileInput.click());");
     expect(html).toContain("function qredTextFromPhotoScanResult(");
     expect(html).toContain("return extractHiddenQRedPayloadFromImage(");
   });
