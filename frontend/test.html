@@ -166,7 +166,6 @@
 
 <script type="module">
 import jsQR from 'https://esm.sh/jsqr@1.4.0';
-import { qredTextFromPhotoScanResult } from './src/qredVerifier.js';
 
 const uploadZone = document.getElementById('uploadZone');
 const fileInput = document.getElementById('fileInput');
@@ -222,6 +221,16 @@ function extractHiddenQRedPayload(binaryData, version) {
   const payloadOffset = hiddenPayloadByteOffset(version);
   if (payloadOffset >= bytes.length) return null;
   return framedPayloadFrom(bytes, payloadOffset);
+}
+
+function qredTextFromScanResult(scanResult) {
+  if (!scanResult || typeof scanResult === 'string') return scanResult || '';
+  const visibleText = scanResult.data || '';
+  const hiddenPayload = extractHiddenQRedPayload(scanResult.binaryData, scanResult.version);
+  if (visibleText === VISIBLE_QR_TEXT || visibleText.includes('QRED1') || visibleText.includes('qred.org')) {
+    return hiddenPayload || visibleText;
+  }
+  return visibleText;
 }
 
 // ── Hex dump formatter ──
