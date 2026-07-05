@@ -42,15 +42,79 @@
     text-align: center;
     cursor: pointer;
     transition: border-color 0.2s, background 0.2s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
   .upload-zone:hover, .upload-zone.dragover {
     border-color: var(--primary);
     background: rgba(59, 130, 246, 0.05);
   }
+  .upload-zone.scanning {
+    border-color: var(--warning);
+    background: rgba(245, 158, 11, 0.06);
+    box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.25) inset;
+  }
+  .upload-zone.scanning .upload-button {
+    background: var(--warning);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.02); }
+  }
   .upload-zone .icon { font-size: 3rem; opacity: 0.5; }
   .upload-zone p { margin-top: 0.5rem; color: var(--text-dim); }
   .upload-zone .hint { font-size: 0.8rem; margin-top: 0.25rem; color: var(--text-dim); opacity: 0.7; }
-  #fileInput { display: none; }
+  .upload-status {
+    margin-top: 0.85rem;
+    font-size: 0.9rem;
+    color: var(--text-dim);
+    min-height: 1.25em;
+  }
+  .upload-status.loading { color: var(--warning); }
+  .upload-status.ready { color: var(--text-dim); }
+  .upload-status.done { color: var(--success); }
+  .app-version {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--primary);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .commit-version {
+    display: inline-block;
+    margin-left: 0.35rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--warning);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  #fileInput { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+  .upload-button {
+    display: block;
+    width: 100%;
+    max-width: 260px;
+    margin-top: 1rem;
+    padding: 0.85rem 1.2rem;
+    border: 0;
+    border-radius: 999px;
+    background: var(--primary);
+    color: white;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: normal;
+    line-height: 1.2;
+    text-align: center;
+  }
+  .upload-button:hover { filter: brightness(1.05); }
   .results { margin-top: 2rem; }
   .result-card {
     background: var(--surface);
@@ -59,7 +123,8 @@
     margin-bottom: 1.5rem;
     border: 1px solid #334155;
   }
-  .result-card.error { border-color: #ef4444; }
+  .result-card.loading { border-color: var(--warning); }
+  .result-card.loading h3 { color: var(--warning); }
   .result-card h3 {
     font-size: 1.1rem;
     margin-bottom: 1rem;
@@ -152,23 +217,36 @@
 </header>
 
 <main>
-  <div class="upload-zone" id="uploadZone">
+  <label class="upload-zone" id="uploadZone" for="fileInput">
     <div class="icon">📷</div>
     <p>Click to select photos or drag &amp; drop</p>
     <p class="hint">JPG, PNG, WEBP — single or multiple files</p>
+    <span class="upload-button">Choose photos</span>
+    <p class="upload-status ready" id="uploadStatus">Ready to scan</p>
     <input type="file" id="fileInput" accept="image/*" multiple>
-  </div>
+  </label>
 
   <div id="results" class="results"></div>
 </main>
 
-<footer>QRed — Tamper-Evident Document Sealing</footer>
+<footer>QRed — Tamper-Evident Document Sealing <span class="app-version" id="appVersion">v1.0.8</span></footer>
 
+<script src="./jsQR.js"></script>
 <script type="module">
-import jsQR from 'https://esm.sh/jsqr@1.4.0';
+const jsQR = globalThis.jsQR || null;
+let awaitingFileSelection = false;
+let activeSelectionKey = null;
+let activeSelectionAt = 0;
+
+function fileSelectionKey(files) {
+  return Array.from(files || [])
+    .map((file) => `${file.name}:${file.size}:${file.lastModified}`)
+    .join('|');
+}
 
 const uploadZone = document.getElementById('uploadZone');
 const fileInput = document.getElementById('fileInput');
+const uploadStatus = document.getElementById('uploadStatus');
 const resultsDiv = document.getElementById('results');
 
 // ── QR code size limits by version ──
@@ -439,13 +517,6 @@ function sampleQrMatrix(imageData, width, height, location, version, options = {
   }
   return matrix;
 }
-function extractHiddenQRedPayload(binaryData, version) {
-  if (!binaryData || binaryData.length === 0) return null;
-  const bytes = binaryData instanceof Uint8Array ? binaryData : new Uint8Array(binaryData);
-  const payloadOffset = hiddenPayloadByteOffset(version);
-  if (payloadOffset >= bytes.length) return null;
-  return framedPayloadFrom(bytes, payloadOffset);
-}
 function extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) {
   if (!scanResult?.location || !scanResult.version) return null;
   const sampleOptions = [
@@ -466,25 +537,110 @@ function extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult)
 }
 
 // ── QR code detection from image ──
-function detectQRCodeFromImage(imgElement) {
-  const canvas = document.createElement('canvas');
-  canvas.width = imgElement.naturalWidth || imgElement.width;
-  canvas.height = imgElement.naturalHeight || imgElement.height;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(imgElement, 0, 0);
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+async function detectQRCodeFromImage(imgElement) {
+  if (jsQR) {
+    const canvas = document.createElement('canvas');
+    canvas.width = imgElement.naturalWidth || imgElement.width;
+    canvas.height = imgElement.naturalHeight || imgElement.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(imgElement, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    return jsQR(imageData.data, imageData.width, imageData.height, {
+      inversionAttempts: 'attemptBoth',
+    });
+  }
 
-  return jsQR(imageData.data, imageData.width, imageData.height, {
-    inversionAttempts: 'attemptBoth'
-  });
+  const Detector = window.BarcodeDetector || globalThis.BarcodeDetector;
+  if (Detector) {
+    const detector = new Detector({ formats: ['qr_code'] });
+    const results = await detector.detect(imgElement);
+    const qr = results?.[0];
+    if (!qr) return null;
+    const [firstPoint, secondPoint, thirdPoint, fourthPoint] = qr.cornerPoints || [];
+    return {
+      data: qr.rawValue || '',
+      binaryData: new Uint8Array(),
+      version: null,
+      location: firstPoint && secondPoint && thirdPoint && fourthPoint ? {
+        topLeftCorner: firstPoint,
+        topRightCorner: secondPoint,
+        bottomRightCorner: thirdPoint,
+        bottomLeftCorner: fourthPoint,
+      } : null,
+    };
+  }
+
+  return null;
 }
 
 // ── HTML escaping ──
+function formatHexDump(bytes, start = 0, length = bytes?.length ?? 0) {
+  const source = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  const end = Math.min(source.length, start + length);
+  const lines = [];
+  for (let offset = start; offset < end; offset += 16) {
+    const chunk = Array.from(source.slice(offset, Math.min(end, offset + 16)));
+    const hex = chunk.map((value) => value.toString(16).padStart(2, '0')).join(' ');
+    const ascii = chunk.map((value) => (value >= 32 && value <= 126 ? String.fromCharCode(value) : '.')).join('');
+    lines.push(`${offset.toString(16).padStart(8, '0')}  ${hex.padEnd(47, ' ')}  ${ascii}`);
+  }
+  return lines.join('\n');
+}
+
 function escapeHtml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ── Result rendering ──
+function updateHiddenPayloadSection(card, code, imgElement, version, payloadOffset) {
+  const section = card.querySelector('[data-hidden-payload-state]');
+  if (!section) return;
+
+  const qrCanvas = document.createElement('canvas');
+  qrCanvas.width = imgElement?.naturalWidth || imgElement?.width || 0;
+  qrCanvas.height = imgElement?.naturalHeight || imgElement?.height || 0;
+  const qrCtx = qrCanvas.getContext('2d');
+  if (!imgElement || !qrCtx || qrCanvas.width === 0 || qrCanvas.height === 0) {
+    section.innerHTML = `
+      <h4>🔍 QRed QR detected — checking for hidden payload...</h4>
+      <p style="margin-bottom: 0.5rem;">
+        <span class="badge badge-warning">Hidden payload: NOT FOUND</span>
+      </p>
+      <p style="font-size: 0.85rem; color: var(--text-dim);">
+        This QR code has the QRed visible text but no hidden payload was detected in the expected offset. The QR may be a bootstrap-only code, or the photo may not have captured the hidden data area clearly.
+      </p>
+    `;
+    return;
+  }
+
+  qrCtx.drawImage(imgElement, 0, 0);
+  const qrImageData = qrCtx.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
+  const recoveredText = qredTextFromPhotoScanResult(qrImageData.data, qrImageData.width, qrImageData.height, code);
+  if (recoveredText !== code.data) {
+    section.innerHTML = `
+      <h4>🔍 Hidden QRed Payload Found</h4>
+      <p style="margin-bottom: 0.5rem;">
+        <span class="badge badge-success">Hidden payload: YES</span>
+      </p>
+      <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.5rem;">
+        Payload byte offset: ${payloadOffset} | Payload length: ${recoveredText.length} bytes
+      </p>
+      <div class="payload-text">${escapeHtml(recoveredText)}</div>
+    `;
+    return;
+  }
+
+  section.innerHTML = `
+    <h4>🔍 QRed QR detected — checking for hidden payload...</h4>
+    <p style="margin-bottom: 0.5rem;">
+      <span class="badge badge-warning">Hidden payload: NOT FOUND</span>
+    </p>
+    <p style="font-size: 0.85rem; color: var(--text-dim);">
+      This QR code has the QRed visible text but no hidden payload was detected in the expected offset. The QR may be a bootstrap-only code, or the photo may not have captured the hidden data area clearly.
+    </p>
+  `;
+}
+
 function renderResultCard(file, code, imgElement, error) {
   const card = document.createElement('div');
   card.className = 'result-card';
@@ -517,50 +673,21 @@ function renderResultCard(file, code, imgElement, error) {
 
   // Check if this looks like a QRed QR
   const looksLikeQRed = code.data === VISIBLE_QR_TEXT || code.data.includes('QRED1') || code.data.includes('qred.org');
-  const qrCanvas = document.createElement('canvas');
-  qrCanvas.width = imgElement?.naturalWidth || imgElement?.width || 0;
-  qrCanvas.height = imgElement?.naturalHeight || imgElement?.height || 0;
-  const qrCtx = qrCanvas.getContext('2d');
-  if (imgElement && qrCtx) {
-    qrCtx.drawImage(imgElement, 0, 0);
-  }
-  const qrImageData = qrCtx && qrCanvas.width > 0 && qrCanvas.height > 0
-    ? qrCtx.getImageData(0, 0, qrCanvas.width, qrCanvas.height)
-    : null;
-  const recoveredText = looksLikeQRed && qrImageData
-    ? qredTextFromPhotoScanResult(qrImageData.data, qrImageData.width, qrImageData.height, code)
-    : qredTextFromScanResult(code);
-  const hiddenPayload = looksLikeQRed && recoveredText !== code.data ? recoveredText : null;
   const payloadOffset = looksLikeQRed ? hiddenPayloadByteOffset(version) : '—';
 
   let hiddenSection = '';
   if (looksLikeQRed) {
-    if (hiddenPayload) {
-      hiddenSection = `
-        <div class="hidden-payload-section">
-          <h4>🔍 Hidden QRed Payload Found</h4>
-          <p style="margin-bottom: 0.5rem;">
-            <span class="badge badge-success">Hidden payload: YES</span>
-          </p>
-          <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.5rem;">
-            Payload byte offset: ${payloadOffset} | Payload length: ${hiddenPayload.length} bytes
-          </p>
-          <div class="payload-text">${escapeHtml(hiddenPayload)}</div>
-        </div>
-      `;
-    } else {
-      hiddenSection = `
-        <div class="hidden-payload-section">
-          <h4>🔍 QRed QR detected — checking for hidden payload...</h4>
-          <p style="margin-bottom: 0.5rem;">
-            <span class="badge badge-warning">Hidden payload: NOT FOUND</span>
-          </p>
-          <p style="font-size: 0.85rem; color: var(--text-dim);">
-            This QR code has the QRed visible text but no hidden payload was detected in the expected offset. The QR may be a bootstrap-only code, or the photo may not have captured the hidden data area clearly.
-          </p>
-        </div>
-      `;
-    }
+    hiddenSection = `
+      <div class="hidden-payload-section" data-hidden-payload-state="pending">
+        <h4>🔍 QRed QR detected — checking for hidden payload...</h4>
+        <p style="margin-bottom: 0.5rem;">
+          <span class="badge badge-info">Hidden payload: LOADING</span>
+        </p>
+        <p style="font-size: 0.85rem; color: var(--text-dim);">
+          Recovering the hidden photo payload…
+        </p>
+      </div>
+    `;
   }
 
   // Build hex dump of raw binary data
@@ -583,9 +710,10 @@ function renderResultCard(file, code, imgElement, error) {
     `;
   }
 
+  const previewUrl = URL.createObjectURL(file);
   card.innerHTML = `
     <h3>✅ QR Code Decoded</h3>
-    <img class="preview-img" src="${URL.createObjectURL(file)}" alt="Photo preview">
+    <img class="preview-img" src="${previewUrl}" alt="Photo preview">
     <div class="detail-grid">
       <span class="label">File</span><span class="value">${escapeHtml(file.name)}</span>
       <span class="label">Visible text</span><span class="value" style="color: var(--primary);">${escapeHtml(code.data)}</span>
@@ -599,18 +727,71 @@ function renderResultCard(file, code, imgElement, error) {
     ${hexDumpSection}
   `;
 
+  if (looksLikeQRed) {
+    setTimeout(() => updateHiddenPayloadSection(card, code, imgElement, version, payloadOffset), 0);
+  }
+
   return card;
 }
 
 // ── File processing ──
-async function processFiles(files) {
+function setUploadStatus(message, tone = 'ready') {
+  if (!uploadStatus) return;
+  uploadStatus.textContent = message;
+  uploadStatus.classList.remove('loading', 'ready', 'done');
+  uploadStatus.classList.add(tone);
+  uploadZone.classList.toggle('scanning', tone === 'loading');
+}
+
+async function handleSelectedFiles(files, source = 'change') {
+  const fileArray = Array.from(files || []);
+  if (fileArray.length === 0) return;
+
+  const selectionKey = fileSelectionKey(fileArray);
+  if (selectionKey === activeSelectionKey && Date.now() - activeSelectionAt < 1500) {
+    return;
+  }
+  activeSelectionKey = selectionKey;
+  activeSelectionAt = Date.now();
+
+  awaitingFileSelection = false;
+  const firstFileName = fileArray[0]?.name || 'photo';
+  setUploadStatus(
+    source === 'click'
+      ? `Opening picker for ${firstFileName}…`
+      : `Selected ${fileArray.length} photo${fileArray.length === 1 ? '' : 's'}…`,
+    'loading',
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await processFiles(fileArray, source);
+}
+
+async function processFiles(files, source = 'change') {
   resultsDiv.innerHTML = '';
   const fileArray = Array.from(files);
+  if (fileArray.length === 0) return;
 
-  for (const file of fileArray) {
+  setUploadStatus(`Scanning ${fileArray.length} photo${fileArray.length === 1 ? '' : 's'}…`, 'loading');
+
+  for (let index = 0; index < fileArray.length; index += 1) {
+    const file = fileArray[index];
+    setUploadStatus(`Scanning photo ${index + 1} of ${fileArray.length}…`, 'loading');
+    const placeholder = document.createElement('div');
+    placeholder.className = 'result-card loading';
+    placeholder.innerHTML = `
+      <h3>⏳ Processing photo…</h3>
+      <div class="detail-grid">
+        <span class="label">File</span><span class="value">${escapeHtml(file.name)}</span>
+        <span class="label">Status</span><span class="value">Loading image and decoding QR…</span>
+      </div>
+    `;
+    resultsDiv.appendChild(placeholder);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const card = await processOneFile(file);
-    resultsDiv.appendChild(card);
+    placeholder.replaceWith(card);
   }
+
+  setUploadStatus(`Done scanning ${fileArray.length} photo${fileArray.length === 1 ? '' : 's'}.`, 'done');
 }
 
 function processOneFile(file) {
@@ -618,21 +799,26 @@ function processOneFile(file) {
     const img = new Image();
     const url = URL.createObjectURL(file);
 
-    img.onload = () => {
+    const finish = (card) => {
+      URL.revokeObjectURL(url);
+      resolve(card);
+    };
+
+    img.onload = async () => {
       try {
-        const code = detectQRCodeFromImage(img);
+        const code = await detectQRCodeFromImage(img);
         if (!code) {
-          resolve(renderResultCard(file, null, img, true));
+          finish(renderResultCard(file, null, img, true));
           return;
         }
-        resolve(renderResultCard(file, code, img, false));
+        finish(renderResultCard(file, code, img, false));
       } catch (err) {
-        resolve(renderResultCard(file, null, img, true));
+        finish(renderResultCard(file, null, img, true));
       }
     };
 
     img.onerror = () => {
-      resolve(renderResultCard(file, null, null, true));
+      finish(renderResultCard(file, null, null, true));
     };
 
     img.src = url;
@@ -640,7 +826,6 @@ function processOneFile(file) {
 }
 
 // ── Event handlers ──
-uploadZone.addEventListener('click', () => fileInput.click());
 
 uploadZone.addEventListener('dragover', (e) => {
   e.preventDefault();
@@ -651,13 +836,36 @@ uploadZone.addEventListener('drop', (e) => {
   e.preventDefault();
   uploadZone.classList.remove('dragover');
   if (e.dataTransfer.files.length) {
-    processFiles(e.dataTransfer.files);
+    handleSelectedFiles(e.dataTransfer.files, 'drop');
+  }
+});
+
+fileInput.addEventListener('click', () => {
+  awaitingFileSelection = true;
+  setUploadStatus('Choose an image, then tap Done…', 'loading');
+});
+
+window.addEventListener('focus', () => {
+  if (awaitingFileSelection && fileInput.files.length) {
+    handleSelectedFiles(fileInput.files, 'focus');
+  }
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && awaitingFileSelection && fileInput.files.length) {
+    handleSelectedFiles(fileInput.files, 'visibility');
+  }
+});
+
+fileInput.addEventListener('input', (e) => {
+  if (e.target.files.length) {
+    handleSelectedFiles(e.target.files, 'input');
   }
 });
 
 fileInput.addEventListener('change', (e) => {
   if (e.target.files.length) {
-    processFiles(e.target.files);
+    handleSelectedFiles(e.target.files, 'change');
   }
 });
 </script>
