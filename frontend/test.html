@@ -229,11 +229,12 @@
   <div id="results" class="results"></div>
 </main>
 
-<footer>QRed — Tamper-Evident Document Sealing <span class="app-version" id="appVersion">v1.0.4</span></footer>
+<footer>QRed — Tamper-Evident Document Sealing <span class="app-version" id="appVersion">v1.0.5</span></footer>
 
 <script type="module">
 let jsQR = null;
 let jsQRLoadPromise = null;
+let awaitingFileSelection = false;
 
 async function loadJsQR() {
   if (jsQR !== null) return jsQR;
@@ -749,6 +750,7 @@ async function handleSelectedFiles(files, source = 'change') {
   const fileArray = Array.from(files || []);
   if (fileArray.length === 0) return;
 
+  awaitingFileSelection = false;
   const firstFileName = fileArray[0]?.name || 'photo';
   setUploadStatus(
     source === 'click'
@@ -831,6 +833,23 @@ uploadZone.addEventListener('drop', (e) => {
   uploadZone.classList.remove('dragover');
   if (e.dataTransfer.files.length) {
     handleSelectedFiles(e.dataTransfer.files, 'drop');
+  }
+});
+
+fileInput.addEventListener('click', () => {
+  awaitingFileSelection = true;
+  setUploadStatus('Choose an image, then tap Done…', 'loading');
+});
+
+window.addEventListener('focus', () => {
+  if (awaitingFileSelection && fileInput.files.length) {
+    handleSelectedFiles(fileInput.files, 'focus');
+  }
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && awaitingFileSelection && fileInput.files.length) {
+    handleSelectedFiles(fileInput.files, 'visibility');
   }
 });
 
