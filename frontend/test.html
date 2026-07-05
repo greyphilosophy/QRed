@@ -229,12 +229,20 @@
   <div id="results" class="results"></div>
 </main>
 
-<footer>QRed — Tamper-Evident Document Sealing <span class="app-version" id="appVersion">v1.0.7</span></footer>
+<footer>QRed — Tamper-Evident Document Sealing <span class="app-version" id="appVersion">v1.0.8</span></footer>
 
 <script src="./jsQR.js"></script>
 <script type="module">
 const jsQR = globalThis.jsQR || null;
 let awaitingFileSelection = false;
+let activeSelectionKey = null;
+let activeSelectionAt = 0;
+
+function fileSelectionKey(files) {
+  return Array.from(files || [])
+    .map((file) => `${file.name}:${file.size}:${file.lastModified}`)
+    .join('|');
+}
 
 const uploadZone = document.getElementById('uploadZone');
 const fileInput = document.getElementById('fileInput');
@@ -738,6 +746,13 @@ function setUploadStatus(message, tone = 'ready') {
 async function handleSelectedFiles(files, source = 'change') {
   const fileArray = Array.from(files || []);
   if (fileArray.length === 0) return;
+
+  const selectionKey = fileSelectionKey(fileArray);
+  if (selectionKey === activeSelectionKey && Date.now() - activeSelectionAt < 1500) {
+    return;
+  }
+  activeSelectionKey = selectionKey;
+  activeSelectionAt = Date.now();
 
   awaitingFileSelection = false;
   const firstFileName = fileArray[0]?.name || 'photo';
