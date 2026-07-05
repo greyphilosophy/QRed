@@ -59,6 +59,11 @@ export function qredTextFromScanResult(scanResult) {
   return visibleText;
 }
 
+export function qredTextFromPhotoScanResult(imageData, width, height, scanResult) {
+  const hiddenPayload = extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult);
+  return hiddenPayload || qredTextFromScanResult(scanResult);
+}
+
 function decodeBase64Url(value) {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
   const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=");

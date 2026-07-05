@@ -166,6 +166,7 @@
 
 <script type="module">
 import jsQR from 'https://esm.sh/jsqr@1.4.0';
+import { qredTextFromPhotoScanResult } from './src/qredVerifier.js';
 
 const uploadZone = document.getElementById('uploadZone');
 const fileInput = document.getElementById('fileInput');
@@ -288,7 +289,20 @@ function renderResultCard(file, code, imgElement, error) {
 
   // Check if this looks like a QRed QR
   const looksLikeQRed = code.data === VISIBLE_QR_TEXT || code.data.includes('QRED1') || code.data.includes('qred.org');
-  const hiddenPayload = looksLikeQRed && code.binaryData ? extractHiddenQRedPayload(code.binaryData, version) : null;
+  const qrCanvas = document.createElement('canvas');
+  qrCanvas.width = imgElement?.naturalWidth || imgElement?.width || 0;
+  qrCanvas.height = imgElement?.naturalHeight || imgElement?.height || 0;
+  const qrCtx = qrCanvas.getContext('2d');
+  if (imgElement && qrCtx) {
+    qrCtx.drawImage(imgElement, 0, 0);
+  }
+  const qrImageData = qrCtx && qrCanvas.width > 0 && qrCanvas.height > 0
+    ? qrCtx.getImageData(0, 0, qrCanvas.width, qrCanvas.height)
+    : null;
+  const recoveredText = looksLikeQRed && qrImageData
+    ? qredTextFromPhotoScanResult(qrImageData.data, qrImageData.width, qrImageData.height, code)
+    : qredTextFromPhotoScanResult(null, 0, 0, code);
+  const hiddenPayload = looksLikeQRed && recoveredText !== code.data ? recoveredText : null;
   const payloadOffset = looksLikeQRed ? hiddenPayloadByteOffset(version) : '—';
 
   let hiddenSection = '';
