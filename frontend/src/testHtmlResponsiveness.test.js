@@ -12,6 +12,7 @@ describe("frontend/test.html responsiveness", () => {
     expect(html).toContain("<p class=\"upload-status ready\" id=\"uploadStatus\">Ready to scan</p>");
     expect(html).toContain("setUploadStatus(`Selected ${e.target.files.length} photo");
     expect(html).toContain("setUploadStatus(`Scanning photo ${index + 1} of ${fileArray.length}…`, 'loading');");
+    expect(html).toContain("await new Promise((resolve) => setTimeout(resolve, 0));");
     expect(html).toContain("setUploadStatus(`Done scanning ${fileArray.length} photo");
   });
 });

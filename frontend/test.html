@@ -688,6 +688,7 @@ async function processFiles(files) {
       </div>
     `;
     resultsDiv.appendChild(placeholder);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const card = await processOneFile(file);
     placeholder.replaceWith(card);
   }
