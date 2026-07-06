@@ -58,8 +58,25 @@ function decodePdfLiteralString(raw) {
 
 async function maybeInflate(bytes) {
   try {
-    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate"));
-    return new Uint8Array(await new Response(stream).arrayBuffer());
+    // PDF "FlateDecode" payloads are usually zlib-wrapped (RFC1950), but
+    // DecompressionStream('deflate') expects raw DEFLATE.
+    //
+    // Try raw first, then attempt zlib unwrap: 2-byte zlib header + raw deflate +
+    // 4-byte Adler32 footer.
+    const tryInflate = async (payload) => {
+      const stream = new Blob([payload]).stream().pipeThrough(new DecompressionStream("deflate"));
+      return new Uint8Array(await new Response(stream).arrayBuffer());
+    };
+
+    try {
+      return await tryInflate(bytes);
+    } catch {
+      if (bytes && bytes.length > 6 && bytes[0] === 0x78) {
+        const unwrapped = bytes.subarray(2, bytes.length - 4);
+        return await tryInflate(unwrapped);
+      }
+      throw new Error("inflate failed");
+    }
   } catch {
     return bytes;
   }
@@ -109,10 +126,25 @@ function parseCMap(text) {
 
 function decodeBytesWithMap(bytes, fontMap) {
   if (!fontMap || fontMap.size === 0) return bytesToLatin1(bytes);
+  const firstKey = fontMap.keys().next().value;
+  // ToUnicode maps may use 1-byte codes (e.g. "41") or 2-byte codes (e.g. "0002").
+  // Decode in the same granularity.
+  const keyLen = typeof firstKey === "string" ? firstKey.length : 0;
+  const bytesPerChar = keyLen % 2 === 0 && keyLen > 0 ? keyLen / 2 : 1;
+
   let out = "";
-  for (const byte of bytes) {
-    const key = byte.toString(16).toUpperCase().padStart(2, "0");
-    out += fontMap.get(key) ?? String.fromCharCode(byte);
+  for (let i = 0; i < bytes.length; i += bytesPerChar) {
+    const slice = bytes.slice(i, i + bytesPerChar);
+    if (slice.length === bytesPerChar) {
+      const key = Array.from(slice, (b) => b.toString(16).toUpperCase().padStart(2, "0")).join("");
+      out += fontMap.get(key) ?? String.fromCharCode(slice[slice.length - 1]);
+    } else {
+      // trailing partial; fall back to per-byte decode
+      for (const byte of slice) {
+        const key = byte.toString(16).toUpperCase().padStart(2, "0");
+        out += fontMap.get(key) ?? String.fromCharCode(byte);
+      }
+    }
   }
   return out;
 }
@@ -164,6 +196,13 @@ function extractTextFromContentString(content, fontMap) {
 
 async function extractPdfText(file) {
   try {
+    // Prefer pdf.js for robustness: it correctly handles font ToUnicode
+    // mappings even when our content-stream decoding fails.
+    const pdfjsText = await extractPdfTextWithPdfJs(file);
+    if (pdfjsText) {
+      return pdfjsText;
+    }
+
     const pdf = await PDFDocument.load(await file.arrayBuffer());
     const pages = [];
     for (const page of pdf.getPages()) {
