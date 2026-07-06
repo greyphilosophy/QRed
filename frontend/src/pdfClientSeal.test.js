@@ -1,4 +1,8 @@
 import { Buffer } from "node:buffer";
+import { execFileSync } from "node:child_process";
+import { writeFileSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import jsQR from "jsqr";
 import { PDFDocument } from "pdf-lib";
 import { PNG } from "pngjs";
@@ -71,6 +75,15 @@ async function scanQRedPngDataUrl(dataUrl) {
 
 function bitAt(bytes, index) {
   return (bytes[Math.floor(index / 8)] >>> (7 - (index % 8))) & 1;
+}
+
+function renderPdfFirstPageToPng(pdfBytes) {
+  const stamp = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const pdfPath = join(tmpdir(), `qred-seal-${stamp}.pdf`);
+  const pngBase = join(tmpdir(), `qred-seal-${stamp}`);
+  writeFileSync(pdfPath, Buffer.from(pdfBytes));
+  execFileSync("pdftoppm", ["-png", "-r", "144", "-singlefile", pdfPath, pngBase]);
+  return PNG.sync.read(readFileSync(`${pngBase}.png`));
 }
 
 describe("browser PDF sealing", () => {
@@ -154,6 +167,21 @@ describe("browser PDF sealing", () => {
     expect(Math.round(printedPage.getWidth())).toBe(612);
     expect(Math.round(printedPage.getHeight())).toBe(1008);
     expect(stampedQrValues.length).toBeGreaterThan(0);
+
+    const png = renderPdfFirstPageToPng(await blob.arrayBuffer());
+    const bottomStart = Math.floor(png.height * 0.75);
+    let darkBottomPixels = 0;
+    for (let y = bottomStart; y < png.height; y += 1) {
+      for (let x = 0; x < png.width; x += 1) {
+        const index = (png.width * y + x) * 4;
+        const r = png.data[index];
+        const g = png.data[index + 1];
+        const b = png.data[index + 2];
+        if (r < 220 || g < 220 || b < 220) darkBottomPixels += 1;
+      }
+    }
+
+    expect(darkBottomPixels).toBeGreaterThan(12000);
   });
 
   it("shrinks page content without changing the source page size when asked", async () => {

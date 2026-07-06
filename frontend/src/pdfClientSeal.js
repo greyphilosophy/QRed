@@ -21,13 +21,20 @@ function resolvePageScalingStrategy(strategy, width, height) {
   return isLetterSizedPage(width, height) ? "legal-footer" : "shrink-footer";
 }
 
-function applyPageScaling(page, resolvedStrategy, footerHeight) {
+async function applyPageScaling(pdf, pageIndex, page, resolvedStrategy, footerHeight) {
   const { width, height } = page.getSize();
 
   if (resolvedStrategy === "legal-footer") {
-    page.setSize(width, height + footerHeight);
-    page.translateContent(0, footerHeight);
-    return resolvedStrategy;
+    const embeddedPage = await pdf.embedPage(page);
+    const replacementPage = pdf.insertPage(pageIndex + 1, [width, height + footerHeight]);
+    replacementPage.drawPage(embeddedPage, {
+      x: 0,
+      y: footerHeight,
+      width,
+      height,
+    });
+    pdf.removePage(pageIndex);
+    return replacementPage;
   }
 
   if (resolvedStrategy === "shrink-footer") {
@@ -37,12 +44,19 @@ function applyPageScaling(page, resolvedStrategy, footerHeight) {
     }
 
     const scale = availableContentHeight / height;
-    page.scaleContent(scale, scale);
-    page.translateContent(0, footerHeight);
-    return resolvedStrategy;
+    const embeddedPage = await pdf.embedPage(page);
+    const replacementPage = pdf.insertPage(pageIndex + 1, [width, height]);
+    replacementPage.drawPage(embeddedPage, {
+      x: 0,
+      y: footerHeight,
+      width: width * scale,
+      height: height * scale,
+    });
+    pdf.removePage(pageIndex);
+    return replacementPage;
   }
 
-  return resolvedStrategy;
+  return page;
 }
 
 function bytesToLatin1(bytes) {
@@ -406,7 +420,8 @@ export async function sealPdfInBrowser({
     throw new Error("PDF page count changed while sealing");
   }
 
-  for (const [pageIndex, page] of pages.entries()) {
+  for (let pageIndex = pageSealResults.length - 1; pageIndex >= 0; pageIndex -= 1) {
+    let page = pdf.getPage(pageIndex);
     const qrValues = pageSealResults[pageIndex].seals;
     const qrImages = await Promise.all(qrValues.map(async (value) => pdf.embedPng(await qrPngBytes(value))));
     const { width, height } = page.getSize();
@@ -416,7 +431,7 @@ export async function sealPdfInBrowser({
       : planQrStampLayout(width, qrImages.length);
     const footerMargin = resolvedPageScalingStrategy === "legal-footer" ? 1 : PANEL_MARGIN;
     const footerHeight = resolvedPageScalingStrategy === "legal-footer" ? LEGAL_FOOTER_HEIGHT : footerMargin + layout.panelHeight;
-    applyPageScaling(page, resolvedPageScalingStrategy, footerHeight);
+    page = await applyPageScaling(pdf, pageIndex, page, resolvedPageScalingStrategy, footerHeight);
     page.drawRectangle({
       x: footerMargin,
       y: footerMargin,
