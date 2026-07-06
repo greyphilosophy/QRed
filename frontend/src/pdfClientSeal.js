@@ -21,20 +21,112 @@ function buildPdfManifest(file, digest) {
   ].join("\n");
 }
 
+function bytesToLatin1(bytes) {
+  return Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+}
+
+function decodePdfLiteralString(raw) {
+  let out = "";
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (ch !== "\\") {
+      out += ch;
+      continue;
+    }
+    i += 1;
+    const next = raw[i];
+    if (next === undefined) break;
+    if (next === "n") out += "\n";
+    else if (next === "r") out += "\r";
+    else if (next === "t") out += "\t";
+    else if (next === "b") out += "\b";
+    else if (next === "f") out += "\f";
+    else if (next === "(" || next === ")" || next === "\\") out += next;
+    else if (/[0-7]/.test(next)) {
+      let oct = next;
+      for (let j = 0; j < 2 && /[0-7]/.test(raw[i + 1]); j += 1) {
+        i += 1;
+        oct += raw[i];
+      }
+      out += String.fromCharCode(Number.parseInt(oct, 8));
+    } else {
+      out += next;
+    }
+  }
+  return out;
+}
+
+async function maybeInflate(bytes) {
+  try {
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate"));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  } catch {
+    return bytes;
+  }
+}
+
+function extractTextFromContentString(content) {
+  const texts = [];
+
+  const hexMatches = content.matchAll(/<([0-9A-Fa-f]+)>\s*Tj/g);
+  for (const match of hexMatches) {
+    const hex = match[1];
+    if (hex.length % 2 !== 0) continue;
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let index = 0; index < hex.length; index += 2) {
+      bytes[index / 2] = Number.parseInt(hex.slice(index, index + 2), 16);
+    }
+    texts.push(bytesToLatin1(bytes));
+  }
+
+  const literalMatches = content.matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj/g);
+  for (const match of literalMatches) texts.push(decodePdfLiteralString(match[1]));
+
+  const arrayMatches = content.matchAll(/\[(.*?)\]\s*TJ/gs);
+  for (const match of arrayMatches) {
+    const chunk = match[1];
+    const pieces = [
+      ...chunk.matchAll(/<([0-9A-Fa-f]+)>|\(((?:\\.|[^\\)])*)\)/g),
+    ];
+    for (const piece of pieces) {
+      if (piece[1]) {
+        const hex = piece[1];
+        if (hex.length % 2 !== 0) continue;
+        const bytes = new Uint8Array(hex.length / 2);
+        for (let index = 0; index < hex.length; index += 2) {
+          bytes[index / 2] = Number.parseInt(hex.slice(index, index + 2), 16);
+        }
+        texts.push(bytesToLatin1(bytes));
+      } else if (piece[2]) {
+        texts.push(decodePdfLiteralString(piece[2]));
+      }
+    }
+  }
+
+  return texts.join(" ").replace(/\s+/g, " ").trim();
+}
+
 async function extractPdfText(file) {
   try {
-    const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const pdf = await pdfjsLib.getDocument({
-      data: new Uint8Array(await file.arrayBuffer()),
-      disableWorker: true,
-      useWorkerFetch: false,
-    }).promise;
+    const pdf = await PDFDocument.load(await file.arrayBuffer());
     const pages = [];
-    for (let index = 1; index <= pdf.numPages; index += 1) {
-      const page = await pdf.getPage(index);
-      const content = await page.getTextContent();
-      const text = content.items.map((item) => item.str).join(" ").trim();
-      if (text) pages.push(text);
+    for (const page of pdf.getPages()) {
+      const contents = page.node.normalizedEntries().Contents;
+      if (!contents) continue;
+      const pageTexts = [];
+      for (let index = 0; index < contents.size(); index += 1) {
+        const stream = contents.lookup(index);
+        let bytes = null;
+        if (typeof stream.getUnencodedContents === "function") bytes = stream.getUnencodedContents();
+        else if (typeof stream.getContents === "function") bytes = await maybeInflate(stream.getContents());
+        else if (typeof stream.asUint8Array === "function") bytes = await maybeInflate(stream.asUint8Array());
+        if (!bytes || bytes.length === 0) continue;
+        const content = bytesToLatin1(bytes);
+        const extracted = extractTextFromContentString(content);
+        if (extracted) pageTexts.push(extracted);
+      }
+      const joined = pageTexts.join(" ").trim();
+      if (joined) pages.push(joined);
     }
     return pages.join("\n\n").trim();
   } catch {
