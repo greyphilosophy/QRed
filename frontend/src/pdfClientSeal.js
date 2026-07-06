@@ -238,7 +238,11 @@ async function extractPdfTextWithPdfJs(file) {
       import.meta.url,
     ).toString();
 
+    // Ensure extraction works even when Workers are blocked.
+    GlobalWorkerOptions.workerPort = null;
+
     const arrayBuffer = await file.arrayBuffer();
+
     const loadingTask = getDocument({ data: arrayBuffer });
     const pdf = await loadingTask.promise;
 
