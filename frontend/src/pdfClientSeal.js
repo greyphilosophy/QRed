@@ -24,7 +24,11 @@ function buildPdfManifest(file, digest) {
 async function extractPdfText(file) {
   try {
     const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+    const pdf = await pdfjsLib.getDocument({
+      data: new Uint8Array(await file.arrayBuffer()),
+      disableWorker: true,
+      useWorkerFetch: false,
+    }).promise;
     const pages = [];
     for (let index = 1; index <= pdf.numPages; index += 1) {
       const page = await pdf.getPage(index);
