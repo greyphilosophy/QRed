@@ -9,6 +9,8 @@ const PANEL_PADDING = 10;
 const PANEL_LABEL_HEIGHT = 18;
 const LETTER_PAGE_WIDTH = 612;
 const LETTER_PAGE_HEIGHT = 792;
+export const LEGAL_PAGE_HEIGHT = 1008;
+export const LEGAL_FOOTER_HEIGHT = 216;
 
 function isLetterSizedPage(width, height) {
   return Math.abs(width - LETTER_PAGE_WIDTH) <= 2 && Math.abs(height - LETTER_PAGE_HEIGHT) <= 2;
@@ -361,7 +363,14 @@ export async function sealPdfInBrowser({
     const layout = planQrStampLayout(width, qrImages.length);
     const resolvedPageScalingStrategy = resolvePageScalingStrategy(pageScalingStrategy, width, height);
     const footerMargin = resolvedPageScalingStrategy === "legal-footer" ? 1 : PANEL_MARGIN;
-    const footerHeight = footerMargin + layout.panelHeight;
+    const footerHeight = resolvedPageScalingStrategy === "legal-footer" ? LEGAL_FOOTER_HEIGHT : footerMargin + layout.panelHeight;
+    if (resolvedPageScalingStrategy === "legal-footer") {
+      const usableFooterHeight = LEGAL_FOOTER_HEIGHT - footerMargin;
+      const usableFooterWidth = width - (footerMargin * 2);
+      if (layout.panelHeight > usableFooterHeight || layout.panelWidth > usableFooterWidth) {
+        throw new Error("Selected QR seals do not fit within the bottom 3 inches of a legal-sized page");
+      }
+    }
     applyPageScaling(page, resolvedPageScalingStrategy, footerHeight);
     page.drawRectangle({
       x: footerMargin,
@@ -381,8 +390,8 @@ export async function sealPdfInBrowser({
     qrImages.forEach((image, index) => {
       const column = index % layout.columns;
       const row = Math.floor(index / layout.columns);
-      const x = PANEL_MARGIN + PANEL_PADDING + (column * (layout.qrSize + layout.gap));
-      const y = PANEL_MARGIN + PANEL_PADDING + ((layout.rows - row - 1) * (layout.qrSize + layout.gap));
+      const x = footerMargin + PANEL_PADDING + (column * (layout.qrSize + layout.gap));
+      const y = footerMargin + PANEL_PADDING + ((layout.rows - row - 1) * (layout.qrSize + layout.gap));
       page.drawImage(image, { x, y, width: layout.qrSize, height: layout.qrSize });
     });
   }

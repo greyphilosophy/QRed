@@ -124,11 +124,11 @@ function PdfSealForm() {
         React.createElement("label", null, "Page scaling"),
         React.createElement("select", { "aria-label": "Page scaling", value: pageScalingStrategy, onChange: (e) => setPageScalingStrategy(e.target.value), title: "Choose how the PDF should make room for QR seals before drawing the footer." },
           React.createElement("option", { value: "automatic" }, "Automatic (legal for letter, shrink otherwise)"),
-          React.createElement("option", { value: "legal-footer" }, "Expand letter pages to legal size"),
+          React.createElement("option", { value: "legal-footer" }, "Expand letter pages to legal size (bottom 3-inch footer)"),
           React.createElement("option", { value: "shrink-footer" }, "Shrink the document to create a footer")
         ),
         React.createElement("small", { style: { color: "#64748b", display: "block", marginTop: "0.5rem" } },
-          "Automatic expands letter pages to legal size, and shrinks other page sizes to create room for the seals."
+          "Automatic expands letter pages to legal size and keeps seals in the bottom 3 inches; other page sizes shrink to create room for the seals."
         )
       )
     ),

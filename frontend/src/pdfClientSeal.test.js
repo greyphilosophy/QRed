@@ -29,6 +29,15 @@ async function makeLetterPdfFile() {
   return new File([bytes], "letter.pdf", { type: "application/pdf" });
 }
 
+async function makeHugeLetterPdfFile() {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([612, 792]);
+  const hugeText = "QRed sealing content needs more than one footer row. ".repeat(600);
+  page.drawText(hugeText, { x: 36, y: 744, size: 10, lineHeight: 12, maxWidth: 540 });
+  const bytes = await pdf.save();
+  return new File([bytes], "huge-letter.pdf", { type: "application/pdf" });
+}
+
 async function makeTwoPagePdfFile() {
   const pdf = await PDFDocument.create();
   const firstPage = pdf.addPage([612, 792]);
@@ -116,6 +125,19 @@ describe("browser PDF sealing", () => {
     const [printedPage] = printedPdf.getPages();
     expect(Math.round(printedPage.getWidth())).toBe(612);
     expect(Math.round(printedPage.getHeight())).toBe(1008);
+  });
+
+  it("rejects legal-sized footers that would spill beyond the bottom 3 inches", async () => {
+    const file = await makeHugeLetterPdfFile();
+
+    await expect(sealPdfInBrowser({
+      file,
+      issuer: "QRed Letter Authority",
+      privateKey,
+      publicKey,
+      encodingStrategy: "plaintext",
+      pageScalingStrategy: "legal-footer",
+    })).rejects.toThrow(/bottom 3 inches/i);
   });
 
   it("shrinks page content without changing the source page size when asked", async () => {
