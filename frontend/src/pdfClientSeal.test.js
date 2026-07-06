@@ -129,6 +129,7 @@ describe("browser PDF sealing", () => {
       footerMargin: 1,
     });
 
+    expect(layout.rows).toBe(1);
     expect(layout.qrSize).toBeLessThanOrEqual(84);
     expect(layout.panelHeight).toBeLessThanOrEqual(LEGAL_FOOTER_HEIGHT - 1);
   });
