@@ -466,7 +466,7 @@ function deinterleaveDataCodewords(interleaved, version, ecLevelBits = 0) {
   const ecTotalBlocks = EC_BLOCKS_BY_LEVEL[ecLevelBits]?.[version];
   if (!totalCodewords || !ecTotalCodewords || interleaved.length < totalCodewords || !ecTotalBlocks) return interleaved;
   const dataTotalCodewords = totalCodewords - ecTotalCodewords;
-  const blocksInGroup2 = totalCodewords % ecTotalBlocks;
+  const blocksInGroup2 = dataTotalCodewords % ecTotalBlocks;
   const blocksInGroup1 = ecTotalBlocks - blocksInGroup2;
   const dataCodewordsInGroup1 = Math.floor(dataTotalCodewords / ecTotalBlocks);
   const dataCodewordsInGroup2 = dataCodewordsInGroup1 + 1;
