@@ -1,9 +1,13 @@
 import { Buffer } from "node:buffer";
+import { execFileSync } from "node:child_process";
+import { writeFileSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import jsQR from "jsqr";
 import { PDFDocument } from "pdf-lib";
 import { PNG } from "pngjs";
 import { describe, expect, it } from "vitest";
-import { planQrStampLayout, qrPngBytes, sealPdfInBrowser } from "./pdfClientSeal.js";
+import { LEGAL_FOOTER_HEIGHT, planQrStampLayout, planQrStampLayoutForFooterBand, qrPngBytes, sealPdfInBrowser } from "./pdfClientSeal.js";
 import { qrScanAction } from "./QrScanner.jsx";
 import { createQRedQrData, qredQrPngDataUrl, qredRasterPlan, qredVisibleBitsLength } from "./qredQr.js";
 import { extractHiddenQRedPayload, verifyQRedSeals, VISIBLE_QR_TEXT } from "./qredVerifier.js";
@@ -27,6 +31,15 @@ async function makeLetterPdfFile() {
   page.drawText("Sincerely, QRed QA", { x: 72, y: 648, size: 12 });
   const bytes = await pdf.save();
   return new File([bytes], "letter.pdf", { type: "application/pdf" });
+}
+
+async function makeHugeLetterPdfFile() {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([612, 792]);
+  const hugeText = "QRed sealing content needs more than one footer row. ".repeat(600);
+  page.drawText(hugeText, { x: 36, y: 744, size: 10, lineHeight: 12, maxWidth: 540 });
+  const bytes = await pdf.save();
+  return new File([bytes], "huge-letter.pdf", { type: "application/pdf" });
 }
 
 async function makeTwoPagePdfFile() {
@@ -62,6 +75,15 @@ async function scanQRedPngDataUrl(dataUrl) {
 
 function bitAt(bytes, index) {
   return (bytes[Math.floor(index / 8)] >>> (7 - (index % 8))) & 1;
+}
+
+function renderPdfFirstPageToPng(pdfBytes) {
+  const stamp = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const pdfPath = join(tmpdir(), `qred-seal-${stamp}.pdf`);
+  const pngBase = join(tmpdir(), `qred-seal-${stamp}`);
+  writeFileSync(pdfPath, Buffer.from(pdfBytes));
+  execFileSync("pdftoppm", ["-png", "-r", "144", "-singlefile", pdfPath, pngBase]);
+  return PNG.sync.read(readFileSync(`${pngBase}.png`));
 }
 
 describe("browser PDF sealing", () => {
@@ -101,6 +123,16 @@ describe("browser PDF sealing", () => {
     expect(stampedQrValues).toEqual(pageSealStrings[0]);
   });
 
+  it("shrinks legal-footer QR seals to fit within the usable bottom 3-inch band", () => {
+    const layout = planQrStampLayoutForFooterBand(612, 6, {
+      footerBandHeight: LEGAL_FOOTER_HEIGHT,
+      footerMargin: 1,
+    });
+
+    expect(layout.qrSize).toBeLessThanOrEqual(84);
+    expect(layout.panelHeight).toBeLessThanOrEqual(LEGAL_FOOTER_HEIGHT - 1);
+  });
+
   it("expands letter pages to legal size when asked to create a footer for QR seals", async () => {
     const file = await makeLetterPdfFile();
 
@@ -116,6 +148,40 @@ describe("browser PDF sealing", () => {
     const [printedPage] = printedPdf.getPages();
     expect(Math.round(printedPage.getWidth())).toBe(612);
     expect(Math.round(printedPage.getHeight())).toBe(1008);
+  });
+
+  it("stamps huge letter PDFs into legal pages without spilling past the footer band", async () => {
+    const file = await makeHugeLetterPdfFile();
+
+    const { blob, stampedQrValues } = await sealPdfInBrowser({
+      file,
+      issuer: "QRed Letter Authority",
+      privateKey,
+      publicKey,
+      encodingStrategy: "plaintext",
+      pageScalingStrategy: "legal-footer",
+    });
+
+    const printedPdf = await PDFDocument.load(await blob.arrayBuffer());
+    const [printedPage] = printedPdf.getPages();
+    expect(Math.round(printedPage.getWidth())).toBe(612);
+    expect(Math.round(printedPage.getHeight())).toBe(1008);
+    expect(stampedQrValues.length).toBeGreaterThan(0);
+
+    const png = renderPdfFirstPageToPng(await blob.arrayBuffer());
+    const bottomStart = Math.floor(png.height * 0.75);
+    let darkBottomPixels = 0;
+    for (let y = bottomStart; y < png.height; y += 1) {
+      for (let x = 0; x < png.width; x += 1) {
+        const index = (png.width * y + x) * 4;
+        const r = png.data[index];
+        const g = png.data[index + 1];
+        const b = png.data[index + 2];
+        if (r < 220 || g < 220 || b < 220) darkBottomPixels += 1;
+      }
+    }
+
+    expect(darkBottomPixels).toBeGreaterThan(12000);
   });
 
   it("shrinks page content without changing the source page size when asked", async () => {

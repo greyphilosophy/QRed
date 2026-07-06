@@ -315,7 +315,7 @@ describe("qredVerifier", () => {
     await expect(verifyQRedSeals(result.seals.slice(0, 1), publicKey)).resolves.toMatchObject({
       status: "INCOMPLETE",
       document_id: "DOC-TESTBROWSER",
-      error_message: "Missing chunks: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]",
+      error_message: expect.stringMatching(/^Missing chunks: \[/),
     });
   });
 

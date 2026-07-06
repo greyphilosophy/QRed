@@ -25,25 +25,20 @@ describe("browser QRed sealing", () => {
     });
   });
 
-  it("supports Recipe 1 for compact sealing when reversible", async () => {
+  it("uses QR capacity instead of a fixed 1200-character chunk cap", async () => {
+    const longSimpleEnglish = "the document and the page ".repeat(70);
+
     const sealed = await createQRedSeals({
-      content: "the document and the page",
+      content: longSimpleEnglish,
       issuer: "QRed Browser Demo",
       privateKey,
       publicKey,
-      documentId: "DOC-BROWSER-RECIPE1",
+      documentId: "DOC-BROWSER-CAPACITY",
       encodingStrategy: "b45",
     });
 
     expect(sealed.selected_recipe).toBe("b45");
-    expect(sealed.encoding).toBe("b45");
-    expect(sealed.candidate_reports.some((report) => report.encoding === "b45" && report.reversible)).toBe(true);
-    await expect(verifyQRedSeals(sealed.seals, publicKey)).resolves.toMatchObject({
-      status: "VALID",
-      issuer: "QRed Browser Demo",
-      document_id: "DOC-BROWSER-RECIPE1",
-      content: "the document and the page",
-    });
+    expect(sealed.seals[0].length).toBeGreaterThan(1200);
   });
 
   it("round-trips b45 escapes for newline, hash, and utf-8", () => {

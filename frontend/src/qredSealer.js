@@ -1,8 +1,8 @@
 import { signAsync as signEd25519 } from "@noble/ed25519";
+import { createQRedQrData } from "./qredQr.js";
 import { validateSimpleEnglish } from "./textRecipes.js";
 
 export const DEFAULT_BOOTSTRAP_URL = "https://qred.org/";
-export const MAX_QR_PAYLOAD_LENGTH = 1200;
 
 function decodeBase64Url(value) {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
@@ -47,6 +47,15 @@ function buildFragmentUrl(bootstrapUrl, fragmentData) {
   return `${fragmentBase(bootstrapUrl)}#${fragmentData}`;
 }
 
+function fragmentFitsQr(bootstrapUrl, fragmentData) {
+  try {
+    createQRedQrData(buildFragmentUrl(bootstrapUrl, fragmentData));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function splitTextForQrUrls(text, payload, bootstrapUrl, recipeId = "plaintext") {
   if (!text) {
     return [""];
@@ -73,7 +82,7 @@ function splitTextForQrUrls(text, payload, bootstrapUrl, recipeId = "plaintext")
           totalChunks,
           recipeId,
         });
-        if (buildFragmentUrl(bootstrapUrl, fragmentData).length <= MAX_QR_PAYLOAD_LENGTH) {
+        if (fragmentFitsQr(bootstrapUrl, fragmentData)) {
           best = mid;
           low = mid + 1;
         } else {
@@ -81,7 +90,7 @@ function splitTextForQrUrls(text, payload, bootstrapUrl, recipeId = "plaintext")
         }
       }
       if (best === 0) {
-        throw new Error("QRed metadata and signature exceed the QR payload limit before adding document text");
+        throw new Error("QRed metadata and signature exceed the QR code capacity before adding document text");
       }
       chunks.push(text.slice(offset, offset + best));
       offset += best;
