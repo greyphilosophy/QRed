@@ -201,6 +201,58 @@ async function extractPdfText(file) {
       const joined = pageTexts.join(" ").trim();
       if (joined) pages.push(joined);
     }
+    const extracted = pages.join("\n\n").trim();
+
+    // Heuristic: if we ended up decoding mostly control characters, the PDF
+    // likely lacks a usable ToUnicode map for its fonts. In that case, fall
+    // back to pdf.js which handles more real-world PDFs.
+    const controlChars = extracted
+      .split("")
+      .filter((ch) => {
+        const code = ch.charCodeAt(0);
+        // allow common whitespace; everything else under 0x20 is suspicious
+        return code < 0x20 && ![0x09, 0x0a, 0x0d].includes(code);
+      }).length;
+    const controlRatio = extracted.length ? controlChars / extracted.length : 0;
+
+    if (extracted && controlRatio >= 0.25) {
+      const pdfjsFallback = await extractPdfTextWithPdfJs(file);
+      if (pdfjsFallback) return pdfjsFallback;
+    }
+
+    return extracted;
+  } catch {
+    return "";
+  }
+}
+
+async function extractPdfTextWithPdfJs(file) {
+  try {
+    // Dynamic import keeps pdf.js out of the hot path.
+    const pdfjs = await import("pdfjs-dist/build/pdf.mjs");
+    const { GlobalWorkerOptions, getDocument } = pdfjs;
+
+    // Use bundled worker (no CDN) so this works in Cloudflare/static contexts.
+    GlobalWorkerOptions.workerSrc = new URL(
+      "pdfjs-dist/build/pdf.worker.min.mjs",
+      import.meta.url,
+    ).toString();
+
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = getDocument({ data: arrayBuffer });
+    const pdf = await loadingTask.promise;
+
+    const pages = [];
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      const strings = (textContent.items || [])
+        .map((item) => item && item.str)
+        .filter((s) => typeof s === "string");
+      const joined = strings.join(" ").replace(/\s+/g, " ").trim();
+      if (joined) pages.push(joined);
+    }
+
     return pages.join("\n\n").trim();
   } catch {
     return "";
