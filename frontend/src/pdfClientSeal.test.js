@@ -29,6 +29,16 @@ async function makeLetterPdfFile() {
   return new File([bytes], "letter.pdf", { type: "application/pdf" });
 }
 
+async function makeTwoPagePdfFile() {
+  const pdf = await PDFDocument.create();
+  const firstPage = pdf.addPage([612, 792]);
+  firstPage.drawText("Page one: this PDF should get its own seal set.", { x: 72, y: 720, size: 12 });
+  const secondPage = pdf.addPage([612, 792]);
+  secondPage.drawText("Page two: this PDF should not reuse page one seals.", { x: 72, y: 720, size: 12 });
+  const bytes = await pdf.save();
+  return new File([bytes], "two-pages.pdf", { type: "application/pdf" });
+}
+
 async function printBlobToPdf(blob) {
   const sourcePdf = await PDFDocument.load(await blob.arrayBuffer());
   const printedPdf = await PDFDocument.create();
@@ -72,6 +82,23 @@ describe("browser PDF sealing", () => {
       status: "VALID",
       issuer: "QRed Browser Demo",
     });
+  });
+
+  it("stamps each page with its own QR seal set instead of repeating the full document set", async () => {
+    const file = await makeTwoPagePdfFile();
+
+    const { pageSealResults, pageSealStrings, stampedQrValues } = await sealPdfInBrowser({
+      file,
+      issuer: "QRed Page Authority",
+      privateKey,
+      publicKey,
+    });
+
+    expect(pageSealResults).toHaveLength(2);
+    expect(pageSealStrings).toHaveLength(2);
+    expect(pageSealStrings[0]).not.toEqual(pageSealStrings[1]);
+    expect(pageSealResults[0].document_id).not.toEqual(pageSealResults[1].document_id);
+    expect(stampedQrValues).toEqual(pageSealStrings[0]);
   });
 
   it("generates QR seals for a PDF letter, stamps every verifier QR, and validates the stamped seals", async () => {
