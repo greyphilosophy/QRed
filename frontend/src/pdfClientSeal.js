@@ -242,11 +242,8 @@ export async function sealPdfInBrowser({
   bootstrapUrl = DEFAULT_BOOTSTRAP_URL,
   encodingStrategy = "automatic",
 }) {
-  console.log("[qred-debug seal] start", { name: file?.name, size: file?.size });
   const digest = await fileDigestHex(file);
-  console.log("[qred-debug seal] digest done");
   const pdfText = await extractPdfText(file);
-  console.log("[qred-debug seal] extracted text", pdfText);
   const sealResult = await createQRedSeals({
     content: pdfText || buildPdfManifest(file, digest),
     issuer,
@@ -255,12 +252,10 @@ export async function sealPdfInBrowser({
     bootstrapUrl,
     encodingStrategy,
   });
-  console.log("[qred-debug seal] qred seals", sealResult.seals.length, sealResult.selected_recipe);
   const pdf = await PDFDocument.load(await file.arrayBuffer());
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const qrValues = sealResult.seals;
   const qrImages = await Promise.all(qrValues.map(async (value) => pdf.embedPng(await qrPngBytes(value))));
-  console.log("[qred-debug seal] qr images ready", qrImages.length);
 
   for (const page of pdf.getPages()) {
     const { width } = page.getSize();
@@ -289,9 +284,7 @@ export async function sealPdfInBrowser({
     });
   }
 
-  console.log("[qred-debug seal] before save");
   const sealedBytes = await pdf.save();
-  console.log("[qred-debug seal] after save", sealedBytes.length);
   return {
     blob: new Blob([sealedBytes], { type: "application/pdf" }),
     sealResult,
