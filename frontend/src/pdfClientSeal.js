@@ -1,5 +1,5 @@
 import { PDFDocument, rgb, StandardFonts, PDFName } from "pdf-lib";
-import { createQRedSeals, DEFAULT_BOOTSTRAP_URL } from "./qredSealer.js";
+import { createQRedSeals, DEFAULT_BOOTSTRAP_URL, canonicalizeText } from "./qredSealer.js";
 import { qredQrPngDataUrl } from "./qredQr.js";
 
 export const QR_SIZE = 177;
@@ -7,18 +7,40 @@ const QR_GAP = 10;
 const PANEL_MARGIN = 18;
 const PANEL_PADDING = 10;
 const PANEL_LABEL_HEIGHT = 18;
+const LETTER_PAGE_WIDTH = 612;
+const LETTER_PAGE_HEIGHT = 792;
 
-async function fileDigestHex(file) {
-  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+function isLetterSizedPage(width, height) {
+  return Math.abs(width - LETTER_PAGE_WIDTH) <= 2 && Math.abs(height - LETTER_PAGE_HEIGHT) <= 2;
 }
 
-function buildPdfManifest(file, digest) {
-  return [
-    `PDF file: ${file.name}`,
-    `Size: ${file.size} bytes`,
-    `SHA-256: ${digest}`,
-  ].join("\n");
+function resolvePageScalingStrategy(strategy, width, height) {
+  if (strategy !== "automatic") return strategy;
+  return isLetterSizedPage(width, height) ? "legal-footer" : "shrink-footer";
+}
+
+function applyPageScaling(page, resolvedStrategy, footerHeight) {
+  const { width, height } = page.getSize();
+
+  if (resolvedStrategy === "legal-footer") {
+    page.setSize(width, height + footerHeight);
+    page.translateContent(0, footerHeight);
+    return resolvedStrategy;
+  }
+
+  if (resolvedStrategy === "shrink-footer") {
+    const availableContentHeight = height - footerHeight;
+    if (availableContentHeight <= 0) {
+      throw new Error("PDF page is too short to shrink for the selected seal footer");
+    }
+
+    const scale = availableContentHeight / height;
+    page.scaleContent(scale, scale);
+    page.translateContent(0, footerHeight);
+    return resolvedStrategy;
+  }
+
+  return resolvedStrategy;
 }
 
 function bytesToLatin1(bytes) {
@@ -169,14 +191,17 @@ export function extractTextFromContentString(content, fontMap) {
   return texts.join("").replace(/\s+/g, " ").trim();
 }
 
-export async function extractPdfText(file) {
+async function extractPdfPageTexts(file) {
   try {
     const pdf = await PDFDocument.load(await file.arrayBuffer());
     const pages = [];
     for (const page of pdf.getPages()) {
       const entries = page.node.normalizedEntries();
       const contents = entries.Contents;
-      if (!contents) continue;
+      if (!contents) {
+        pages.push("");
+        continue;
+      }
 
       const fontMaps = new Map();
       const fontDict = entries.Resources?.lookup?.(PDFName.of("Font"));
@@ -192,6 +217,7 @@ export async function extractPdfText(file) {
           fontMaps.set(fontName.decodeText ? fontName.decodeText() : fontName.toString().replace(/^\//, ""), parseCMap(cmapText));
         }
       }
+
       const pageTexts = [];
       for (let index = 0; index < contents.size(); index += 1) {
         const stream = contents.lookup(index);
@@ -204,15 +230,85 @@ export async function extractPdfText(file) {
         const extracted = extractTextFromContentString(content, fontMaps);
         if (extracted) pageTexts.push(extracted);
       }
-      const joined = pageTexts.join(" ").trim();
-      if (joined) pages.push(joined);
+      pages.push(pageTexts.join(" ").trim());
     }
-    const extracted = pages.join("\n\n").trim();
-
-    return extracted;
+    return pages;
   } catch {
-    return "";
+    return [];
   }
+}
+
+export async function extractPdfText(file) {
+  return extractPdfPageTexts(file).then((pages) => pages.join("\n\n").trim());
+}
+
+async function sha256Hex(value) {
+  const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function pageContentHash(pageText) {
+  return sha256Hex(canonicalizeText(pageText));
+}
+
+async function documentMerkleRoot(pageTexts) {
+  const leaves = await Promise.all(pageTexts.map((pageText) => pageContentHash(pageText)));
+  if (leaves.length === 0) {
+    return sha256Hex(new Uint8Array());
+  }
+
+  let level = leaves;
+  while (level.length > 1) {
+    const nextLevel = [];
+    for (let index = 0; index < level.length; index += 2) {
+      const left = level[index];
+      const right = level[index + 1] ?? left;
+      nextLevel.push(await sha256Hex(`${left}${right}`));
+    }
+    level = nextLevel;
+  }
+  return level[0];
+}
+
+async function pageIntegrityText(pageText, merkleRoot) {
+  const canonicalPageText = canonicalizeText(pageText);
+  const pageHash = await pageContentHash(pageText);
+  return [
+    "QRed PDF page integrity",
+    `Page SHA256: ${pageHash}`,
+    `Document Merkle Root: ${merkleRoot}`,
+    "",
+    canonicalPageText,
+  ].join("\n");
+}
+
+async function pageSealDocumentId(merkleRoot, pageText, sealOccurrenceNumber) {
+  return sha256Hex(`${merkleRoot}${await pageContentHash(pageText)}${sealOccurrenceNumber}`);
+}
+
+async function createPageSealResults({
+  file,
+  issuer,
+  privateKey,
+  publicKey,
+  bootstrapUrl,
+  encodingStrategy,
+}) {
+  const pageTexts = await extractPdfPageTexts(file);
+  const merkleRoot = await documentMerkleRoot(pageTexts);
+  return Promise.all(pageTexts.map(async (pageText, pageIndex) => {
+    const documentId = await pageSealDocumentId(merkleRoot, pageText, pageIndex);
+    return createQRedSeals({
+      content: await pageIntegrityText(pageText, merkleRoot),
+      issuer,
+      privateKey,
+      publicKey,
+      documentId,
+      bootstrapUrl,
+      encodingStrategy,
+    });
+  }));
 }
 
 export async function qrPngBytes(value) {
@@ -241,11 +337,10 @@ export async function sealPdfInBrowser({
   publicKey,
   bootstrapUrl = DEFAULT_BOOTSTRAP_URL,
   encodingStrategy = "automatic",
+  pageScalingStrategy = "automatic",
 }) {
-  const digest = await fileDigestHex(file);
-  const pdfText = await extractPdfText(file);
-  const sealResult = await createQRedSeals({
-    content: pdfText || buildPdfManifest(file, digest),
+  const pageSealResults = await createPageSealResults({
+    file,
     issuer,
     privateKey,
     publicKey,
@@ -254,23 +349,31 @@ export async function sealPdfInBrowser({
   });
   const pdf = await PDFDocument.load(await file.arrayBuffer());
   const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const qrValues = sealResult.seals;
-  const qrImages = await Promise.all(qrValues.map(async (value) => pdf.embedPng(await qrPngBytes(value))));
+  const pages = pdf.getPages();
+  if (pages.length !== pageSealResults.length) {
+    throw new Error("PDF page count changed while sealing");
+  }
 
-  for (const page of pdf.getPages()) {
-    const { width } = page.getSize();
+  for (const [pageIndex, page] of pages.entries()) {
+    const qrValues = pageSealResults[pageIndex].seals;
+    const qrImages = await Promise.all(qrValues.map(async (value) => pdf.embedPng(await qrPngBytes(value))));
+    const { width, height } = page.getSize();
     const layout = planQrStampLayout(width, qrImages.length);
+    const resolvedPageScalingStrategy = resolvePageScalingStrategy(pageScalingStrategy, width, height);
+    const footerMargin = resolvedPageScalingStrategy === "legal-footer" ? 1 : PANEL_MARGIN;
+    const footerHeight = footerMargin + layout.panelHeight;
+    applyPageScaling(page, resolvedPageScalingStrategy, footerHeight);
     page.drawRectangle({
-      x: PANEL_MARGIN,
-      y: PANEL_MARGIN,
+      x: footerMargin,
+      y: footerMargin,
       width: layout.panelWidth,
       height: layout.panelHeight,
       color: rgb(1, 1, 1),
       opacity: 0.94,
     });
-    page.drawText("QRed sealed PDF manifest", {
-      x: PANEL_MARGIN + PANEL_PADDING,
-      y: PANEL_MARGIN + layout.panelHeight - PANEL_PADDING - 9,
+    page.drawText("QRed sealed PDF page", {
+      x: footerMargin + PANEL_PADDING,
+      y: footerMargin + layout.panelHeight - PANEL_PADDING - 9,
       size: 9,
       font,
       color: rgb(0.05, 0.12, 0.22),
@@ -285,9 +388,13 @@ export async function sealPdfInBrowser({
   }
 
   const sealedBytes = await pdf.save();
+  const pageSealStrings = pageSealResults.map((result) => result.seals);
+  const firstResult = pageSealResults[0] ?? null;
   return {
     blob: new Blob([sealedBytes], { type: "application/pdf" }),
-    sealResult,
-    stampedQrValues: qrValues,
+    sealResult: firstResult,
+    stampedQrValues: firstResult?.seals ?? [],
+    pageSealResults,
+    pageSealStrings,
   };
 }
