@@ -332,6 +332,56 @@ export function planQrStampLayout(pageWidth, qrCount) {
   return { columns, rows, panelWidth, panelHeight, qrSize: QR_SIZE, gap: QR_GAP };
 }
 
+function planQrStampLayoutForSize(pageWidth, qrCount, qrSize, { footerBandHeight = null, footerMargin = PANEL_MARGIN } = {}) {
+  const usableWidth = Math.max(qrSize, pageWidth - (PANEL_MARGIN * 2) - (PANEL_PADDING * 2));
+  const maxColumns = Math.max(1, qrCount);
+  let bestLayout = null;
+
+  for (let columns = 1; columns <= maxColumns; columns += 1) {
+    const rows = Math.max(1, Math.ceil(qrCount / columns));
+    const panelWidth = (PANEL_PADDING * 2) + (columns * qrSize) + ((columns - 1) * QR_GAP);
+    const panelHeight = (PANEL_PADDING * 2) + PANEL_LABEL_HEIGHT + (rows * qrSize) + ((rows - 1) * QR_GAP);
+    const widthFits = panelWidth <= pageWidth - (PANEL_MARGIN * 2) && panelWidth <= usableWidth + (PANEL_PADDING * 2);
+    const heightFits = footerBandHeight == null || panelHeight <= footerBandHeight - footerMargin;
+    if (!widthFits || !heightFits) continue;
+    const candidate = { columns, rows, panelWidth, panelHeight, qrSize, gap: QR_GAP };
+    if (!bestLayout || candidate.qrSize > bestLayout.qrSize || (candidate.qrSize === bestLayout.qrSize && candidate.columns > bestLayout.columns)) {
+      bestLayout = candidate;
+    }
+  }
+
+  return bestLayout;
+}
+
+export function planQrStampLayoutForFooterBand(pageWidth, qrCount, { footerBandHeight = LEGAL_FOOTER_HEIGHT, footerMargin = 1, minQrSize = 32 } = {}) {
+  const maxAvailableHeight = footerBandHeight - footerMargin - (PANEL_PADDING * 2) - PANEL_LABEL_HEIGHT;
+  if (maxAvailableHeight <= 0) {
+    throw new Error("Selected QR seals do not fit within the bottom 3 inches of a legal-sized page");
+  }
+
+  const maxColumns = Math.max(1, qrCount);
+  let bestLayout = null;
+
+  for (let columns = 1; columns <= maxColumns; columns += 1) {
+    const rows = Math.max(1, Math.ceil(qrCount / columns));
+    const widthLimit = Math.floor((pageWidth - (PANEL_MARGIN * 2) - (PANEL_PADDING * 2) - ((columns - 1) * QR_GAP)) / columns);
+    const heightLimit = Math.floor((maxAvailableHeight - ((rows - 1) * QR_GAP)) / rows);
+    const qrSize = Math.min(widthLimit, heightLimit);
+    if (qrSize < minQrSize) continue;
+    const layout = planQrStampLayoutForSize(pageWidth, qrCount, qrSize, { footerBandHeight, footerMargin });
+    if (!layout) continue;
+    if (!bestLayout || layout.qrSize > bestLayout.qrSize || (layout.qrSize === bestLayout.qrSize && layout.columns > bestLayout.columns)) {
+      bestLayout = layout;
+    }
+  }
+
+  if (!bestLayout) {
+    throw new Error("Selected QR seals do not fit within the bottom 3 inches of a legal-sized page");
+  }
+
+  return bestLayout;
+}
+
 export async function sealPdfInBrowser({
   file,
   issuer,
@@ -360,17 +410,12 @@ export async function sealPdfInBrowser({
     const qrValues = pageSealResults[pageIndex].seals;
     const qrImages = await Promise.all(qrValues.map(async (value) => pdf.embedPng(await qrPngBytes(value))));
     const { width, height } = page.getSize();
-    const layout = planQrStampLayout(width, qrImages.length);
     const resolvedPageScalingStrategy = resolvePageScalingStrategy(pageScalingStrategy, width, height);
+    const layout = resolvedPageScalingStrategy === "legal-footer"
+      ? planQrStampLayoutForFooterBand(width, qrImages.length, { footerBandHeight: LEGAL_FOOTER_HEIGHT, footerMargin: 1 })
+      : planQrStampLayout(width, qrImages.length);
     const footerMargin = resolvedPageScalingStrategy === "legal-footer" ? 1 : PANEL_MARGIN;
     const footerHeight = resolvedPageScalingStrategy === "legal-footer" ? LEGAL_FOOTER_HEIGHT : footerMargin + layout.panelHeight;
-    if (resolvedPageScalingStrategy === "legal-footer") {
-      const usableFooterHeight = LEGAL_FOOTER_HEIGHT - footerMargin;
-      const usableFooterWidth = width - (footerMargin * 2);
-      if (layout.panelHeight > usableFooterHeight || layout.panelWidth > usableFooterWidth) {
-        throw new Error("Selected QR seals do not fit within the bottom 3 inches of a legal-sized page");
-      }
-    }
     applyPageScaling(page, resolvedPageScalingStrategy, footerHeight);
     page.drawRectangle({
       x: footerMargin,

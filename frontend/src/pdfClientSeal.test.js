@@ -3,7 +3,7 @@ import jsQR from "jsqr";
 import { PDFDocument } from "pdf-lib";
 import { PNG } from "pngjs";
 import { describe, expect, it } from "vitest";
-import { planQrStampLayout, qrPngBytes, sealPdfInBrowser } from "./pdfClientSeal.js";
+import { LEGAL_FOOTER_HEIGHT, planQrStampLayout, planQrStampLayoutForFooterBand, qrPngBytes, sealPdfInBrowser } from "./pdfClientSeal.js";
 import { qrScanAction } from "./QrScanner.jsx";
 import { createQRedQrData, qredQrPngDataUrl, qredRasterPlan, qredVisibleBitsLength } from "./qredQr.js";
 import { extractHiddenQRedPayload, verifyQRedSeals, VISIBLE_QR_TEXT } from "./qredVerifier.js";
@@ -110,6 +110,16 @@ describe("browser PDF sealing", () => {
     expect(stampedQrValues).toEqual(pageSealStrings[0]);
   });
 
+  it("shrinks legal-footer QR seals to fit within the usable bottom 3-inch band", () => {
+    const layout = planQrStampLayoutForFooterBand(612, 6, {
+      footerBandHeight: LEGAL_FOOTER_HEIGHT,
+      footerMargin: 1,
+    });
+
+    expect(layout.qrSize).toBeLessThanOrEqual(84);
+    expect(layout.panelHeight).toBeLessThanOrEqual(LEGAL_FOOTER_HEIGHT - 1);
+  });
+
   it("expands letter pages to legal size when asked to create a footer for QR seals", async () => {
     const file = await makeLetterPdfFile();
 
@@ -127,17 +137,23 @@ describe("browser PDF sealing", () => {
     expect(Math.round(printedPage.getHeight())).toBe(1008);
   });
 
-  it("rejects legal-sized footers that would spill beyond the bottom 3 inches", async () => {
+  it("stamps huge letter PDFs into legal pages without spilling past the footer band", async () => {
     const file = await makeHugeLetterPdfFile();
 
-    await expect(sealPdfInBrowser({
+    const { blob, stampedQrValues } = await sealPdfInBrowser({
       file,
       issuer: "QRed Letter Authority",
       privateKey,
       publicKey,
       encodingStrategy: "plaintext",
       pageScalingStrategy: "legal-footer",
-    })).rejects.toThrow(/bottom 3 inches/i);
+    });
+
+    const printedPdf = await PDFDocument.load(await blob.arrayBuffer());
+    const [printedPage] = printedPdf.getPages();
+    expect(Math.round(printedPage.getWidth())).toBe(612);
+    expect(Math.round(printedPage.getHeight())).toBe(1008);
+    expect(stampedQrValues.length).toBeGreaterThan(0);
   });
 
   it("shrinks page content without changing the source page size when asked", async () => {
