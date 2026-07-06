@@ -1,4 +1,4 @@
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts, PDFName } from "pdf-lib";
 import { createQRedSeals, DEFAULT_BOOTSTRAP_URL } from "./qredSealer.js";
 import { qredQrPngDataUrl } from "./qredQr.js";
 
@@ -65,45 +65,101 @@ async function maybeInflate(bytes) {
   }
 }
 
-function extractTextFromContentString(content) {
-  const texts = [];
-
-  const hexMatches = content.matchAll(/<([0-9A-Fa-f]+)>\s*Tj/g);
-  for (const match of hexMatches) {
-    const hex = match[1];
-    if (hex.length % 2 !== 0) continue;
-    const bytes = new Uint8Array(hex.length / 2);
-    for (let index = 0; index < hex.length; index += 2) {
-      bytes[index / 2] = Number.parseInt(hex.slice(index, index + 2), 16);
+function parseCMap(text) {
+  const map = new Map();
+  const bfcharPattern = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g;
+  for (const match of text.matchAll(bfcharPattern)) {
+    const code = match[1].toUpperCase();
+    const unicode = match[2];
+    const chars = [];
+    for (let i = 0; i < unicode.length; i += 4) {
+      const cp = Number.parseInt(unicode.slice(i, i + 4), 16);
+      if (!Number.isNaN(cp)) chars.push(String.fromCodePoint(cp));
     }
-    texts.push(bytesToLatin1(bytes));
+    map.set(code, chars.join(""));
   }
 
-  const literalMatches = content.matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj/g);
-  for (const match of literalMatches) texts.push(decodePdfLiteralString(match[1]));
-
-  const arrayMatches = content.matchAll(/\[(.*?)\]\s*TJ/gs);
-  for (const match of arrayMatches) {
-    const chunk = match[1];
-    const pieces = [
-      ...chunk.matchAll(/<([0-9A-Fa-f]+)>|\(((?:\\.|[^\\)])*)\)/g),
-    ];
-    for (const piece of pieces) {
-      if (piece[1]) {
-        const hex = piece[1];
-        if (hex.length % 2 !== 0) continue;
-        const bytes = new Uint8Array(hex.length / 2);
-        for (let index = 0; index < hex.length; index += 2) {
-          bytes[index / 2] = Number.parseInt(hex.slice(index, index + 2), 16);
+  const bfrangePattern = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*\[(.*?)\]|<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/gs;
+  for (const match of text.matchAll(bfrangePattern)) {
+    if (match[1] && match[2] && match[3]) {
+      const start = Number.parseInt(match[1], 16);
+      const end = Number.parseInt(match[2], 16);
+      const targets = [...match[3].matchAll(/<([0-9A-Fa-f]+)>/g)].map((m) => m[1]);
+      for (let code = start, idx = 0; code <= end && idx < targets.length; code += 1, idx += 1) {
+        const chars = [];
+        const unicode = targets[idx];
+        for (let i = 0; i < unicode.length; i += 4) {
+          const cp = Number.parseInt(unicode.slice(i, i + 4), 16);
+          if (!Number.isNaN(cp)) chars.push(String.fromCodePoint(cp));
         }
-        texts.push(bytesToLatin1(bytes));
-      } else if (piece[2]) {
-        texts.push(decodePdfLiteralString(piece[2]));
+        map.set(code.toString(16).toUpperCase().padStart(match[1].length, "0"), chars.join(""));
+      }
+    } else if (match[4] && match[5] && match[6]) {
+      const start = Number.parseInt(match[4], 16);
+      const end = Number.parseInt(match[5], 16);
+      const base = Number.parseInt(match[6], 16);
+      for (let code = start; code <= end; code += 1) {
+        map.set(code.toString(16).toUpperCase().padStart(match[4].length, "0"), String.fromCodePoint(base + (code - start)));
       }
     }
   }
 
-  return texts.join(" ").replace(/\s+/g, " ").trim();
+  return map;
+}
+
+function decodeBytesWithMap(bytes, fontMap) {
+  if (!fontMap || fontMap.size === 0) return bytesToLatin1(bytes);
+  let out = "";
+  for (const byte of bytes) {
+    const key = byte.toString(16).toUpperCase().padStart(2, "0");
+    out += fontMap.get(key) ?? String.fromCharCode(byte);
+  }
+  return out;
+}
+
+function extractTextFromContentString(content, fontMap) {
+  const texts = [];
+  const scanner = /\/([!#-~]+)\s+[\d.]+\s+Tf|<([0-9A-Fa-f]+)>\s*Tj|\(((?:\\.|[^\\)])*)\)\s*Tj|\[(.*?)\]\s*TJ/gs;
+  let currentFont = fontMap;
+  for (const match of content.matchAll(scanner)) {
+    if (match[1]) {
+      currentFont = fontMap?.[match[1]] || fontMap?.get?.(match[1]) || null;
+      continue;
+    }
+    if (match[2]) {
+      const hex = match[2];
+      if (hex.length % 2 !== 0) continue;
+      const bytes = new Uint8Array(hex.length / 2);
+      for (let index = 0; index < hex.length; index += 2) {
+        bytes[index / 2] = Number.parseInt(hex.slice(index, index + 2), 16);
+      }
+      texts.push(decodeBytesWithMap(bytes, currentFont));
+      continue;
+    }
+    if (match[3]) {
+      texts.push(decodeBytesWithMap(Uint8Array.from(match[3], (ch) => ch.charCodeAt(0)), currentFont));
+      continue;
+    }
+    if (match[4]) {
+      const chunk = match[4];
+      const pieces = [...chunk.matchAll(/<([0-9A-Fa-f]+)>|\(((?:\\.|[^\\)])*)\)/g)];
+      for (const piece of pieces) {
+        if (piece[1]) {
+          const hex = piece[1];
+          if (hex.length % 2 !== 0) continue;
+          const bytes = new Uint8Array(hex.length / 2);
+          for (let index = 0; index < hex.length; index += 2) {
+            bytes[index / 2] = Number.parseInt(hex.slice(index, index + 2), 16);
+          }
+          texts.push(decodeBytesWithMap(bytes, currentFont));
+        } else if (piece[2]) {
+          texts.push(decodeBytesWithMap(Uint8Array.from(decodePdfLiteralString(piece[2]), (ch) => ch.charCodeAt(0)), currentFont));
+        }
+      }
+    }
+  }
+
+  return texts.join("").replace(/\s+/g, " ").trim();
 }
 
 async function extractPdfText(file) {
@@ -111,8 +167,25 @@ async function extractPdfText(file) {
     const pdf = await PDFDocument.load(await file.arrayBuffer());
     const pages = [];
     for (const page of pdf.getPages()) {
-      const contents = page.node.normalizedEntries().Contents;
+      const entries = page.node.normalizedEntries();
+      const contents = entries.Contents;
       if (!contents) continue;
+
+      const fontMaps = new Map();
+      const fontDict = entries.Resources?.lookup?.(PDFName.of("Font"));
+      if (fontDict) {
+        for (const [fontName] of fontDict.entries()) {
+          const fontObj = fontDict.lookup(fontName);
+          const toUnicodeRef = fontObj.get(PDFName.of("ToUnicode"));
+          if (!toUnicodeRef) continue;
+          const cmapStream = pdf.context.lookup(toUnicodeRef);
+          const cmapBytes = cmapStream && typeof cmapStream.getContents === "function" ? cmapStream.getContents() : null;
+          if (!cmapBytes) continue;
+          const cmapText = new TextDecoder("latin1").decode(await maybeInflate(cmapBytes));
+          fontMaps.set(fontName.decodeText ? fontName.decodeText() : fontName.toString().replace(/^\//, ""), parseCMap(cmapText));
+        }
+      }
+
       const pageTexts = [];
       for (let index = 0; index < contents.size(); index += 1) {
         const stream = contents.lookup(index);
@@ -122,7 +195,7 @@ async function extractPdfText(file) {
         else if (typeof stream.asUint8Array === "function") bytes = await maybeInflate(stream.asUint8Array());
         if (!bytes || bytes.length === 0) continue;
         const content = bytesToLatin1(bytes);
-        const extracted = extractTextFromContentString(content);
+        const extracted = extractTextFromContentString(content, fontMaps);
         if (extracted) pageTexts.push(extracted);
       }
       const joined = pageTexts.join(" ").trim();
