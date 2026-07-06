@@ -2,31 +2,6 @@ import React, { useEffect, useState } from "react";
 import { sealPdfInBrowser } from "./pdfClientSeal.js";
 import { QrScanner } from "./QrScanner.jsx";
 
-function normalizeApiBase(value) {
-  const trimmed = (value || "/api").trim();
-  const withoutTrailingSlash = trimmed.replace(/\/+$/, "");
-  return withoutTrailingSlash || "/api";
-}
-
-const API_BASE = normalizeApiBase(import.meta.env.VITE_API_BASE_URL);
-
-async function responseErrorMessage(response) {
-  const text = await response.text();
-  if (!text) return `${response.status} ${response.statusText}`.trim();
-
-  try {
-    const data = JSON.parse(text);
-    return data.message || data.error || text;
-  } catch {
-    return text;
-  }
-}
-
-function isMissingBackendOriginMessage(message) {
-  return message.includes("API-backed demo endpoints require a separate QRed backend origin")
-    || message.includes("QRED_API_ORIGIN is not configured");
-}
-
 function PdfSealForm() {
   const [file, setFile] = useState(null);
   const [issuer, setIssuer] = useState("QRed Demo Authority");
@@ -44,8 +19,8 @@ function PdfSealForm() {
     setKeyStatus("Loading default keys...");
 
     try {
-      const response = await fetch(API_BASE + "/keys/default");
-      if (!response.ok) throw new Error(await responseErrorMessage(response));
+      const response = await fetch("/api/keys/default");
+      if (!response.ok) throw new Error((await response.text()) || `${response.status} ${response.statusText}`.trim());
       const keys = await response.json();
       setPrivateKey(keys.private_key);
       setPublicKey(keys.public_key);
@@ -56,8 +31,10 @@ function PdfSealForm() {
       } else {
         setKeyStatus("Ephemeral demo keys loaded. Set QRED_DEFAULT_PRIVATE_KEY and QRED_DEFAULT_PUBLIC_KEY on the API server to use stable defaults.");
       }
-    } catch (error) {
-      setKeyStatus(`Default key loading failed: ${error.message}`);
+    } catch {
+      setPrivateKey("txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=");
+      setPublicKey("eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=");
+      setKeyStatus("Static demo keys loaded from the bundled fallback, because /api/keys/default was unavailable.");
     } finally {
       setLoadingKeys(false);
     }
@@ -75,19 +52,16 @@ function PdfSealForm() {
       return;
     }
     setLoading(true);
-    setMessage("Stamping QRed seals onto each PDF page...");
-    const form = new FormData();
-    form.append("file", file);
-    form.append("issuer", issuer);
-    form.append("private_key", privateKey);
-    form.append("public_key", publicKey);
-    form.append("bootstrap_url", "https://qred.org/");
-    form.append("encoding_strategy", encodingStrategy);
-
     try {
-      const response = await fetch(API_BASE + "/pdf/upload-seal", { method: "POST", body: form });
-      if (!response.ok) throw new Error(await responseErrorMessage(response));
-      const blob = await response.blob();
+      setMessage("Sealing in this browser...");
+      const { blob, sealResult } = await sealPdfInBrowser({
+        file,
+        issuer,
+        privateKey,
+        publicKey,
+        bootstrapUrl: "https://qred.org/",
+        encodingStrategy,
+      });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -95,45 +69,15 @@ function PdfSealForm() {
       link.click();
       URL.revokeObjectURL(url);
       setMessage([
-        `Selected encoding: ${response.headers.get("X-QRed-Encoding") || "plaintext"}`,
-        `Selected recipe: ${response.headers.get("X-QRed-Selected-Recipe") || "plaintext"}`,
-        `Estimated QR count: ${response.headers.get("X-QRed-Estimated-QR-Count") || response.headers.get("X-QRed-Total-Seals") || "0"}`,
-        `Compression savings: ${response.headers.get("X-QRed-Compression-Savings-Pct") || "0"}%`,
-        `Document ID: ${response.headers.get("X-QRed-Document-Id")}`,
+        `Sealed ${file.name} in this browser. Document ID: ${sealResult.document_id}`,
+        `Selected encoding: ${sealResult.encoding || encodingStrategy}`,
+        `Selected recipe: ${sealResult.selected_recipe || "plaintext"}`,
+        `Estimated QR count: ${sealResult.estimated_qr_count || sealResult.total_seals || 0}`,
+        `Compression savings: ${sealResult.compression_savings_pct || 0}%`,
+        `Document ID: ${sealResult.document_id}`,
       ].join("\n"));
     } catch (error) {
-      if (!isMissingBackendOriginMessage(error.message)) {
-        setMessage(`PDF sealing failed: ${error.message}`);
-        return;
-      }
-
-      try {
-        setMessage("Backend PDF sealing is not configured; sealing in this browser instead...");
-        const { blob, sealResult } = await sealPdfInBrowser({
-          file,
-          issuer,
-          privateKey,
-          publicKey,
-          bootstrapUrl: "https://qred.org/",
-          encodingStrategy,
-        });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
-        link.click();
-        URL.revokeObjectURL(url);
-        setMessage([
-          `Sealed ${file.name} in this browser. Document ID: ${sealResult.document_id}`,
-          `Selected encoding: ${sealResult.encoding || encodingStrategy}`,
-          `Selected recipe: ${sealResult.selected_recipe || "plaintext"}`,
-          `Estimated QR count: ${sealResult.estimated_qr_count || sealResult.total_seals || 0}`,
-          `Compression savings: ${sealResult.compression_savings_pct || 0}%`,
-          `Document ID: ${sealResult.document_id}`,
-        ].join("\n"));
-      } catch (fallbackError) {
-        setMessage(`PDF sealing failed: ${fallbackError.message}`);
-      }
+      setMessage(`PDF sealing failed: ${error.message}`);
     } finally {
       setLoading(false);
     }
