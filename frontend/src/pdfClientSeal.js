@@ -96,31 +96,6 @@ function parseCMap(text) {
     map.set(code, chars.join(""));
   }
 
-  const bfrangePattern = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*\[(.*?)\]|<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/gs;
-  for (const match of text.matchAll(bfrangePattern)) {
-    if (match[1] && match[2] && match[3]) {
-      const start = Number.parseInt(match[1], 16);
-      const end = Number.parseInt(match[2], 16);
-      const targets = [...match[3].matchAll(/<([0-9A-Fa-f]+)>/g)].map((m) => m[1]);
-      for (let code = start, idx = 0; code <= end && idx < targets.length; code += 1, idx += 1) {
-        const chars = [];
-        const unicode = targets[idx];
-        for (let i = 0; i < unicode.length; i += 4) {
-          const cp = Number.parseInt(unicode.slice(i, i + 4), 16);
-          if (!Number.isNaN(cp)) chars.push(String.fromCodePoint(cp));
-        }
-        map.set(code.toString(16).toUpperCase().padStart(match[1].length, "0"), chars.join(""));
-      }
-    } else if (match[4] && match[5] && match[6]) {
-      const start = Number.parseInt(match[4], 16);
-      const end = Number.parseInt(match[5], 16);
-      const base = Number.parseInt(match[6], 16);
-      for (let code = start; code <= end; code += 1) {
-        map.set(code.toString(16).toUpperCase().padStart(match[4].length, "0"), String.fromCodePoint(base + (code - start)));
-      }
-    }
-  }
-
   return map;
 }
 
@@ -149,7 +124,7 @@ function decodeBytesWithMap(bytes, fontMap) {
   return out;
 }
 
-function extractTextFromContentString(content, fontMap) {
+export function extractTextFromContentString(content, fontMap) {
   const texts = [];
   const scanner = /\/([!#-~]+)\s+[\d.]+\s+Tf|<([0-9A-Fa-f]+)>\s*Tj|\(((?:\\.|[^\\)])*)\)\s*Tj|\[(.*?)\]\s*TJ/gs;
   let currentFont = fontMap;
@@ -194,15 +169,8 @@ function extractTextFromContentString(content, fontMap) {
   return texts.join("").replace(/\s+/g, " ").trim();
 }
 
-async function extractPdfText(file) {
+export async function extractPdfText(file) {
   try {
-    // Prefer pdf.js for robustness: it correctly handles font ToUnicode
-    // mappings even when our content-stream decoding fails.
-    const pdfjsText = await extractPdfTextWithPdfJs(file);
-    if (pdfjsText) {
-      return pdfjsText;
-    }
-
     const pdf = await PDFDocument.load(await file.arrayBuffer());
     const pages = [];
     for (const page of pdf.getPages()) {
@@ -224,12 +192,11 @@ async function extractPdfText(file) {
           fontMaps.set(fontName.decodeText ? fontName.decodeText() : fontName.toString().replace(/^\//, ""), parseCMap(cmapText));
         }
       }
-
       const pageTexts = [];
       for (let index = 0; index < contents.size(); index += 1) {
         const stream = contents.lookup(index);
         let bytes = null;
-        if (typeof stream.getUnencodedContents === "function") bytes = stream.getUnencodedContents();
+        if (typeof stream.getUnencodedContents === "function") bytes = await maybeInflate(stream.getUnencodedContents());
         else if (typeof stream.getContents === "function") bytes = await maybeInflate(stream.getContents());
         else if (typeof stream.asUint8Array === "function") bytes = await maybeInflate(stream.asUint8Array());
         if (!bytes || bytes.length === 0) continue;
@@ -242,61 +209,7 @@ async function extractPdfText(file) {
     }
     const extracted = pages.join("\n\n").trim();
 
-    // Heuristic: if we ended up decoding mostly control characters, the PDF
-    // likely lacks a usable ToUnicode map for its fonts. In that case, fall
-    // back to pdf.js which handles more real-world PDFs.
-    const controlChars = extracted
-      .split("")
-      .filter((ch) => {
-        const code = ch.charCodeAt(0);
-        // allow common whitespace; everything else under 0x20 is suspicious
-        return code < 0x20 && ![0x09, 0x0a, 0x0d].includes(code);
-      }).length;
-    const controlRatio = extracted.length ? controlChars / extracted.length : 0;
-
-    if (extracted && controlRatio >= 0.25) {
-      const pdfjsFallback = await extractPdfTextWithPdfJs(file);
-      if (pdfjsFallback) return pdfjsFallback;
-    }
-
     return extracted;
-  } catch {
-    return "";
-  }
-}
-
-async function extractPdfTextWithPdfJs(file) {
-  try {
-    // Dynamic import keeps pdf.js out of the hot path.
-    const pdfjs = await import("pdfjs-dist/build/pdf.mjs");
-    const { GlobalWorkerOptions, getDocument } = pdfjs;
-
-    // Use bundled worker (no CDN) so this works in Cloudflare/static contexts.
-    GlobalWorkerOptions.workerSrc = new URL(
-      "pdfjs-dist/build/pdf.worker.min.mjs",
-      import.meta.url,
-    ).toString();
-
-    // Ensure extraction works even when Workers are blocked.
-    GlobalWorkerOptions.workerPort = null;
-
-    const arrayBuffer = await file.arrayBuffer();
-
-    const loadingTask = getDocument({ data: arrayBuffer });
-    const pdf = await loadingTask.promise;
-
-    const pages = [];
-    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
-      const page = await pdf.getPage(pageNum);
-      const textContent = await page.getTextContent();
-      const strings = (textContent.items || [])
-        .map((item) => item && item.str)
-        .filter((s) => typeof s === "string");
-      const joined = strings.join(" ").replace(/\s+/g, " ").trim();
-      if (joined) pages.push(joined);
-    }
-
-    return pages.join("\n\n").trim();
   } catch {
     return "";
   }

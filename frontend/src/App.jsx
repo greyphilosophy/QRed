@@ -77,6 +77,7 @@ function PdfSealForm() {
         `Document ID: ${sealResult.document_id}`,
       ].join("\n"));
     } catch (error) {
+      console.error("PDF sealing failed", error, error?.stack);
       setMessage(`PDF sealing failed: ${error.message}`);
     } finally {
       setLoading(false);
