@@ -7,6 +7,41 @@ const QR_GAP = 10;
 const PANEL_MARGIN = 18;
 const PANEL_PADDING = 10;
 const PANEL_LABEL_HEIGHT = 18;
+const LETTER_PAGE_WIDTH = 612;
+const LETTER_PAGE_HEIGHT = 792;
+
+function isLetterSizedPage(width, height) {
+  return Math.abs(width - LETTER_PAGE_WIDTH) <= 2 && Math.abs(height - LETTER_PAGE_HEIGHT) <= 2;
+}
+
+function resolvePageScalingStrategy(strategy, width, height) {
+  if (strategy !== "automatic") return strategy;
+  return isLetterSizedPage(width, height) ? "legal-footer" : "shrink-footer";
+}
+
+function applyPageScaling(page, resolvedStrategy, footerHeight) {
+  const { width, height } = page.getSize();
+
+  if (resolvedStrategy === "legal-footer") {
+    page.setSize(width, height + footerHeight);
+    page.translateContent(0, footerHeight);
+    return resolvedStrategy;
+  }
+
+  if (resolvedStrategy === "shrink-footer") {
+    const availableContentHeight = height - footerHeight;
+    if (availableContentHeight <= 0) {
+      throw new Error("PDF page is too short to shrink for the selected seal footer");
+    }
+
+    const scale = availableContentHeight / height;
+    page.scaleContent(scale, scale);
+    page.translateContent(0, footerHeight);
+    return resolvedStrategy;
+  }
+
+  return resolvedStrategy;
+}
 
 function bytesToLatin1(bytes) {
   return Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
@@ -302,6 +337,7 @@ export async function sealPdfInBrowser({
   publicKey,
   bootstrapUrl = DEFAULT_BOOTSTRAP_URL,
   encodingStrategy = "automatic",
+  pageScalingStrategy = "automatic",
 }) {
   const pageSealResults = await createPageSealResults({
     file,
@@ -321,19 +357,23 @@ export async function sealPdfInBrowser({
   for (const [pageIndex, page] of pages.entries()) {
     const qrValues = pageSealResults[pageIndex].seals;
     const qrImages = await Promise.all(qrValues.map(async (value) => pdf.embedPng(await qrPngBytes(value))));
-    const { width } = page.getSize();
+    const { width, height } = page.getSize();
     const layout = planQrStampLayout(width, qrImages.length);
+    const resolvedPageScalingStrategy = resolvePageScalingStrategy(pageScalingStrategy, width, height);
+    const footerMargin = resolvedPageScalingStrategy === "legal-footer" ? 1 : PANEL_MARGIN;
+    const footerHeight = footerMargin + layout.panelHeight;
+    applyPageScaling(page, resolvedPageScalingStrategy, footerHeight);
     page.drawRectangle({
-      x: PANEL_MARGIN,
-      y: PANEL_MARGIN,
+      x: footerMargin,
+      y: footerMargin,
       width: layout.panelWidth,
       height: layout.panelHeight,
       color: rgb(1, 1, 1),
       opacity: 0.94,
     });
     page.drawText("QRed sealed PDF page", {
-      x: PANEL_MARGIN + PANEL_PADDING,
-      y: PANEL_MARGIN + layout.panelHeight - PANEL_PADDING - 9,
+      x: footerMargin + PANEL_PADDING,
+      y: footerMargin + layout.panelHeight - PANEL_PADDING - 9,
       size: 9,
       font,
       color: rgb(0.05, 0.12, 0.22),

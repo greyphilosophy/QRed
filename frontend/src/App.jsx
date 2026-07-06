@@ -11,6 +11,7 @@ function PdfSealForm() {
   const [keyStatus, setKeyStatus] = useState("Loading default keys...");
   const [loadingKeys, setLoadingKeys] = useState(false);
   const [encodingStrategy, setEncodingStrategy] = useState("automatic");
+  const [pageScalingStrategy, setPageScalingStrategy] = useState("automatic");
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -61,6 +62,7 @@ function PdfSealForm() {
         publicKey,
         bootstrapUrl: "https://qred.org/",
         encodingStrategy,
+        pageScalingStrategy,
       });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -71,6 +73,7 @@ function PdfSealForm() {
       setMessage([
         `Sealed ${file.name} in this browser. Document ID: ${sealResult.document_id}`,
         `Selected encoding: ${sealResult.encoding || encodingStrategy}`,
+        `Selected page scaling: ${pageScalingStrategy}`,
         `Selected recipe: ${sealResult.selected_recipe || "plaintext"}`,
         `Estimated QR count: ${sealResult.estimated_qr_count || sealResult.total_seals || 0}`,
         `Compression savings: ${sealResult.compression_savings_pct || 0}%`,
@@ -115,6 +118,17 @@ function PdfSealForm() {
         ),
         React.createElement("small", { style: { color: "#64748b", display: "block", marginTop: "0.5rem" } },
           "Automatic tries every reversible recipe and chooses the smallest successful encoding."
+        )
+      ),
+      React.createElement("div", { className: "demo-input" },
+        React.createElement("label", null, "Page scaling"),
+        React.createElement("select", { "aria-label": "Page scaling", value: pageScalingStrategy, onChange: (e) => setPageScalingStrategy(e.target.value), title: "Choose how the PDF should make room for QR seals before drawing the footer." },
+          React.createElement("option", { value: "automatic" }, "Automatic (legal for letter, shrink otherwise)"),
+          React.createElement("option", { value: "legal-footer" }, "Expand letter pages to legal size"),
+          React.createElement("option", { value: "shrink-footer" }, "Shrink the document to create a footer")
+        ),
+        React.createElement("small", { style: { color: "#64748b", display: "block", marginTop: "0.5rem" } },
+          "Automatic expands letter pages to legal size, and shrinks other page sizes to create room for the seals."
         )
       )
     ),

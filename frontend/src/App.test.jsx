@@ -61,6 +61,7 @@ describe("App PDF sealing defaults", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open PDF stamping tool" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Use Default Keys" })).toBeTruthy());
+    expect(screen.getByLabelText("Page scaling")).toBeTruthy();
 
     const privateKeyInput = screen.getByLabelText("Private Key");
     const publicKeyInput = screen.getByLabelText("Public Key");
@@ -87,6 +88,7 @@ describe("App PDF sealing defaults", () => {
       publicKey: defaultPublicKey,
       bootstrapUrl: "https://qred.org/",
       encodingStrategy: "automatic",
+      pageScalingStrategy: "automatic",
     });
     expect(URL.createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
     expect(HTMLAnchorElement.prototype.click).toHaveBeenCalled();
@@ -121,6 +123,7 @@ describe("App PDF sealing defaults", () => {
       publicKey: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=",
       bootstrapUrl: "https://qred.org/",
       encodingStrategy: "automatic",
+      pageScalingStrategy: "automatic",
     }));
     expect(await screen.findByText(/Sealed static\.pdf in this browser\./)).toBeTruthy();
   });

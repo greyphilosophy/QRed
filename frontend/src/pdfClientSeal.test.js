@@ -101,6 +101,40 @@ describe("browser PDF sealing", () => {
     expect(stampedQrValues).toEqual(pageSealStrings[0]);
   });
 
+  it("expands letter pages to legal size when asked to create a footer for QR seals", async () => {
+    const file = await makeLetterPdfFile();
+
+    const { blob } = await sealPdfInBrowser({
+      file,
+      issuer: "QRed Letter Authority",
+      privateKey,
+      publicKey,
+      pageScalingStrategy: "legal-footer",
+    });
+
+    const printedPdf = await PDFDocument.load(await blob.arrayBuffer());
+    const [printedPage] = printedPdf.getPages();
+    expect(Math.round(printedPage.getWidth())).toBe(612);
+    expect(Math.round(printedPage.getHeight())).toBe(1008);
+  });
+
+  it("shrinks page content without changing the source page size when asked", async () => {
+    const file = await makeLetterPdfFile();
+
+    const { blob } = await sealPdfInBrowser({
+      file,
+      issuer: "QRed Letter Authority",
+      privateKey,
+      publicKey,
+      pageScalingStrategy: "shrink-footer",
+    });
+
+    const printedPdf = await PDFDocument.load(await blob.arrayBuffer());
+    const [printedPage] = printedPdf.getPages();
+    expect(Math.round(printedPage.getWidth())).toBe(612);
+    expect(Math.round(printedPage.getHeight())).toBe(792);
+  });
+
   it("generates QR seals for a PDF letter, stamps every verifier QR, and validates the stamped seals", async () => {
     const file = await makeLetterPdfFile();
 
