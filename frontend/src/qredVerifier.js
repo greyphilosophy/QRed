@@ -1,7 +1,7 @@
 import { verifyAsync as verifyEd25519 } from "@noble/ed25519";
-import Utils from "qrcode/lib/core/utils";
-import ECCode from "qrcode/lib/core/error-correction-code";
-import ECLevel from "qrcode/lib/core/error-correction-level";
+import Utils from "qrcode/lib/core/utils.js";
+import ECCode from "qrcode/lib/core/error-correction-code.js";
+import ECLevel from "qrcode/lib/core/error-correction-level.js";
 import { decodeB45ish } from "./textRecipes.js";
 
 export const VISIBLE_QR_TEXT = "QRED.ORG";
