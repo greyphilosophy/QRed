@@ -826,7 +826,8 @@ class TestAssertion4_QRScannerDecodePageTextAndSignature:
         """
         import subprocess
 
-        test_harness_src = Path(__file__).parent / "test_harness_decode.mjs"
+        repo_root = Path(__file__).resolve().parents[1]
+        test_harness_src = repo_root / "tests" / "test_harness_decode.mjs"
 
         # Create a test seal fragment
         test_seal = "https://qred.org/#QRED1?doc=test-doc-id&i=0&n=1&txt=Hello%20World&sig=abc123&alg=Ed25519&iss=TestIssuer&kid=key123&ts=2026-01-01T00:00:00&v=1"
@@ -844,14 +845,14 @@ class TestAssertion4_QRScannerDecodePageTextAndSignature:
         substituted = substituted.replace("{timestamp}", "2026-01-01T00:00:00")
         substituted = substituted.replace("{version}", "1")
 
-        # Write harness in tests/ dir and run from project root so node_modules resolves
-        test_harness_dst = Path(__file__).parent / "_test_qred_node.mjs"
+        # Write harness to tmp_path (unique per test, survives parallel execution)
+        test_harness_dst = tmp_path / "test_qred_decode.mjs"
         test_harness_dst.write_text(substituted)
 
         try:
             result = subprocess.run(
-                ["node", "tests/_test_qred_node.mjs"],
-                cwd="/tmp/QRed",
+                ["node", str(test_harness_dst)],
+                cwd=repo_root,
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -879,7 +880,8 @@ class TestAssertion4_QRScannerDecodePageTextAndSignature:
         import subprocess
         import json
 
-        test_harness_src = Path(__file__).parent / "test_harness_verify.mjs"
+        repo_root = Path(__file__).resolve().parents[1]
+        test_harness_src = repo_root / "tests" / "test_harness_verify.mjs"
 
         # Create seals using Python
         result_python = create_seals(
@@ -897,14 +899,14 @@ class TestAssertion4_QRScannerDecodePageTextAndSignature:
         substituted = template.replace("{seals_json}", seal_list)
         substituted = substituted.replace("{public_key}", TEST_PUBLIC_KEY)
 
-        # Write harness in tests/ dir and run from project root so node_modules resolves
-        test_harness_dst = Path(__file__).parent / "_test_qred_node.mjs"
+        # Write harness to tmp_path (unique per test, survives parallel execution)
+        test_harness_dst = tmp_path / "test_qred_verify.mjs"
         test_harness_dst.write_text(substituted)
 
         try:
             result = subprocess.run(
-                ["node", "tests/_test_qred_node.mjs"],
-                cwd="/tmp/QRed",
+                ["node", str(test_harness_dst)],
+                cwd=repo_root,
                 capture_output=True,
                 text=True,
                 timeout=30,

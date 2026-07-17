@@ -1,4 +1,4 @@
-import { verifyQRedSeals } from '/tmp/QRed/frontend/src/qredVerifier.js';
+import { verifyQRedSeals } from '../frontend/src/qredVerifier.js';
 
 const seals = {seals_json};
 const publicKey = '{public_key}';
