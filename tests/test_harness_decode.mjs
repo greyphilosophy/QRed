@@ -1,4 +1,4 @@
-import { decodeSeal } from '../frontend/src/qredVerifier.js';
+import { decodeSeal } from '{repo_root}/frontend/src/qredVerifier.js';
 
 const seal = '{seal}';
 const result = decodeSeal(seal);

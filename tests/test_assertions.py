@@ -834,7 +834,8 @@ class TestAssertion4_QRScannerDecodePageTextAndSignature:
 
         # Read the template and substitute values
         template = test_harness_src.read_text()
-        substituted = template.replace("{seal}", test_seal)
+        substituted = template.replace("{repo_root}", str(repo_root))
+        substituted = substituted.replace("{seal}", test_seal)
         substituted = substituted.replace("{document_id}", "test-doc-id")
         substituted = substituted.replace("{chunk_number}", "0")
         substituted = substituted.replace("{total_chunks}", "1")
@@ -896,7 +897,8 @@ class TestAssertion4_QRScannerDecodePageTextAndSignature:
 
         # Read the template and substitute values
         template = test_harness_src.read_text()
-        substituted = template.replace("{seals_json}", seal_list)
+        substituted = template.replace("{repo_root}", str(repo_root))
+        substituted = substituted.replace("{seals_json}", seal_list)
         substituted = substituted.replace("{public_key}", TEST_PUBLIC_KEY)
 
         # Write harness to tmp_path (unique per test, survives parallel execution)
