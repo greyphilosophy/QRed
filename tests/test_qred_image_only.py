@@ -6,8 +6,6 @@ text streams.  They confirm that the verifier handles empty content gracefully.
 """
 
 import io
-import os
-import pytest
 import fitz  # PyMuPDF
 from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
@@ -17,11 +15,9 @@ from backend.crypto import generate_keypair
 from backend.services.pdf_stamp import (
     seal_pdf,
     extract_text_from_pdf,
-    create_page_seal_results,
     page_integrity_text,
     document_merkle_root,
     page_content_hash,
-    page_seal_document_id,
 )
 from backend.services.verifier import decode_seal, reconstruct_and_verify
 
@@ -275,6 +271,7 @@ def test_img_api_seal_endpoint_validates_empty_content_in_result(tmp_path):
             "public_key": KEYPAIR["public_key"],
         },
     )
+    assert resp.status_code == 200
     data = resp.json()
     assert data["total_seals"] == 2
 
