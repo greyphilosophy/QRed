@@ -10,6 +10,7 @@ import os
 import pytest
 import fitz  # PyMuPDF
 from fastapi.testclient import TestClient
+from PIL import Image, ImageDraw
 
 from backend.app import create_app
 from backend.crypto import generate_keypair
@@ -26,38 +27,56 @@ from backend.services.verifier import decode_seal, reconstruct_and_verify
 
 app = create_app()
 client = TestClient(app)
-
 KEYPAIR = generate_keypair()
-ISSUER = "QRed Test"
 
 
 # --- Helpers ---
 
 
+def _create_dummy_png_data(
+    width: int = 200, height: int = 300, color: tuple = (200, 200, 200)
+) -> bytes:
+    """Create a small PNG image in memory."""
+    img = Image.new("RGB", (width, height), color=color)
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([10, 10, width - 10, height - 10], outline=(100, 100, 100))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def _make_image_only_pdf_bytes(page_count: int = 1) -> io.BytesIO:
-    """Create an in-memory image-only PDF (no text streams)."""
+    """Create an in-memory image-only PDF (no text streams, raster image pages).
+
+    Each page contains an actual raster image inserted via PyMuPDF's
+    ``insert_image(stream=...)``, exercising image XObjects, image streams,
+    compression, color spaces, etc. — just like a real scanner-produced PDF.
+    """
     buf = io.BytesIO()
     doc = fitz.open()
-    for pg in range(page_count):
+    for pg_idx in range(page_count):
         page = doc.new_page(width=612, height=792)
-        shape = page.new_shape()
-        shape.draw_rect(fitz.Rect(50, 50, 562, 742))
-        shape.finish(color=(pg / max(1, page_count - 1), 0, 0), width=1)
-        shape.commit()
+        png_data = _create_dummy_png_data(
+            width=400, height=600, color=(255 - pg_idx * 50, 200, 200)
+        )
+        page.insert_image(
+            fitz.Rect(50, 50, 562, 650),
+            stream=png_data,
+            width=512,
+            height=600,
+        )
     doc.save(buf)
     doc.close()
     buf.seek(0)
     return buf
 
 
-def _write_tmp_pdf(page_count: int = 1, path: str | None = None) -> str:
-    """Write an image-only PDF to disk and return its path."""
-    if path is None:
-        path = f"/tmp/_img_test_{page_count}p.pdf"
+def _make_image_only_pdf(tmp_path, page_count: int = 1, filename: str = "image-only.pdf") -> str:
+    """Create an image-only PDF in *tmp_path* and return its path."""
+    path = tmp_path / filename
     buf = _make_image_only_pdf_bytes(page_count)
-    with open(path, "wb") as f:
-        f.write(buf.getvalue())
-    return path
+    path.write_bytes(buf.getvalue())
+    return str(path)
 
 
 def verify_each_page(result_dict: dict) -> list[dict]:
@@ -73,19 +92,19 @@ def verify_each_page(result_dict: dict) -> list[dict]:
 # ===========================
 
 
-def test_img_single_page_extracted_text_is_empty():
+def test_img_single_page_extracted_text_is_empty(tmp_path):
     """Given an image-only PDF, when text is extracted, then it is empty."""
-    tmp = _write_tmp_pdf(1)
-    text = extract_text_from_pdf(tmp)
+    pdf_path = _make_image_only_pdf(tmp_path, page_count=1)
+    text = extract_text_from_pdf(pdf_path)
     assert text == ""
 
 
-def test_img_single_page_seal_generates_successfully():
+def test_img_single_page_seal_generates_successfully(tmp_path):
     """Given an image-only PDF, when sealed, then one seal is created."""
-    tmp = _write_tmp_pdf(1)
+    pdf_path = _make_image_only_pdf(tmp_path, page_count=1)
     result = seal_pdf(
-        pdf_path=tmp,
-        issuer=ISSUER,
+        pdf_path=pdf_path,
+        issuer="QRed Test",
         private_key=KEYPAIR["private_key"],
         public_key=KEYPAIR["public_key"],
     )
@@ -93,12 +112,12 @@ def test_img_single_page_seal_generates_successfully():
     assert len(result["seal_strings"]) == result["total_seals"]
 
 
-def test_img_single_page_seal_contains_integrity_header():
+def test_img_single_page_seal_contains_integrity_header(tmp_path):
     """Given an image-only PDF, when decoded, the seal txt contains integrity metadata."""
-    tmp = _write_tmp_pdf(1)
+    pdf_path = _make_image_only_pdf(tmp_path, page_count=1)
     result = seal_pdf(
-        pdf_path=tmp,
-        issuer=ISSUER,
+        pdf_path=pdf_path,
+        issuer="QRed Test",
         private_key=KEYPAIR["private_key"],
         public_key=KEYPAIR["public_key"],
     )
@@ -111,12 +130,12 @@ def test_img_single_page_seal_contains_integrity_header():
     assert "Document Merkle Root:" in data
 
 
-def test_img_single_page_per_page_verification_succeeds():
+def test_img_single_page_per_page_verification_succeeds(tmp_path):
     """Given an image-only PDF, when verifying page-by-page, then each page is VALID."""
-    tmp = _write_tmp_pdf(1)
+    pdf_path = _make_image_only_pdf(tmp_path, page_count=1)
     result = seal_pdf(
-        pdf_path=tmp,
-        issuer=ISSUER,
+        pdf_path=pdf_path,
+        issuer="QRed Test",
         private_key=KEYPAIR["private_key"],
         public_key=KEYPAIR["public_key"],
     )
@@ -144,21 +163,21 @@ def test_img_single_page_merkle_root_of_one_empty_page():
 # ===========================
 
 
-def test_img_multi_page_all_pages_have_empty_text():
+def test_img_multi_page_all_pages_have_empty_text(tmp_path):
     """Given a 3-page image-only PDF, all pages extract to empty strings."""
-    tmp = _write_tmp_pdf(3)
+    pdf_path = _make_image_only_pdf(tmp_path, page_count=3)
 
     for i in range(3):
-        text = extract_text_from_pdf(tmp, page_number=i)
+        text = extract_text_from_pdf(pdf_path, page_number=i)
         assert text == "", f"Page {i} should have no text but got '{text}'"
 
 
-def test_img_multi_page_seal_per_page_valid():
+def test_img_multi_page_seal_per_page_valid(tmp_path):
     """Given a 3-page image-only PDF, each page verifies VALID individually."""
-    tmp = _write_tmp_pdf(3)
+    pdf_path = _make_image_only_pdf(tmp_path, page_count=3)
     result = seal_pdf(
-        pdf_path=tmp,
-        issuer=ISSUER,
+        pdf_path=pdf_path,
+        issuer="QRed Test",
         private_key=KEYPAIR["private_key"],
         public_key=KEYPAIR["public_key"],
     )
@@ -170,40 +189,53 @@ def test_img_multi_page_seal_per_page_valid():
         assert v["status"] == "VALID", f"Page should be valid but was {v['status']}"
 
 
-def test_img_multi_page_all_together_invalid_mixed_docs():
+def test_img_multi_page_all_together_invalid_mixed_docs(tmp_path):
     """Given a multi-page image-only PDF, verifying all seals together yields INVALID."""
-    tmp = _write_tmp_pdf(3)
+    pdf_path = _make_image_only_pdf(tmp_path, page_count=3)
     result = seal_pdf(
-        pdf_path=tmp,
-        issuer=ISSUER,
+        pdf_path=pdf_path,
+        issuer="QRed Test",
         private_key=KEYPAIR["private_key"],
         public_key=KEYPAIR["public_key"],
     )
 
     # Per-page seals intentionally get unique document IDs (Merkle + page hash + index)
-    ver_all = reconstruct_and_verify(result["seal_strings"], expected_public_key=KEYPAIR["public_key"])
+    ver_all = reconstruct_and_verify(
+        result["seal_strings"], expected_public_key=KEYPAIR["public_key"]
+    )
     assert ver_all["status"] == "INVALID"
     assert "Mixed document IDs" in ver_all.get("error_message", "")
 
 
-def test_img_multi_page_unique_doc_ids_per_page():
-    """Each page of an image-only PDF gets a different document ID."""
-    tmp = _write_tmp_pdf(3)
+def test_img_multi_page_unique_doc_ids_per_page(tmp_path):
+    """Each page of an image-only PDF gets a different document ID.
+
+    CRITICAL: This test MUST fail if every seal fails to decode
+    (``0 == 0`` would pass the old ``len(set(doc_ids)) == len(doc_ids)``).
+    We assert every page has at least one seal string, each decode succeeds,
+    and all document IDs are distinct.
+    """
+    pdf_path = _make_image_only_pdf(tmp_path, page_count=3)
     result = seal_pdf(
-        pdf_path=tmp,
-        issuer=ISSUER,
+        pdf_path=pdf_path,
+        issuer="QRed Test",
         private_key=KEYPAIR["private_key"],
         public_key=KEYPAIR["public_key"],
     )
 
+    # Assert every page has at least one seal string (not empty lists)
+    assert len(result["page_seal_strings"]) == 3
+
     doc_ids = []
-    for ps in result["page_seal_strings"]:
-        dec = decode_seal(ps[0])
-        if dec:
-            doc_ids.append(dec["document_id"])
+    for i, page_seals in enumerate(result["page_seal_strings"]):
+        assert page_seals, f"Page {i}: expected at least one seal, got empty list"
+        decoded = decode_seal(page_seals[0])
+        assert decoded is not None, f"Page {i}: decode_seal returned None"
+        doc_ids.append(decoded["document_id"])
 
     # All must be distinct
-    assert len(set(doc_ids)) == len(doc_ids)
+    assert len(doc_ids) == 3
+    assert len(set(doc_ids)) == 3
 
 
 # ===========================
@@ -211,16 +243,15 @@ def test_img_multi_page_unique_doc_ids_per_page():
 # ===========================
 
 
-def test_img_api_seal_endpoint_returns_success():
+def test_img_api_seal_endpoint_returns_success(tmp_path):
     """When uploading an image-only PDF via /api/pdf/seal, the response is 200 OK."""
-    tmp = "/tmp/_img_test_api_1p.pdf"
-    _write_tmp_pdf(1, path=tmp)
+    tmp = _make_image_only_pdf(tmp_path, page_count=1, filename="api_test_1p.pdf")
 
     resp = client.post(
         "/api/pdf/seal",
         params={
             "pdf_path": tmp,
-            "issuer": ISSUER,
+            "issuer": "QRed Test",
             "private_key": KEYPAIR["private_key"],
             "public_key": KEYPAIR["public_key"],
         },
@@ -231,16 +262,15 @@ def test_img_api_seal_endpoint_returns_success():
     assert data["seal_strings"]
 
 
-def test_img_api_seal_endpoint_validates_empty_content_in_result():
+def test_img_api_seal_endpoint_validates_empty_content_in_result(tmp_path):
     """The seal API response for an image-only PDF shows encoding and seal info."""
-    tmp = "/tmp/_img_test_api_2p.pdf"
-    _write_tmp_pdf(2, path=tmp)
+    tmp = _make_image_only_pdf(tmp_path, page_count=2, filename="api_test_2p.pdf")
 
     resp = client.post(
         "/api/pdf/seal",
         params={
             "pdf_path": tmp,
-            "issuer": ISSUER,
+            "issuer": "QRed Test",
             "private_key": KEYPAIR["private_key"],
             "public_key": KEYPAIR["public_key"],
         },
@@ -267,31 +297,43 @@ def test_img_integrity_text_structure_for_empty_page():
     assert lines[4] == ""  # body is empty since there's no page text
 
 
-def test_img_mixed_content_image_and_text_pages():
-    """A hybrid PDF (some pages with text, some without) has correct per-page hashes."""
-    tmp_path = "/tmp/_img_hybrid.pdf"
-    try:
-        doc = fitz.open()
-        # Page 0: has text
-        p0 = doc.new_page()
-        p0.insert_text(fitz.Point(72, 72), "This is normal text.")
-        # Page 1: image only (blank)
-        p1 = doc.new_page()
-        shape = p1.new_shape()
-        shape.draw_rect(fitz.Rect(50, 50, 562, 742))
-        shape.finish(color=(0.5, 0, 0), width=1)
-        shape.commit()
-        doc.save(tmp_path)
-        doc.close()
+def test_img_mixed_content_image_and_text_pages(tmp_path):
+    """A hybrid PDF (some pages with text, some without) has correct per-page hashes.
 
-        t0 = extract_text_from_pdf(tmp_path, page_number=0)
-        t1 = extract_text_from_pdf(tmp_path, page_number=1)
+    The hybrid PDF is built entirely in memory: page 0 has real text,
+    page 1 has a raster image — no text on the image page.
+    """
+    # Build hybrid PDF in memory
+    buf = io.BytesIO()
+    doc = fitz.open()
+    # Page 0: has text (no image)
+    p0 = doc.new_page(width=612, height=792)
+    p0.insert_text(fitz.Point(72, 72), "This is normal text.")
+    # Page 1: image only (raster PNG, no text)
+    p1 = doc.new_page(width=612, height=792)
+    png_data = _create_dummy_png_data(width=400, height=600, color=(200, 200, 200))
+    p1.insert_image(
+        fitz.Rect(50, 50, 562, 650),
+        stream=png_data,
+        width=512,
+        height=600,
+    )
+    doc.save(buf)
+    doc.close()
+    tmp = str(tmp_path / "hybrid_test.pdf")
+    buf.seek(0)
+    with open(tmp, "wb") as f:
+        f.write(buf.read())
+
+    try:
+        t0 = extract_text_from_pdf(tmp, page_number=0)
+        t1 = extract_text_from_pdf(tmp, page_number=1)
         assert t0 != ""
         assert t1 == ""
 
         result = seal_pdf(
-            pdf_path=tmp_path,
-            issuer=ISSUER,
+            pdf_path=tmp,
+            issuer="QRed Test",
             private_key=KEYPAIR["private_key"],
             public_key=KEYPAIR["public_key"],
         )
@@ -303,5 +345,5 @@ def test_img_mixed_content_image_and_text_pages():
             assert v["status"] == "VALID"
 
     finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        if os.path.exists(tmp):
+            os.unlink(tmp)
