@@ -18,7 +18,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r backend/requirements.txt
+          pip install pytest httpx
+          pip install -e .
       - name: Run BDD tests
         run: pytest tests/test_qred.py -v --tb=short
 
@@ -51,12 +53,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install dependencies
+      - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      - name: Install Playwright Chromium
+          pip install -r backend/requirements.txt
+          pip install pytest httpx
+          pip install -e .
+      - name: Install Playwright dependencies
         run: |
+          python -m pip install playwright>=1.40
           python -m playwright install --with-deps chromium
       - name: Run E2E tests
         run: pytest tests/test_corrupt_pdf.py -v --tb=short --timeout=120
