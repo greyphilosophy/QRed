@@ -277,9 +277,10 @@ def _upload_file_to_stamp_tool(
     wrong reason.
     """
     # Step 1: Write to temp file so Playwright's set_input_files can read it
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, mode="wb") as tmp:
-        tmp.write(pdf_bytes)
-        tmp_path = tmp.name
+    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, mode="wb")
+    tmp.write(pdf_bytes)
+    tmp_path = tmp.name
+    tmp.close()
 
     try:
         # Step 2: Find the hidden file input and set files using the path
@@ -293,34 +294,33 @@ def _upload_file_to_stamp_tool(
         file_input.set_input_files(tmp_path)
         print(f"[FILE UPLOAD] set_input_files({file_name}) OK")
 
+        # Step 3: Wait for React to pick up the file
+        page.wait_for_timeout(3000)
+
+        # Step 4: Log whether filename appeared in UI (informational only —
+        # QRed doesn't always echo the filename back)
+        body_text = page.text_content("body") or ""
+        file_visible = file_name.lower() in body_text.lower()
+        print(f"[DEBUG] File '{file_name}' visible in UI? {'Yes' if file_visible else 'No'}")
+
+        # Step 5: Click the Seal button
+        if not _wait_for_seal_action(page):
+            raise AssertionError(
+                "Seal button not found or could not be clicked — "
+                "the seal action was not triggered"
+            )
+
+        # Step 6: Wait for async processing
+        page.wait_for_timeout(PROCESSING_WAIT_MS)
+        page.wait_for_timeout(AFTER_SEAL_TIMEOUT)
     except Exception as e:
         raise AssertionError(f"File upload failed: {e}") from e
     finally:
-        # Clean up temp file
+        # Clean up temp file — do this LAST, after all processing is done
         try:
             os.unlink(tmp_path)
         except OSError:
             pass
-
-    # Step 3: Wait for React to pick up the file
-    page.wait_for_timeout(3000)
-
-    # Step 4: Log whether filename appeared in UI (informational only —
-    # QRed doesn't always echo the filename back)
-    body_text = page.text_content("body") or ""
-    file_visible = file_name.lower() in body_text.lower()
-    print(f"[DEBUG] File '{file_name}' visible in UI? {'Yes' if file_visible else 'No'}")
-
-    # Step 5: Click the Seal button
-    if not _wait_for_seal_action(page):
-        raise AssertionError(
-            "Seal button not found or could not be clicked — "
-            "the seal action was not triggered"
-        )
-
-    # Step 6: Wait for async processing
-    page.wait_for_timeout(PROCESSING_WAIT_MS)
-    page.wait_for_timeout(AFTER_SEAL_TIMEOUT)
 
 
 def _check_results(page: Page) -> dict:
