@@ -10,8 +10,8 @@ function env(overrides = {}) {
   };
 }
 
-describe("frontend worker API handling", () => {
-  it("serves default demo keys without requiring a backend origin", async () => {
+describe("frontend worker public-key API", () => {
+  it("serves only the public demo key without exposing a private key", async () => {
     const response = await worker.fetch(
       new Request("https://qred.org/api/keys/default"),
       env()
@@ -21,19 +21,18 @@ describe("frontend worker API handling", () => {
     expect(response.status).toBe(200);
     expect(body).toEqual(
       expect.objectContaining({
-        private_key: expect.any(String),
         public_key: expect.any(String),
         key_id: expect.any(String),
         source: "static-demo",
       })
     );
+    expect(body.private_key).toBeUndefined();
   });
 
-  it("derives a key ID for Worker-provided default keys when one is not configured", async () => {
+  it("derives a key ID for Worker-provided public keys when one is not configured", async () => {
     const response = await worker.fetch(
       new Request("https://qred.org/api/keys/default"),
       env({
-        QRED_DEFAULT_PRIVATE_KEY: "private-key",
         QRED_DEFAULT_PUBLIC_KEY: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=",
       })
     );
@@ -41,16 +40,29 @@ describe("frontend worker API handling", () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({
-      private_key: "private-key",
       public_key: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=",
       key_id: "da522162396ab2d0",
       source: "worker-environment",
     });
   });
 
+  it("returns /api/keys/demo identically to /api/keys/default", async () => {
+    const resp1 = await worker.fetch(
+      new Request("https://qred.org/api/keys/default"),
+      env()
+    );
+    const resp2 = await worker.fetch(
+      new Request("https://qred.org/api/keys/demo"),
+      env()
+    );
+
+    const body1 = await resp1.json();
+    const body2 = await resp2.json();
+
+    expect(body1).toEqual(body2);
+  });
+
   it("delegates all non-API routes to static assets", async () => {
-    // Any request that is not /api/keys/default or /api/keys/demo
-    // falls through to env.ASSETS.fetch
     const response = await worker.fetch(
       new Request("https://qred.org/verifier"),
       env()

@@ -13,56 +13,39 @@ No app installation is required.
 ```bash
 git clone https://github.com/greyphilosophy/QRed
 cd QRed
-python demo.py
+cd frontend
+npm ci && npm start
 ```
 
-This walks through the full QRed flow:
+The demo app runs at `http://localhost:3000`. It is fully client-side: all PDF sealing, QR generation, and signature operations happen in your browser. No backend server is required.
 
-1. Generates an Ed25519 keypair for the issuer
-2. Creates a sample document
-3. Seals the document into QR-ready seal strings
-4. Shows the generated seals
-5. Verifies the seals end-to-end → VALID
-
-## Use the demo script
-
-The included `demo.sh` sets up a virtual environment and runs the demo in one command:
+## Start the development server
 
 ```bash
-bash demo.sh
+cd frontend
+npm install
+npm start
 ```
 
-## Start the API server
-
-```bash
-make install   # pip install -r requirements.txt
-make run       # uvicorn on port 8190
-```
-
-Then use the REST API. The local backend listens on `http://localhost:8190`, and generated QRed payload QR codes show `https://qred.org/` as the visible production bootstrap URL by default. Normal camera apps only deliver that URL to the browser; the QRed verifier must scan the QR image itself to recover the hidden signed payload bytes:
-
-```bash
-# Generate seals
-curl -X POST http://localhost:8190/api/seals \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "content": "This is my document.",
-    "issuer": "QRed Authority",
-    "private_key": "<base64_private_key>",
-    "public_key": "<base64_public_key>"
-}'
-
-# Verify seals
-curl -X POST http://localhost:8190/api/verify \
-  -H 'Content-Type: application/json' \
-  -d '{"seals": ["<scanner-safe hidden payload QR>"]}'
-```
+Open `http://localhost:3000` in your browser. Click "Open PDF stamping tool" to upload a PDF, provide your own Ed25519 keypair, and seal it in-browser.
 
 ## Run tests
 
 ```bash
-make tests     # 104 passing BDD tests
+cd frontend
+npm test          # Vitest unit tests
+cd ../tests
+pytest            # Playwright E2E parity tests
 ```
+
+## Deploy to Cloudflare
+
+```bash
+cd frontend
+npm run build:pages
+```
+
+The build outputs static assets to `frontend/build/` and copies the Worker to `frontend/build/_worker.js`. Deploy the `build` directory as a Cloudflare Pages project.
 
 
 # Production deployment for qred.org
@@ -83,17 +66,16 @@ Configure the Cloudflare Pages project with these settings:
 
 Use `npm ci && npm run build:pages` after setting the project root to `frontend`, where `package.json` and `package-lock.json` live. The `build:pages` script builds the static frontend and copies `frontend/worker/index.js` to `build/_worker.js`, which is required for Cloudflare Pages to run the `/api/*` Worker routes in production. If Cloudflare runs from the repository root, use the root `npm run build` script and publish `frontend/build`; the root `wrangler.jsonc` declares that Pages output directory. If the UI requires manual settings instead, use `cd frontend && npm ci && npm run build:pages` and set the build output directory to `frontend/build`.
 
-The production frontend is a Cloudflare Pages deployment with a small Worker in `frontend/worker/index.js`. By default, the browser build sends API requests to the relative `/api` path, which lets the Worker proxy requests. Configure the Worker variable `QRED_API_ORIGIN` to the origin of the separately deployed QRed FastAPI backend if production should support API-backed demo features such as seal generation, PDF stamping, registry calls, or server-side verification. Alternatively, set the frontend build-time variable `VITE_API_BASE_URL` to the backend origin (for example, `https://api.qred.org`) so the browser calls that API directly instead of relying on the Worker proxy. Leave both `QRED_API_ORIGIN` and `VITE_API_BASE_URL` unset only for a static verifier/demo deployment; in that mode the Worker serves `/api/keys/default` and `/api/keys/demo` locally so the homepage can load demo issuer keys, while other `/api/*` routes return a 503 explaining that the backend origin is missing.
+The production frontend is a Cloudflare Pages deployment with a small Worker in `frontend/worker/index.js`. All PDF sealing, QR generation, and signature operations happen client-side in the browser. The Worker serves only static assets and the public signing key at `/api/keys/default`. No private keys are ever exposed or processed by the server.
 
-Optional Worker variables for stable homepage demo keys are:
+Optional Worker variables for a custom public key are:
 
 | Variable | Purpose |
 | --- | --- |
-| `QRED_DEFAULT_PRIVATE_KEY` | Base64URL-encoded Ed25519 private key used by the browser demo. |
-| `QRED_DEFAULT_PUBLIC_KEY` | Matching Base64URL-encoded Ed25519 public key. |
+| `QRED_DEFAULT_PUBLIC_KEY` | Base64URL-encoded Ed25519 public key. |
 | `QRED_DEFAULT_KEY_ID` | Optional key ID. If omitted, the Worker derives it from `QRED_DEFAULT_PUBLIC_KEY`. |
 
-When using direct browser API calls, add `VITE_API_BASE_URL=https://api.qred.org` (or another production API origin) as a Cloudflare Pages build-time variable and rebuild the frontend. `VITE_API_PROXY_TARGET` is only used by the local Vite development proxy and is not a production Pages setting.
+Users must supply their own private key in the browser — the server never stores, returns, or processes private keys.
 
 ## Cloudflare Pages custom domains
 
@@ -221,8 +203,16 @@ QRed relies on public key cryptography.
 
 Each issuing authority maintains a signing key pair:
 
-- Private key: used to sign document payloads.
-- Public key: used by the verifier to validate signatures.
+- Private key: used to sign document payloads. Must be generated and stored securely by the issuer — never uploaded to any server.
+- Public key: used by the verifier to validate signatures. This is the only key that may be served from the server (e.g., via `/api/keys/default`).
+
+**The QRed Cloudflare Worker never stores, processes, or returns private keys.** All sealing operations — including Ed25519 signature generation — happen entirely in the user's browser using the private key the user provides. This ensures that:
+
+- PDFs never leave the user's machine.
+- Private keys never touch the server.
+- Seals made with user-provided keys cannot be forged by anyone who accesses the public key endpoint.
+
+The default demo keypair is provided solely for testing. In production, issuers should generate their own keypair and supply the private key directly in the browser.
 
 Any modification to the sealed document contents invalidates the signature and causes verification to fail.
 

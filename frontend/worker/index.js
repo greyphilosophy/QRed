@@ -1,13 +1,12 @@
 /**
  * QRed Cloudflare Pages Worker
  *
- * Serves the static frontend assets and exposes /api/keys/default for
- * the sealing interface.  All sealing happens client-side — the backend
- * has been removed so no PDFs ever touch a server.
+ * Serves the static frontend assets and exposes only the public signing key.
+ * All PDF sealing happens client-side in the browser — no PDFs ever touch
+ * the server, and no private keys are served.
  *
- * Static demo keypair used when no environment variables are set.
- * Configure QRED_DEFAULT_PRIVATE_KEY / QRED_DEFAULT_PUBLIC_KEY on the
- * Worker to use your own signing keys.
+ * To configure a custom keypair, set QRED_DEFAULT_PUBLIC_KEY on the Worker.
+ * The private key must remain secret and must never be set on the server.
  */
 
 // ---------------------------------------------------------------------------
@@ -29,18 +28,13 @@ function json(body, status = 200, extraHeaders = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Demo keypair (hard-coded for static hosting)
+// Demo public key (public only — private key is NOT included)
 // ---------------------------------------------------------------------------
 
-const DEMO_KEYPAIR = {
-  private_key: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=",
-  public_key: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=",
-  key_id: "da522162396ab2d0",
-  source: "static-demo",
-};
+const DEMO_PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 
 /**
- * Decode a Base64url-encoded public key to hex for computing key_id.
+ * Decode a Base64url-encoded public key to bytes for computing key_id.
  */
 function base64urlToBytes(value) {
   const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
@@ -63,23 +57,18 @@ async function computeKeyId(publicKey) {
 }
 
 /**
- * Return the effective default keypair: env vars when present, else demo.
+ * Return the effective default public key: env var when present, else demo.
+ * NOTE: The private key is NEVER returned by this endpoint.
+ * Users must supply their own private key in the browser.
  */
-async function defaultKeypair(env) {
-  const privateKey = env.QRED_DEFAULT_PRIVATE_KEY?.trim();
-  const publicKey = env.QRED_DEFAULT_PUBLIC_KEY?.trim();
-  const keyId = env.QRED_DEFAULT_KEY_ID?.trim();
-
-  if (privateKey && publicKey) {
-    return {
-      private_key: privateKey,
-      public_key: publicKey,
-      key_id: keyId || (await computeKeyId(publicKey)),
-      source: "worker-environment",
-    };
-  }
-
-  return DEMO_KEYPAIR;
+async function defaultPublicKey(env) {
+  const publicKey = env.QRED_DEFAULT_PUBLIC_KEY?.trim() || DEMO_PUBLIC_KEY;
+  const keyId = env.QRED_DEFAULT_KEY_ID?.trim() || (await computeKeyId(publicKey));
+  return {
+    public_key: publicKey,
+    key_id: keyId,
+    source: env.QRED_DEFAULT_PUBLIC_KEY?.trim() ? "worker-environment" : "static-demo",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -90,9 +79,9 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // --- /api/keys/default  (frontend calls this on load) -------------------
+    // --- /api/keys/default — public key only (NO private key) -------------
     if (url.pathname === "/api/keys/default" || url.pathname === "/api/keys/demo") {
-      return json(await defaultKeypair(env));
+      return json(await defaultPublicKey(env));
     }
 
     // --- All other paths → static assets -----------------------------------
