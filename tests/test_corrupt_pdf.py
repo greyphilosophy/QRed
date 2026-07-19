@@ -359,10 +359,17 @@ def _check_results(page: Page) -> dict:
     has_error = any(ind in result_lower for ind in ERROR_KEYWORDS)
     had_success = any(ind in result_lower for ind in SUCCESS_KEYWORDS)
 
+    # Determine whether the UI showed a terminal result (success or error)
+    # at all. A blank result_text means the app did not render any
+    # completion feedback — the operation may still have run in the
+    # background, but we cannot confirm that from the UI.
+    completed = bool(result_text)
+
     return {
         "success": had_success and not has_error,
         "message_contains": result_text[:500] if result_text else None,
         "has_error": has_error,
+        "completed": completed,
         "downloaded": False,
     }
 
@@ -508,41 +515,62 @@ def test_t7_mismatched_sizes_pdf(page: Page):
     """Extra fake objects appended after valid PDF -- may succeed or fail
     depending on parser leniency.
 
-    We only require that the operation does NOT hang / crash — the PDF
-    sealer may accept or reject this, both are acceptable.
+    We only require that the operation completes with an observable
+    result in the UI (success or error), not that any particular
+    outcome occurs. Both are acceptable.
     """
     data = make_mismatched_sizes_pdf()
     _open_stamp_tool(page)
     _upload_file_to_stamp_tool(page, data, file_name="mismatched.pdf")
     result = _check_results(page)
     print(f"T7 mismatched: success={result['success']} err={result['has_error']} "
+          f"completed={result['completed']} "
           f"msg='{result['message_contains']}'")
-    # The important property: no unhandled exception in the app.
-    # The app may report success or error — both are valid outcomes.
-    assert result["has_error"] or not result["success"] or result["success"], (
-        "Operation completed without crashing — graceful handling verified"
+    assert result["completed"], (
+        "No terminal success or error result appeared in the UI"
+    )
+    assert result["success"] or result["has_error"], (
+        "Operation produced output but not a recognisable success or error"
     )
 
 
 def test_t8_reupload_sealed_pdf(page: Page):
-    """A previously QRed-sealed PDF uploaded again should either work or error gracefully."""
+    """A previously QRed-sealed PDF uploaded again should either work or
+    error gracefully — the key requirement is an observable result."""
     data = make_qred_sealed_pdf()
     if data is None or len(data) == 0:  # type: ignore[arg-type]
         pytest.skip("No pre-existing QRed-sealed PDF available for T8 re-upload test")
     _open_stamp_tool(page)
     _upload_file_to_stamp_tool(page, data, file_name="already_sealed.qred-sealed.pdf")  # type: ignore[arg-type]
     result = _check_results(page)
-    print(f"T8 re-seal: success={result['success']} err={result['has_error']}")
+    print(f"T8 re-seal: success={result['success']} err={result['has_error']} "
+          f"completed={result['completed']}")
+    assert result["completed"], (
+        "No terminal success or error result appeared in the UI"
+    )
+    assert result["success"] or result["has_error"], (
+        "Operation produced output but not a recognisable success or error"
+    )
 
 
 def test_t9_image_only_pdf(page: Page):
-    """Image-only PDF (actual raster image, no text) should handle gracefully."""
+    """Image-only PDF (actual raster image, no text) should seal
+    successfully — matches the expectation from PR #88."""
     data = make_image_only_pdf()
     _open_stamp_tool(page)
     _upload_file_to_stamp_tool(page, data, file_name="image_only.pdf")
     result = _check_results(page)
     print(f"T9 image-only: success={result['success']} err={result['has_error']} "
           f"msg='{result['message_contains']}'")
+    assert result["success"], (
+        f"Image-only PDF should seal successfully, but result says "
+        f"success={result['success']} and error={result['has_error']}. "
+        f"UI text: {result['message_contains']!r}"
+    )
+    assert not result["has_error"], (
+        f"Image-only PDF should not produce an error, but "
+        f"has_error={result['has_error']}. UI text: {result['message_contains']!r}"
+    )
 
 
 def test_t10_non_pdf_binary(page: Page):
