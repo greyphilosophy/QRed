@@ -140,18 +140,28 @@ def make_image_only_pdf(page_size: tuple = letter) -> bytes:
         "aQHa2JQ0SwAAAABJRU5ErkJggg=="
     )
 
-    buf = _io.BytesIO()
-    c = rl_canvas.Canvas(buf, pagesize=page_size)
-    c.drawImage(
-        _io.BytesIO(png_data),
-        x=50,
-        y=50,
-        width=500,
-        height=700,
-        mask="auto",
-    )
-    c.save()
-    return buf.getvalue()
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False, mode="wb") as png_tmp:
+        png_tmp.write(png_data)
+        png_path = png_tmp.name
+
+    try:
+        buf = _io.BytesIO()
+        c = rl_canvas.Canvas(buf, pagesize=page_size)
+        c.drawImage(
+            png_path,
+            x=50,
+            y=50,
+            width=500,
+            height=700,
+            mask="auto",
+        )
+        c.save()
+        return buf.getvalue()
+    finally:
+        try:
+            os.unlink(png_path)
+        except OSError:
+            pass
 
 
 def make_qred_sealed_pdf(source_pdf_path: str | None = None):
