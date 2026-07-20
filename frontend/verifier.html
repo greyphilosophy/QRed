@@ -1172,32 +1172,11 @@
     window.__qredTestVerify = function(sealStrings, publicKey) {
       return new Promise(async function(resolve) {
         try {
-          // Parse seal strings into the format verifyQRedSeals expects
-          var seals = sealStrings.split("\n").map(function(s) {
-            var trimmed = s.trim();
-            if (!trimmed) return null;
+          // Split multiline payload into individual seal strings
+          var rawSeals = sealStrings.split("\n").map(function(s) { return s.trim(); }).filter(Boolean);
 
-            var parsed = { url: trimmed };
-            if (trimmed.indexOf("QRED1") === 0) {
-              try {
-                var url = new URL(trimmed, "http://dummy.local");
-                parsed.document_id = url.searchParams.get("kid") || "";
-                parsed.seal_version = url.searchParams.get("v") || "1";
-                parsed.algorithm = url.searchParams.get("alg");
-                parsed.data = url.searchParams.get("data");
-                parsed.sig = url.searchParams.get("sig");
-                parsed.pub = (publicKey || url.searchParams.get("pub")) || "";
-              } catch (e) {
-                // malformed URL — verifyQRedSeals will try to parse
-              }
-            } else {
-              parsed.seal = trimmed;
-            }
-            return parsed;
-          }).filter(Boolean);
-
-          // Call the module-scoped verification function
-          var result = await verifyQRedSeals(seals, publicKey || "");
+          // Call the module-scoped verification function with raw seal strings
+          var result = await verifyQRedSeals(rawSeals, publicKey || "");
 
           // Update the DOM so the test can read #resultStatus
           var resultView = document.getElementById("resultView");
