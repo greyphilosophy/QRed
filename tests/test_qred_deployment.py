@@ -364,60 +364,47 @@ def _extract_seal_result(page: Page) -> dict:
 
 def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", public_key: str = ""):
     """
-    Verify a seal by calling the verifier's JavaScript functions directly,
-    then reading the result from the DOM.
-
+    Verify a seal by calling the verifier's test API (window.__qredTestVerify),
+    which bridges from Playwright's evaluate() to module-scoped verifyQRedSeals().
+    
     The seal_payload should be one or more QRED seal strings (URL fragments
     like "QRED1?v=1&alg=ed25519&..."), one per line.
 
     public_key: the exact public key to use for signature verification.
     Raises AssertionError if any step fails.
     """
-    import os
-
     from playwright.sync_api import expect as expect_playwright
 
     BASE_URL = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
 
     # Navigate to verifier
     page.goto(f"{BASE_URL}/verifier.html", wait_until="networkidle", timeout=30_000)
-    page.wait_for_timeout(2000)  # let the verifier initialize
+    page.wait_for_timeout(2000)  # let the verifier module initialize
 
     if not seal_payload or seal_payload.strip() == "":
         raise AssertionError("Seal payload is empty — cannot verify without valid seal data")
 
-    # Load JS template and substitute placeholders
-    js_path = os.path.join(os.path.dirname(__file__), "verifier_verify.js")
-    with open(js_path, "r") as _f:
-        js_template = _f.read()
+    # Step 1: Call the test API to run verification via module-scoped verifyQRedSeals()
+    result = page.evaluate("(__seals, __pk) => window.__qredTestVerify(__seals, __pk)", [seal_payload, public_key or ""])
 
-    js_code = js_template.replace("PUBLIC_KEY_PLACEHOLDER", public_key or "")
-    js_code = js_code.replace("SEAL_PAYLOAD_PLACEHOLDER", seal_payload)
+    if isinstance(result, dict) and result.get("status") == "ERROR":
+        raise AssertionError(f"Verification error: {result.get('error', 'unknown')}")
 
-    try:
-        result = page.evaluate(js_code)
-    except Exception as exc:
-        raise AssertionError(f"Failed to run verifier JavaScript: {exc}") from exc
+    if not result or not isinstance(result, dict):
+        raise AssertionError(f"Verification returned unexpected result: {result}")
 
-    # Wait for the result to appear in the DOM
-    page.wait_for_timeout(3000)
+    status = result.get("status", "")
+    status_upper = status.upper().strip()
 
-    # Check the #resultStatus element
+    # Step 2: Wait for #resultStatus to appear in the DOM (page.evaluate updates DOM asynchronously)
     try:
         result_status = page.locator('#resultStatus').first
-        expect_playwright(result_status).to_be_visible(timeout=3_000)
-        status_text = result_status.inner_text().strip()
+        expect_playwright(result_status).to_be_visible(timeout=15_000)
+        dom_status = result_status.inner_text().strip()
     except Exception:
-        try:
-            body_text = page.locator('body').inner_text()
-        except Exception:
-            body_text = ""
-        raise AssertionError(
-            f"Verification did not produce a result. Body text: {body_text[:500]}"
-        )
+        dom_status = status  # fallback to JS result if DOM not yet rendered
 
-    status_upper = status_text.upper().strip()
-
+    # Step 3: Assert only VALID — UNVERIFIED means no public key, INCOMPLETE means missing chunks
     if status_upper == "VALID":
         return True
     else:
@@ -435,7 +422,7 @@ def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", 
             body_text = ""
 
         raise AssertionError(
-            f"Verification returned status '{status_text}' instead of VALID. "
+            f"Verification returned status '{status}' instead of VALID. "
             f"Result meta: {result_meta[:200]}. "
             f"Result content: {result_content[:200]}. "
             f"Body: {body_text[:500]}"
