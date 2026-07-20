@@ -366,10 +366,10 @@ def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", 
     """
     Verify a seal by calling the verifier's JavaScript functions directly,
     then reading the result from the DOM.
-    
+
     The seal_payload should be one or more QRED seal strings (URL fragments
     like "QRED1?v=1&alg=ed25519&..."), one per line.
-    
+
     public_key: the exact public key to use for signature verification.
     Raises AssertionError if any step fails.
     """
@@ -384,50 +384,29 @@ def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", 
     if not seal_payload or seal_payload.strip() == "":
         raise AssertionError("Seal payload is empty — cannot verify without valid seal data")
 
-    # Call the verifier's JavaScript directly — bypass UI interaction issues
+    # Load JS template and substitute placeholders
+    import os
+    js_path = os.path.join(os.path.dirname(__file__), "verifier_verify.js")
+    with open(js_path, "r") as _f:
+        js_template = _f.read()
+
+    js_code = js_template.replace("PUBLIC_KEY_PLACEHOLDER", public_key or "")
+    js_code = js_code.replace("SEAL_PAYLOAD_PLACEHOLDER", seal_payload)
+
     try:
-        result = page.evaluate('''(seals, publicKey) => {
-            // Set the public key in the input field and state
-            const pkInput = document.getElementById("publicKeyInput");
-            if (pkInput) {
-                pkInput.value = publicKey || "";
-                pkInput.dispatchEvent(new Event("input", { bubbles: true }));
-                pkInput.dispatchEvent(new Event("change", { bubbles: true }));
-            }
-
-            // Process each seal line
-            const lines = seals.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);
-            lines.forEach(line => {
-                if (typeof processScannedSeal === "function") {
-                    processScannedSeal(line);
-                }
-            });
-
-            // Get all document IDs
-            const docIds = Object.keys(state && state.sealsByDocument ? state.sealsByDocument : {});
-            if (docIds.length === 0) {
-                return { error: "No seals were processed. Make sure the seal strings are valid QRED payloads." };
-            }
-
-            // Call reconstructAndShow for the first document
-            if (typeof reconstructAndShow === "function") {
-                return reconstructAndShow(docIds[0]);
-            }
-            return { error: "reconstructAndShow function not found on page." };
-        }''', seal_payload, public_key or "")
+        result = page.evaluate(js_code)
     except Exception as exc:
         raise AssertionError(f"Failed to run verifier JavaScript: {exc}") from exc
 
     # Wait for the result to appear in the DOM
     page.wait_for_timeout(3000)
 
-    # Check the #resultStatus element — it shows "VALID", "INCOMPLETE", "ERROR", etc.
+    # Check the #resultStatus element
     try:
         result_status = page.locator('#resultStatus').first
         expect_playwright(result_status).to_be_visible(timeout=3_000)
         status_text = result_status.inner_text().strip()
     except Exception:
-        # If resultStatus isn't visible, try to get body text as fallback
         try:
             body_text = page.locator('body').inner_text()
         except Exception:
@@ -436,16 +415,11 @@ def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", 
             f"Verification did not produce a result. Body text: {body_text[:500]}"
         )
 
-    # Valid states: "VALID" means all chunks verified successfully
-    # "INCOMPLETE" means we have some chunks but not all (also a valid partial result)
-    # "UNVERIFIED" means the seals parsed but no public key was available (signature skipped)
-    # "ERROR" means something went wrong
     status_upper = status_text.upper().strip()
-    
+
     if status_upper == "VALID":
         return True
     else:
-        # Get more context about the result
         try:
             result_meta = page.locator('#resultMeta').inner_text()
         except Exception:
@@ -465,6 +439,7 @@ def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", 
             f"Result content: {result_content[:200]}. "
             f"Body: {body_text[:500]}"
         )
+
 
 
 def _verify_seal_with_seal_strings(page: Page, seal_result: dict, expected_document_id: str = "", public_key: str = ""):
