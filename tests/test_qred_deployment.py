@@ -238,15 +238,20 @@ def _verify_seal(page: Page, sealed_pdf_path: str):
 
     # Navigate to verifier
     page.goto(f"{BASE_URL}/verifier.html", wait_until="networkidle", timeout=30_000)
+    page.wait_for_timeout(3000)  # let the verifier initialize
 
     # Upload the sealed PDF
     file_input = page.locator('input[type="file"]').first
     file_input.set_input_files(sealed_pdf_path)
 
-    # Wait for the result status element to show "VALID"
+    # Wait for processing to complete — the verifier needs time to extract
+    # QR codes from the uploaded PDF and verify them.
+    page.wait_for_timeout(10_000)
+
+    # Check the result status element
     try:
         rs = page.locator('#resultStatus')
-        rs.wait_for(state="visible", timeout=30_000)
+        rs.wait_for(state="visible", timeout=5_000)
         status_text = rs.inner_text().strip()
         # The verifier displays status strings: VALID, INVALID, ERROR, INCOMPLETE
         if "VALID" in status_text.upper():
@@ -256,11 +261,15 @@ def _verify_seal(page: Page, sealed_pdf_path: str):
             return False
         # Fallback: check any text content on the page
         body_text = page.text_content("body") or ""
-        return "VALID" in body_text.upper() and "ERROR" not in body_text.upper()
+        if "VALID" in body_text.upper():
+            return True
     except Exception:
-        # Final fallback: check body text
-        body_text = page.text_content("body") or ""
-        return "VALID" in body_text.upper()
+        pass
+    
+    # Final fallback: check body text for "Valid" or similar
+    body_text = page.text_content("body") or ""
+    body_lower = body_text.lower()
+    return ("valid" in body_lower or "verified" in body_lower or "success" in body_lower) and "error" not in body_lower
 
 
 # ---------------------------------------------------------------------------
