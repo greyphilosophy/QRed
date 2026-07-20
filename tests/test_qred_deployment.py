@@ -207,8 +207,6 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
         expect_playwright(key_btn).to_be_visible(timeout=10_000)
         key_btn.click()  # Force key loading
         page.wait_for_timeout(2000)  # Wait for async loadDefaultKeys() to complete
-        key_btn.click()  # Re-click to go back to "ready" state before proceeding
-        page.wait_for_timeout(500)
     except Exception:
         raise AssertionError("App failed to load — key button not found after opening Stamp PDF tool")
 
@@ -227,38 +225,18 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
         raise AssertionError("Failed to upload PDF file") from exc
 
     # Fill the private key — essential for sealing to work
-    # Use page.evaluate to trigger React's onChange handler
+    # Use Playwright's fill() + wait for button to become enabled (most reliable for React)
     try:
         pk_input = page.locator('input[aria-label="Private Key"]').first
         # Verify the input exists and is visible
         expect_playwright(pk_input).to_be_visible(timeout=3_000)
-        # Set value via evaluate to properly trigger React's onChange
-        page.evaluate('''(text) => {
-            const input = document.querySelector('input[aria-label="Private Key"]');
-            if (!input) throw new Error("Private key input not found");
-            input.value = text;
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-        }''', private_key)
-        # Verify the value was set
-        actual_value = pk_input.input_value()
-        assert actual_value == private_key, f"Private key not set: expected {private_key}, got {actual_value}"
-    except AssertionError:
-        raise
+        # Use fill() — Playwright v2 handles React state updates automatically
+        pk_input.fill(private_key)
+        # Wait for the seal button to become enabled (confirms React state synced)
+        seal_button = page.locator('button:has-text("Upload PDF and Stamp QR Seals")').first
+        expect_playwright(seal_button).to_be_enabled(timeout=5_000)
     except Exception as exc:
-        # Try alternative selector
-        try:
-            pk_input = page.locator('input[type="password"], input[name="privateKey"], input[placeholder*="private"], input[placeholder*="key"]').first
-            expect_playwright(pk_input).to_be_visible(timeout=3_000)
-            page.evaluate('''(text, selector) => {
-                const input = document.querySelector(selector);
-                if (!input) throw new Error("Private key input not found");
-                input.value = text;
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-            }''', private_key, 'input[type="password"]')
-        except Exception as inner_exc:
-            raise AssertionError(f"Failed to fill private key: {exc}. Also failed fallback: {inner_exc}") from exc
+        raise AssertionError(f"Failed to fill private key or wait for seal button: {exc}") from exc
 
     # If encoding strategy needs to be changed, verify it was selected
     if encoding and encoding != "plaintext":
