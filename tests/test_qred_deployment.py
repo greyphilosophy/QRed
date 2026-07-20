@@ -33,6 +33,14 @@ from playwright.sync_api import Page, expect
 REPORTLAB_AVAILABLE = False
 PIL_AVAILABLE = False
 
+# The demo key pair used throughout the tests.
+# This matches the hardcoded fallback in App.jsx loadDefaultKeys():
+#   setPublicKey("eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=")
+DEMO_PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="
+
+# The demo private key used for sealing in tests.
+DEMO_PRIVATE_KEY = "qJ6bqL6U26yH4jG3G7qG4pKqYqG6qYqG6qYqG6qYqG6qYQ"
+
 try:
     from reportlab.lib.pagesizes import letter
     from reportlab.pdfgen import canvas as rl_canvas
@@ -255,19 +263,8 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
 
     # Extract seal result from the success message displayed by the UI
     seal_result = _extract_seal_result(page)
-    
-    # Extract the public key from the App.jsx browser state for use during verification.
-    # The verifier needs the public key to verify signatures; it tries /api/keys/default which
-    # doesn't exist in static mode, so we pre-fill it from the app's publicKey field.
-    try:
-        public_key = page.evaluate("() => window.__publicKey || ''")
-    except Exception:
-        try:
-            public_key = page.evaluate("document.querySelector('input[aria-label=\"Public Key\"]')?.value || ''")
-        except Exception:
-            public_key = ""
 
-    return sealed_path, seal_result, public_key
+    return sealed_path, seal_result
 
 
 def _extract_seal_result(page: Page) -> dict:
@@ -449,11 +446,7 @@ def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", 
     # "ERROR" means something went wrong
     status_upper = status_text.upper().strip()
     
-    if status_upper in ("VALID", "UNVERIFIED"):
-        return True
-    elif status_upper == "INCOMPLETE":
-        # Partial verification is still a success — we got at least some valid chunks
-        # and the system is waiting for the remaining chunks
+    if status_upper == "VALID":
         return True
     else:
         # Get more context about the result
@@ -485,6 +478,7 @@ def _verify_seal_with_seal_strings(page: Page, seal_result: dict, expected_docum
     This is the recommended verification function — it uses the raw seal strings
     (URL fragments) that were generated during sealing, which the verifier can parse.
     
+    public_key: the exact public key to use for signature verification.
     Raises AssertionError if any step fails.
     """
     seal_strings = seal_result.get("seal_strings", [])
@@ -505,7 +499,7 @@ class TestPlainTextSealAndVerify:
 
     def test_seal_simple_pdf(self, page: Page, simple_pdf_path: str):
         """Seal a simple text PDF and verify the download."""
-        sealed, seal_result, _ = _upload_and_seal(page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Test")
+        sealed, seal_result = _upload_and_seal(page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Test")
         assert os.path.exists(sealed), "Sealed PDF was not downloaded"
         assert os.path.getsize(sealed) > 100, "Sealed PDF is too small"
         with open(sealed, "rb") as f:
@@ -513,14 +507,16 @@ class TestPlainTextSealAndVerify:
 
     def test_verify_sealed_pdf(self, page: Page, simple_pdf_path: str):
         """Seal and verify a simple PDF using the actual seal strings."""
-        sealed, seal_result, public_key = _upload_and_seal(page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Test")
+        sealed, seal_result = _upload_and_seal(page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Test")
         
         # Verify the seal result was captured
         assert seal_result, "Seal result was not captured from UI message"
         assert seal_result.get("seal_strings"), "No seal strings captured — cannot verify"
         
-        # Use the actual seal strings (not formatted text) for verification
-        verified = _verify_seal_with_seal_strings(page, seal_result, seal_result.get('document_id', ''), public_key)
+        # Use the actual seal strings with known public key for verification
+        verified = _verify_seal_with_seal_strings(
+            page, seal_result, seal_result.get('document_id', ''), DEMO_PUBLIC_KEY
+        )
         assert verified, "Verification failed for simple sealed PDF"
 
 
@@ -529,7 +525,7 @@ class TestMultiQrDocuments:
 
     def test_seal_multi_page_pdf(self, page: Page, multi_page_pdf_path: str):
         """Seal a multi-page PDF and verify the download."""
-        sealed, seal_result, _ = _upload_and_seal(page, multi_page_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Multi-PQR Test")
+        sealed, seal_result = _upload_and_seal(page, multi_page_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Multi-PQR Test")
         assert os.path.exists(sealed), "Multi-page PDF was not sealed"
         assert os.path.getsize(sealed) > 100, "Sealed multi-page PDF is too small"
         with open(sealed, "rb") as f:
@@ -537,12 +533,14 @@ class TestMultiQrDocuments:
 
     def test_multi_page_verification(self, page: Page, multi_page_pdf_path: str):
         """Seal and verify a multi-page PDF."""
-        sealed, seal_result, public_key = _upload_and_seal(page, multi_page_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Multi-PQR Test")
+        sealed, seal_result = _upload_and_seal(page, multi_page_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Multi-PQR Test")
         
         # Verify the seal result was captured with actual seal strings
         assert seal_result.get("seal_strings"), "No seal strings captured — cannot verify"
         
-        verified = _verify_seal_with_seal_strings(page, seal_result, seal_result.get('document_id', ''), public_key)
+        verified = _verify_seal_with_seal_strings(
+            page, seal_result, seal_result.get('document_id', ''), DEMO_PUBLIC_KEY
+        )
         assert verified, "Verification failed for multi-page sealed PDF"
 
 
@@ -551,13 +549,13 @@ class TestPdfTextSealing:
 
     def test_seal_with_custom_issuer(self, page: Page, simple_pdf_path: str):
         """Seal with a custom issuer string and verify the seal is applied."""
-        sealed, seal_result, _ = _upload_and_seal(page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="Custom Test Issuer")
+        sealed, seal_result = _upload_and_seal(page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="Custom Test Issuer")
         assert os.path.exists(sealed), "Sealed PDF with custom issuer was not downloaded"
         assert os.path.getsize(sealed) > 100, "Sealed PDF with custom issuer is too small"
 
     def test_seal_with_b45_encoding(self, page: Page, simple_pdf_path: str):
         """Seal using the b45 encoding strategy."""
-        sealed, seal_result, _ = _upload_and_seal(
+        sealed, seal_result = _upload_and_seal(
             page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, encoding="b45", issuer="QRed B45 Test"
         )
         assert os.path.exists(sealed), "b45-encoded sealed PDF was not downloaded"
@@ -573,7 +571,7 @@ class TestImageOnlyPdfs:
 
     def test_seal_image_only_pdf(self, page: Page, image_only_pdf_path: str):
         """Seal an image-only PDF and verify the download."""
-        sealed, seal_result, _ = _upload_and_seal(
+        sealed, seal_result = _upload_and_seal(
             page, image_only_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Image-Only Test"
         )
         assert os.path.exists(sealed), "Image-only PDF was not sealed"
@@ -583,14 +581,16 @@ class TestImageOnlyPdfs:
 
     def test_image_only_verification(self, page: Page, image_only_pdf_path: str):
         """Seal and verify an image-only PDF."""
-        sealed, seal_result, public_key = _upload_and_seal(
+        sealed, seal_result = _upload_and_seal(
             page, image_only_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Image-Only Test"
         )
         
         # Verify the seal result was captured with actual seal strings
         assert seal_result.get("seal_strings"), "No seal strings captured — cannot verify"
         
-        verified = _verify_seal_with_seal_strings(page, seal_result, seal_result.get('document_id', ''), public_key)
+        verified = _verify_seal_with_seal_strings(
+            page, seal_result, seal_result.get('document_id', ''), DEMO_PUBLIC_KEY
+        )
         assert verified, "Verification failed for image-only sealed PDF"
 
 
@@ -599,7 +599,7 @@ class TestKeyGenerationImportAndSignatureVerification:
 
     def test_seal_with_custom_private_key(self, page: Page, simple_pdf_path: str):
         """Seal using a user-provided private key (not from server)."""
-        sealed, seal_result, _ = _upload_and_seal(
+        sealed, seal_result = _upload_and_seal(
             page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Custom Key Test"
         )
         assert os.path.exists(sealed), "PDF sealed with custom private key was not downloaded"
@@ -630,15 +630,16 @@ class TestKeyGenerationImportAndSignatureVerification:
             assert status != 200 or "html" in ct or "text" in ct, \
                 f"/api/keys/default should not return JSON in static mode, got status {status}, ct={ct}"
 
-
     def test_custom_key_verification(self, page: Page, simple_pdf_path: str):
         """Seal with custom key and verify the seal."""
-        sealed, seal_result, public_key = _upload_and_seal(
+        sealed, seal_result = _upload_and_seal(
             page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Key Test"
         )
         
-        # Use the actual seal strings for verification
-        verified = _verify_seal_with_seal_strings(page, seal_result, seal_result.get('document_id', ''), public_key)
+        # Use the actual seal strings with known public key for verification
+        verified = _verify_seal_with_seal_strings(
+            page, seal_result, seal_result.get('document_id', ''), DEMO_PUBLIC_KEY
+        )
         assert verified, "Verification failed for seal with custom key"
 
 
@@ -648,20 +649,22 @@ class TestExistingSealCompatibility:
     def test_seal_reseal_compatibility(self, page: Page, simple_pdf_path: str):
         """Seal a document, then re-seal the result — verify compatibility."""
         # First seal
-        sealed1, seal_result1, public_key = _upload_and_seal(
+        sealed1, seal_result1 = _upload_and_seal(
             page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Compatibility Test"
         )
         assert os.path.exists(sealed1)
 
         # Re-seal the already-sealed PDF
-        sealed2, seal_result2, public_key2 = _upload_and_seal(
+        sealed2, seal_result2 = _upload_and_seal(
             page, sealed1, private_key=DEMO_PRIVATE_KEY, issuer="QRed Compatibility Test"
         )
         assert os.path.exists(sealed2)
 
         # Verify the re-sealed PDF using the actual seal strings
         assert seal_result2.get("seal_strings"), "No seal strings captured — cannot verify"
-        verified = _verify_seal_with_seal_strings(page, seal_result2, seal_result2.get('document_id', ''), public_key2)
+        verified = _verify_seal_with_seal_strings(
+            page, seal_result2, seal_result2.get('document_id', ''), DEMO_PUBLIC_KEY
+        )
         assert verified, "Re-sealed PDF should still verify"
 
 
