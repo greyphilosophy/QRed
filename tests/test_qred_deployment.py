@@ -386,8 +386,8 @@ def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", 
 
     # Step 1: Call the test API to run verification via module-scoped verifyQRedSeals()
     # Playwright v2 uses array syntax: evaluate(script, [arg1, arg2])
-    # Use array destructuring to extract seal_payload and public_key
-    result = page.evaluate("[s, k] => window.__qredTestVerify(s, k)", [seal_payload, public_key or ""])
+    # Wrap destructuring in parens so JS doesn't confuse [s, k] with an array literal
+    result = page.evaluate("([s, k]) => window.__qredTestVerify(s, k)", [seal_payload, public_key or ""])
 
     if isinstance(result, dict) and result.get("status") == "ERROR":
         raise AssertionError(f"Verification error: {result.get('error', 'unknown')}")
