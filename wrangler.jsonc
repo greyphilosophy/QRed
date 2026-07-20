@@ -9,7 +9,6 @@
     "not_found_handling": "single-page-application"
   },
   "vars": {
-    "QRED_DEFAULT_PRIVATE_KEY": "",
     "QRED_DEFAULT_PUBLIC_KEY": "",
     "QRED_DEFAULT_KEY_ID": ""
   }

@@ -183,6 +183,9 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
     """
     from playwright.sync_api import expect as expect_playwright
 
+    # Enable test-mode flag so App.jsx exposes seal data for E2E verification
+    page.add_init_script("__qredTestMode = true;")
+
     BASE_URL = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
 
     # Navigate to the page — wait for QrScanner to render

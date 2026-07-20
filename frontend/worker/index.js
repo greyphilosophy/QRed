@@ -84,6 +84,17 @@ export default {
       return json(await defaultPublicKey(env));
     }
 
+    // --- /api/* — reject removed endpoints with 410 --------------------------
+    if (url.pathname.startsWith("/api/") && url.pathname !== "/api/keys/default" && url.pathname !== "/api/keys/demo") {
+      return json(
+        {
+          error: "API endpoint removed",
+          message: "QRed sealing and verification now run in the browser.",
+        },
+        410,
+      );
+    }
+
     // --- All other paths → static assets -----------------------------------
     return env.ASSETS.fetch(request);
   },

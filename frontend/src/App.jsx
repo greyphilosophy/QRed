@@ -77,8 +77,13 @@ function PdfSealForm() {
       link.click();
       URL.revokeObjectURL(url);
       const sealStrings = sealResult.seals ? sealResult.seals.join("\n") : "";
-      // Store seal result globally so tests can read it
-      window.__lastSealResult = sealResult;
+      // Expose seal result globally only for Playwright E2E tests
+      const IS_TEST = typeof window !== "undefined" && window.__qredTestMode === true;
+      if (IS_TEST) {
+        window.__lastSealResult = sealResult;
+        // Tests read seal strings from the message element; only enabled in test mode
+        sealStrings && setMessage((prev) => prev + "\n---SEALS---\n" + sealStrings);
+      }
       setMessage([
         `Sealed ${file.name} in this browser. Document ID: ${sealResult.document_id}`,
         `Selected encoding: ${sealResult.encoding || encodingStrategy}`,
@@ -87,8 +92,6 @@ function PdfSealForm() {
         `Estimated QR count: ${sealResult.estimated_qr_count || sealResult.total_seals || 0}`,
         `Compression savings: ${sealResult.compression_savings_pct || 0}%`,
         `Document ID: ${sealResult.document_id}`,
-        "---SEALS---",
-        sealStrings,
       ].join("\n"));
     } catch (error) {
       setMessage(`PDF sealing failed: ${error.message}`);
