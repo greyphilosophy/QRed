@@ -272,97 +272,50 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
 
 def _extract_seal_result(page: Page) -> dict:
     """
-    Extract the seal result metadata from the success message displayed by the frontend.
+    Extract the seal result metadata from the frontend's seal result.
     
-    The frontend displays a message after sealing that contains:
-    - "Sealed <filename> in this browser."
-    - "Document ID: <id>"
-    - "Selected encoding: <encoding>"
-    - "---SEALS---"
-    - [seal strings, one per line]
+    The frontend stores the full seal result on window.__lastSealResult after sealing.
+    This is much more reliable than parsing the UI message.
+    
+    The seal result contains:
+    - document_id
+    - encoding
+    - selected_recipe
+    - estimated_qr_count / total_seals
+    - sealStrings (the raw seal strings as an array)
     
     Returns a dict with the seal metadata and seal strings.
     """
     import time
     
-    # Wait for the success message to appear (it updates after download completes)
-    time.sleep(2)
+    # Wait a moment for the seal result to be stored
+    time.sleep(0.5)
     
-    # Strategy 1: Try to find any element containing "Sealed" text
-    message_text = ""
+    # Read the seal result directly from the window object
     try:
-        all_text = page.locator('body').inner_text()
-        if "Sealed" in all_text:
-            message_text = all_text
+        result = page.evaluate("() => window.__lastSealResult || {}")
     except Exception:
-        pass
+        result = {}
     
-    if not message_text:
-        # Strategy 2: Try specific selectors
-        selectors = [
-            'p:has-text("Sealed")',
-            'p:has-text("Document ID")',
-            '[class*="card"] p',
-        ]
-        
-        for selector in selectors:
-            try:
-                elements = page.locator(selector).all()
-                for elem in elements:
-                    text = elem.inner_text()
-                    if text and ("Sealed" in text or "Document ID" in text):
-                        message_text = text
-                        break
-                if message_text:
-                    break
-            except Exception:
-                continue
-    
-    if not message_text:
+    if not result or not isinstance(result, dict):
         return {}
     
-    if "Sealed" not in message_text:
-        return {}
-
-    result = {
+    # Extract seal strings from the seals array
+    seal_strings = []
+    if "seals" in result and isinstance(result["seals"], list):
+        for s in result["seals"]:
+            if isinstance(s, str):
+                seal_strings.append(s)
+    
+    return {
         "seal_type": "QRED",
-        "encoding": "unknown",
-        "document_id": "",
-        "recipe": "unknown",
-        "seal_count": 0,
-        "seal_strings": [],  # List of raw seal strings for verification
+        "encoding": result.get("encoding", "unknown"),
+        "document_id": result.get("document_id", ""),
+        "recipe": result.get("selected_recipe", "unknown"),
+        "seal_count": result.get("estimated_qr_count", result.get("total_seals", 0)),
+        "seal_strings": seal_strings,  # List of raw seal strings for verification
+        "full_result": result,  # For debugging if needed
     }
-
-    # Parse the message
-    lines = message_text.split("\n")
-    in_seals_section = False
-    
-    for line in lines:
-        line = line.strip()
-        
-        if "---SEALS---" in line:
-            in_seals_section = True
-            continue
-        
-        if in_seals_section:
-            # These are the actual seal strings (URL fragments)
-            if line and line.startswith("QRED1"):
-                result["seal_strings"].append(line)
-        else:
-            if "Selected encoding:" in line:
-                result["encoding"] = line.split("Selected encoding:")[1].strip()
-            elif "Document ID:" in line:
-                result["document_id"] = line.split("Document ID:")[1].strip()
-            elif "Selected recipe:" in line:
-                result["recipe"] = line.split("Selected recipe:")[1].strip()
-            elif "Estimated QR count:" in line or "Total seals:" in line:
-                try:
-                    count_str = line.split(":")[-1].strip()
-                    result["seal_count"] = int(count_str)
-                except ValueError:
-                    pass
-
-    return result
 
 
 def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", public_key: str = ""):

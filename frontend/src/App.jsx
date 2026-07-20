@@ -72,6 +72,8 @@ function PdfSealForm() {
       link.click();
       URL.revokeObjectURL(url);
       const sealStrings = sealResult.seals ? sealResult.seals.join("\n") : "";
+      // Store seal result globally so tests can read it
+      window.__lastSealResult = sealResult;
       setMessage([
         `Sealed ${file.name} in this browser. Document ID: ${sealResult.document_id}`,
         `Selected encoding: ${sealResult.encoding || encodingStrategy}`,
