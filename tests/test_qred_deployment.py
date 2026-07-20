@@ -217,7 +217,6 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
             raise AssertionError("Failed to fill private key") from exc
 
     # If encoding strategy needs to be changed, verify it was selected
-    encoding_selected = False
     if encoding and encoding != "plaintext":
         try:
             encoding_select = page.locator('select[aria-label="Encoding Strategy"]').first
@@ -226,11 +225,11 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
             selected_value = encoding_select.input_value()
             if selected_value != encoding:
                 raise AssertionError(f"Encoding selection failed: expected '{encoding}', got '{selected_value}'")
-            encoding_selected = True
         except AssertionError:
             raise
         except Exception as exc:
-            # Encoding selector might not exist in all UI versions
+            # If encoding selector doesn't exist, warn but don't fail yet
+            # (it will fail when we check seal_result encoding later)
             print(f"[WARN] Could not select encoding: {exc}")
 
     # Click the seal button and wait for download
@@ -273,12 +272,47 @@ def _extract_seal_result(page: Page) -> dict:
     
     Returns a dict with the seal metadata, or an empty dict if the message is not found.
     """
+    import time
+    
+    # Wait for the success message to appear (it updates after download completes)
+    time.sleep(2)
+    
+    # Try multiple selectors - the message could be in various elements
+    message_text = ""
+    
+    # Strategy 1: Try to find any element containing "Sealed" text (Playwright's has-text works recursively)
     try:
-        message_elem = page.locator('p').first
-        message_text = message_elem.inner_text()
+        # Try all elements on the page
+        all_text = page.locator('body').inner_text()
+        if "Sealed" in all_text:
+            message_text = all_text
     except Exception:
+        pass
+    
+    if not message_text:
+        # Strategy 2: Try specific selectors
+        selectors = [
+            'p:has-text("Sealed")',
+            'p:has-text("Document ID")',
+            '[class*="card"] p',
+        ]
+        
+        for selector in selectors:
+            try:
+                elements = page.locator(selector).all()
+                for elem in elements:
+                    text = elem.inner_text()
+                    if text and ("Sealed" in text or "Document ID" in text):
+                        message_text = text
+                        break
+                if message_text:
+                    break
+            except Exception:
+                continue
+    
+    if not message_text:
         return {}
-
+    
     if "Sealed" not in message_text:
         return {}
 
@@ -371,7 +405,11 @@ def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = ""):
         page.wait_for_timeout(8000)
         
         # Check for verification success indicators on the page
-        body_text = page.text_content("body") or ""
+        try:
+            body_text = page.locator('body').inner_text()
+        except Exception:
+            body_text = page.content()  # fallback to raw HTML
+        
         body_lower = body_text.lower()
         
         # The verifier shows "Document verified" and "Seal status: Verified" with green checkmarks (✓)
