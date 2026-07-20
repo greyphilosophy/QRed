@@ -71,6 +71,7 @@ function PdfSealForm() {
       link.download = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
       link.click();
       URL.revokeObjectURL(url);
+      const sealStrings = sealResult.seals ? sealResult.seals.join("\n") : "";
       setMessage([
         `Sealed ${file.name} in this browser. Document ID: ${sealResult.document_id}`,
         `Selected encoding: ${sealResult.encoding || encodingStrategy}`,
@@ -79,6 +80,8 @@ function PdfSealForm() {
         `Estimated QR count: ${sealResult.estimated_qr_count || sealResult.total_seals || 0}`,
         `Compression savings: ${sealResult.compression_savings_pct || 0}%`,
         `Document ID: ${sealResult.document_id}`,
+        "---SEALS---",
+        sealStrings,
       ].join("\n"));
     } catch (error) {
       setMessage(`PDF sealing failed: ${error.message}`);
