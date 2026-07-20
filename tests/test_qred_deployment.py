@@ -291,7 +291,6 @@ def _verify_seal(page: Page, sealed_pdf_path: str):
         body_lower = body_text.lower()
         
         # The verifier shows "Document verified" and "Seal status: Verified" with green checkmarks (✓)
-        # These are the reliable indicators from the screenshot:
         has_verified = False
         
         if "document verified" in body_lower:
