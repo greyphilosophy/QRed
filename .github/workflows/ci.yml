@@ -65,4 +65,4 @@ jobs:
       - name: Run E2E tests
         env:
           QRED_BASE_URL: "http://localhost:3000"
-        run: pytest tests/test_corrupt_pdf.py -v --tb=short
+        run: pytest tests/test_corrupt_pdf.py tests/test_qred_deployment.py -v --tb=short
