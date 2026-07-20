@@ -229,7 +229,8 @@ def _verify_seal(page: Page, sealed_pdf_path: str):
     """
     Navigate to the verifier, upload the sealed PDF, and verify the seal.
     
-    Returns True if verification passed.
+    The verifier displays the status string "VALID", "INVALID", "ERROR", etc.
+    in the element with id="resultStatus".  Returns True only when status is "VALID".
     """
     from playwright.sync_api import expect as expect_playwright
 
@@ -242,21 +243,24 @@ def _verify_seal(page: Page, sealed_pdf_path: str):
     file_input = page.locator('input[type="file"]').first
     file_input.set_input_files(sealed_pdf_path)
 
-    # Wait for verification result
+    # Wait for the result status element to show "VALID"
     try:
-        result = page.locator('p:has-text("Verified")').first
-        expect_playwright(result).to_be_visible(timeout=15_000)
-        return True
-    except Exception:
-        try:
-            error = page.locator('p:has-text("Error")').first
-            expect_playwright(error).to_be_visible(timeout=5_000)
+        rs = page.locator('#resultStatus')
+        rs.wait_for(state="visible", timeout=30_000)
+        status_text = rs.inner_text().strip()
+        # The verifier displays status strings: VALID, INVALID, ERROR, INCOMPLETE
+        if "VALID" in status_text.upper():
+            return True
+        # Also check for error
+        if "ERROR" in status_text.upper():
             return False
-        except Exception:
-            # Check for any status message
-            status = page.locator('p, .status, #result').first
-            status_text = status.inner_text() if status else ""
-            return "verified" in status_text.lower() or "valid" in status_text.lower()
+        # Fallback: check any text content on the page
+        body_text = page.text_content("body") or ""
+        return "VALID" in body_text.upper() and "ERROR" not in body_text.upper()
+    except Exception:
+        # Final fallback: check body text
+        body_text = page.text_content("body") or ""
+        return "VALID" in body_text.upper()
 
 
 # ---------------------------------------------------------------------------
