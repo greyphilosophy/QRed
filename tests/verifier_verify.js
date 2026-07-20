@@ -20,12 +20,18 @@
         return;
       }
       if (typeof reconstructAndShow === "function") {
-        reconstructAndShow(docIds[0])
-          .then(r => resolve(r))
-          .catch(e => resolve({ error: e.message }));
-        return;
+        await reconstructAndShow(docIds[0]);
       }
-      resolve({ error: "reconstructAndShow not found" });
+      // Poll until #resultStatus has content
+      for (let i = 0; i < 60 && i < 30000; i++) {
+        const rs = document.getElementById("resultStatus");
+        if (rs && rs.textContent && rs.textContent.trim()) {
+          resolve(rs.textContent.trim());
+          return;
+        }
+        await new Promise(r => setTimeout(r, 500));
+      }
+      resolve({ error: "Result status never populated" });
     } catch (e) {
       resolve({ error: e.message });
     }
