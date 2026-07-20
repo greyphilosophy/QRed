@@ -385,8 +385,9 @@ def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", 
         raise AssertionError("Seal payload is empty — cannot verify without valid seal data")
 
     # Step 1: Call the test API to run verification via module-scoped verifyQRedSeals()
-    # Playwright v2 uses positional args (not array wrapper)
-    result = page.evaluate("(s, k) => window.__qredTestVerify(s, k)", seal_payload, public_key or "")
+    # Playwright v2 uses array syntax: evaluate(script, [arg1, arg2])
+    # Use array destructuring to extract seal_payload and public_key
+    result = page.evaluate("[s, k] => window.__qredTestVerify(s, k)", [seal_payload, public_key or ""])
 
     if isinstance(result, dict) and result.get("status") == "ERROR":
         raise AssertionError(f"Verification error: {result.get('error', 'unknown')}")
