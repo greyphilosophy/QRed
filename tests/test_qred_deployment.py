@@ -185,28 +185,39 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
 
     BASE_URL = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
 
-    # Navigate to the page
+    # Navigate to the page — wait for QrScanner to render
     page.goto(BASE_URL, wait_until="networkidle", timeout=30_000)
 
-    # Wait for the app to be ready — keyStatus should indicate keys are loaded
-    # (not "Loading default keys..." or "Loading Default Keys...")
     from playwright.sync_api import expect as expect_playwright
-    key_status = page.locator('button:has-text("Use Default Keys")').first
-    try:
-        expect_playwright(key_status).to_be_visible(timeout=10_000)
-        key_status.click()  # Force key loading
-        page.wait_for_timeout(2000)  # Wait for async loadDefaultKeys() to complete
-    except Exception:
-        raise AssertionError("App failed to load — key loading button not found")
 
-    # Wait for and click the "Stamp PDF" button to open the tool
+    # Step 1: Click "Stamp PDF" to open the PdfSealForm
+    # (QrScanner renders first, then conditionally shows PdfStampTool)
     stamp_btn = None
     try:
         stamp_btn = page.locator('button:has-text("Stamp PDF")').first
-        expect_playwright(stamp_btn).to_be_visible(timeout=5_000)
+        expect_playwright(stamp_btn).to_be_visible(timeout=10_000)
         stamp_btn.click()
+        page.wait_for_timeout(500)  # Let React render the PdfStampTool
     except Exception as exc:
         raise AssertionError("Failed to click 'Stamp PDF' button — UI may have changed") from exc
+
+    # Step 2: Wait for the "Use Default Keys" button (inside PdfSealForm)
+    try:
+        key_btn = page.locator('button:has-text("Use Default Keys")').first
+        expect_playwright(key_btn).to_be_visible(timeout=10_000)
+        key_btn.click()  # Force key loading
+        page.wait_for_timeout(2000)  # Wait for async loadDefaultKeys() to complete
+        key_btn.click()  # Re-click to go back to "ready" state before proceeding
+        page.wait_for_timeout(500)
+    except Exception:
+        raise AssertionError("App failed to load — key button not found after opening Stamp PDF tool")
+
+    # Step 3: Wait for and click the "Stamp PDF" button inside the tool to proceed to file upload
+    try:
+        upload_btn = page.locator('input[type="file"][accept="application/pdf"]').first
+        expect_playwright(upload_btn).to_be_visible(timeout=5_000)
+    except Exception as exc:
+        raise AssertionError("File input not found after key loading") from exc
 
     # Wait for the file input
     file_input = page.locator('input[type="file"][accept="application/pdf"]').first
