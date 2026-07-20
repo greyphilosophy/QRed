@@ -3,11 +3,11 @@
     try {
       const pkInput = document.getElementById("publicKeyInput");
       if (pkInput) {
-        pkInput.value = PUBLIC_KEY_PLACEHOLDER;
+        pkInput.value = "PUBLIC_KEY_PLACEHOLDER";
         pkInput.dispatchEvent(new Event("input", { bubbles: true }));
         pkInput.dispatchEvent(new Event("change", { bubbles: true }));
       }
-      const sealText = String(SEAL_PAYLOAD_PLACEHOLDER);
+      const sealText = String("SEAL_PAYLOAD_PLACEHOLDER");
       const lines = sealText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
       lines.forEach(line => {
         if (typeof processScannedSeal === "function") {
