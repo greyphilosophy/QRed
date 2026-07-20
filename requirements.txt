@@ -1,21 +1,8 @@
-# QRed dependencies
-#
-# Backend runtime
-cryptography>=42.0
-fastapi>=0.110,<1.0
-pydantic>=2.0,<3.0
-uvicorn>=0.30,<1.0
-
-# PDF sealing pipeline
-pymupdf>=1.27.0
-qrcode>=8.0
-Pillow>=10.0
-reportlab>=4.0
+# QRed — Frontend build and test dependencies
+# All PDF sealing happens in-browser (pdf-lib + jsQR).
+# No backend runtime dependencies are required.
 
 # Testing
-httpx>=0.27
 pytest>=8.0
-python-multipart>=0.0.9
 playwright>=1.40
-b45 @ git+https://github.com/greyphilosophy/b45.git@338ffcaec502b73a66d01948a7dbe4049a4ed783
-brotli>=1.1.0
+reportlab>=4.0

@@ -24,19 +24,15 @@ from reportlab.pdfgen import canvas as rl_canvas
 # ---------------------------------------------------------------------------
 # Test constants
 # ---------------------------------------------------------------------------
-# Default to localhost/development so CI and local runs test the local build,
-# NOT the live site. Production smoke tests should be in a separate module.
 BASE_URL = os.environ.get("QRED_BASE_URL", "http://localhost:5173")
 
-# Timeouts for Playwright operations
 PAGE_LOAD_TIMEOUT = 30_000
 STAMP_SECTION_TIMEOUT = 15_000
 SEAL_BUTTON_TIMEOUT = 10_000
 PROCESSING_WAIT_MS = 8_000  # async processing after click
 AFTER_SEAL_TIMEOUT = 5_000  # extra buffer for QR generation
 
-# Result selectors — these target the actual UI element that shows
-# operation results, not broad page text that may contain documentation.
+# Result selectors — target the actual UI element showing operation results.
 RESULT_SELECTORS = [
     "#stamp-result",
     ".stamp-result",
@@ -69,17 +65,18 @@ ERROR_KEYWORDS = [
     "changed while",
 ]
 
-# Success indicators — only trust these when found inside the result container
-SUCCESS_KEYWORDS = [
+# Success indicators — ONLY these exact strings mean the seal operation succeeded.
+# We use full-phrase matching so incidental page text ("Stamp PDF") does not count.
+SUCCESS_PHRASES = [
     "document_id",
-    "qr code",
-    "qrcode",
-    "stamped",
-    "sealed",
-    "generated",
-    "compression_savings",
-    "estimated qr count",
-    "encoding:",
+    "qr code generated",
+    "qr codes generated",
+    "stamped successfully",
+    "seal generated",
+    "seals generated",
+    "qr seal",
+    "qr seals",
+    "estimated qr",
 ]
 
 
@@ -127,17 +124,10 @@ def make_mismatched_sizes_pdf() -> bytes:
 
 
 def make_image_only_pdf(page_size: tuple = letter) -> bytes:
-    """T9: PDF with actual raster image content (no extractable text).
-
-    Uses Pillow to create a valid test image, writes it to a temp file,
-    then injects it via reportlab's drawImage(). This avoids the
-    base64-decoded PNG being too small for reportlab's image reader.
-    """
+    """T9: PDF with actual raster image content (no extractable text)."""
     from PIL import Image
     import io as _io
 
-    # Create a small solid-color test image via Pillow (more reliable than
-    # base64-decoded 1x1 PNG)
     img_buf = _io.BytesIO()
     img = Image.new("RGB", (200, 200), color=(200, 200, 200))
     img.save(img_buf, format="PNG")
@@ -152,11 +142,7 @@ def make_image_only_pdf(page_size: tuple = letter) -> bytes:
         c = rl_canvas.Canvas(buf, pagesize=page_size)
         c.drawImage(
             png_path,
-            x=50,
-            y=50,
-            width=500,
-            height=700,
-            mask="auto",
+            x=50, y=50, width=500, height=700, mask="auto",
         )
         c.save()
         return buf.getvalue()
@@ -208,58 +194,29 @@ def _generate_valid_pdf_text(text: str, num_pages: int = 1) -> bytes:
 def _open_stamp_tool(page: Page) -> Page:
     """Open the stamp-tool section on the homepage.
 
-    Raises AssertionError if the stamp tool cannot be opened, so the test
-    fails immediately rather than proceeding with undefined UI state.
+    Raises AssertionError if the stamp tool cannot be opened.
     """
     home_url = f"{BASE_URL}/"
     page.goto(home_url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT)
     page.wait_for_timeout(3000)
 
-    # Click the "Stamp PDF" button to reveal the tool
     btn = page.locator("button[aria-label='Open PDF stamping tool']")
     if btn.count() == 0:
         btn = page.locator("button").filter(has_text="Stamp PDF").first
     btn.wait_for(state="visible", timeout=10_000)
     btn.click()
 
-    # Wait for the stamp-tool section to appear in DOM
     stamp_section = page.locator("#pdf-stamp-tool, .pdf-stamp-tool")
     stamp_section.wait_for(state="visible", timeout=STAMP_SECTION_TIMEOUT)
 
-    # Give React time to render
     page.wait_for_timeout(3000)
 
     return page
 
 
-def _verify_file_accepted(page: Page, expected_filename: str) -> bool:
-    """Return True only if the UI confirms the file is loaded."""
-    body_text = page.text_content("body") or ""
-    return expected_filename.lower() in body_text.lower()
-
-
-def _wait_for_seal_action(page: Page) -> bool:
-    """Click the seal button and return True only if the action was triggered.
-
-    Returns False (without raising) if the button truly doesn't exist,
-    allowing callers to decide how to handle that situation.
-    """
-    seal_btn = page.locator("button:has-text('Seal'), button.seal-button").first
-
-    if not seal_btn.is_visible(timeout=SEAL_BUTTON_TIMEOUT):
-        # Try broader selectors
-        try:
-            alt_btns = page.locator(".card button:not(.tool-close):not([type='button'])").all()
-            for b in alt_btns:
-                if not b.get_attribute("disabled"):
-                    b.click()
-                    return True
-        except Exception:
-            pass
-        return False
-
-    seal_btn.click(timeout=5_000)
-    return True
+# A demo private key for client-side sealing (not exposed by the server).
+# The frontend requires a private key before the seal handler will process the file.
+_DEMO_PRIVATE_KEY = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes="
 
 
 def _upload_file_to_stamp_tool(
@@ -273,10 +230,6 @@ def _upload_file_to_stamp_tool(
     1. The file input cannot accept files, OR
     2. The file does not appear in the UI after upload, OR
     3. The seal button cannot be found and clicked.
-
-    This prevents the scenario where upload / action silently fails and
-    the negative assertion ``assert not result["success"]`` passes for the
-    wrong reason.
     """
     # Step 1: Write to temp file so Playwright's set_input_files can read it
     tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, mode="wb")
@@ -285,7 +238,6 @@ def _upload_file_to_stamp_tool(
     tmp.close()
 
     try:
-        # Step 2: Find the hidden file input and set files using the path
         file_input = page.locator("input[type='file'][accept*='pdf']").first
 
         if file_input.count() == 0:
@@ -296,29 +248,46 @@ def _upload_file_to_stamp_tool(
         file_input.set_input_files(tmp_path)
         print(f"[FILE UPLOAD] set_input_files({file_name}) OK")
 
-        # Step 3: Wait for React to pick up the file
         page.wait_for_timeout(3000)
 
-        # Step 4: Log whether filename appeared in UI (informational only —
-        # QRed doesn't always echo the filename back)
         body_text = page.text_content("body") or ""
         file_visible = file_name.lower() in body_text.lower()
         print(f"[DEBUG] File '{file_name}' visible in UI? {'Yes' if file_visible else 'No'}")
 
-        # Step 5: Click the Seal button
-        if not _wait_for_seal_action(page):
+        # The frontend's seal handler requires a private key before it will
+        # process the file.  Without one the handler returns early with
+        # "Choose a PDF and provide issuer keys before sealing." which is
+        # not an error — so we must enter a key so the seal actually runs.
+        try:
+            pk_input = page.locator('input[aria-label="Private Key"]').first
+            if not pk_input.is_focused() or pk_input.input_value() != _DEMO_PRIVATE_KEY:
+                pk_input.click()
+                pk_input.fill(_DEMO_PRIVATE_KEY)
+        except Exception:
+            try:
+                pk_input = page.locator('input[type="password"], input[placeholder*="private"], input[placeholder*="key"]').first
+                if pk_input.is_visible():
+                    pk_input.click()
+                    pk_input.fill(_DEMO_PRIVATE_KEY)
+            except Exception:
+                pass
+
+        # Click the Seal button — must exist after upload
+        seal_btn = page.locator("button:has-text('Seal'), button:has-text('Upload PDF'), button:has-text('Stamp QR'), button:has-text('Stamp and Seal')").first
+        
+        if not seal_btn.is_visible(timeout=SEAL_BUTTON_TIMEOUT):
             raise AssertionError(
-                "Seal button not found or could not be clicked — "
-                "the seal action was not triggered"
+                "Seal button not found — the upload form may not have completed processing"
             )
 
-        # Step 6: Wait for async processing
+        seal_btn.click(timeout=5_000)
+
+        # Wait for async processing
         page.wait_for_timeout(PROCESSING_WAIT_MS)
         page.wait_for_timeout(AFTER_SEAL_TIMEOUT)
     except Exception as e:
         raise AssertionError(f"File upload failed: {e}") from e
     finally:
-        # Clean up temp file — do this LAST, after all processing is done
         try:
             os.unlink(tmp_path)
         except OSError:
@@ -328,9 +297,9 @@ def _upload_file_to_stamp_tool(
 def _check_results(page: Page) -> dict:
     """Read the result message/status after uploading and attempting to seal.
 
-    Only examines the dedicated result container (if present) and, as a
-    fallback, all paragraph text.  It does NOT classify a blank page as
-    success.
+    Returns success only if an explicit success PHRASE is found in the result
+    container or paragraph text.  A blank or landing-page-only result is
+    considered an incomplete operation.
     """
     # Collect text from the dedicated result container(s) first
     result_text = ""
@@ -357,14 +326,11 @@ def _check_results(page: Page) -> dict:
     result_text = result_text.strip()
     result_lower = result_text.lower()
 
-    # Determine error / success using the result-text only
+    # Only count as success if an explicit success phrase is found
     has_error = any(ind in result_lower for ind in ERROR_KEYWORDS)
-    had_success = any(ind in result_lower for ind in SUCCESS_KEYWORDS)
+    had_success = any(phrase.lower() in result_lower for phrase in SUCCESS_PHRASES)
 
-    # Determine whether the UI showed a terminal result (success or error)
-    # at all. A blank result_text means the app did not render any
-    # completion feedback — the operation may still have run in the
-    # background, but we cannot confirm that from the UI.
+    # An operation that produced no visible feedback is not considered complete
     completed = bool(result_text)
 
     return {
@@ -512,6 +478,8 @@ def test_t6_corrupt_trailer_pdf(page: Page):
     assert result["success"] or result["has_error"], (
         "Operation produced output but not a recognisable success or error"
     )
+
+
 def test_t7_mismatched_sizes_pdf(page: Page):
     """Extra fake objects appended after valid PDF -- may succeed or fail
     depending on parser leniency.

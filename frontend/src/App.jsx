@@ -15,27 +15,33 @@ function PdfSealForm() {
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Expose public key to the window for tests
+  useEffect(() => {
+    window.__qredPublicKeys = publicKey;
+  }, [publicKey]);
+
   async function loadDefaultKeys() {
     setLoadingKeys(true);
-    setKeyStatus("Loading default keys...");
+    setKeyStatus("Loading default public key...");
 
     try {
       const response = await fetch("/api/keys/default");
       if (!response.ok) throw new Error((await response.text()) || `${response.status} ${response.statusText}`.trim());
       const keys = await response.json();
-      setPrivateKey(keys.private_key);
       setPublicKey(keys.public_key);
-      if (keys.source === "environment" || keys.source === "worker-environment") {
-        setKeyStatus("Default keys loaded from server environment.");
-      } else if (keys.source === "worker-static-demo") {
-        setKeyStatus("Static demo keys loaded from qred.org. Configure QRED_DEFAULT_PRIVATE_KEY, QRED_DEFAULT_PUBLIC_KEY, and QRED_DEFAULT_KEY_ID on the Worker to use stable custom defaults.");
+      // Private key must be supplied by the user in the browser — never from the server.
+      if (!privateKey) {
+        setKeyStatus("Public key loaded. Please enter your private key before sealing. (The server does not store private keys.)");
       } else {
-        setKeyStatus("Ephemeral demo keys loaded. Set QRED_DEFAULT_PRIVATE_KEY and QRED_DEFAULT_PUBLIC_KEY on the API server to use stable defaults.");
+        setKeyStatus("Public key loaded. Ready to seal with your private key.");
       }
     } catch {
-      setPrivateKey("txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=");
       setPublicKey("eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=");
-      setKeyStatus("Static demo keys loaded from the bundled fallback, because /api/keys/default was unavailable.");
+      if (!privateKey) {
+        setKeyStatus("Public key loaded from bundled fallback. Please enter your private key before sealing.");
+      } else {
+        setKeyStatus("Public key loaded from bundled fallback. Ready to seal with your private key.");
+      }
     } finally {
       setLoadingKeys(false);
     }
@@ -70,6 +76,14 @@ function PdfSealForm() {
       link.download = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
       link.click();
       URL.revokeObjectURL(url);
+      const sealStrings = sealResult.seals ? sealResult.seals.join("\n") : "";
+      // Expose seal result globally only for Playwright E2E tests
+      const IS_TEST = typeof window !== "undefined" && window.__qredTestMode === true;
+      if (IS_TEST) {
+        window.__lastSealResult = sealResult;
+        // Tests read seal strings from the message element; only enabled in test mode
+        sealStrings && setMessage((prev) => prev + "\n---SEALS---\n" + sealStrings);
+      }
       setMessage([
         `Sealed ${file.name} in this browser. Document ID: ${sealResult.document_id}`,
         `Selected encoding: ${sealResult.encoding || encodingStrategy}`,

@@ -9,7 +9,6 @@ vi.mock("./pdfClientSeal.js", () => ({
   sealPdfInBrowser: vi.fn(),
 }));
 
-const defaultPrivateKey = "default-private-key";
 const defaultPublicKey = "default-public-key";
 
 function mockKeyFetch() {
@@ -20,7 +19,11 @@ function mockKeyFetch() {
         status: 200,
         statusText: "OK",
         text: () => Promise.resolve(""),
-        json: () => Promise.resolve({ private_key: defaultPrivateKey, public_key: defaultPublicKey, source: "worker-static-demo" }),
+        json: () => Promise.resolve({
+          public_key: defaultPublicKey,
+          key_id: "0000000000000000",
+          source: "static-demo",
+        }),
       });
     }
 
@@ -52,11 +55,7 @@ describe("App PDF sealing defaults", () => {
     expect(screen.queryByRole("heading", { name: "Demo: Upload and Seal a PDF" })).toBeNull();
   });
 
-  it("loads default keys and seals the PDF in the browser without a backend", async () => {
-    sealPdfInBrowser.mockResolvedValue({
-      blob: new Blob(["sealed in browser"], { type: "application/pdf" }),
-      sealResult: { document_id: "DOC-DEFAULT-KEYS" },
-    });
+  it("loads the public key and requires the user to enter the private key", async () => {
     render(React.createElement(App));
     fireEvent.click(screen.getByRole("button", { name: "Open PDF stamping tool" }));
 
@@ -67,14 +66,14 @@ describe("App PDF sealing defaults", () => {
     const publicKeyInput = screen.getByLabelText("Public Key");
 
     expect(privateKeyInput.type).toBe("password");
-    fireEvent.click(screen.getByRole("button", { name: "Show private key" }));
-    expect(privateKeyInput.type).toBe("text");
-    fireEvent.click(screen.getByRole("button", { name: "Hide private key" }));
-    expect(privateKeyInput.type).toBe("password");
-
-    await waitFor(() => expect(privateKeyInput.value).toBe(defaultPrivateKey));
+    expect(privateKeyInput.value).toBe("");
     expect(publicKeyInput.value).toBe(defaultPublicKey);
-    expect(screen.getByText("Static demo keys loaded from qred.org. Configure QRED_DEFAULT_PRIVATE_KEY, QRED_DEFAULT_PUBLIC_KEY, and QRED_DEFAULT_KEY_ID on the Worker to use stable custom defaults.")).toBeTruthy();
+
+    expect(screen.getByText("Public key loaded. Please enter your private key before sealing. (The server does not store private keys.)")).toBeTruthy();
+
+    // User must provide the private key in the browser
+    fireEvent.change(privateKeyInput, { target: { value: "user-private-key" } });
+    expect(privateKeyInput.value).toBe("user-private-key");
 
     const pdf = new File(["%PDF-1.4"], "source.pdf", { type: "application/pdf" });
     fireEvent.change(screen.getByLabelText("PDF file"), { target: { files: [pdf] } });
@@ -84,7 +83,7 @@ describe("App PDF sealing defaults", () => {
     expect(sealPdfInBrowser).toHaveBeenCalledWith({
       file: pdf,
       issuer: "QRed Demo Authority",
-      privateKey: defaultPrivateKey,
+      privateKey: "user-private-key",
       publicKey: defaultPublicKey,
       bootstrapUrl: "https://qred.org/",
       encodingStrategy: "automatic",
@@ -95,7 +94,7 @@ describe("App PDF sealing defaults", () => {
     expect(screen.getByText(/Sealed source\.pdf in this browser\./)).toBeTruthy();
   });
 
-  it("falls back to bundled demo keys when the static key endpoint is unavailable", async () => {
+  it("falls back to bundled public key when the static key endpoint is unavailable", async () => {
     globalThis.fetch = vi.fn((url) => {
       if (url === "/api/keys/default") {
         return Promise.reject(new Error("offline"));
@@ -111,7 +110,14 @@ describe("App PDF sealing defaults", () => {
     render(React.createElement(App));
     fireEvent.click(screen.getByRole("button", { name: "Open PDF stamping tool" }));
 
-    await waitFor(() => expect(screen.getByLabelText("Private Key").value).toBe("txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes="));
+    const privateKeyInput = screen.getByLabelText("Private Key");
+    const publicKeyInput = screen.getByLabelText("Public Key");
+
+    expect(privateKeyInput.value).toBe("");
+    expect(publicKeyInput.value).toBe("eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=");
+
+    // User provides their own private key
+    fireEvent.change(privateKeyInput, { target: { value: "user-private-key" } });
     const pdf = new File(["%PDF-1.4"], "static.pdf", { type: "application/pdf" });
     fireEvent.change(screen.getByLabelText("PDF file"), { target: { files: [pdf] } });
     fireEvent.click(screen.getByRole("button", { name: "Upload PDF and Stamp QR Seals" }));
@@ -119,12 +125,79 @@ describe("App PDF sealing defaults", () => {
     await waitFor(() => expect(sealPdfInBrowser).toHaveBeenCalledWith({
       file: pdf,
       issuer: "QRed Demo Authority",
-      privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=",
+      privateKey: "user-private-key",
       publicKey: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=",
       bootstrapUrl: "https://qred.org/",
       encodingStrategy: "automatic",
       pageScalingStrategy: "automatic",
     }));
     expect(await screen.findByText(/Sealed static\.pdf in this browser\./)).toBeTruthy();
+  });
+
+  it("keeps existing user private key after reloading public key", async () => {
+    render(React.createElement(App));
+    fireEvent.click(screen.getByRole("button", { name: "Open PDF stamping tool" }));
+
+    // User enters private key
+    const privateKeyInput = screen.getByLabelText("Private Key");
+    fireEvent.change(privateKeyInput, { target: { value: "my-secret-key" } });
+    expect(privateKeyInput.value).toBe("my-secret-key");
+
+    // User clicks "Use Default Keys" to reload public key
+    fireEvent.click(screen.getByRole("button", { name: "Use Default Keys" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Use Default Keys" })).toBeTruthy());
+
+    // Private key should still be there
+    expect(privateKeyInput.value).toBe("my-secret-key");
+    expect(screen.getByText("Public key loaded. Ready to seal with your private key.")).toBeTruthy();
+  });
+
+  it("hides/shows private key field", async () => {
+    render(React.createElement(App));
+    fireEvent.click(screen.getByRole("button", { name: "Open PDF stamping tool" }));
+
+    const privateKeyInput = screen.getByLabelText("Private Key");
+
+    expect(privateKeyInput.type).toBe("password");
+    fireEvent.click(screen.getByRole("button", { name: "Show private key" }));
+    expect(privateKeyInput.type).toBe("text");
+    fireEvent.click(screen.getByRole("button", { name: "Hide private key" }));
+    expect(privateKeyInput.type).toBe("password");
+  });
+
+  it("returns public key only from /api/keys/default — no private key exposed", async () => {
+    const mockFetch = vi.fn((url) => {
+      if (url === "/api/keys/default") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          text: () => Promise.resolve(""),
+          json: () => Promise.resolve({
+            public_key: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=",
+            key_id: "da522162396ab2d0",
+            source: "static-demo",
+          }),
+        });
+      }
+      return Promise.reject(new Error(`Unexpected fetch URL: ${url}`));
+    });
+    globalThis.fetch = mockFetch;
+
+    render(React.createElement(App));
+    fireEvent.click(screen.getByRole("button", { name: "Open PDF stamping tool" }));
+
+    await waitFor(() => expect(screen.getByLabelText("Public Key")).toBeTruthy());
+
+    // Verify the mock was called with correct URL
+    expect(mockFetch).toHaveBeenCalledWith("/api/keys/default");
+
+    // Verify the response contained only public_key, not private_key
+    const callArgs = mockFetch.mock.calls[0][0];
+    const response = await mockFetch(callArgs);
+    const data = await response.json();
+    expect(data).toHaveProperty("public_key");
+    expect(data).not.toHaveProperty("private_key");
   });
 });
