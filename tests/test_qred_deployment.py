@@ -275,47 +275,80 @@ def _extract_seal_result(page: Page) -> dict:
     Extract the seal result metadata from the frontend's seal result.
     
     The frontend stores the full seal result on window.__lastSealResult after sealing.
-    This is much more reliable than parsing the UI message.
-    
-    The seal result contains:
-    - document_id
-    - encoding
-    - selected_recipe
-    - estimated_qr_count / total_seals
-    - sealStrings (the raw seal strings as an array)
+    We wait for it to be available by polling.
     
     Returns a dict with the seal metadata and seal strings.
     """
     import time
+    import json
     
-    # Wait a moment for the seal result to be stored
-    time.sleep(0.5)
+    # Poll for the seal result to be available (up to 15 seconds)
+    for attempt in range(30):
+        time.sleep(0.5)
+        try:
+            raw_result = page.evaluate("""() => {
+                return JSON.stringify(window.__lastSealResult);
+            }""")
+            if raw_result and raw_result != "undefined" and raw_result != "null" and raw_result != '"{}"':
+                try:
+                    result = json.loads(raw_result)
+                    if result and isinstance(result, dict) and len(result) > 0:
+                        # Extract seal strings from the seals array
+                        seal_strings = []
+                        if "seals" in result and isinstance(result["seals"], list):
+                            for s in result["seals"]:
+                                if isinstance(s, str):
+                                    seal_strings.append(s)
+                        
+                        return {
+                            "seal_type": "QRED",
+                            "encoding": result.get("encoding", "unknown"),
+                            "document_id": result.get("document_id", ""),
+                            "recipe": result.get("selected_recipe", "unknown"),
+                            "seal_count": result.get("estimated_qr_count", result.get("total_seals", 0)),
+                            "seal_strings": seal_strings,  # List of raw seal strings for verification
+                            "full_result": result,  # For debugging if needed
+                        }
+                except json.JSONDecodeError:
+                    pass
+        except Exception:
+            pass
     
-    # Read the seal result directly from the window object
+    # Final fallback: parse from HTML content
     try:
-        result = page.evaluate("() => window.__lastSealResult || {}")
+        html = page.content()
+        if "Sealed" in html and "Document ID" in html:
+            import re
+            # Find the message in the HTML
+            msg_match = re.search(r'Sealed [^\n<]*Document ID: [^\n<]*', html)
+            if msg_match:
+                msg_text = msg_match.group(0)
+                result = {
+                    "seal_type": "QRED",
+                    "encoding": "unknown",
+                    "document_id": "",
+                    "recipe": "unknown",
+                    "seal_count": 0,
+                    "seal_strings": [],
+                }
+                for line in msg_text.split("\n"):
+                    line = line.strip()
+                    if "Selected encoding:" in line:
+                        result["encoding"] = line.split("Selected encoding:")[1].strip()
+                    elif "Document ID:" in line:
+                        result["document_id"] = line.split("Document ID:")[1].strip()
+                    elif "Selected recipe:" in line:
+                        result["recipe"] = line.split("Selected recipe:")[1].strip()
+                    elif "Estimated QR count:" in line:
+                        try:
+                            result["seal_count"] = int(line.split(":")[-1].strip())
+                        except ValueError:
+                            pass
+                return result
     except Exception:
-        result = {}
+        pass
     
-    if not result or not isinstance(result, dict):
-        return {}
-    
-    # Extract seal strings from the seals array
-    seal_strings = []
-    if "seals" in result and isinstance(result["seals"], list):
-        for s in result["seals"]:
-            if isinstance(s, str):
-                seal_strings.append(s)
-    
-    return {
-        "seal_type": "QRED",
-        "encoding": result.get("encoding", "unknown"),
-        "document_id": result.get("document_id", ""),
-        "recipe": result.get("selected_recipe", "unknown"),
-        "seal_count": result.get("estimated_qr_count", result.get("total_seals", 0)),
-        "seal_strings": seal_strings,  # List of raw seal strings for verification
-        "full_result": result,  # For debugging if needed
-    }
+    return {}
 
 
 def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", public_key: str = ""):
