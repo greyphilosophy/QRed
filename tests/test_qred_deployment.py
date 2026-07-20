@@ -188,6 +188,17 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
     # Navigate to the page
     page.goto(BASE_URL, wait_until="networkidle", timeout=30_000)
 
+    # Wait for the app to be ready — keyStatus should indicate keys are loaded
+    # (not "Loading default keys..." or "Loading Default Keys...")
+    from playwright.sync_api import expect as expect_playwright
+    key_status = page.locator('button:has-text("Use Default Keys")').first
+    try:
+        expect_playwright(key_status).to_be_visible(timeout=10_000)
+        key_status.click()  # Force key loading
+        page.wait_for_timeout(2000)  # Wait for async loadDefaultKeys() to complete
+    except Exception:
+        raise AssertionError("App failed to load — key loading button not found")
+
     # Wait for and click the "Stamp PDF" button to open the tool
     stamp_btn = None
     try:
@@ -205,24 +216,38 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
         raise AssertionError("Failed to upload PDF file") from exc
 
     # Fill the private key — essential for sealing to work
+    # Use page.evaluate to trigger React's onChange handler
     try:
         pk_input = page.locator('input[aria-label="Private Key"]').first
-        if not pk_input.is_focused() or pk_input.input_value() != private_key:
-            pk_input.click()
-            pk_input.fill(private_key)
-    except Exception:
-        # Private key input might use a different selector
+        # Verify the input exists and is visible
+        expect_playwright(pk_input).to_be_visible(timeout=3_000)
+        # Set value via evaluate to properly trigger React's onChange
+        page.evaluate('''(text) => {
+            const input = document.querySelector('input[aria-label="Private Key"]');
+            if (!input) throw new Error("Private key input not found");
+            input.value = text;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        }''', private_key)
+        # Verify the value was set
+        actual_value = pk_input.input_value()
+        assert actual_value == private_key, f"Private key not set: expected {private_key}, got {actual_value}"
+    except AssertionError:
+        raise
+    except Exception as exc:
+        # Try alternative selector
         try:
             pk_input = page.locator('input[type="password"], input[name="privateKey"], input[placeholder*="private"], input[placeholder*="key"]').first
-            if pk_input.is_visible():
-                pk_input.click()
-                pk_input.fill(private_key)
-            else:
-                raise AssertionError("Private key input not found or not visible")
-        except AssertionError:
-            raise
-        except Exception as exc:
-            raise AssertionError("Failed to fill private key") from exc
+            expect_playwright(pk_input).to_be_visible(timeout=3_000)
+            page.evaluate('''(text, selector) => {
+                const input = document.querySelector(selector);
+                if (!input) throw new Error("Private key input not found");
+                input.value = text;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+            }''', private_key, 'input[type="password"]')
+        except Exception as inner_exc:
+            raise AssertionError(f"Failed to fill private key: {exc}. Also failed fallback: {inner_exc}") from exc
 
     # If encoding strategy needs to be changed, verify it was selected
     if encoding and encoding != "plaintext":

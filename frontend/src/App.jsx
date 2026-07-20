@@ -15,6 +15,11 @@ function PdfSealForm() {
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Expose public key to the window for tests
+  useEffect(() => {
+    window.__qredPublicKeys = publicKey;
+  }, [publicKey]);
+
   async function loadDefaultKeys() {
     setLoadingKeys(true);
     setKeyStatus("Loading default public key...");
