@@ -373,6 +373,8 @@ def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", 
     public_key: the exact public key to use for signature verification.
     Raises AssertionError if any step fails.
     """
+    import os
+
     from playwright.sync_api import expect as expect_playwright
 
     BASE_URL = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
@@ -385,7 +387,6 @@ def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", 
         raise AssertionError("Seal payload is empty — cannot verify without valid seal data")
 
     # Load JS template and substitute placeholders
-    import os
     js_path = os.path.join(os.path.dirname(__file__), "verifier_verify.js")
     with open(js_path, "r") as _f:
         js_template = _f.read()
