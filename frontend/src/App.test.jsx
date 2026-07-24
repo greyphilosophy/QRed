@@ -124,7 +124,7 @@ describe("App PDF sealing defaults", () => {
     await waitFor(() => {
       const key = publicKeyInput.value;
       // fallback key contains bundled constant
-      expect(key === "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5iQ=" || key.length > 0).toBeTruthy();
+      expect(key).toBe("eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=");
     });
 
     fireEvent.change(privateKeyInput, { target: { value: "user-private-key" } });
@@ -177,7 +177,7 @@ describe("App PDF sealing defaults", () => {
           statusText: "OK",
           text: () => Promise.resolve(""),
           json: () => Promise.resolve({
-            public_key: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5iQ=",
+            public_key: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=",
             key_id: "da522162396ab2d0",
             source: "static-demo",
           }),

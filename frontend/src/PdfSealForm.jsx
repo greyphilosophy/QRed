@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { sealPdfInBrowser } from "./pdfClientSeal.js";
 
-const BUNDLED_PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5iQ=";
+const BUNDLED_PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 const BOOTSTRAP_URL = "https://qred.org/";
 
 export function PdfSealForm() {
@@ -51,7 +51,6 @@ export function PdfSealForm() {
 
   useEffect(() => {
     if (!privateKey || !publicKey) loadDefaultKeys();
-  // eslint-disable-next-line
   }, []);
 
   async function sealPdf() {

@@ -101,6 +101,14 @@ export function qredTextFromPhotoScanResult(imageData, width, height, scanResult
   return qredDisplayTextFromScannedPayload(hiddenPayload);
 }
 
+// Like qredTextFromPhotoScanResult, but returns the raw QRed hidden payload (seal string)
+// instead of decoding it into plaintext document content.
+export function qredPayloadFromPhotoScanResult(imageData, width, height, scanResult) {
+  const visibleText = qredTextFromScanResult(scanResult);
+  if (!imageData || !width || !height) return visibleText;
+  return extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) || visibleText;
+}
+
 // ── Seal parsing + signature verification ──
 function decodeBase64Url(value) {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
