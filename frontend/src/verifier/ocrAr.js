@@ -7,9 +7,11 @@ export function captureDocumentFrameForOcr({
   widthIdeal = 1600,
   heightIdeal = 1200,
   waitMs = 800,
-  getUserMedia = typeof navigator !== "undefined"?.mediaDevices?.getUserMedia
-    ? navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
-    : null,
+  getUserMedia =
+    typeof navigator !== "undefined" &&
+    navigator.mediaDevices?.getUserMedia
+      ? navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
+      : null,
 } = {}) {
   if (typeof document === "undefined") {
     return Promise.reject(new Error("captureDocumentFrameForOcr: document is not available"));
