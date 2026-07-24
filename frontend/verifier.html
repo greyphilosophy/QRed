@@ -391,6 +391,7 @@
   <script type="module">
     import jsQR from "jsqr";
     import { compareDocumentText, classifyOcrWords, decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
+    import { captureDocumentFrameForOcr, drawArOverlay } from "./src/verifier/ocrAr.js";
 
     // QRed Protocol - decode QRed seal strings for scanner UI state.
     function decodeSeal(str) {
@@ -892,36 +893,6 @@
       return state.ocrPromise;
     }
 
-    function captureDocumentFrameForOcr() {
-      return navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1600 }, height: { ideal: 1200 } }
-      }).then(function(mediaStream) {
-        return new Promise(function(resolve, reject) {
-          var video = document.createElement("video");
-          video.playsInline = true;
-          video.muted = true;
-          video.srcObject = mediaStream;
-          video.onloadedmetadata = function() {
-            video.play().then(function() {
-              window.setTimeout(function() {
-                var canvas = document.createElement("canvas");
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-                mediaStream.getTracks().forEach(function(track) { track.stop(); });
-                resolve(canvas);
-              }, 800);
-            }).catch(reject);
-          };
-          video.onerror = function() {
-            reject(new Error("Unable to read camera frame for OCR."));
-          };
-        }).catch(function(error) {
-          mediaStream.getTracks().forEach(function(track) { track.stop(); });
-          throw error;
-        });
-      });
-    }
 
     async function reconstructAndShow(docId, options) {
       options = options || {};
@@ -1102,7 +1073,7 @@
         return workerApi.recognize(capture, "eng");
       }).then(function(result) {
         var words = result && result.data && result.data.words ? result.data.words : [];
-        drawArOverlay(classifyOcrWords(state.verifiedContent, words));
+        drawArOverlay(canvas, classifyOcrWords(state.verifiedContent, words));
       }).catch(function(err) {
         if (!state.arErrorShown) {
           state.arErrorShown = true;
@@ -1114,31 +1085,6 @@
       });
     }
 
-    function drawArOverlay(classified) {
-      var canvas = document.getElementById("arCanvas");
-      var ctx = canvas.getContext("2d");
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      classified.words.forEach(function(item) {
-        var bbox = item.word.bbox;
-        if (!bbox) return;
-        var color = item.status === "matched" ? "rgba(187, 247, 208, 0.55)" : "rgba(254, 202, 202, 0.6)";
-        ctx.fillStyle = color;
-        ctx.strokeStyle = item.status === "matched" ? "rgba(22, 163, 74, 0.95)" : "rgba(220, 38, 38, 0.95)";
-        ctx.lineWidth = 2;
-        ctx.fillRect(bbox.x0, bbox.y0, bbox.x1 - bbox.x0, bbox.y1 - bbox.y0);
-        ctx.strokeRect(bbox.x0, bbox.y0, bbox.x1 - bbox.x0, bbox.y1 - bbox.y0);
-      });
-      if (classified.missing.length > 0) {
-        var missingText = "Missing from page: " + classified.missing.slice(0, 12).join(" ") + (classified.missing.length > 12 ? " ..." : "");
-        ctx.font = "24px sans-serif";
-        ctx.textBaseline = "top";
-        var metrics = ctx.measureText(missingText);
-        ctx.fillStyle = "rgba(15, 23, 42, 0.82)";
-        ctx.fillRect(12, 12, metrics.width + 24, 44);
-        ctx.fillStyle = "#ef4444";
-        ctx.fillText(missingText, 24, 22);
-      }
-    }
 
     function renderDiffSection(label, tokens, classes) {
       var container = document.createElement("div");
