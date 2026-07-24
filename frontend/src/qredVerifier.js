@@ -16,6 +16,29 @@ import { tokenizeDocumentText, compareWordSequences, compareDocumentText } from 
 
 export { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset, tokenizeDocumentText, compareWordSequences, compareDocumentText };
 
+/**
+ * classifyOcrWords — given the verified QR text (the expected words) and the
+ * OCR word objects from tesseract.js, mark each OCR word as either:
+ *  - matched: present in the verified QR word sequence
+ *  - extra:   not present in the verified QR word sequence
+ *
+ * This mirrors the overlay behavior historically implemented in verifier.html.
+ */
+export function classifyOcrWords(qrText, ocrWords) {
+  const qrWords = (qrText || "").match(/\S+/g) || [];
+  const pageWords = (ocrWords || []).map((word) => word?.text || "");
+
+  const comparison = compareWordSequences(qrWords, pageWords);
+
+  return {
+    words: (ocrWords || []).map((word, index) => ({
+      word,
+      status: comparison.matchedPage.has(index) ? "matched" : "extra",
+    })),
+    missing: comparison.missingQrWords,
+  };
+}
+
 export function qredTextFromScanResult(scanResult) {
   if (!scanResult || typeof scanResult === "string") return scanResult || "";
   const visibleText = scanResult.data || "";

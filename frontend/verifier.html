@@ -390,7 +390,7 @@
 
   <script type="module">
     import jsQR from "jsqr";
-    import { compareDocumentText, compareWordSequences, decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
+    import { compareDocumentText, classifyOcrWords, decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
 
     // QRed Protocol - decode QRed seal strings for scanner UI state.
     function decodeSeal(str) {
@@ -1002,15 +1002,6 @@
       }
     }
 
-    function classifyOcrWords(qrText, ocrWords) {
-      var qrWords = (qrText || "").match(/\S+/g) || [];
-      var pageWords = ocrWords.map(function(word) { return word.text || ""; });
-      var comparison = compareWordSequences(qrWords, pageWords);
-      return {
-        words: ocrWords.map(function(word, index) { return { word: word, status: comparison.matchedPage.has(index) ? "matched" : "extra" }; }),
-        missing: comparison.missingQrWords,
-      };
-    }
 
     function startArOverlay() {
       if (!state.verifiedContent) return;
