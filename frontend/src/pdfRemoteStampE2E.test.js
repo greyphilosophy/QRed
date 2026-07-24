@@ -9,6 +9,8 @@ import { PDFDocument, rgb } from "pdf-lib";
 import jsQR from "jsqr";
 import { PNG } from "pngjs";
 import { describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
+
 import { qredQrPngDataUrl } from "./qredQr.js";
 import { qredTextFromPhotoScanResult } from "./qredVerifier.js";
 
@@ -36,7 +38,9 @@ async function fetchPdfBytes() {
   throw new Error(`Unable to download a usable PDF sample. Attempts: ${JSON.stringify(attempts)}`);
 }
 
-describe("remote PDF sample end-to-end stamping", () => {
+const hasPlaywright = existsSync("/tmp/pwtest/node_modules/playwright");
+
+describe.skipIf(!hasPlaywright)("remote PDF sample end-to-end stamping", () => {
   it("stamps the sample PDF, screenshots it, and scans a QR that decodes to Dummy PDF File", async () => {
     const { chromium } = await import("/tmp/pwtest/node_modules/playwright");
     const { bytes: pdfBytes, sourceUrl } = await fetchPdfBytes();

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
-import { VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredTextFromScanResult } from "./qredVerifier.js";
+import { VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult, qredTextFromScanResult } from "./qredVerifier.js";
 
 /**
  * QrScanner — Camera-based QR code scanner that can scan ANY QR code and
@@ -11,7 +11,7 @@ import { VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredTextFromScanResult } 
  * 2. Scanning — camera feed + jsQR loop
  * 3. Result — displays the scanned QR text, "New scan" resumes scanning
  */
-export function QrScanner({ onOpenPdfStampTool }) {
+export function QrScanner({ onOpenPdfStampTool, onSealDetected, returnPayload = false }) {
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
   const [captureRequest, setCaptureRequest] = useState(0);
@@ -35,7 +35,7 @@ export function QrScanner({ onOpenPdfStampTool }) {
       onClick: () => setTorchEnabled((enabled) => !enabled),
       type: "button",
     }, torchEnabled ? "Flashlight on" : "Flashlight off") : null,
-    React.createElement("button", {
+    onOpenPdfStampTool ? React.createElement("button", {
       "aria-label": "Open PDF stamping tool",
       className: "ar-button ar-button-secondary",
       onClick: onOpenPdfStampTool,
@@ -43,7 +43,7 @@ export function QrScanner({ onOpenPdfStampTool }) {
     },
       React.createElement("span", { "aria-hidden": "true", className: "stamp-icon" }, "▣"),
       React.createElement("span", null, "Stamp PDF")
-    )
+    ) : null
   );
 
   if (mode === "result") {
@@ -57,12 +57,14 @@ export function QrScanner({ onOpenPdfStampTool }) {
     return React.createElement("section", { className: "ar-display", "aria-label": "QRed AR scanner" },
       React.createElement(ScannerView, {
         onScan: (text) => {
+          onSealDetected?.(text);
           setScannedText(text);
           setMode("result");
         },
         onClose: () => setMode("idle"),
         captureRequest,
         torchEnabled,
+        returnPayload,
       }),
       controls
     );
@@ -101,12 +103,14 @@ export const QR_CAMERA_CONSTRAINTS = {
   },
 };
 
-export function qrScanAction(imageData, width, height, code) {
+export function qrScanAction(imageData, width, height, code, { returnPayload = false } = {}) {
   if (!code?.data) return { status: "continue" };
 
-  const text = qredTextFromPhotoScanResult(imageData, width, height, code);
-  if (text && text !== VISIBLE_QR_TEXT) return { status: "found", text };
+  const text = returnPayload
+    ? qredPayloadFromPhotoScanResult(imageData, width, height, code)
+    : qredTextFromPhotoScanResult(imageData, width, height, code);
 
+  if (text && text !== VISIBLE_QR_TEXT) return { status: "found", text };
   return { status: "continue" };
 }
 
@@ -207,6 +211,7 @@ function getROICropRegion(videoWidth, videoHeight) {
 
 export function decodeCanvasFrame(video, canvas, options = {}) {
   const manual = Boolean(options.manual);
+  const returnPayload = Boolean(options.returnPayload);
   if (!isCameraFrameReady(video, canvas)) {
     return manual ? { status: "pending", message: "Camera is preparing the photo. Hold steady…" } : { status: "continue" };
   }
@@ -237,7 +242,9 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
       return { status: "feedback", message: "No QR code found in this photo. Center a QR seal in the frame and try again." };
     }
     if (manual && (code.data === VISIBLE_QR_TEXT || code.data.includes("QRED1") || code.data.includes("qred.org"))) {
-      const text = qredTextFromPhotoScanResult(imageData.data, roi.width, roi.height, code);
+      const text = returnPayload
+        ? qredPayloadFromPhotoScanResult(imageData.data, roi.width, roi.height, code)
+        : qredTextFromPhotoScanResult(imageData.data, roi.width, roi.height, code);
       if (text && text !== VISIBLE_QR_TEXT) return { status: "found", text };
       if (code.data === VISIBLE_QR_TEXT) {
         return { status: "feedback", message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again." };
@@ -245,13 +252,13 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
       return { status: "found", text: qredTextFromScanResult(code) };
     }
 
-    return qrScanAction(imageData.data, roi.width, roi.height, code);
+    return qrScanAction(imageData.data, roi.width, roi.height, code, { returnPayload });
   }
 
   return { status: "continue" };
 }
 
-function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
+function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayload }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const handleScanActionRef = useRef(() => false);
@@ -338,8 +345,8 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
         : null;
       const scanAction = timedOutManualCapture
         || (pendingManualCaptureRef.current && frameReady
-          ? decodeCanvasFrame(video, canvas, { manual: true })
-          : decodeCanvasFrame(video, canvas));
+          ? decodeCanvasFrame(video, canvas, { manual: true, returnPayload })
+          : decodeCanvasFrame(video, canvas, { returnPayload }));
       if (pendingManualCaptureRef.current && scanAction.status !== "pending") {
         pendingManualCaptureRef.current = false;
         pendingManualCaptureStartedAtRef.current = null;
@@ -393,7 +400,7 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled }) {
   useEffect(() => {
     if (captureRequest <= 0 || error) return;
 
-    const scanAction = decodeCanvasFrame(videoRef.current, canvasRef.current, { manual: true });
+    const scanAction = decodeCanvasFrame(videoRef.current, canvasRef.current, { manual: true, returnPayload });
     handleScanActionRef.current(scanAction);
   }, [captureRequest, error, onScan]);
 

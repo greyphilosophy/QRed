@@ -390,7 +390,8 @@
 
   <script type="module">
     import jsQR from "jsqr";
-    import { compareDocumentText, compareWordSequences, decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
+    import { compareDocumentText, classifyOcrWords, decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
+    import { captureDocumentFrameForOcr, drawArOverlay } from "./src/verifier/ocrAr.js";
 
     // QRed Protocol - decode QRed seal strings for scanner UI state.
     function decodeSeal(str) {
@@ -892,36 +893,6 @@
       return state.ocrPromise;
     }
 
-    function captureDocumentFrameForOcr() {
-      return navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1600 }, height: { ideal: 1200 } }
-      }).then(function(mediaStream) {
-        return new Promise(function(resolve, reject) {
-          var video = document.createElement("video");
-          video.playsInline = true;
-          video.muted = true;
-          video.srcObject = mediaStream;
-          video.onloadedmetadata = function() {
-            video.play().then(function() {
-              window.setTimeout(function() {
-                var canvas = document.createElement("canvas");
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-                mediaStream.getTracks().forEach(function(track) { track.stop(); });
-                resolve(canvas);
-              }, 800);
-            }).catch(reject);
-          };
-          video.onerror = function() {
-            reject(new Error("Unable to read camera frame for OCR."));
-          };
-        }).catch(function(error) {
-          mediaStream.getTracks().forEach(function(track) { track.stop(); });
-          throw error;
-        });
-      });
-    }
 
     async function reconstructAndShow(docId, options) {
       options = options || {};
@@ -1002,15 +973,6 @@
       }
     }
 
-    function classifyOcrWords(qrText, ocrWords) {
-      var qrWords = (qrText || "").match(/\S+/g) || [];
-      var pageWords = ocrWords.map(function(word) { return word.text || ""; });
-      var comparison = compareWordSequences(qrWords, pageWords);
-      return {
-        words: ocrWords.map(function(word, index) { return { word: word, status: comparison.matchedPage.has(index) ? "matched" : "extra" }; }),
-        missing: comparison.missingQrWords,
-      };
-    }
 
     function startArOverlay() {
       if (!state.verifiedContent) return;
@@ -1111,7 +1073,7 @@
         return workerApi.recognize(capture, "eng");
       }).then(function(result) {
         var words = result && result.data && result.data.words ? result.data.words : [];
-        drawArOverlay(classifyOcrWords(state.verifiedContent, words));
+        drawArOverlay(canvas, classifyOcrWords(state.verifiedContent, words));
       }).catch(function(err) {
         if (!state.arErrorShown) {
           state.arErrorShown = true;
@@ -1123,31 +1085,6 @@
       });
     }
 
-    function drawArOverlay(classified) {
-      var canvas = document.getElementById("arCanvas");
-      var ctx = canvas.getContext("2d");
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      classified.words.forEach(function(item) {
-        var bbox = item.word.bbox;
-        if (!bbox) return;
-        var color = item.status === "matched" ? "rgba(187, 247, 208, 0.55)" : "rgba(254, 202, 202, 0.6)";
-        ctx.fillStyle = color;
-        ctx.strokeStyle = item.status === "matched" ? "rgba(22, 163, 74, 0.95)" : "rgba(220, 38, 38, 0.95)";
-        ctx.lineWidth = 2;
-        ctx.fillRect(bbox.x0, bbox.y0, bbox.x1 - bbox.x0, bbox.y1 - bbox.y0);
-        ctx.strokeRect(bbox.x0, bbox.y0, bbox.x1 - bbox.x0, bbox.y1 - bbox.y0);
-      });
-      if (classified.missing.length > 0) {
-        var missingText = "Missing from page: " + classified.missing.slice(0, 12).join(" ") + (classified.missing.length > 12 ? " ..." : "");
-        ctx.font = "24px sans-serif";
-        ctx.textBaseline = "top";
-        var metrics = ctx.measureText(missingText);
-        ctx.fillStyle = "rgba(15, 23, 42, 0.82)";
-        ctx.fillRect(12, 12, metrics.width + 24, 44);
-        ctx.fillStyle = "#ef4444";
-        ctx.fillText(missingText, 24, 22);
-      }
-    }
 
     function renderDiffSection(label, tokens, classes) {
       var container = document.createElement("div");
@@ -1166,60 +1103,92 @@
       container.appendChild(body);
       return container;
     }
-
     // ── Test API: exposed on window so page.evaluate() can call module-scoped code ──
+    // NOTE: CI E2E tests call this hook with either:
+    //  - raw seal strings (preferred)
+    //  - URL-like strings containing a "QRED1?..." fragment
+    window.__qredTestVerify = async function(sealStrings, publicKey) {
+      try {
+        var raw = Array.isArray(sealStrings)
+          ? sealStrings
+          : String(sealStrings || "").split("\n");
 
-    window.__qredTestVerify = function(sealStrings, publicKey) {
-      return new Promise(async function(resolve) {
-        try {
-          // Split multiline payload into individual seal strings
-          var rawSeals = sealStrings.split("\n").map(function(s) { return s.trim(); }).filter(Boolean);
+        var seals = raw
+          .map(function(s) {
+            var trimmed = String(s || "").trim();
+            if (!trimmed) return null;
 
-          // Call the module-scoped verification function with raw seal strings
-          var result = await verifyQRedSeals(rawSeals, publicKey || "");
+            // Extract the QRED1?... part if this looks like a URL.
+            var m = trimmed.match(/(QRED1\?[^\s#]+)/);
+            if (m && m[1]) return m[1];
 
-          // Update the DOM so the test can read #resultStatus
-          var resultView = document.getElementById("resultView");
-          var resultStatus = document.getElementById("resultStatus");
-          var resultMeta = document.getElementById("resultMeta");
-          var resultContent = document.getElementById("resultContent");
+            // Otherwise assume the entire value is already a seal string.
+            return trimmed;
+          })
+          .filter(Boolean);
 
-          if (resultView && resultStatus) {
-            resultView.classList.add("visible");
-            resultStatus.textContent = result.status;
-            if (result.status === "VALID") {
-              resultStatus.className = "result-status valid";
-            } else {
-              resultStatus.className = "result-status";
-            }
+        var result = await verifyQRedSeals(seals, publicKey || "");
+
+        // Update the DOM so tests can read #resultStatus / #resultContent
+        var resultView = document.getElementById("resultView");
+        var resultStatus = document.getElementById("resultStatus");
+        var resultMeta = document.getElementById("resultMeta");
+        var resultContent = document.getElementById("resultContent");
+
+        if (resultView && resultStatus) {
+          resultView.classList.add("visible");
+          resultStatus.textContent = result.status;
+          if (result.status === "VALID") {
+            resultStatus.className = "result-status valid";
+          } else if (result.status === "INVALID") {
+            resultStatus.className = "result-status error";
+          } else {
+            resultStatus.className = "result-status";
           }
-
-          if (resultMeta) {
-            resultMeta.innerHTML = "";
-            if (result.document_id) {
-              var div = document.createElement("div");
-              div.className = "meta-item";
-              div.innerHTML = "<strong>Document:</strong> " + result.document_id;
-              resultMeta.appendChild(div);
-            }
-            if (result.total_seals !== undefined) {
-              var div2 = document.createElement("div");
-              div2.className = "meta-item";
-              div2.innerHTML = "<strong>Seals:</strong> " + result.total_seals + " / " + result.total_required;
-              resultMeta.appendChild(div2);
-            }
-          }
-
-          if (resultContent && result.verified_content) {
-            resultContent.textContent = result.verified_content;
-          }
-
-          resolve(result);
-        } catch (e) {
-          resolve({ status: "ERROR", error: e.message });
         }
-      });
+
+        if (resultMeta) {
+          resultMeta.innerHTML = "";
+          if (result.document_id) {
+            var div = document.createElement("div");
+            div.className = "meta-item";
+            div.innerHTML = "<strong>Document:</strong> " + result.document_id;
+            resultMeta.appendChild(div);
+          }
+          if (result.key_id) {
+            var div2 = document.createElement("div");
+            div2.className = "meta-item";
+            div2.innerHTML = "<strong>Key:</strong> " + result.key_id;
+            resultMeta.appendChild(div2);
+          }
+          if (result.error_message) {
+            var div3 = document.createElement("div");
+            div3.className = "meta-item";
+            div3.innerHTML = "<strong>Error:</strong> " + result.error_message;
+            resultMeta.appendChild(div3);
+          }
+        }
+
+        if (resultContent) {
+          resultContent.textContent = result.content || "";
+        }
+
+        return result;
+      } catch (e) {
+        return { status: "ERROR", error_message: e && e.message ? e.message : String(e) };
+      }
     };
+
+    // Browser-level assertion for test harnesses
+    (function () {
+      var ok = typeof window.__qredTestVerify === "function";
+      try {
+        if (document && document.body) {
+          document.body.dataset.qredTestVerifyOk = ok ? "true" : "false";
+        }
+      } catch (e) {}
+      console.assert(ok, "Expected window.__qredTestVerify to be a function");
+    })();
   </script>
 </body>
 </html>

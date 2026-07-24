@@ -1,17 +1,18 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import process from "node:process";
 import { describe, expect, it } from "vitest";
 
-const testHtmlPath = resolve(process.cwd(), "test.html");
-
 describe("frontend/test.html script loading", () => {
-  it("uses the local jsQR bundle instead of a CDN import", () => {
-    const html = readFileSync(testHtmlPath, "utf8");
+  it("uses npm jsqr via Vite import, not a vendored bundle", () => {
+    const htmlPath = resolve(process.cwd(), "test.html");
+    const analyzerPath = resolve(process.cwd(), "src/testAnalyzer.js");
+    const html = readFileSync(htmlPath, "utf8");
+    const analyzer = readFileSync(analyzerPath, "utf8");
 
-    expect(html).toContain("<script src=\"./jsQR.js\"></script>");
-    expect(html).toContain("const jsQR = globalThis.jsQR || null;");
-    expect(html).toContain("window.BarcodeDetector || globalThis.BarcodeDetector");
-    expect(html).not.toContain("import('https://esm.sh/jsqr@1.4.0')");
+    expect(html).not.toContain('<script src="./jsQR.js"></script>');
+    expect(html).toContain('from "./src/testAnalyzer.js"');
+    expect(analyzer).toContain('from "jsqr"');
+    expect(existsSync(resolve(process.cwd(), "jsQR.js"))).toBe(false);
   });
 });
