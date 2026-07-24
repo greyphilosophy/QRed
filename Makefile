@@ -1,21 +1,28 @@
-.PHONY: install run tests demo build clean
+.PHONY: install install-frontend run tests demo build clean lint
 
-install:
-	pip install -r requirements.txt
+# ---- Frontend ----
 
-run:
-	uvicorn backend.app:create_app --factory --host 0.0.0.0 --port 8190 --reload
-
-tests:
-	python -m pytest tests/test_qred.py -v
-
-demo:
-	bash demo.sh
+install install-frontend:
+	cd frontend && npm ci
 
 build:
-	cd frontend && npm install && npm run build
+	cd frontend && npm ci && npm run build
+
+lint:
+	cd frontend && npm run lint
+
+run:
+	cd frontend && npm start
+
+tests:
+	cd frontend && npm test
 
 clean:
 	find . -type d -name '__pycache__' -exec rm -rf {} +
 	find . -type f -name '*.pyc' -delete
-	rm -rf .pytest_cache frontend/node_modules frontend/dist
+	rm -rf .pytest_cache frontend/node_modules frontend/build frontend/dist
+
+demo:
+	@echo "QRed is fully client-side — no backend server needed."
+	@echo "Running the dev server..."
+	cd frontend && npm start

@@ -1,173 +1,29 @@
-import React, { useEffect, useState } from "react";
-import { sealPdfInBrowser } from "./pdfClientSeal.js";
+/* eslint-disable no-unused-vars */
+import React, { useState } from "react";
 import { QrScanner } from "./QrScanner.jsx";
-
-function PdfSealForm() {
-  const [file, setFile] = useState(null);
-  const [issuer, setIssuer] = useState("QRed Demo Authority");
-  const [privateKey, setPrivateKey] = useState("");
-  const [publicKey, setPublicKey] = useState("");
-  const [message, setMessage] = useState("");
-  const [keyStatus, setKeyStatus] = useState("Loading default keys...");
-  const [loadingKeys, setLoadingKeys] = useState(false);
-  const [encodingStrategy, setEncodingStrategy] = useState("automatic");
-  const [pageScalingStrategy, setPageScalingStrategy] = useState("automatic");
-  const [showPrivateKey, setShowPrivateKey] = useState(false);
-  const [loading, setLoading] = useState(false);
-
-  // Expose public key to the window for tests
-  useEffect(() => {
-    window.__qredPublicKeys = publicKey;
-  }, [publicKey]);
-
-  async function loadDefaultKeys() {
-    setLoadingKeys(true);
-    setKeyStatus("Loading default public key...");
-
-    try {
-      const response = await fetch("/api/keys/default");
-      if (!response.ok) throw new Error((await response.text()) || `${response.status} ${response.statusText}`.trim());
-      const keys = await response.json();
-      setPublicKey(keys.public_key);
-      // Private key must be supplied by the user in the browser — never from the server.
-      if (!privateKey) {
-        setKeyStatus("Public key loaded. Please enter your private key before sealing. (The server does not store private keys.)");
-      } else {
-        setKeyStatus("Public key loaded. Ready to seal with your private key.");
-      }
-    } catch {
-      setPublicKey("eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=");
-      if (!privateKey) {
-        setKeyStatus("Public key loaded from bundled fallback. Please enter your private key before sealing.");
-      } else {
-        setKeyStatus("Public key loaded from bundled fallback. Ready to seal with your private key.");
-      }
-    } finally {
-      setLoadingKeys(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!privateKey || !publicKey) {
-      loadDefaultKeys();
-    }
-  }, []);
-
-  async function sealPdf() {
-    if (!file || !issuer || !privateKey || !publicKey) {
-      setMessage("Choose a PDF and provide issuer keys before sealing.");
-      return;
-    }
-    setLoading(true);
-    try {
-      setMessage("Sealing in this browser...");
-      const { blob, sealResult } = await sealPdfInBrowser({
-        file,
-        issuer,
-        privateKey,
-        publicKey,
-        bootstrapUrl: "https://qred.org/",
-        encodingStrategy,
-        pageScalingStrategy,
-      });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
-      link.click();
-      URL.revokeObjectURL(url);
-      const sealStrings = sealResult.seals ? sealResult.seals.join("\n") : "";
-      // Expose seal result globally only for Playwright E2E tests
-      const IS_TEST = typeof window !== "undefined" && window.__qredTestMode === true;
-      if (IS_TEST) {
-        window.__lastSealResult = sealResult;
-        // Tests read seal strings from the message element; only enabled in test mode
-        sealStrings && setMessage((prev) => prev + "\n---SEALS---\n" + sealStrings);
-      }
-      setMessage([
-        `Sealed ${file.name} in this browser. Document ID: ${sealResult.document_id}`,
-        `Selected encoding: ${sealResult.encoding || encodingStrategy}`,
-        `Selected page scaling: ${pageScalingStrategy}`,
-        `Selected recipe: ${sealResult.selected_recipe || "plaintext"}`,
-        `Estimated QR count: ${sealResult.estimated_qr_count || sealResult.total_seals || 0}`,
-        `Compression savings: ${sealResult.compression_savings_pct || 0}%`,
-        `Document ID: ${sealResult.document_id}`,
-      ].join("\n"));
-    } catch (error) {
-      setMessage(`PDF sealing failed: ${error.message}`);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return React.createElement("div", { className: "card" },
-    React.createElement("h2", null, "Demo: Upload and Seal a PDF"),
-    React.createElement("p", { style: { color: "#64748b", marginBottom: "1rem" }},
-      "Select a PDF, stamp every page with a verifier QR plus payload QR seals, and download the sealed copy."),
-    React.createElement("div", { className: "demo-grid" },
-      React.createElement("div", { className: "demo-input" },
-        React.createElement("label", null, "PDF file"),
-        React.createElement("input", { "aria-label": "PDF file", type: "file", accept: "application/pdf", onChange: (e) => setFile(e.target.files?.[0] || null) })
-      ),
-      React.createElement("div", { className: "demo-input" },
-        React.createElement("label", null, "Issuer"),
-        React.createElement("input", { "aria-label": "Issuer", value: issuer, onChange: (e) => setIssuer(e.target.value) })
-      ),
-      React.createElement("div", { className: "demo-input" },
-        React.createElement("label", null, "Private Key"),
-        React.createElement("input", { "aria-label": "Private Key", type: showPrivateKey ? "text" : "password", value: privateKey, onChange: (e) => setPrivateKey(e.target.value), placeholder: "Default private key", autoComplete: "off" }),
-        React.createElement("button", { type: "button", onClick: () => setShowPrivateKey((value) => !value), style: { marginTop: "0.5rem" }}, showPrivateKey ? "Hide private key" : "Show private key")
-      ),
-      React.createElement("div", { className: "demo-input" },
-        React.createElement("label", null, "Public Key"),
-        React.createElement("input", { "aria-label": "Public Key", value: publicKey, onChange: (e) => setPublicKey(e.target.value), placeholder: "Default public key" })
-      ),
-      React.createElement("div", { className: "demo-input" },
-        React.createElement("label", null, "Encoding Strategy"),
-        React.createElement("select", { "aria-label": "Encoding Strategy", value: encodingStrategy, onChange: (e) => setEncodingStrategy(e.target.value), title: "Automatic tries every reversible recipe and chooses the smallest successful encoding." },
-          React.createElement("option", { value: "automatic" }, "Automatic (recommended)"),
-          React.createElement("option", { value: "plaintext" }, "Plaintext"),
-          React.createElement("option", { value: "b45" }, "Recipe 1 – b45"),
-          React.createElement("option", { value: "brotli" }, "Brotli (when smaller)")
-        ),
-        React.createElement("small", { style: { color: "#64748b", display: "block", marginTop: "0.5rem" } },
-          "Automatic tries every reversible recipe and chooses the smallest successful encoding."
-        )
-      ),
-      React.createElement("div", { className: "demo-input" },
-        React.createElement("label", null, "Page scaling"),
-        React.createElement("select", { "aria-label": "Page scaling", value: pageScalingStrategy, onChange: (e) => setPageScalingStrategy(e.target.value), title: "Choose how the PDF should make room for QR seals before drawing the footer." },
-          React.createElement("option", { value: "automatic" }, "Automatic (legal for letter, shrink otherwise)"),
-          React.createElement("option", { value: "legal-footer" }, "Expand letter pages to legal size (bottom 3-inch footer)"),
-          React.createElement("option", { value: "shrink-footer" }, "Shrink the document to create a footer")
-        ),
-        React.createElement("small", { style: { color: "#64748b", display: "block", marginTop: "0.5rem" } },
-          "Automatic expands letter pages to legal size and keeps seals in the bottom 3 inches; other page sizes shrink to create room for the seals."
-        )
-      )
-    ),
-    React.createElement("p", { style: { marginTop: "1rem", color: keyStatus.includes("failed") ? "#ef4444" : "#64748b" }}, keyStatus),
-    React.createElement("button", { onClick: loadDefaultKeys, disabled: loadingKeys, style: { marginRight: "1rem", marginTop: "1rem" }}, loadingKeys ? "Loading Default Keys..." : "Use Default Keys"),
-    React.createElement("button", { onClick: sealPdf, disabled: loading || loadingKeys, style: { marginTop: "1rem" }}, loading ? "Sealing..." : "Upload PDF and Stamp QR Seals"),
-    message && React.createElement("p", { style: { marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155" }}, message)
-  );
-}
+import { PdfSealForm } from "./PdfSealForm.jsx";
 
 function App() {
   const [showPdfStampTool, setShowPdfStampTool] = useState(false);
 
-  return React.createElement("main", { className: "homepage" },
-    React.createElement(QrScanner, { onOpenPdfStampTool: () => setShowPdfStampTool(true) }),
-    showPdfStampTool && React.createElement("section", { className: "pdf-stamp-tool", id: "pdf-stamp-tool" },
-      React.createElement("div", { className: "tool-header" },
-        React.createElement("div", null,
-          React.createElement("p", { className: "eyebrow" }, "PDF stamping tool"),
-          React.createElement("h2", null, "Stamp a PDF with QRed seals")
-        ),
-        React.createElement("button", { className: "tool-close", onClick: () => setShowPdfStampTool(false), type: "button" }, "Close")
-      ),
-      React.createElement(PdfSealForm)
-    )
+  return (
+    <main className="homepage">
+      <QrScanner onOpenPdfStampTool={() => setShowPdfStampTool(true)} />
+      {showPdfStampTool && (
+        <section className="pdf-stamp-tool" id="pdf-stamp-tool">
+          <div className="tool-header">
+            <div>
+              <p className="eyebrow">PDF stamping tool</p>
+              <h2>Stamp a PDF with QRed seals</h2>
+            </div>
+            <button className="tool-close" onClick={() => setShowPdfStampTool(false)} type="button">
+              Close
+            </button>
+          </div>
+          <PdfSealForm />
+        </section>
+      )}
+    </main>
   );
 }
 

@@ -13,6 +13,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, "index.html"),
         verifier: resolve(__dirname, "verifier.html"),
+        test: resolve(__dirname, "test.html"),
       },
     },
   },

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
 
-describe("frontend/test.html plaintext seal display", () => {
+
+const hasPlaywright = existsSync("/tmp/pwtest/node_modules/playwright");
+
+describe.skipIf(!hasPlaywright)("frontend/test.html plaintext seal display", () => {
   it("shows the original document text instead of the raw seal URL", async () => {
     const { chromium } = await import("/tmp/pwtest/node_modules/playwright");
     const browser = await chromium.launch({ headless: true, executablePath: "/snap/bin/chromium" });
