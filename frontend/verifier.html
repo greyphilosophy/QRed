@@ -1166,9 +1166,7 @@
       container.appendChild(body);
       return container;
     }
-  </script>
     // ── Test API: exposed on window so page.evaluate() can call module-scoped code ──
-
     window.__qredTestVerify = function(sealStrings, publicKey) {
       return new Promise(async function(resolve) {
         try {
@@ -1242,9 +1240,16 @@
       });
     };
 
-
-</body>
-</html>
-
+    // Browser-level assertion for test harnesses
+    (function () {
+      var ok = typeof window.__qredTestVerify === "function";
+      try {
+        if (document && document.body) {
+          document.body.dataset.qredTestVerifyOk = ok ? "true" : "false";
+        }
+      } catch (e) {}
+      console.assert(ok, "Expected window.__qredTestVerify to be a function");
+    })();
+  </script>
 </body>
 </html>
