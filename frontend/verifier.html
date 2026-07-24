@@ -1104,77 +1104,79 @@
       return container;
     }
     // ── Test API: exposed on window so page.evaluate() can call module-scoped code ──
-    window.__qredTestVerify = function(sealStrings, publicKey) {
-      return new Promise(async function(resolve) {
-        try {
-          // Parse seal strings into the format verifyQRedSeals expects
-          var seals = sealStrings.split("\n").map(function(s) {
-            var trimmed = s.trim();
+    // NOTE: CI E2E tests call this hook with either:
+    //  - raw seal strings (preferred)
+    //  - URL-like strings containing a "QRED1?..." fragment
+    window.__qredTestVerify = async function(sealStrings, publicKey) {
+      try {
+        var raw = Array.isArray(sealStrings)
+          ? sealStrings
+          : String(sealStrings || "").split("\n");
+
+        var seals = raw
+          .map(function(s) {
+            var trimmed = String(s || "").trim();
             if (!trimmed) return null;
 
-            var parsed = { url: trimmed };
-            if (trimmed.indexOf("QRED1") === 0) {
-              try {
-                var url = new URL(trimmed, "http://dummy.local");
-                parsed.document_id = url.searchParams.get("kid") || "";
-                parsed.seal_version = url.searchParams.get("v") || "1";
-                parsed.algorithm = url.searchParams.get("alg");
-                parsed.data = url.searchParams.get("data");
-                parsed.sig = url.searchParams.get("sig");
-                parsed.pub = (publicKey || url.searchParams.get("pub")) || "";
-              } catch (e) {
-                // malformed URL — verifyQRedSeals will try to parse
-              }
-            } else {
-              parsed.seal = trimmed;
-            }
-            return parsed;
-          }).filter(Boolean);
+            // Extract the QRED1?... part if this looks like a URL.
+            var m = trimmed.match(/(QRED1\?[^\s#]+)/);
+            if (m && m[1]) return m[1];
 
-          // Call the module-scoped verification function
-          var result = await verifyQRedSeals(seals, publicKey || "");
+            // Otherwise assume the entire value is already a seal string.
+            return trimmed;
+          })
+          .filter(Boolean);
 
-          // Update the DOM so the test can read #resultStatus
-          var resultView = document.getElementById("resultView");
-          var resultStatus = document.getElementById("resultStatus");
-          var resultMeta = document.getElementById("resultMeta");
-          var resultContent = document.getElementById("resultContent");
+        var result = await verifyQRedSeals(seals, publicKey || "");
 
-          if (resultView && resultStatus) {
-            resultView.classList.add("visible");
-            resultStatus.textContent = result.status;
-            if (result.status === "VALID") {
-              resultStatus.className = "result-status valid";
-            } else {
-              resultStatus.className = "result-status";
-            }
+        // Update the DOM so tests can read #resultStatus / #resultContent
+        var resultView = document.getElementById("resultView");
+        var resultStatus = document.getElementById("resultStatus");
+        var resultMeta = document.getElementById("resultMeta");
+        var resultContent = document.getElementById("resultContent");
+
+        if (resultView && resultStatus) {
+          resultView.classList.add("visible");
+          resultStatus.textContent = result.status;
+          if (result.status === "VALID") {
+            resultStatus.className = "result-status valid";
+          } else if (result.status === "INVALID") {
+            resultStatus.className = "result-status error";
+          } else {
+            resultStatus.className = "result-status";
           }
-
-          if (resultMeta) {
-            resultMeta.innerHTML = "";
-            if (result.document_id) {
-              var div = document.createElement("div");
-              div.className = "meta-item";
-              div.innerHTML = "<strong>Document:</strong> " + result.document_id;
-              resultMeta.appendChild(div);
-            }
-            if (result.total_seals !== undefined) {
-              var div2 = document.createElement("div");
-              div2.className = "meta-item";
-              div2.innerHTML = "<strong>Seals:</strong> " + result.total_seals + " / " + result.total_required;
-              resultMeta.appendChild(div2);
-            }
-          }
-
-          if (resultContent && result.verified_content) {
-            resultContent.textContent = result.verified_content;
-          }
-
-          resolve(result);
-        } catch (e) {
-          resolve({ status: "ERROR", error: e.message });
         }
-      });
+
+        if (resultMeta) {
+          resultMeta.innerHTML = "";
+          if (result.document_id) {
+            var div = document.createElement("div");
+            div.className = "meta-item";
+            div.innerHTML = "<strong>Document:</strong> " + result.document_id;
+            resultMeta.appendChild(div);
+          }
+          if (result.key_id) {
+            var div2 = document.createElement("div");
+            div2.className = "meta-item";
+            div2.innerHTML = "<strong>Key:</strong> " + result.key_id;
+            resultMeta.appendChild(div2);
+          }
+          if (result.error_message) {
+            var div3 = document.createElement("div");
+            div3.className = "meta-item";
+            div3.innerHTML = "<strong>Error:</strong> " + result.error_message;
+            resultMeta.appendChild(div3);
+          }
+        }
+
+        if (resultContent) {
+          resultContent.textContent = result.content || "";
+        }
+
+        return result;
+      } catch (e) {
+        return { status: "ERROR", error_message: e && e.message ? e.message : String(e) };
+      }
     };
 
     // Browser-level assertion for test harnesses
