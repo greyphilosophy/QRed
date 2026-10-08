@@ -546,7 +546,7 @@ class TestImageOnlyPdfs:
         page.get_by_label("PDF file", exact=True).set_input_files(image_only_pdf_path)
         page.get_by_label("Private Key", exact=True).fill(DEMO_PRIVATE_KEY)
         downloads = []
-        page.on("download", downloads.append)
+        page.on("download", lambda download: downloads.append(download))
         page.get_by_role("button", name="Upload PDF and Stamp QR Seals", exact=True).click()
         expect(page.get_by_text("PDF sealing failed: No readable text", exact=False)).to_be_visible()
         assert not downloads, "An unreadable PDF must not produce a sealed download"

@@ -172,7 +172,7 @@ export function PdfSealForm() {
         {loading ? "Sealing..." : "Upload PDF and Stamp QR Seals"}
       </button>
       {message && (
-        <p style={{ marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155", whiteSpace: "pre-wrap" }}>
+        <p id="stamp-result" role="status" style={{ marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155", whiteSpace: "pre-wrap" }}>
           {message}
         </p>
       )}
