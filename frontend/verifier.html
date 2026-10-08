@@ -390,7 +390,7 @@
 
   <script type="module">
     import jsQR from "jsqr";
-    import { compareDocumentText, classifyOcrWords, decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
+    import { compareDocumentText, classifyOcrWords, decodeSeal as decodeQRedSeal, verifyQRedSeals, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./src/qredVerifier.js";
     import { captureDocumentFrameForOcr, drawArOverlay } from "./src/verifier/ocrAr.js";
 
     // QRed Protocol - decode QRed seal strings for scanner UI state.
@@ -405,9 +405,15 @@
       };
     }
 
+    function escapeHtml(value) {
+      var span = document.createElement("span");
+      span.textContent = String(value);
+      return span.innerHTML;
+    }
+
     // State
     var state = {
-      sealsByDocument: {},
+      sealsByDocument: Object.create(null),
       scannedSeals: [],
       seenSeals: new Set(),
       arItems: [],
@@ -459,7 +465,7 @@
     };
 
     btnNewScan.onclick = function() {
-      state.sealsByDocument = {};
+      state.sealsByDocument = Object.create(null);
       state.scannedSeals = [];
       stopArOverlay();
       state.seenSeals = new Set();
@@ -654,7 +660,7 @@
         button.style.width = item.bbox.width + "%";
         button.style.height = item.bbox.height + "%";
         button.title = arItemDetails(item);
-        button.innerHTML = "<span class='ar-qr-icon'>" + arItemIcon(item.status) + "</span><span>" + arItemTitle(item) + "</span>";
+        button.innerHTML = "<span class='ar-qr-icon'>" + arItemIcon(item.status) + "</span><span>" + escapeHtml(arItemTitle(item)) + "</span>";
         button.onclick = function() {
           renderArSelectedItem(item);
         };
@@ -711,10 +717,11 @@
       }
     }
 
-    function processArQrDetection(code, frameWidth, frameHeight) {
+    function processArQrDetection(code, frameWidth, frameHeight, imageData) {
       if (!code || !code.data) return;
 
-      var raw = code.data;
+      var raw = qredPayloadFromPhotoScanResult(imageData, frameWidth, frameHeight, code);
+      if (raw === VISIBLE_QR_TEXT) return;
       if (state.arItemsByRaw.has(raw)) {
         var existing = state.arItemsByRaw.get(raw);
         existing.bbox = getQrBounds(code.location, frameWidth || existing.frameWidth, frameHeight || existing.frameHeight) || existing.bbox;
@@ -793,7 +800,12 @@
             var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             var code = jsQR(imageData.data, canvas.width, canvas.height);
             if (code) {
-              processScannedSeal(code.data);
+              var payload = qredPayloadFromPhotoScanResult(imageData.data, canvas.width, canvas.height, code);
+              if (payload === VISIBLE_QR_TEXT) {
+                statusText.textContent = "QR found, but its hidden payload could not be read. Move closer and try again.";
+              } else {
+                processScannedSeal(payload);
+              }
             }
             state.animFrameId = requestAnimationFrame(scanFrame);
           }
@@ -802,7 +814,7 @@
       }).catch(function(err) {
         statusText.textContent = "Camera error: " + err.message;
         placeholder.style.display = "flex";
-        placeholder.innerHTML = "<div class='icon'>&#128247;</div><div>" + err.message + "</div>";
+        placeholder.innerHTML = "<div class='icon'>&#128247;</div><div>" + escapeHtml(err.message) + "</div>";
       });
     }
 
@@ -857,7 +869,7 @@
           if (decoded) {
             var div = document.createElement("div");
             div.className = "seal-item";
-            div.innerHTML = "<div class='seal-index'>" + (decoded.chunkNumber + 1) + "</div><div>" + decoded.documentId + " / " + decoded.totalChunks + " chunks</div>";
+            div.innerHTML = "<div class='seal-index'>" + (decoded.chunkNumber + 1) + "</div><div>" + escapeHtml(decoded.documentId) + " / " + decoded.totalChunks + " chunks</div>";
             sealList.appendChild(div);
           }
         }
@@ -900,7 +912,7 @@
       var total = docData.total;
       var seals = [];
       for (var i = 0; i < total; i++) {
-        if (!docData.chunks[i]) {
+        if (!(i in docData.chunks)) {
           showResult("INCOMPLETE", { error_message: "Missing chunk " + i });
           return;
         }
@@ -938,19 +950,19 @@
       rm.innerHTML = "";
 
       if (payload.issuer) {
-        rm.innerHTML += "<div class='meta-item'><strong>Issuer:</strong> " + payload.issuer + "</div>";
+        rm.innerHTML += "<div class='meta-item'><strong>" + (payload.metadata_authenticated ? "Issuer:" : "Claimed issuer (not authenticated):") + "</strong> " + escapeHtml(payload.issuer) + "</div>";
       }
       if (payload.document_id) {
-        rm.innerHTML += "<div class='meta-item'><strong>Doc ID:</strong> " + payload.document_id + "</div>";
+        rm.innerHTML += "<div class='meta-item'><strong>Doc ID:</strong> " + escapeHtml(payload.document_id) + "</div>";
       }
       if (payload.key_id) {
-        rm.innerHTML += "<div class='meta-item'><strong>Key ID:</strong> " + payload.key_id + "</div>";
+        rm.innerHTML += "<div class='meta-item'><strong>Key ID:</strong> " + escapeHtml(payload.key_id) + "</div>";
       }
       if (payload.timestamp) {
         rm.innerHTML += "<div class='meta-item'><strong>Timestamp:</strong> " + new Date(payload.timestamp).toLocaleString() + "</div>";
       }
       if (payload.error_message) {
-        rm.innerHTML += "<div class='meta-item'><strong>Error:</strong> " + payload.error_message + "</div>";
+        rm.innerHTML += "<div class='meta-item'><strong>Error:</strong> " + escapeHtml(payload.error_message) + "</div>";
       }
 
       statusBar.classList.remove("visible");
@@ -1044,7 +1056,7 @@
       var imageData = capture.getContext("2d").getImageData(0, 0, capture.width, capture.height);
       var code = jsQR(imageData.data, capture.width, capture.height);
       if (code && code.data) {
-        processArQrDetection(code, capture.width, capture.height);
+        processArQrDetection(code, capture.width, capture.height, imageData.data);
       }
       state.arQrBusy = false;
       if (state.arStream) {
@@ -1064,9 +1076,10 @@
       capture.width = video.videoWidth;
       capture.height = video.videoHeight;
       capture.getContext("2d").drawImage(video, 0, 0, capture.width, capture.height);
-      var qrCode = jsQR(capture.getContext("2d").getImageData(0, 0, capture.width, capture.height).data, capture.width, capture.height);
+      var imageData = capture.getContext("2d").getImageData(0, 0, capture.width, capture.height);
+      var qrCode = jsQR(imageData.data, capture.width, capture.height);
       if (qrCode && qrCode.data) {
-        processArQrDetection(qrCode, capture.width, capture.height);
+        processArQrDetection(qrCode, capture.width, capture.height, imageData.data);
       }
       import("tesseract.js").then(function(module) {
         var workerApi = module.default || module;
@@ -1152,19 +1165,19 @@
           if (result.document_id) {
             var div = document.createElement("div");
             div.className = "meta-item";
-            div.innerHTML = "<strong>Document:</strong> " + result.document_id;
+            div.innerHTML = "<strong>Document:</strong> " + escapeHtml(result.document_id);
             resultMeta.appendChild(div);
           }
           if (result.key_id) {
             var div2 = document.createElement("div");
             div2.className = "meta-item";
-            div2.innerHTML = "<strong>Key:</strong> " + result.key_id;
+            div2.innerHTML = "<strong>Key:</strong> " + escapeHtml(result.key_id);
             resultMeta.appendChild(div2);
           }
           if (result.error_message) {
             var div3 = document.createElement("div");
             div3.className = "meta-item";
-            div3.innerHTML = "<strong>Error:</strong> " + result.error_message;
+            div3.innerHTML = "<strong>Error:</strong> " + escapeHtml(result.error_message);
             resultMeta.appendChild(div3);
           }
         }

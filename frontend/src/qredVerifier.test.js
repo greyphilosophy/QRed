@@ -271,11 +271,13 @@ describe("qredVerifier", () => {
   });
 
 
-  it("verifies the sample plaintext fragment with the static demo public key", async () => {
+  it("labels the old content-only signature as legacy instead of authenticating its issuer", async () => {
     const fragmentSeal = "https://qred.org/#QRED1?v=1&alg=Ed25519&doc=DOC-A58A798C5FB2&i=0&n=1&iss=QRed+Demo+Authority&kid=da522162396ab2d0&ts=2026-06-25T03%3A46%3A04.757Z&sig=LvusYUa1V3MtKgfVLeHbzMan8tDGQIpakRTJ39WD-LeiXzCBSMOrqNjSUNj7QyzfFhV2H5QpNnMKvjz9PWh_CA&txt=PDF+file%3A+Minutes_2023_05_23.pdf%0ASize%3A+346921+bytes%0ASHA-256%3A+c08048143569b6324147179a9a3d9e6b85d386aedff1260783d5fafd7b7a5f63";
 
     await expect(verifyQRedSeals([fragmentSeal], staticDemoPublicKey)).resolves.toMatchObject({
-      status: "VALID",
+      status: "LEGACY",
+      signature_valid: true,
+      metadata_authenticated: false,
       issuer: "QRed Demo Authority",
       document_id: "DOC-A58A798C5FB2",
       content: "PDF file: Minutes_2023_05_23.pdf\nSize: 346921 bytes\nSHA-256: c08048143569b6324147179a9a3d9e6b85d386aedff1260783d5fafd7b7a5f63",

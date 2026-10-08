@@ -191,8 +191,9 @@ async function renderModulesToPngBytes(qr, options = DEFAULT_QR_OPTIONS) {
   const dataUrl = renderModulesToDataUrl(qr, options);
   if (dataUrl) return dataUrl;
   const { default: PngRenderer } = await import("qrcode/lib/renderer/png");
+  const plan = qredRasterPlan(qr.modules.size, options);
   const buffer = await new Promise((resolve, reject) => {
-    PngRenderer.renderToBuffer(qr, options, (error, output) => (error ? reject(error) : resolve(output)));
+    PngRenderer.renderToBuffer(qr, { ...options, margin: plan.margin, width: plan.width, scale: plan.tile }, (error, output) => (error ? reject(error) : resolve(output)));
   });
   return `data:image/png;base64,${buffer.toString("base64")}`;
 }

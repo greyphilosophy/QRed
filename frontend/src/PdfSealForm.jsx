@@ -102,7 +102,7 @@ export function PdfSealForm() {
     <div className="card">
       <h2>Demo: Upload and Seal a PDF</h2>
       <p style={{ color: "#64748b", marginBottom: "1rem" }}>
-        Select a PDF, stamp every page with a verifier QR plus payload QR seals, and download the sealed copy.
+        Seal the readable text on every PDF page and download the stamped copy. Images, handwriting, and page appearance are not authenticated. Scanned or blank pages require a checked text layer before sealing.
       </p>
       <div className="demo-grid">
         <div className="demo-input">
@@ -142,7 +142,6 @@ export function PdfSealForm() {
             <option value="automatic">Automatic (recommended)</option>
             <option value="plaintext">Plaintext</option>
             <option value="b45">Recipe 1 – b45</option>
-            <option value="brotli">Brotli (when smaller)</option>
           </select>
           <small style={{ color: "#64748b", display: "block", marginTop: "0.5rem" }}>
             Automatic tries every reversible recipe and chooses the smallest successful encoding.

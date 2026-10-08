@@ -1,7 +1,6 @@
-import { PDFDocument, rgb, StandardFonts, PDFName } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { createQRedSeals, DEFAULT_BOOTSTRAP_URL, canonicalizeText } from "./qredSealer.js";
 import { qredQrPngDataUrl } from "./qredQr.js";
-import { bytesToLatin1, maybeInflate, parseCMap, extractTextFromContentString } from "./pdf/pdfTextExtraction.js";
 import { LEGAL_FOOTER_HEIGHT, LEGAL_PAGE_HEIGHT, resolvePageScalingStrategy, applyPageScaling } from "./pdf/pageScaling.js";
 import { QR_SIZE, planQrStampLayout, planQrStampLayoutForFooterBand } from "./pdf/qrLayout.js";
 
@@ -9,45 +8,8 @@ export { QR_SIZE, LEGAL_PAGE_HEIGHT, LEGAL_FOOTER_HEIGHT };
 export { planQrStampLayout, planQrStampLayoutForFooterBand };
 
 async function extractPdfPageTexts(file) {
-  try {
-    const pdf = await PDFDocument.load(await file.arrayBuffer());
-    const pages = [];
-    for (const page of pdf.getPages()) {
-      const entries = page.node.normalizedEntries();
-      const contents = entries.Contents;
-      if (!contents) { pages.push(""); continue; }
-
-      const fontMaps = new Map();
-      const fontDict = entries.Resources?.lookup?.(PDFName.of("Font"));
-      if (fontDict) {
-        for (const [fontName] of fontDict.entries()) {
-          const fontObj = fontDict.lookup(fontName);
-          const toUnicodeRef = fontObj.get(PDFName.of("ToUnicode"));
-          if (!toUnicodeRef) continue;
-          const cmapStream = pdf.context.lookup(toUnicodeRef);
-          const cmapBytes = cmapStream && typeof cmapStream.getContents === "function" ? cmapStream.getContents() : null;
-          if (!cmapBytes) continue;
-          const cmapText = new TextDecoder("latin1").decode(await maybeInflate(cmapBytes));
-          fontMaps.set(fontName.decodeText ? fontName.decodeText() : fontName.toString().replace(/^\//, ""), parseCMap(cmapText));
-        }
-      }
-
-      const pageTexts = [];
-      for (let index = 0; index < contents.size(); index += 1) {
-        const stream = contents.lookup(index);
-        let bytes = null;
-        if (typeof stream.getUnencodedContents === "function") bytes = await maybeInflate(stream.getUnencodedContents());
-        else if (typeof stream.getContents === "function") bytes = await maybeInflate(stream.getContents());
-        else if (typeof stream.asUint8Array === "function") bytes = await maybeInflate(stream.asUint8Array());
-        if (!bytes || bytes.length === 0) continue;
-        const content = bytesToLatin1(bytes);
-        const extracted = extractTextFromContentString(content, fontMaps);
-        if (extracted) pageTexts.push(extracted);
-      }
-      pages.push(pageTexts.join(" ").trim());
-    }
-    return pages;
-  } catch { return []; }
+  const { extractPdfPageTexts: readPages } = await import("./pdf/readPdfText.js");
+  return readPages(file);
 }
 
 export async function extractPdfText(file) {
@@ -90,6 +52,10 @@ async function pageSealDocumentId(merkleRoot, pageText, sealOccurrenceNumber) {
 
 async function createPageSealResults({ file, issuer, privateKey, publicKey, bootstrapUrl, encodingStrategy }) {
   const pageTexts = await extractPdfPageTexts(file);
+  const unreadablePages = pageTexts.flatMap((text, index) => text.trim() ? [] : [index + 1]);
+  if (unreadablePages.length) {
+    throw new Error(`No readable text on PDF page(s) ${unreadablePages.join(", ")}. Scanned, image-only, and blank pages cannot be sealed. Add a checked OCR text layer or use a text PDF.`);
+  }
   const merkleRoot = await documentMerkleRoot(pageTexts);
   return Promise.all(pageTexts.map(async (pageText, pageIndex) => {
     const documentId = await pageSealDocumentId(merkleRoot, pageText, pageIndex);

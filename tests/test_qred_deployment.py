@@ -39,7 +39,7 @@ PIL_AVAILABLE = False
 DEMO_PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="
 
 # The demo private key used for sealing in tests.
-DEMO_PRIVATE_KEY = "qJ6bqL6U26yH4jG3G7qG4pKqYqG6qYqG6qYqG6qYqG6qYQ"
+DEMO_PRIVATE_KEY = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes="
 
 try:
     from reportlab.lib.pagesizes import letter
@@ -241,8 +241,11 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
     except Exception as exc:
         raise AssertionError(f"Failed to fill private key or wait for seal button: {exc}") from exc
 
+    page.get_by_label("Issuer", exact=True).fill(issuer)
+    page.get_by_label("Public Key", exact=True).fill(public_key or DEMO_PUBLIC_KEY)
+
     # If encoding strategy needs to be changed, verify it was selected
-    if encoding and encoding != "plaintext":
+    if encoding:
         try:
             encoding_select = page.locator('select[aria-label="Encoding Strategy"]').first
             encoding_select.select_option(encoding)
@@ -517,6 +520,7 @@ class TestPdfTextSealing:
         sealed, seal_result = _upload_and_seal(page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="Custom Test Issuer")
         assert os.path.exists(sealed), "Sealed PDF with custom issuer was not downloaded"
         assert os.path.getsize(sealed) > 100, "Sealed PDF with custom issuer is too small"
+        assert seal_result["full_result"]["issuer"] == "Custom Test Issuer"
 
     def test_seal_with_b45_encoding(self, page: Page, simple_pdf_path: str):
         """Seal using the b45 encoding strategy."""
@@ -532,31 +536,20 @@ class TestPdfTextSealing:
 
 
 class TestImageOnlyPdfs:
-    """T3: Image-only PDFs (no text content, only raster images)."""
+    """Image-only pages must not receive a signature over empty text."""
 
-    def test_seal_image_only_pdf(self, page: Page, image_only_pdf_path: str):
-        """Seal an image-only PDF and verify the download."""
-        sealed, seal_result = _upload_and_seal(
-            page, image_only_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Image-Only Test"
-        )
-        assert os.path.exists(sealed), "Image-only PDF was not sealed"
-        assert os.path.getsize(sealed) > 100, "Sealed image-only PDF is too small"
-        with open(sealed, "rb") as f:
-            assert f.read(5) == b"%PDF-", "Image-only sealed file is not a PDF"
-
-    def test_image_only_verification(self, page: Page, image_only_pdf_path: str):
-        """Seal and verify an image-only PDF."""
-        sealed, seal_result = _upload_and_seal(
-            page, image_only_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Image-Only Test"
-        )
-        
-        # Verify the seal result was captured with actual seal strings
-        assert seal_result.get("seal_strings"), "No seal strings captured — cannot verify"
-        
-        verified = _verify_seal_with_seal_strings(
-            page, seal_result, seal_result.get('document_id', ''), DEMO_PUBLIC_KEY
-        )
-        assert verified, "Verification failed for image-only sealed PDF"
+    def test_refuses_image_only_pdf(self, page: Page, image_only_pdf_path: str):
+        base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
+        page.goto(base_url, wait_until="networkidle")
+        page.get_by_role("button", name="Open PDF stamping tool").click()
+        expect(page.get_by_role("button", name="Use Default Keys")).to_be_enabled()
+        page.get_by_label("PDF file", exact=True).set_input_files(image_only_pdf_path)
+        page.get_by_label("Private Key", exact=True).fill(DEMO_PRIVATE_KEY)
+        downloads = []
+        page.on("download", downloads.append)
+        page.get_by_role("button", name="Upload PDF and Stamp QR Seals", exact=True).click()
+        expect(page.get_by_text("PDF sealing failed: No readable text", exact=False)).to_be_visible()
+        assert not downloads, "An unreadable PDF must not produce a sealed download"
 
 
 class TestKeyGenerationImportAndSignatureVerification:

@@ -1,0 +1,9 @@
+.verification-card { max-width: 780px; margin: 1.5rem auto; padding: 1.5rem; background: #fff; border-radius: 12px; color: #172033; }
+.verification-card label { display: block; margin-top: 1rem; font-weight: 600; }
+.verification-card input, .verification-card textarea { box-sizing: border-box; width: 100%; margin: .4rem 0; padding: .6rem; }
+.verification-card button { margin: .75rem .75rem .75rem 0; }
+.verification-card details { margin-top: 1rem; }
+.verification-card p { margin: .75rem 0; }
+.verification-note { color: #475569; font-size: .9rem; }
+.verification-result { border-top: 1px solid #cbd5e1; padding-top: 1rem; margin-top: 1rem; overflow-wrap: anywhere; }
+.verification-result pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; background: #f1f5f9; padding: 1rem; border-radius: 6px; }
