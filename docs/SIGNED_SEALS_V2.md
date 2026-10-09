@@ -45,6 +45,20 @@ stops sealing the whole file with an actionable error. Blank and image-only
 pages are not silently signed as empty documents. OCR is not automatically
 performed; scanned pages need a reviewed text layer before sealing.
 
+Predefined character maps, standard fonts, and decoder assets ship with the
+app under `/pdfjs/<version>/`; `npm start` and `npm run build` prepare them
+from the pinned PDF.js package. Used assets are cached for offline reuse.
+If a required font or character map fails, sealing stops even when another
+part of the page has readable text. `stopAtErrors` alone is insufficient:
+PDF.js can substitute an error font, so we also inspect font dependencies
+in each page's operator list before accepting its extracted text.
+
+Interactive AcroForm/XFA PDFs and widget annotations are rejected before
+signing. Flatten or print forms to a text PDF in a PDF editor and check all
+values first. The stamper must not silently omit field values or remove
+them while replacing pages. Already flattened forms are ordinary page
+content and remain supported.
+
 QRed seals text and associated metadata, not a PDF's images, handwriting,
 layout, or every byte of the PDF. Recipients must compare the recovered text
 with the visible document. A signature alone does not establish that the
@@ -59,6 +73,10 @@ ReportLab defaults and invariant output. It stamps the PDF, rasterizes the
 actual footer at 300 dpi with Poppler, recovers the hidden payload from the
 QR image, verifies the signature, and asserts all three source text lines.
 Other tests cover blank/image-only/mixed pages, embedded form text,
+Latin/CJK pages requiring predefined CMaps, failed fonts, interactive-form
+rejection, and preservation of flattened form values in signed and output
+text. Browser tests also block CMap downloads to confirm sealing fails.
+Tests additionally cover
 metadata tampering, wrong keys, Unicode chunk boundaries, missing and
 conflicting chunks, homepage verification, and the standalone camera route.
 The camera test supplies a synthetic image frame to the shipped inline

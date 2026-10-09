@@ -11,6 +11,9 @@ Legacy content-only signatures are displayed as `LEGACY`, not `VALID`.
 PDFs must contain readable text on every page; scanned, image-only, or blank
 pages are rejected rather than signed as empty content. See
 [Signed seals v2](docs/SIGNED_SEALS_V2.md) for scope, compatibility, and tests.
+Interactive PDF forms must be flattened or printed to a text PDF and their
+values checked before sealing. Missing fonts or character maps stop sealing
+instead of signing only the readable portion of a page.
 
 # Quick Start
 

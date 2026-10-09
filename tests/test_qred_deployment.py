@@ -18,6 +18,7 @@ Run:
 """
 
 import os
+import json
 import subprocess
 import sys
 import tempfile
@@ -550,6 +551,58 @@ class TestImageOnlyPdfs:
         page.get_by_role("button", name="Upload PDF and Stamp QR Seals", exact=True).click()
         expect(page.get_by_text("PDF sealing failed: No readable text", exact=False)).to_be_visible()
         assert not downloads, "An unreadable PDF must not produce a sealed download"
+
+
+class TestPdfExtractionIntegrity:
+    def test_cjk_text_survives_browser_sealing(self, page: Page):
+        source = str(Path(__file__).parent / "fixtures" / "cjk-text.pdf")
+        sealed, seal_result = _upload_and_seal(page, source, private_key=DEMO_PRIVATE_KEY)
+        assert os.path.exists(sealed)
+        content = json.loads(seal_result["full_result"]["payload_json"])["content"]
+        assert "Invoice 123" in content
+        assert "承認金額は一万円です" in content
+        assert _verify_seal_with_seal_strings(page, seal_result, seal_result["document_id"], DEMO_PUBLIC_KEY)
+        expect(page.locator("#resultContent")).to_contain_text("承認金額は一万円です")
+
+    def test_missing_cmap_cannot_sign_partial_text(self, browser):
+        # Block service workers so this deliberately failed request cannot be
+        # satisfied by a previous offline cache entry.
+        with browser.new_context(service_workers="block") as context:
+            blocked = []
+
+            def fail_cmap(route):
+                blocked.append(route.request.url)
+                route.abort()
+
+            context.route("**/pdfjs/**/cmaps/**", fail_cmap)
+            page = context.new_page()
+            source = str(Path(__file__).parent / "fixtures" / "cjk-text.pdf")
+            self._assert_rejected(page, source, "Cannot reliably read all text")
+            assert blocked, "The test must actually fail a character-map request"
+
+    def test_filled_form_is_rejected_before_download(self, page: Page, tmp_path):
+        source = tmp_path / "filled-form.pdf"
+        pdf = rl_canvas.Canvas(str(source), pagesize=letter)
+        pdf.drawString(72, 700, "Invoice amount:")
+        pdf.acroForm.textfield(name="amount", value="12345.67 dollars", x=180, y=690, width=200, height=25)
+        pdf.showPage()
+        pdf.save()
+        self._assert_rejected(page, str(source), "interactive form fields")
+
+    @staticmethod
+    def _assert_rejected(page, source, message):
+        base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
+        page.goto(base_url, wait_until="networkidle")
+        page.get_by_role("button", name="Open PDF stamping tool").click()
+        expect(page.get_by_role("button", name="Use Default Keys", exact=True)).to_be_enabled()
+        page.get_by_label("PDF file", exact=True).set_input_files(source)
+        page.get_by_label("Private Key", exact=True).fill(DEMO_PRIVATE_KEY)
+        page.get_by_label("Public Key", exact=True).fill(DEMO_PUBLIC_KEY)
+        downloads = []
+        page.on("download", lambda download: downloads.append(download))
+        page.get_by_role("button", name="Upload PDF and Stamp QR Seals", exact=True).click()
+        expect(page.locator("#stamp-result")).to_contain_text(message, timeout=30_000)
+        assert not downloads, "Rejected PDF must not produce a signed download"
 
 
 class TestKeyGenerationImportAndSignatureVerification:

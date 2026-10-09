@@ -59,10 +59,10 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
-      - name: Start frontend dev server
+      - name: Start production frontend preview
         working-directory: frontend
         run: |
-          npm run start &
+          npm exec vite preview -- --host 127.0.0.1 --port 3000 &
           echo "Waiting for frontend..."
           for i in $(seq 1 30); do
             curl -sf http://localhost:3000 > /dev/null 2>&1 && echo "Frontend ready" && break

@@ -2,10 +2,10 @@
 // HTML: network-first (never stale verifier). JS/CSS/img: cache-first (content-hashed).
 // Bump V string to invalidate existing installs.
 
-const CACHE_VERSION = "v3";
+const CACHE_VERSION = "v4";
 const CACHE_NAME = `qred-${CACHE_VERSION}`;
 const STATIC_ORIGINS = new Set([self.location.origin]);
-const JS_CSS_ASSET_RE = /\.(?:m?js|css|woff2?|ttf|otf|png|jpg|jpeg|webp|svg|ico)$/i;
+const JS_CSS_ASSET_RE = /\.(?:m?js|css|woff2?|ttf|otf|pfb|bcmap|wasm|png|jpg|jpeg|webp|svg|ico)$/i;
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();

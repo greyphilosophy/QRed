@@ -102,7 +102,7 @@ export function PdfSealForm() {
     <div className="card">
       <h2>Demo: Upload and Seal a PDF</h2>
       <p style={{ color: "#64748b", marginBottom: "1rem" }}>
-        Seal the readable text on every PDF page and download the stamped copy. Images, handwriting, and page appearance are not authenticated. Scanned or blank pages require a checked text layer before sealing.
+        Seal the readable text on every PDF page and download the stamped copy. Images, handwriting, and page appearance are not authenticated. Scanned or blank pages require a checked text layer before sealing. Interactive forms must first be flattened or printed to a text PDF with every value checked.
       </p>
       <div className="demo-grid">
         <div className="demo-input">
