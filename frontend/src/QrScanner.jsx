@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
 import { VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult, qredTextFromScanResult } from "./qredVerifier.js";
 
@@ -11,11 +11,16 @@ import { VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanR
  * 2. Scanning — camera feed + jsQR loop
  * 3. Result — displays the scanned QR text, "New scan" resumes scanning
  */
-export function QrScanner({ onOpenPdfStampTool, onSealDetected, returnPayload = false }) {
+export function QrScanner({ onOpenPdfStampTool, onSealDetected, returnPayload = false, resultPanel }) {
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
   const [captureRequest, setCaptureRequest] = useState(0);
   const [torchEnabled, setTorchEnabled] = useState(false);
+  const handleScan = useCallback((text) => {
+    onSealDetected?.(text);
+    setScannedText(text);
+    setMode("result");
+  }, [onSealDetected]);
 
   const scanButtonLabel = mode === "scanning" ? "Scan photo" : mode === "result" ? "Scan again" : "Start scanning";
   const controls = React.createElement("div", { className: "ar-controls" },
@@ -48,7 +53,7 @@ export function QrScanner({ onOpenPdfStampTool, onSealDetected, returnPayload = 
 
   if (mode === "result") {
     return React.createElement("section", { className: "ar-display ar-display-result", "aria-label": "QRed AR scanner" },
-      React.createElement(ResultPanel, { scannedText }),
+      resultPanel ?? React.createElement(ResultPanel, { scannedText }),
       controls
     );
   }
@@ -56,11 +61,7 @@ export function QrScanner({ onOpenPdfStampTool, onSealDetected, returnPayload = 
   if (mode === "scanning") {
     return React.createElement("section", { className: "ar-display", "aria-label": "QRed AR scanner" },
       React.createElement(ScannerView, {
-        onScan: (text) => {
-          onSealDetected?.(text);
-          setScannedText(text);
-          setMode("result");
-        },
+        onScan: handleScan,
         onClose: () => setMode("idle"),
         captureRequest,
         torchEnabled,
@@ -283,9 +284,11 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
     let animId = null;
     let stream = null;
     let stopped = false;
+    let throttleTimer = null;
 
     function stop() {
       stopped = true;
+      clearTimeout(throttleTimer);
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
         stream = null;
@@ -332,7 +335,7 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
       const MIN_FRAME_INTERVAL_MS = 125;
       const nextFrameTime = lastScanTimeRef.current + MIN_FRAME_INTERVAL_MS;
       if (now < nextFrameTime) {
-        setTimeout(scanFrame, nextFrameTime - now);
+        throttleTimer = setTimeout(scanFrame, nextFrameTime - now);
         return;
       }
 
@@ -347,7 +350,7 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
         || (pendingManualCaptureRef.current && frameReady
           ? decodeCanvasFrame(video, canvas, { manual: true, returnPayload })
           : decodeCanvasFrame(video, canvas, { returnPayload }));
-      if (pendingManualCaptureRef.current && scanAction.status !== "pending") {
+      if (pendingManualCaptureRef.current && (frameReady || timedOutManualCapture)) {
         pendingManualCaptureRef.current = false;
         pendingManualCaptureStartedAtRef.current = null;
       }
@@ -390,7 +393,7 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
       handleScanActionRef.current = () => false;
       stop();
     };
-  }, [onScan]);
+  }, [onScan, returnPayload]);
 
   useEffect(() => {
     torchEnabledRef.current = torchEnabled;

@@ -61,7 +61,7 @@ export function PdfSealForm() {
     setLoading(true);
     try {
       setMessage("Sealing in this browser...");
-      const { blob, sealResult } = await sealPdfInBrowser({
+      const { blob, sealResult, flattenedFieldCount } = await sealPdfInBrowser({
         file,
         issuer,
         privateKey,
@@ -83,6 +83,7 @@ export function PdfSealForm() {
       setMessage(
         [
           `Sealed ${file.name} in this browser. Document ID: ${sealResult.document_id}`,
+          ...(flattenedFieldCount ? [`Flattened ${flattenedFieldCount} form field(s) before sealing.`] : []),
           `Selected encoding: ${sealResult.encoding || encodingStrategy}`,
           `Selected page scaling: ${pageScalingStrategy}`,
           `Selected recipe: ${sealResult.selected_recipe || "plaintext"}`,
@@ -102,7 +103,7 @@ export function PdfSealForm() {
     <div className="card">
       <h2>Demo: Upload and Seal a PDF</h2>
       <p style={{ color: "#64748b", marginBottom: "1rem" }}>
-        Select a PDF, stamp every page with a verifier QR plus payload QR seals, and download the sealed copy.
+        Seal the readable text on every PDF page and download the stamped copy. Supported form fields are automatically flattened before their text is signed. Images, handwriting, checkbox marks, and page appearance are not authenticated. Scanned or blank pages require a checked text layer before sealing. Review the values in your downloaded copy.
       </p>
       <div className="demo-grid">
         <div className="demo-input">
@@ -142,7 +143,6 @@ export function PdfSealForm() {
             <option value="automatic">Automatic (recommended)</option>
             <option value="plaintext">Plaintext</option>
             <option value="b45">Recipe 1 – b45</option>
-            <option value="brotli">Brotli (when smaller)</option>
           </select>
           <small style={{ color: "#64748b", display: "block", marginTop: "0.5rem" }}>
             Automatic tries every reversible recipe and chooses the smallest successful encoding.
@@ -173,7 +173,7 @@ export function PdfSealForm() {
         {loading ? "Sealing..." : "Upload PDF and Stamp QR Seals"}
       </button>
       {message && (
-        <p style={{ marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155", whiteSpace: "pre-wrap" }}>
+        <p id="stamp-result" role="status" style={{ marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155", whiteSpace: "pre-wrap" }}>
           {message}
         </p>
       )}

@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "description": "QRed Verifier - Web-based QR document verification",
   "scripts": {
+    "prestart": "node scripts/preparePdfAssets.mjs",
     "start": "vite",
+    "prebuild": "node scripts/preparePdfAssets.mjs",
     "build": "vite build && cp build/verifier.html build/verify.htm",
     "test": "vitest run",
     "lint": "eslint src/ --ext .jsx,.tsx",
@@ -16,7 +18,7 @@
     "@noble/ed25519": "^3.1.0",
     "jsqr": "^1.4.0",
     "pdf-lib": "^1.17.1",
-    "pdfjs-dist": "^6.1.200",
+    "pdfjs-dist": "6.1.200",
     "qrcode": "^1.5.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

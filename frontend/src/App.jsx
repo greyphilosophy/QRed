@@ -2,13 +2,22 @@
 import React, { useState } from "react";
 import { QrScanner } from "./QrScanner.jsx";
 import { PdfSealForm } from "./PdfSealForm.jsx";
+import { SealVerification, useSealVerification } from "./SealVerification.jsx";
+import "./verification.css";
 
 function App() {
   const [showPdfStampTool, setShowPdfStampTool] = useState(false);
+  const verification = useSealVerification();
 
   return (
     <main className="homepage">
-      <QrScanner onOpenPdfStampTool={() => setShowPdfStampTool(true)} />
+      <QrScanner
+        returnPayload
+        onSealDetected={verification.addSeal}
+        onOpenPdfStampTool={() => setShowPdfStampTool(true)}
+        resultPanel={<div className="ar-result-panel"><h2>QR captured</h2><p>See verification results below. Scan again to collect the next seal.</p></div>}
+      />
+      <SealVerification verification={verification} />
       {showPdfStampTool && (
         <section className="pdf-stamp-tool" id="pdf-stamp-tool">
           <div className="tool-header">

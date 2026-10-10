@@ -1,15 +1,11 @@
-import { signAsync as signEd25519 } from "@noble/ed25519";
+import { signAsync as signEd25519, getPublicKeyAsync } from "@noble/ed25519";
 import { createQRedQrData } from "./qredQr.js";
 import { validateSimpleEnglish } from "./textRecipes.js";
+import { computeKeyId, decodeBase64Url, sealSignatureMessage } from "./sealSignature.js";
+
+export { computeKeyId } from "./sealSignature.js";
 
 export const DEFAULT_BOOTSTRAP_URL = "https://qred.org/";
-
-function decodeBase64Url(value) {
-  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=");
-  const binary = atob(padded);
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
-}
 
 function encodeBase64Url(bytes) {
   let binary = "";
@@ -62,19 +58,22 @@ function splitTextForQrUrls(text, payload, bootstrapUrl, recipeId = "plaintext")
   }
 
   let totalChunks = 1;
+  // Split on Unicode code points; cutting a surrogate pair changes the signed
+  // text when URLSearchParams replaces each lone surrogate with U+FFFD.
+  const characters = Array.from(text);
   let chunks = [];
   let stable = false;
 
   while (!stable) {
     chunks = [];
     let offset = 0;
-    while (offset < text.length) {
+    while (offset < characters.length) {
       let low = 1;
-      let high = text.length - offset;
+      let high = characters.length - offset;
       let best = 0;
       while (low <= high) {
         const mid = Math.floor((low + high) / 2);
-        const chunkText = text.slice(offset, offset + mid);
+        const chunkText = characters.slice(offset, offset + mid).join("");
         const fragmentData = buildFragmentData({
           payload,
           chunkText,
@@ -92,7 +91,8 @@ function splitTextForQrUrls(text, payload, bootstrapUrl, recipeId = "plaintext")
       if (best === 0) {
         throw new Error("QRed metadata and signature exceed the QR code capacity before adding document text");
       }
-      chunks.push(text.slice(offset, offset + best));
+      chunks.push(characters.slice(offset, offset + best).join(""));
+      if (chunks.length > 4096) throw new Error("Document exceeds the 4096-seal limit");
       offset += best;
     }
     stable = chunks.length === totalChunks;
@@ -120,11 +120,6 @@ export function canonicalizeText(text) {
   while (collapsed.length > 0 && !collapsed[0]) collapsed.shift();
   while (collapsed.length > 0 && !collapsed[collapsed.length - 1]) collapsed.pop();
   return collapsed.join("\n");
-}
-
-export async function computeKeyId(publicKey) {
-  const digest = await crypto.subtle.digest("SHA-256", decodeBase64Url(publicKey));
-  return bytesToHex(new Uint8Array(digest)).slice(0, 16);
 }
 
 export function generateDocumentId() {
@@ -174,18 +169,28 @@ export async function createQRedSeals({
   encodingStrategy = "automatic",
 }) {
   const canonical = canonicalizeText(content);
+  if (!canonical.trim()) throw new Error("Cannot seal empty document text");
+  if (!issuer?.trim()) throw new Error("An issuer is required");
+  if (!["automatic", "plaintext", "b45", "base45ish", "recipe1", "simple_english"].includes(encodingStrategy)) {
+    throw new Error(`Unsupported encoding strategy: ${encodingStrategy}`);
+  }
   if (!documentId) documentId = generateDocumentId();
-  const signature = await signEd25519(new TextEncoder().encode(canonical), decodeBase64Url(privateKey));
+  const privateBytes = decodeBase64Url(privateKey);
+  const publicBytes = decodeBase64Url(publicKey);
+  const derivedPublicKey = await getPublicKeyAsync(privateBytes);
+  if (publicBytes.length !== derivedPublicKey.length || publicBytes.some((byte, index) => byte !== derivedPublicKey[index])) {
+    throw new Error("The public key does not match the private key");
+  }
   const keyId = await computeKeyId(publicKey);
   const baseFields = {
     algorithm: "Ed25519",
     document_id: documentId,
     issuer,
     key_id: keyId,
-    signature: encodeBase64Url(signature),
     timestamp: new Date().toISOString(),
-    version: "1",
+    version: "2",
   };
+  baseFields.signature = encodeBase64Url(await signEd25519(sealSignatureMessage(baseFields, canonical), privateBytes));
 
   const plaintextPayload = buildPayload(baseFields, canonical, "plaintext");
   const plaintextJson = JSON.stringify(plaintextPayload, Object.keys(plaintextPayload).sort());

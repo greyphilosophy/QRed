@@ -6,6 +6,18 @@ QRed encodes the signed contents of a document into one or more QR code seals pr
 
 No app installation is required.
 
+New seals use a v2 signature over the text and issuer/document metadata.
+Legacy content-only signatures are displayed as `LEGACY`, not `VALID`.
+PDFs must contain readable text on every page; scanned, image-only, or blank
+pages are rejected rather than signed as empty content. See
+[Signed seals v2](docs/SIGNED_SEALS_V2.md) for scope, compatibility, and tests.
+Supported PDF forms are automatically flattened before text extraction and
+signing. Text fields and dropdowns are checked against their saved appearances;
+unsupported or inconsistent forms stop with an actionable error. Review the
+values in the downloaded copy. Missing fonts or character maps stop sealing
+instead of signing only the readable portion of a page. Checkbox/radio marks
+remain visible graphics and are not authenticated by the text signature.
+
 # Quick Start
 
 ## Run the demo
@@ -18,6 +30,9 @@ npm ci && npm start
 ```
 
 The demo app runs at `http://localhost:3000`. It is fully client-side: all PDF sealing, QR generation, and signature operations happen in your browser. No backend server is required.
+
+Use Node 24. For PDF raster regression tests, install `poppler-utils`
+(`pdftoppm`).
 
 ## Start the development server
 
@@ -108,7 +123,7 @@ Before considering production deployment complete, verify all of the following:
 
 - The homepage loads successfully at `https://qred.org/`.
 - The verifier route loads successfully at `https://qred.org/verify.htm`.
-- The scanner page can submit collected payload seals and issuer public key data to the verification API.
+- The scanner recovers hidden payloads from QR images, collects all chunks, and verifies locally against the selected issuer public key.
 - Generated QRed payload QR codes in sealed PDFs and API responses show `https://qred.org/` to ordinary scanners, and only the QRed-aware scanner can recover the signed payload data hidden in QR codewords.
 
 A quick HTTP check for the required verifier route is:
@@ -214,7 +229,10 @@ Each issuing authority maintains a signing key pair:
 
 The default demo keypair is provided solely for testing. In production, issuers should generate their own keypair and supply the private key directly in the browser.
 
-Any modification to the sealed document contents invalidates the signature and causes verification to fail.
+Changing signed text or v2 identity metadata invalidates the signature. A
+recipient must also compare that recovered text with the visible document;
+changing the paper while leaving its QR unchanged does not alter the QR's
+signature. Images, handwriting, and page appearance are not authenticated.
 
 # Status
 

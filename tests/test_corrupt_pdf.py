@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import tempfile
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Page, expect, sync_playwright
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas as rl_canvas
 
@@ -29,55 +30,6 @@ BASE_URL = os.environ.get("QRED_BASE_URL", "http://localhost:5173")
 PAGE_LOAD_TIMEOUT = 30_000
 STAMP_SECTION_TIMEOUT = 15_000
 SEAL_BUTTON_TIMEOUT = 10_000
-PROCESSING_WAIT_MS = 8_000  # async processing after click
-AFTER_SEAL_TIMEOUT = 5_000  # extra buffer for QR generation
-
-# Result selectors — target the actual UI element showing operation results.
-RESULT_SELECTORS = [
-    "#stamp-result",
-    ".stamp-result",
-    "#result-message",
-    ".result-message",
-    ".message",
-    ".alert",
-    ".error-message",
-    ".error-alert",
-    '[role="alert"]',
-]
-
-# Error keywords that indicate a genuine operation failure
-ERROR_KEYWORDS = [
-    "not a valid",
-    "could not",
-    "unhandled",
-    "exception",
-    "corrupt",
-    "malformed",
-    "parse",
-    "truncated",
-    "zero-byte",
-    "empty file",
-    "cannot read",
-    "unexpected end",
-    "rejected",
-    "invalid",
-    "page count",
-    "changed while",
-]
-
-# Success indicators — ONLY these exact strings mean the seal operation succeeded.
-# We use full-phrase matching so incidental page text ("Stamp PDF") does not count.
-SUCCESS_PHRASES = [
-    "document_id",
-    "qr code generated",
-    "qr codes generated",
-    "stamped successfully",
-    "seal generated",
-    "seals generated",
-    "qr seal",
-    "qr seals",
-    "estimated qr",
-]
 
 
 def make_empty_pdf() -> bytes:
@@ -198,8 +150,6 @@ def _open_stamp_tool(page: Page) -> Page:
     """
     home_url = f"{BASE_URL}/"
     page.goto(home_url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT)
-    page.wait_for_timeout(3000)
-
     btn = page.locator("button[aria-label='Open PDF stamping tool']")
     if btn.count() == 0:
         btn = page.locator("button").filter(has_text="Stamp PDF").first
@@ -209,7 +159,7 @@ def _open_stamp_tool(page: Page) -> Page:
     stamp_section = page.locator("#pdf-stamp-tool, .pdf-stamp-tool")
     stamp_section.wait_for(state="visible", timeout=STAMP_SECTION_TIMEOUT)
 
-    page.wait_for_timeout(3000)
+    expect(page.get_by_role("button", name="Use Default Keys", exact=True)).to_be_enabled()
 
     return page
 
@@ -248,8 +198,6 @@ def _upload_file_to_stamp_tool(
         file_input.set_input_files(tmp_path)
         print(f"[FILE UPLOAD] set_input_files({file_name}) OK")
 
-        page.wait_for_timeout(3000)
-
         body_text = page.text_content("body") or ""
         file_visible = file_name.lower() in body_text.lower()
         print(f"[DEBUG] File '{file_name}' visible in UI? {'Yes' if file_visible else 'No'}")
@@ -273,18 +221,12 @@ def _upload_file_to_stamp_tool(
                 pass
 
         # Click the Seal button — must exist after upload
-        seal_btn = page.locator("button:has-text('Seal'), button:has-text('Upload PDF'), button:has-text('Stamp QR'), button:has-text('Stamp and Seal')").first
-        
-        if not seal_btn.is_visible(timeout=SEAL_BUTTON_TIMEOUT):
-            raise AssertionError(
-                "Seal button not found — the upload form may not have completed processing"
-            )
-
+        seal_btn = page.get_by_role("button", name="Upload PDF and Stamp QR Seals", exact=True)
+        expect(seal_btn).to_be_enabled(timeout=SEAL_BUTTON_TIMEOUT)
         seal_btn.click(timeout=5_000)
-
-        # Wait for async processing
-        page.wait_for_timeout(PROCESSING_WAIT_MS)
-        page.wait_for_timeout(AFTER_SEAL_TIMEOUT)
+        expect(page.locator("#stamp-result")).to_have_text(
+            re.compile(r"^(Sealed |PDF sealing failed:)"), timeout=60_000
+        )
     except Exception as e:
         raise AssertionError(f"File upload failed: {e}") from e
     finally:
@@ -297,41 +239,12 @@ def _upload_file_to_stamp_tool(
 def _check_results(page: Page) -> dict:
     """Read the result message/status after uploading and attempting to seal.
 
-    Returns success only if an explicit success PHRASE is found in the result
-    container or paragraph text.  A blank or landing-page-only result is
-    considered an incomplete operation.
+    Read only the completed stamping operation, never unrelated page copy.
     """
-    # Collect text from the dedicated result container(s) first
-    result_text = ""
-    for selector in RESULT_SELECTORS:
-        try:
-            elements = page.locator(selector).all()
-            for el in elements[:20]:
-                t = el.inner_text().strip()
-                if t and len(t) > 2:
-                    result_text += t + "\n"
-        except Exception:
-            pass
-
-    # Fallback: all paragraph text
-    try:
-        paragraphs = page.locator("p").all_text_contents()
-        for p_text in paragraphs:
-            cleaned = p_text.strip()
-            if cleaned and cleaned not in result_text:
-                result_text += cleaned + "\n"
-    except Exception:
-        pass
-
-    result_text = result_text.strip()
-    result_lower = result_text.lower()
-
-    # Only count as success if an explicit success phrase is found
-    has_error = any(ind in result_lower for ind in ERROR_KEYWORDS)
-    had_success = any(phrase.lower() in result_lower for phrase in SUCCESS_PHRASES)
-
-    # An operation that produced no visible feedback is not considered complete
-    completed = bool(result_text)
+    result_text = page.locator("#stamp-result").inner_text().strip()
+    has_error = result_text.startswith("PDF sealing failed:")
+    had_success = result_text.startswith("Sealed ") and "Document ID:" in result_text
+    completed = has_error or had_success
 
     return {
         "success": had_success and not has_error,
@@ -523,23 +436,14 @@ def test_t8_reupload_sealed_pdf(page: Page):
 
 
 def test_t9_image_only_pdf(page: Page):
-    """Image-only PDF (actual raster image, no text) should seal
-    successfully — matches the expectation from PR #88."""
+    """Refuse image-only PDFs rather than signing empty page text."""
     data = make_image_only_pdf()
     _open_stamp_tool(page)
     _upload_file_to_stamp_tool(page, data, file_name="image_only.pdf")
     result = _check_results(page)
-    print(f"T9 image-only: success={result['success']} err={result['has_error']} "
-          f"msg='{result['message_contains']}'")
-    assert result["success"], (
-        f"Image-only PDF should seal successfully, but result says "
-        f"success={result['success']} and error={result['has_error']}. "
-        f"UI text: {result['message_contains']!r}"
-    )
-    assert not result["has_error"], (
-        f"Image-only PDF should not produce an error, but "
-        f"has_error={result['has_error']}. UI text: {result['message_contains']!r}"
-    )
+    assert not result["success"], "Image-only PDF must not produce an empty-content seal"
+    assert result["has_error"], f"Expected extraction error, got {result!r}"
+    assert "No readable text" in page.locator("body").inner_text()
 
 
 def test_t10_non_pdf_binary(page: Page):

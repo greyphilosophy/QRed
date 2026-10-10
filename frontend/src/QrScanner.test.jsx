@@ -239,7 +239,9 @@ describe("QrScanner manual photo capture", () => {
         return 1;
       });
     const cancelAnimationFrameSpy = vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
-    const now = vi.spyOn(performance, "now");
+    // Set the clock before the first frame; moving it backwards after mount
+    // can leave the scanner waiting for a throttle timer from the real clock.
+    const now = vi.spyOn(performance, "now").mockReturnValue(1000);
     const stream = {
       getTracks: () => [{ stop: vi.fn() }],
       getVideoTracks: () => [{ getCapabilities: () => ({}) }],

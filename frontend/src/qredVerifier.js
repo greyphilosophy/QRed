@@ -9,6 +9,7 @@ import ECCode from "qrcode/lib/core/error-correction-code.js";
 import ECLevel from "qrcode/lib/core/error-correction-level.js";
 import { verifyAsync as verifyEd25519 } from "@noble/ed25519";
 import { decodeB45ish } from "./textRecipes.js";
+import { computeKeyId, decodeBase64Url, sealSignatureMessage } from "./sealSignature.js";
 import { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset } from "./qr/hiddenPayload.js";
 import { codewordsFromMatrix, deinterleaveDataCodewordsWithQrLib } from "./qr/qrLowLevel.js";
 import { sampleQrMatrix } from "./qr/qrImageRecovery.js";
@@ -128,18 +129,11 @@ export function qredTextFromPhotoScanResult(imageData, width, height, scanResult
 // instead of decoding it into plaintext document content.
 export function qredPayloadFromPhotoScanResult(imageData, width, height, scanResult) {
   const visibleText = qredTextFromScanResult(scanResult);
-  if (!imageData || !width || !height) return visibleText;
+  if (!imageData || !width || !height || scanResult?.data !== VISIBLE_QR_TEXT) return visibleText;
   return extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) || visibleText;
 }
 
 // ── Seal parsing + signature verification ──
-function decodeBase64Url(value) {
-  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=");
-  const binary = atob(padded);
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
-}
-
 async function decodeBrotli(value) {
   if (typeof DecompressionStream !== "function") throw new Error("Brotli decoding is not available in this browser");
   const stream = new Blob([decodeBase64Url(value)]).stream().pipeThrough(new DecompressionStream("br"));
@@ -155,10 +149,12 @@ function sealFragment(sealString) {
 function decodePlaintextFragment(fragment) {
   if (!fragment.startsWith("QRED1?")) return null;
   const params = new URLSearchParams(fragment.slice("QRED1?".length));
-  const chunkNumber = Number.parseInt(params.get("i") || "", 10);
-  const totalChunks = Number.parseInt(params.get("n") || "", 10);
+  if ([...params.keys()].some((key) => params.getAll(key).length !== 1)) return null;
+  if (!/^\d+$/.test(params.get("i") || "") || !/^[1-9]\d*$/.test(params.get("n") || "")) return null;
+  const chunkNumber = Number(params.get("i"));
+  const totalChunks = Number(params.get("n"));
   const documentId = params.get("doc") || "";
-  if (!documentId || !Number.isInteger(chunkNumber) || !Number.isInteger(totalChunks)) return null;
+  if (!documentId || !Number.isSafeInteger(chunkNumber) || !Number.isSafeInteger(totalChunks) || totalChunks > 4096 || chunkNumber >= totalChunks) return null;
 
   return {
     format_id: "QRED1",
@@ -177,6 +173,7 @@ function decodePlaintextFragment(fragment) {
 }
 
 export function decodeSeal(sealString) {
+  if (typeof sealString !== "string") return null;
   const fragment = sealFragment(sealString);
   const plaintext = decodePlaintextFragment(fragment);
   if (plaintext) return plaintext;
@@ -184,131 +181,80 @@ export function decodeSeal(sealString) {
 }
 
 export async function verifyQRedSeals(seals, publicKey) {
-  const context = { chunks: {}, document_id: "", total_chunks: 0, errors: [], plaintext: false, metadata: {} };
-
+  if (!Array.isArray(seals) || seals.length === 0) {
+    return { status: "ERROR", error_message: "No valid chunks found" };
+  }
+  const chunks = new Map();
+  let metadata;
+  const consistentFields = ["document_id", "total_chunks", "version", "algorithm", "issuer", "key_id", "timestamp", "recipe"];
   for (const seal of seals) {
     const decoded = decodeSeal(seal);
-    if (!decoded) {
-      context.errors.push(`Malformed seal: ${seal.slice(0, 50)}`);
-      continue;
+    if (!decoded) return { status: "ERROR", error_message: "Malformed seal or invalid chunk index/count" };
+    if (!metadata) metadata = decoded;
+    if (decoded.document_id !== metadata.document_id) {
+      return { status: "INVALID", document_id: metadata.document_id, error_message: "Mixed document IDs" };
     }
-
-    if (context.document_id && decoded.document_id !== context.document_id) {
-      return { status: "INVALID", document_id: context.document_id, error_message: "Mixed document IDs" };
+    if (consistentFields.some((field) => decoded[field] !== metadata[field])) {
+      return { status: "INVALID", document_id: metadata.document_id, error_message: "Inconsistent seal metadata" };
     }
-
-    if (!context.document_id) context.document_id = decoded.document_id;
-    context.total_chunks = decoded.total_chunks;
-    context.chunks[decoded.chunk_number] = decoded.data;
-    if (decoded.recipe !== undefined) {
-      context.plaintext = true;
-      context.metadata = { ...context.metadata, recipe: decoded.recipe };
+    const previous = chunks.get(decoded.chunk_number);
+    if (previous && (previous.data !== decoded.data || previous.signature !== decoded.signature)) {
+      return { status: "INVALID", document_id: metadata.document_id, error_message: "Conflicting duplicate chunk" };
     }
-    if (decoded.recipe !== undefined || decoded.algorithm) {
-      context.metadata = {
-        ...context.metadata,
-        ...Object.fromEntries(
-          Object.entries({
-            algorithm: decoded.algorithm,
-            issuer: decoded.issuer,
-            key_id: decoded.key_id,
-            signature: decoded.signature,
-            timestamp: decoded.timestamp,
-            version: decoded.version,
-          }).filter(([, value]) => value)
-        ),
-      };
+    if (decoded.chunk_number !== 0 && decoded.signature) {
+      return { status: "INVALID", error_message: "Signature must appear only in chunk 0" };
     }
+    chunks.set(decoded.chunk_number, decoded);
   }
-
-  const chunkNumbers = Object.keys(context.chunks).map(Number);
-  if (chunkNumbers.length === 0) return { status: "ERROR", error_message: "No valid chunks found" };
-
+  if (!["1", "2"].includes(metadata.version) || metadata.algorithm !== "Ed25519") {
+    return { status: "ERROR", error_message: "Unsupported seal version or signature algorithm" };
+  }
   const missing = [];
-  for (let i = 0; i < context.total_chunks; i += 1) {
-    if (!(i in context.chunks)) missing.push(i);
+  for (let i = 0; i < metadata.total_chunks; i += 1) {
+    if (!chunks.has(i)) missing.push(i);
   }
-  if (missing.length > 0) {
-    return { status: "INCOMPLETE", document_id: context.document_id, error_message: `Missing chunks: [${missing.join(", ")}]` };
+  if (missing.length) {
+    return { status: "INCOMPLETE", document_id: metadata.document_id, error_message: `Missing chunks: [${missing.join(", ")}]`, collected_chunks: chunks.size, total_chunks: metadata.total_chunks };
   }
-
-  let payload;
+  const recipeDecoders = new Map([
+    ["plaintext", (value) => value], ["b45", decodeB45ish],
+    ["base45ish", decodeB45ish], ["recipe1", decodeB45ish],
+    ["simple_english", decodeB45ish], ["brotli", decodeBrotli],
+  ]);
+  const decoder = recipeDecoders.get(metadata.recipe);
+  if (!decoder) return { status: "ERROR", error_message: "Unsupported text recipe" };
+  let content;
   try {
-    const rawData = Array.from({ length: context.total_chunks }, (_, i) => context.chunks[i]).join("");
-    if (context.plaintext) {
-      payload = {
-        algorithm: context.metadata.algorithm || "Ed25519",
-        content: rawData,
-        document_id: context.document_id,
-        issuer: context.metadata.issuer || "",
-        key_id: context.metadata.key_id || "",
-        signature: context.metadata.signature || "",
-        timestamp: context.metadata.timestamp || "",
-        version: context.metadata.version || "1",
-        recipe: context.metadata.recipe || "plaintext",
-      };
-    } else {
-      return { status: "ERROR", error_message: "Unsupported seal format" };
-    }
-  } catch (error) {
-    return { status: "ERROR", error_message: `Payload decoding failed: ${error.message}` };
-  }
-
-  const content = payload.content || "";
-  const recipe = payload.recipe || "plaintext";
-  const recipeDecoders = {
-    b45: decodeB45ish,
-    base45ish: decodeB45ish,
-    recipe1: decodeB45ish,
-    simple_english: decodeB45ish,
-    brotli: decodeBrotli,
-  };
-  let restoredContent;
-  try {
-    restoredContent = await (recipeDecoders[recipe] || ((value) => value))(content);
+    content = await decoder(Array.from({ length: metadata.total_chunks }, (_, i) => chunks.get(i).data).join(""));
   } catch (error) {
     return { status: "ERROR", error_message: `Recipe decoding failed: ${error.message}` };
   }
-  const signature = payload.signature || "";
-  const issuer = payload.issuer || "";
-  const documentId = payload.document_id || "";
-  const timestamp = payload.timestamp || "";
-  const keyId = payload.key_id || "";
-
-  if (!publicKey) {
-    return {
-      status: "UNVERIFIED",
-      document_id: documentId,
-      issuer,
-      timestamp,
-      content: restoredContent,
-      recipe,
-      key_id: keyId,
-      error_message: "No trusted public key available for signature verification",
-    };
+  const result = {
+    issuer: metadata.issuer, document_id: metadata.document_id,
+    timestamp: metadata.timestamp, content, recipe: metadata.recipe,
+    key_id: metadata.key_id, version: metadata.version,
+    metadata_authenticated: false, signature_valid: false,
+  };
+  if (!publicKey?.trim()) {
+    return { ...result, status: "UNVERIFIED", error_message: "No trusted public key available for signature verification" };
   }
-
   let isValid;
   try {
-    const message = new TextEncoder().encode(restoredContent);
-    isValid = await verifyEd25519(decodeBase64Url(signature), message, decodeBase64Url(publicKey));
+    const message = metadata.version === "2"
+      ? sealSignatureMessage(metadata, content)
+      : new TextEncoder().encode(content);
+    const keyMatches = metadata.version === "1" || await computeKeyId(publicKey) === metadata.key_id;
+    isValid = keyMatches && await verifyEd25519(decodeBase64Url(chunks.get(0).signature), message, decodeBase64Url(publicKey));
   } catch {
     isValid = false;
   }
-
-  if (isValid) {
-    return { status: "VALID", issuer, document_id: documentId, timestamp, content: restoredContent, recipe, key_id: keyId };
+  if (!isValid) {
+    return { ...result, status: "INVALID", error_message: "Digital signature verification failed" };
   }
-
-  return {
-    status: "INVALID",
-    issuer,
-    document_id: documentId,
-    error_message: "Digital signature verification failed",
-    content: restoredContent,
-    recipe,
-    key_id: keyId,
-  };
+  if (metadata.version === "1") {
+    return { ...result, status: "LEGACY", signature_valid: true, error_message: "Legacy seal: the content signature matches, but issuer and document metadata are not authenticated. Re-seal to use full verification." };
+  }
+  return { ...result, status: "VALID", signature_valid: true, metadata_authenticated: true };
 }
 
 // Re-export kept for test compatibility (module::codewordsFromMatrix etc were re-exported)

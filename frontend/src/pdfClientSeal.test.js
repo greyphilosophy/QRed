@@ -7,10 +7,10 @@ import jsQR from "jsqr";
 import { PDFDocument } from "pdf-lib";
 import { PNG } from "pngjs";
 import { describe, expect, it } from "vitest";
-import { LEGAL_FOOTER_HEIGHT, planQrStampLayout, planQrStampLayoutForFooterBand, qrPngBytes, sealPdfInBrowser } from "./pdfClientSeal.js";
+import { extractPdfText, LEGAL_FOOTER_HEIGHT, planQrStampLayout, planQrStampLayoutForFooterBand, qrPngBytes, sealPdfInBrowser } from "./pdfClientSeal.js";
 import { qrScanAction } from "./QrScanner.jsx";
 import { createQRedQrData, qredQrPngDataUrl, qredRasterPlan, qredVisibleBitsLength } from "./qredQr.js";
-import { extractHiddenQRedPayload, verifyQRedSeals, VISIBLE_QR_TEXT } from "./qredVerifier.js";
+import { extractHiddenQRedPayload, qredPayloadFromPhotoScanResult, verifyQRedSeals, VISIBLE_QR_TEXT } from "./qredVerifier.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
@@ -77,16 +77,63 @@ function bitAt(bytes, index) {
   return (bytes[Math.floor(index / 8)] >>> (7 - (index % 8))) & 1;
 }
 
-function renderPdfFirstPageToPng(pdfBytes) {
+function renderPdfFirstPageToPng(pdfBytes, dpi = 144) {
   const stamp = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const pdfPath = join(tmpdir(), `qred-seal-${stamp}.pdf`);
   const pngBase = join(tmpdir(), `qred-seal-${stamp}`);
   writeFileSync(pdfPath, Buffer.from(pdfBytes));
-  execFileSync("pdftoppm", ["-png", "-r", "144", "-singlefile", pdfPath, pngBase]);
+  execFileSync("pdftoppm", ["-png", "-r", String(dpi), "-singlefile", pdfPath, pngBase]);
   return PNG.sync.read(readFileSync(`${pngBase}.png`));
 }
 
 describe("browser PDF sealing", () => {
+  it("recovers the actual text from an ASCII85/Flate PDF's rendered stamped QR", async () => {
+    const file = new File([readFileSync("../tests/fixtures/ascii85-text.pdf")], "ascii85.pdf", { type: "application/pdf" });
+    expect(await extractPdfText(file)).toContain("The approved total is 123.45 dollars.");
+    const { blob } = await sealPdfInBrowser({ file, issuer: "Regression QA", privateKey, publicKey });
+    // Read the actual printed footer at normal print resolution, not the seal
+    // string held in memory by the stamper (which missed the original bug).
+    const page = renderPdfFirstPageToPng(await blob.arrayBuffer(), 300);
+    const footerHeight = Math.round(LEGAL_FOOTER_HEIGHT * 300 / 72);
+    const png = new PNG({ width: page.width, height: footerHeight });
+    PNG.bitblt(page, png, 0, page.height - footerHeight, page.width, footerHeight, 0, 0);
+    const pixels = new Uint8ClampedArray(png.data);
+    const qr = jsQR(pixels, png.width, png.height);
+    expect(qr?.data).toBe(VISIBLE_QR_TEXT);
+    const payload = qredPayloadFromPhotoScanResult(pixels, png.width, png.height, qr);
+    const result = await verifyQRedSeals([payload], publicKey);
+    expect(result).toMatchObject({ status: "VALID", metadata_authenticated: true });
+    for (const line of ["QRed audit sample", "The approved total is 123.45 dollars.", "This is a synthetic test document with no private information."]) {
+      expect(result.content).toContain(line);
+    }
+    expect(result.content).not.toContain("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+  });
+
+  it("extracts text inside embedded form objects", async () => {
+    const source = await makeLetterPdfFile();
+    const pdf = await PDFDocument.create();
+    const [embedded] = await pdf.embedPdf(await source.arrayBuffer());
+    pdf.addPage([612, 792]).drawPage(embedded);
+    const file = new File([await pdf.save()], "form.pdf", { type: "application/pdf" });
+    expect(await extractPdfText(file)).toContain("Dear verifier,");
+  });
+
+  it.each(["blank", "image-only", "mixed"])("refuses %s pages instead of signing empty text", async (kind) => {
+    const pdf = await PDFDocument.create();
+    if (kind === "mixed") pdf.addPage([612, 792]).drawText("Readable first page");
+    const page = pdf.addPage([612, 792]);
+    if (kind !== "blank") {
+      const image = await pdf.embedPng(readFileSync("../tests/qr_test_plain.png"));
+      page.drawImage(image, { x: 72, y: 400, width: 200, height: 200 });
+    }
+    const file = new File([await pdf.save()], "unreadable.pdf", { type: "application/pdf" });
+    await expect(sealPdfInBrowser({ file, issuer: "QA", privateKey, publicKey })).rejects.toThrow(/No readable text on PDF page\(s\)/);
+  });
+
+  it("propagates invalid PDF errors instead of returning an empty extraction", async () => {
+    await expect(extractPdfText(new File(["not a PDF"], "bad.pdf"))).rejects.toThrow();
+  });
+
   it("stamps a PDF and returns verifier-compatible manifest seals", async () => {
     const file = await makePdfFile();
 
