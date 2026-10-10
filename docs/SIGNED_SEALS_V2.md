@@ -53,11 +53,21 @@ part of the page has readable text. `stopAtErrors` alone is insufficient:
 PDF.js can substitute an error font, so we also inspect font dependencies
 in each page's operator list before accepting its extracted text.
 
-Interactive AcroForm/XFA PDFs and widget annotations are rejected before
-signing. Flatten or print forms to a text PDF in a PDF editor and check all
-values first. The stamper must not silently omit field values or remove
-them while replacing pages. Already flattened forms are ordinary page
-content and remain supported.
+Before extraction, supported AcroForm fields are flattened into page content.
+Both text extraction and stamping use that same serialized flattened copy.
+Text fields and dropdowns retain their saved appearances and fonts; missing
+appearances are generated when possible. Each text appearance is independently
+extracted and checked against its stored value, so stale appearances cannot
+silently seal an outdated amount. Checkboxes and radio groups retain their
+visible appearances as graphics, outside the text signature's coverage.
+
+XFA, signature fields, unsupported field types, password/rich-text fields,
+hidden, orphaned, or overlapping widgets, mismatched values, and unsupported appearance
+geometry stop sealing with instructions to export a checked text PDF.
+The UI reports how many fields were flattened. Review values in the downloaded
+copy. Already flattened PDFs remain supported. This preparation does not add
+visual-overlay tampering detection or authenticate graphics, and does not
+flatten arbitrary non-form annotations.
 
 QRed seals text and associated metadata, not a PDF's images, handwriting,
 layout, or every byte of the PDF. Recipients must compare the recovered text
@@ -73,9 +83,12 @@ ReportLab defaults and invariant output. It stamps the PDF, rasterizes the
 actual footer at 300 dpi with Poppler, recovers the hidden payload from the
 QR image, verifies the signature, and asserts all three source text lines.
 Other tests cover blank/image-only/mixed pages, embedded form text,
-Latin/CJK pages requiring predefined CMaps, failed fonts, interactive-form
-rejection, and preservation of flattened form values in signed and output
-text. Browser tests also block CMap downloads to confirm sealing fails.
+Latin/CJK pages requiring predefined CMaps, failed fonts, automatic form
+flattening, unsupported/stale forms, and preservation of values in signed and
+output text. A raster comparison also checks that text, dropdowns, checkboxes,
+and radio buttons keep their appearance after flattening and stamping. Browser
+tests block CMap downloads and reject stale field appearances to confirm
+sealing fails, and verify a filled form's value after automatic flattening.
 Tests additionally cover
 metadata tampering, wrong keys, Unicode chunk boundaries, missing and
 conflicting chunks, homepage verification, and the standalone camera route.

@@ -7,7 +7,7 @@ if (typeof window !== "undefined" && typeof Worker !== "undefined") {
   GlobalWorkerOptions.workerSrc = workerUrl;
 }
 
-const formError = "This PDF contains interactive form fields. Flatten or print it to a text PDF and check that every value is visible before sealing.";
+const formError = "This PDF still contains interactive form fields after preparation. Export or print it to a text PDF and check every value before sealing.";
 
 async function pdfAssetBase() {
   if (import.meta.env.SSR) {

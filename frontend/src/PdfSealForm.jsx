@@ -61,7 +61,7 @@ export function PdfSealForm() {
     setLoading(true);
     try {
       setMessage("Sealing in this browser...");
-      const { blob, sealResult } = await sealPdfInBrowser({
+      const { blob, sealResult, flattenedFieldCount } = await sealPdfInBrowser({
         file,
         issuer,
         privateKey,
@@ -83,6 +83,7 @@ export function PdfSealForm() {
       setMessage(
         [
           `Sealed ${file.name} in this browser. Document ID: ${sealResult.document_id}`,
+          ...(flattenedFieldCount ? [`Flattened ${flattenedFieldCount} form field(s) before sealing.`] : []),
           `Selected encoding: ${sealResult.encoding || encodingStrategy}`,
           `Selected page scaling: ${pageScalingStrategy}`,
           `Selected recipe: ${sealResult.selected_recipe || "plaintext"}`,
@@ -102,7 +103,7 @@ export function PdfSealForm() {
     <div className="card">
       <h2>Demo: Upload and Seal a PDF</h2>
       <p style={{ color: "#64748b", marginBottom: "1rem" }}>
-        Seal the readable text on every PDF page and download the stamped copy. Images, handwriting, and page appearance are not authenticated. Scanned or blank pages require a checked text layer before sealing. Interactive forms must first be flattened or printed to a text PDF with every value checked.
+        Seal the readable text on every PDF page and download the stamped copy. Supported form fields are automatically flattened before their text is signed. Images, handwriting, checkbox marks, and page appearance are not authenticated. Scanned or blank pages require a checked text layer before sealing. Review the values in your downloaded copy.
       </p>
       <div className="demo-grid">
         <div className="demo-input">

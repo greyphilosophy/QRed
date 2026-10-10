@@ -3,6 +3,7 @@ import { createQRedSeals, DEFAULT_BOOTSTRAP_URL, canonicalizeText } from "./qred
 import { qredQrPngDataUrl } from "./qredQr.js";
 import { LEGAL_FOOTER_HEIGHT, LEGAL_PAGE_HEIGHT, resolvePageScalingStrategy, applyPageScaling } from "./pdf/pageScaling.js";
 import { QR_SIZE, planQrStampLayout, planQrStampLayoutForFooterBand } from "./pdf/qrLayout.js";
+import { flattenPdfForSealing } from "./pdf/flattenPdf.js";
 
 export { QR_SIZE, LEGAL_PAGE_HEIGHT, LEGAL_FOOTER_HEIGHT };
 export { planQrStampLayout, planQrStampLayoutForFooterBand };
@@ -71,6 +72,8 @@ export async function qrPngBytes(value) {
 }
 
 export async function sealPdfInBrowser({ file, issuer, privateKey, publicKey, bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic", pageScalingStrategy = "automatic" }) {
+  const prepared = await flattenPdfForSealing(file);
+  file = prepared.file;
   const pageSealResults = await createPageSealResults({ file, issuer, privateKey, publicKey, bootstrapUrl, encodingStrategy });
   const pdf = await PDFDocument.load(await file.arrayBuffer());
   const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -118,5 +121,6 @@ export async function sealPdfInBrowser({ file, issuer, privateKey, publicKey, bo
     stampedQrValues: firstResult?.seals ?? [],
     pageSealResults,
     pageSealStrings,
+    flattenedFieldCount: prepared.flattenedFieldCount,
   };
 }

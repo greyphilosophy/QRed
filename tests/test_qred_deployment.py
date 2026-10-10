@@ -580,14 +580,34 @@ class TestPdfExtractionIntegrity:
             self._assert_rejected(page, source, "Cannot reliably read all text")
             assert blocked, "The test must actually fail a character-map request"
 
-    def test_filled_form_is_rejected_before_download(self, page: Page, tmp_path):
+    def test_filled_form_is_flattened_before_sealing(self, page: Page, tmp_path):
         source = tmp_path / "filled-form.pdf"
         pdf = rl_canvas.Canvas(str(source), pagesize=letter)
         pdf.drawString(72, 700, "Invoice amount:")
         pdf.acroForm.textfield(name="amount", value="12345.67 dollars", x=180, y=690, width=200, height=25)
         pdf.showPage()
         pdf.save()
-        self._assert_rejected(page, str(source), "interactive form fields")
+        sealed, seal_result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY)
+        assert os.path.exists(sealed)
+        expect(page.locator("#stamp-result")).to_contain_text("Flattened 1 form field(s) before sealing.")
+        content = json.loads(seal_result["full_result"]["payload_json"])["content"]
+        assert "12345.67 dollars" in content
+        assert _verify_seal_with_seal_strings(page, seal_result, seal_result["document_id"], DEMO_PUBLIC_KEY)
+        expect(page.locator("#resultContent")).to_contain_text("12345.67 dollars")
+
+    def test_stale_form_appearance_is_rejected(self, page: Page, tmp_path):
+        source = tmp_path / "stale-form.pdf"
+        pdf = rl_canvas.Canvas(str(source), pagesize=letter)
+        pdf.drawString(72, 700, "Invoice amount:")
+        pdf.acroForm.textfield(name="amount", value="12345.67 dollars", x=180, y=690, width=200, height=25)
+        pdf.showPage()
+        pdf.save()
+        data = source.read_bytes()
+        assert data.count(b"/V (12345.67 dollars)") == 1
+        # Same byte length keeps the xref valid while changing only the stored
+        # value, leaving the compressed visible appearance at the old amount.
+        source.write_bytes(data.replace(b"/V (12345.67 dollars)", b"/V (99999.99 dollars)"))
+        self._assert_rejected(page, str(source), "saved appearance that does not match its value")
 
     @staticmethod
     def _assert_rejected(page, source, message):
