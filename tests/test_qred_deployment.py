@@ -35,8 +35,7 @@ REPORTLAB_AVAILABLE = False
 PIL_AVAILABLE = False
 
 # The demo key pair used throughout the tests.
-# This matches the hardcoded fallback in App.jsx loadDefaultKeys():
-#   setPublicKey("eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=")
+# This matches the public demo verification key in the worker.
 DEMO_PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="
 
 # The demo private key used for sealing in tests.
@@ -122,7 +121,7 @@ def make_multi_page_pdf(path: str, num_pages: int = 3) -> bytes:
 # Test constants
 # ---------------------------------------------------------------------------
 
-# The demo public key — matches the hardcoded value in the worker and App.jsx
+# The demo public key — matches the hardcoded verification value in the worker
 DEMO_PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="
 
 # A demo private key for in-browser sealing (not exposed by the server)
@@ -205,14 +204,8 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
     except Exception as exc:
         raise AssertionError("Failed to click 'Stamp PDF' button — UI may have changed") from exc
 
-    # Step 2: Wait for the "Use Default Keys" button (inside PdfSealForm)
-    try:
-        key_btn = page.locator('button:has-text("Use Default Keys")').first
-        expect_playwright(key_btn).to_be_visible(timeout=10_000)
-        key_btn.click()  # Force key loading
-        page.wait_for_timeout(2000)  # Wait for async loadDefaultKeys() to complete
-    except Exception:
-        raise AssertionError("App failed to load — key button not found after opening Stamp PDF tool")
+    # Signing keys are local; opening the tool no longer fetches a default pair.
+    expect_playwright(page.get_by_role("button", name="Generate key pair", exact=True)).to_be_enabled()
 
     # Step 3: Wait for and click the "Stamp PDF" button inside the tool to proceed to file upload
     try:
@@ -543,9 +536,10 @@ class TestImageOnlyPdfs:
         base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
         page.goto(base_url, wait_until="networkidle")
         page.get_by_role("button", name="Open PDF stamping tool").click()
-        expect(page.get_by_role("button", name="Use Default Keys")).to_be_enabled()
+        expect(page.get_by_role("button", name="Generate key pair")).to_be_enabled()
         page.get_by_label("PDF file", exact=True).set_input_files(image_only_pdf_path)
         page.get_by_label("Private Key", exact=True).fill(DEMO_PRIVATE_KEY)
+        page.get_by_label("Public Key", exact=True).fill(DEMO_PUBLIC_KEY)
         downloads = []
         page.on("download", lambda download: downloads.append(download))
         page.get_by_role("button", name="Upload PDF and Stamp QR Seals", exact=True).click()
@@ -614,7 +608,7 @@ class TestPdfExtractionIntegrity:
         base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
         page.goto(base_url, wait_until="networkidle")
         page.get_by_role("button", name="Open PDF stamping tool").click()
-        expect(page.get_by_role("button", name="Use Default Keys", exact=True)).to_be_enabled()
+        expect(page.get_by_role("button", name="Generate key pair", exact=True)).to_be_enabled()
         page.get_by_label("PDF file", exact=True).set_input_files(source)
         page.get_by_label("Private Key", exact=True).fill(DEMO_PRIVATE_KEY)
         page.get_by_label("Public Key", exact=True).fill(DEMO_PUBLIC_KEY)
@@ -627,6 +621,71 @@ class TestPdfExtractionIntegrity:
 
 class TestKeyGenerationImportAndSignatureVerification:
     """T4: Key generation/import and signature verification."""
+
+    def test_generate_download_restore_stamp_and_verify(self, page: Page, simple_pdf_path: str, tmp_path):
+        """Generate in a real browser, reuse the downloaded seed, and verify a stamped PDF."""
+        import re
+
+        page.add_init_script("window.__qredTestMode = true;")
+        base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
+        page.goto(base_url, wait_until="networkidle")
+        page.get_by_role("button", name="Open PDF stamping tool").click()
+        private_input = page.get_by_label("Private Key", exact=True)
+        public_input = page.get_by_label("Public Key", exact=True)
+        expect(private_input).to_have_value("")
+        expect(public_input).to_have_value("")
+
+        # No request should be needed for generation or key downloads.
+        requests = []
+        page.on("request", lambda request: requests.append(request))
+        page.get_by_role("button", name="Generate key pair", exact=True).click()
+        expect(page.locator("#signing-key-status")).to_contain_text("Key pair generated.")
+        generated_private = private_input.input_value()
+        generated_public = public_input.input_value()
+        assert re.fullmatch(r"[A-Za-z0-9_-]{43}", generated_private)
+        assert re.fullmatch(r"[A-Za-z0-9_-]{43}", generated_public)
+        expect(private_input).to_have_attribute("type", "password")
+
+        for kind, expected in [("private", generated_private), ("public", generated_public)]:
+            with page.expect_download() as download_info:
+                page.get_by_role("button", name=f"Download {kind} key", exact=True).click()
+            download = download_info.value
+            assert download.suggested_filename == f"qred-ed25519-{kind}-key.txt"
+            path = tmp_path / download.suggested_filename
+            download.save_as(path)
+            assert path.read_text().strip() == expected
+        assert generated_private not in (tmp_path / "qred-ed25519-public-key.txt").read_text()
+        assert not requests, "Key generation and downloads must stay local"
+        assert page.evaluate("JSON.stringify([localStorage, sessionStorage])").find(generated_private) == -1
+
+        # Closing clears the keys. The private download restores the same identity.
+        page.get_by_role("button", name="Close", exact=True).click()
+        page.get_by_role("button", name="Open PDF stamping tool").click()
+        expect(private_input).to_have_value("")
+        expect(public_input).to_have_value("")
+        private_input.fill((tmp_path / "qred-ed25519-private-key.txt").read_text().strip())
+        page.get_by_role("button", name="Derive public key", exact=True).click()
+        expect(public_input).to_have_value(generated_public)
+        page.get_by_role("button", name="Use public key to verify", exact=True).click()
+        expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(generated_public)
+
+        page.get_by_label("PDF file", exact=True).set_input_files(simple_pdf_path)
+        page.get_by_label("Issuer", exact=True).fill("Generated Key Test")
+        with page.expect_download(timeout=60_000) as download_info:
+            page.get_by_role("button", name="Upload PDF and Stamp QR Seals", exact=True).click()
+        sealed_path = tmp_path / download_info.value.suggested_filename
+        download_info.value.save_as(sealed_path)
+        assert sealed_path.read_bytes().startswith(b"%PDF-")
+        seal_result = _extract_seal_result(page)
+        assert seal_result["seal_strings"]
+        page.locator("summary", has_text="Manual seal entry").click()
+        page.get_by_label("Seal strings, one per line").fill("\n".join(seal_result["seal_strings"]))
+        page.get_by_role("button", name="Add seals", exact=True).click()
+        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible()
+        expect(page.locator(".verification-result pre")).to_contain_text("Testing client-side sealing")
+        for request in requests:
+            assert generated_private not in request.url
+            assert generated_private not in (request.post_data or "")
 
     def test_seal_with_custom_private_key(self, page: Page, simple_pdf_path: str):
         """Seal using a user-provided private key (not from server)."""

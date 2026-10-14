@@ -1,17 +1,12 @@
-import { signAsync as signEd25519, getPublicKeyAsync } from "@noble/ed25519";
+import { signAsync as signEd25519 } from "@noble/ed25519";
 import { createQRedQrData } from "./qredQr.js";
 import { validateSimpleEnglish } from "./textRecipes.js";
-import { computeKeyId, decodeBase64Url, sealSignatureMessage } from "./sealSignature.js";
+import { computeKeyId, encodeBase64Url, sealSignatureMessage } from "./sealSignature.js";
+import { validateSigningKeyPair } from "./signingKeys.js";
 
 export { computeKeyId } from "./sealSignature.js";
 
 export const DEFAULT_BOOTSTRAP_URL = "https://qred.org/";
-
-function encodeBase64Url(bytes) {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
 
 function bytesToHex(bytes) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -175,12 +170,7 @@ export async function createQRedSeals({
     throw new Error(`Unsupported encoding strategy: ${encodingStrategy}`);
   }
   if (!documentId) documentId = generateDocumentId();
-  const privateBytes = decodeBase64Url(privateKey);
-  const publicBytes = decodeBase64Url(publicKey);
-  const derivedPublicKey = await getPublicKeyAsync(privateBytes);
-  if (publicBytes.length !== derivedPublicKey.length || publicBytes.some((byte, index) => byte !== derivedPublicKey[index])) {
-    throw new Error("The public key does not match the private key");
-  }
+  const { privateBytes } = await validateSigningKeyPair({ privateKey, publicKey });
   const keyId = await computeKeyId(publicKey);
   const baseFields = {
     algorithm: "Ed25519",
