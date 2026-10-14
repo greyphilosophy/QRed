@@ -159,7 +159,7 @@ def _open_stamp_tool(page: Page) -> Page:
     stamp_section = page.locator("#pdf-stamp-tool, .pdf-stamp-tool")
     stamp_section.wait_for(state="visible", timeout=STAMP_SECTION_TIMEOUT)
 
-    expect(page.get_by_role("button", name="Use Default Keys", exact=True)).to_be_enabled()
+    expect(page.get_by_role("button", name="Generate key pair", exact=True)).to_be_enabled()
 
     return page
 
@@ -219,6 +219,8 @@ def _upload_file_to_stamp_tool(
                     pk_input.fill(_DEMO_PRIVATE_KEY)
             except Exception:
                 pass
+
+        page.get_by_label("Public Key", exact=True).fill("eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=")
 
         # Click the Seal button — must exist after upload
         seal_btn = page.get_by_role("button", name="Upload PDF and Stamp QR Seals", exact=True)

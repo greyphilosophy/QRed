@@ -42,7 +42,19 @@ npm install
 npm start
 ```
 
-Open `http://localhost:3000` in your browser. Click "Open PDF stamping tool" to upload a PDF, provide your own Ed25519 keypair, and seal it in-browser.
+Open `http://localhost:3000` in your browser. Click "Open PDF stamping tool" to upload a PDF and seal it in-browser.
+
+## Generate signing keys and stamp a PDF
+
+1. Open the PDF stamping tool and click **Generate key pair**. QRed creates a fresh Ed25519 pair using the browser's secure random generator and fills both key fields. Use HTTPS or localhost with Web Crypto support.
+2. **Download private key** and keep the file private. It is an unencrypted text file; QRed does not save the key, and closing the tool or reloading clears it. Anyone with this key can sign as you.
+3. **Download public key** to share with recipients through a trusted channel. This file contains only the public key.
+4. Choose a PDF, enter your issuer name, and click **Upload PDF and Stamp QR Seals**.
+5. To test your seals on the same page, click **Use public key to verify**. This sets the key in **Verify collected seals**, where you can scan or upload the QR images from your stamped PDF.
+
+To reuse a saved signing identity, paste the private key file's contents into **Private Key**, then click **Derive public key**. You can also paste an existing matching pair. Both fields accept Base64URL or standard Base64, with or without padding. The private key is a raw 32-byte Ed25519 seed; the public key is a raw 32-byte Ed25519 public key (43 encoded characters, optionally followed by `=`). PEM, SSH, hex, and expanded 64-byte private keys are not accepted. Key generation, derivation, validation, and signing happen locally; keys are never sent to a server or saved in browser storage.
+
+The configured/default public key is for verification only. The stamping tool does not preload it because an unrelated private key cannot sign for it. A generated key proves control of that signing key, not an independently verified issuer identity.
 
 ## Run tests
 
@@ -90,7 +102,7 @@ Optional Worker variables for a custom public key are:
 | `QRED_DEFAULT_PUBLIC_KEY` | Base64URL-encoded Ed25519 public key. |
 | `QRED_DEFAULT_KEY_ID` | Optional key ID. If omitted, the Worker derives it from `QRED_DEFAULT_PUBLIC_KEY`. |
 
-Users must supply their own private key in the browser — the server never stores, returns, or processes private keys.
+Users generate a new pair in the browser or supply their own private key — the server never stores, returns, or processes private keys.
 
 ## Cloudflare Pages custom domains
 

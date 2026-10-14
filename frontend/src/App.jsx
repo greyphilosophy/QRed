@@ -29,7 +29,7 @@ function App() {
               Close
             </button>
           </div>
-          <PdfSealForm />
+          <PdfSealForm onUsePublicKey={verification.setPublicKey} />
         </section>
       )}
     </main>

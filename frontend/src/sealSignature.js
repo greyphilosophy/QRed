@@ -9,6 +9,12 @@ export function sealSignatureMessage(metadata, content) {
   ]));
 }
 
+export function encodeBase64Url(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
 export function decodeBase64Url(value) {
   const normalized = value.trim().replace(/-/g, "+").replace(/_/g, "/");
   const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");

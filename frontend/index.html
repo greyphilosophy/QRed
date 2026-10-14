@@ -248,6 +248,19 @@
 
       .tool-close { background: #475569; }
 
+      .pdf-stamp-tool button {
+        background: #f8fafc;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        color: #1e293b;
+        cursor: pointer;
+        font: inherit;
+        min-height: 44px;
+        padding: 0.5rem 0.75rem;
+      }
+      .pdf-stamp-tool button:disabled { cursor: not-allowed; opacity: 0.55; }
+      .pdf-stamp-tool button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+
       .card {
         background: var(--color-card);
         border-radius: 12px;
@@ -265,6 +278,21 @@
       }
 
       .demo-input { margin-bottom: 0.5rem; }
+
+      .signing-key-help {
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 1.25rem;
+      }
+
+      .signing-key-help p { margin: 0.75rem 0; line-height: 1.5; }
+      .signing-key-help button { background: #2563eb; border-color: #2563eb; color: white; font-weight: 600; }
+      .signing-key-help p:last-child { font-size: 0.85rem; margin-bottom: 0; }
+      .key-help { color: #64748b; display: block; margin-top: 0.5rem; line-height: 1.5; }
+      .key-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+      .key-actions button { font-size: 0.8rem; }
 
       .demo-input label {
         display: block;
