@@ -47,6 +47,18 @@ export function extractHiddenQRedPayload(binaryData, version) {
   return framedPayloadFrom(bytes, payloadOffset);
 }
 
+// The patched jsQR result exposes the complete, Reed-Solomon-corrected data
+// stream. binaryData contains only decoded message bytes, excluding padding.
+// Only the QRED.ORG carrier uses our post-terminator framing.
+export function hiddenPayloadFromScanResult(scanResult) {
+  if (scanResult?.correctedData !== undefined) {
+    return scanResult.data === VISIBLE_QR_TEXT
+      ? extractHiddenQRedPayload(scanResult.correctedData, scanResult.version)
+      : null;
+  }
+  return extractHiddenQRedPayload(scanResult?.binaryData, scanResult?.version);
+}
+
 export function isQRedVisibleText(text) {
   if (!text) return false;
   return text === VISIBLE_QR_TEXT || text.includes("QRED1") || text.includes("qred.org");

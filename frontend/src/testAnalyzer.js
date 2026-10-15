@@ -4,7 +4,7 @@
 // Originally lived inside frontend/test.html as a 900-line <script type=module>.
 
 import jsQR from "jsqr";
-import { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset } from "./qr/hiddenPayload.js";
+import { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset, hiddenPayloadFromScanResult } from "./qr/hiddenPayload.js";
 import { codewordsFromMatrix, deinterleaveDataCodewordsWithTables, QR_MODULE_COUNT_BY_VERSION } from "./qr/qrLowLevel.js";
 import { sampleQrMatrix } from "./qr/qrImageRecovery.js";
 
@@ -35,7 +35,7 @@ export function qredDisplayTextFromScannedPayload(payload) {
 export function qredTextFromScanResult(scanResult) {
   if (!scanResult || typeof scanResult === "string") return scanResult || "";
   const visibleText = scanResult.data || "";
-  const hiddenPayload = extractHiddenQRedPayload(scanResult.binaryData, scanResult.version);
+  const hiddenPayload = hiddenPayloadFromScanResult(scanResult);
   if (visibleText === VISIBLE_QR_TEXT || visibleText.includes("QRED1") || visibleText.includes("qred.org")) {
     return hiddenPayload ? qredDisplayTextFromScannedPayload(hiddenPayload) : qredDisplayTextFromScannedPayload(visibleText);
   }
@@ -44,6 +44,7 @@ export function qredTextFromScanResult(scanResult) {
 
 
 export function extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) {
+  if (scanResult?.correctedData !== undefined) return hiddenPayloadFromScanResult(scanResult);
   if (!scanResult?.location || !scanResult.version) return null;
 
   // Fast path — centered adaptive sample first (>90% clean photos)

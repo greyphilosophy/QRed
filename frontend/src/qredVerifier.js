@@ -10,7 +10,7 @@ import ECLevel from "qrcode/lib/core/error-correction-level.js";
 import { verifyAsync as verifyEd25519 } from "@noble/ed25519";
 import { decodeB45ish } from "./textRecipes.js";
 import { computeKeyId, decodeBase64Url, sealSignatureMessage } from "./sealSignature.js";
-import { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset } from "./qr/hiddenPayload.js";
+import { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset, hiddenPayloadFromScanResult } from "./qr/hiddenPayload.js";
 import { codewordsFromMatrix, deinterleaveDataCodewordsWithQrLib } from "./qr/qrLowLevel.js";
 import { sampleQrMatrix } from "./qr/qrImageRecovery.js";
 import { tokenizeDocumentText, compareWordSequences, compareDocumentText } from "./qr/qrTextDiff.js";
@@ -43,7 +43,7 @@ export function classifyOcrWords(qrText, ocrWords) {
 export function qredTextFromScanResult(scanResult) {
   if (!scanResult || typeof scanResult === "string") return scanResult || "";
   const visibleText = scanResult.data || "";
-  const hiddenPayload = extractHiddenQRedPayload(scanResult.binaryData, scanResult.version);
+  const hiddenPayload = hiddenPayloadFromScanResult(scanResult);
   if (visibleText === VISIBLE_QR_TEXT || visibleText.includes("QRED1") || visibleText.includes("qred.org")) {
     return hiddenPayload || visibleText;
   }
@@ -81,6 +81,9 @@ function deinterleaveWithQrLib(interleaved, version, ecLevelBits = 0) {
 }
 
 export function extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) {
+  // Use the decoder's corrected stream before considering legacy image
+  // sampling. A missing/malformed payload here must not fall back to raw bits.
+  if (scanResult?.correctedData !== undefined) return hiddenPayloadFromScanResult(scanResult);
   if (!scanResult?.location || !scanResult.version) return null;
 
   // Fast path — single centered adaptive sample

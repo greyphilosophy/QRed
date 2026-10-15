@@ -734,6 +734,23 @@ class TestKeyGenerationImportAndSignatureVerification:
         assert verified, "Verification failed for seal with custom key"
 
 
+def _invoice_camera_pixels(damaged=False):
+    fixture = Path(__file__).parent / "fixtures" / "qr-scans" / "invoice-footer-300dpi.png"
+    pixels = fixture.read_bytes()
+    if not damaged:
+        return pixels
+    if not PIL_AVAILABLE:
+        pytest.skip("Pillow not installed")
+    with Image.open(pillow_io.BytesIO(pixels)) as image:
+        image = image.convert("RGBA")
+        # Version 35-H, module (row 98, column 126): the high bit of the
+        # hidden length field. jsQR can correct this; raw sampling cannot.
+        image.paste((255, 255, 255, 255), (627, 572, 632, 578))
+        buffer = pillow_io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+
 class TestRenderedQrImageUploads:
     """Use actual downloaded-PDF pixels, without manual strings or test hooks."""
 
@@ -767,6 +784,17 @@ class TestRenderedQrImageUploads:
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("END OF MANIFEST - 56 synthetic line items.")
 
+    def test_verifies_image_with_damaged_hidden_length(self, page: Page):
+        page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
+        page.get_by_label("Issuer public key", exact=True).fill(self.PUBLIC_KEY)
+        page.get_by_label("QR image", exact=True).set_input_files({
+            "name": "damaged-invoice.png", "mimeType": "image/png", "buffer": _invoice_camera_pixels(damaged=True),
+        })
+        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
+        expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45")
+        page.get_by_label("Issuer public key", exact=True).fill(DEMO_PUBLIC_KEY)
+        expect(page.get_by_role("heading", name="INVALID", exact=True)).to_be_visible()
+
 
 class TestCameraFrameScanning:
     """Exercise the real video/canvas/decoder path with synthetic camera pixels.
@@ -774,15 +802,15 @@ class TestCameraFrameScanning:
     These cover framing and verification, not physical focus, glare, or moire.
     """
 
+    @pytest.mark.parametrize("damaged", [False, True], ids=["clean", "damaged-hidden-data"])
     @pytest.mark.parametrize("manual", [False, True], ids=["automatic", "scan-photo"])
     @pytest.mark.parametrize("width,height,left,top,size", [
         (720, 1280, 90, 180, 540),
         (1280, 720, 90, 30, 660),
     ], ids=["portrait", "landscape"])
-    def test_verifies_seal_outside_center_crop(self, page: Page, manual, width, height, left, top, size):
-        fixture = Path(__file__).parent / "fixtures" / "qr-scans" / "invoice-footer-300dpi.png"
+    def test_verifies_seal_outside_center_crop(self, page: Page, manual, width, height, left, top, size, damaged):
         camera = {
-            "image": "data:image/png;base64," + base64.b64encode(fixture.read_bytes()).decode("ascii"),
+            "image": "data:image/png;base64," + base64.b64encode(_invoice_camera_pixels(damaged)).decode("ascii"),
             "width": width, "height": height, "left": left, "top": top, "size": size, "manual": manual,
         }
         page.set_viewport_size({"width": 390, "height": 844} if width < height else {"width": 1280, "height": 800})
