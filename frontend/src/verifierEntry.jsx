@@ -197,6 +197,7 @@ function VerifierApp() {
       <header>
         <h1>QRed Verifier</h1>
         <p>Scan QR seals to verify a document — camera or manual entry</p>
+        <p>Camera frames and seal text are processed in this browser and are not sent to a server.</p>
       </header>
 
       <main>
@@ -222,7 +223,7 @@ function VerifierApp() {
           />
 
           <label htmlFor="manualSealInput" className="field-label">
-            Manual seal entry or uploaded seal text
+            Seal text
           </label>
           <textarea
             id="manualSealInput"
@@ -234,6 +235,7 @@ function VerifierApp() {
             style={{ resize: "vertical" }}
           />
 
+          <label htmlFor="sealFileInput" className="field-label">Open seal text file</label>
           <input
             id="sealFileInput"
             type="file"

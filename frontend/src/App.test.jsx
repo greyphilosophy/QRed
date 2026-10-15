@@ -84,8 +84,8 @@ describe("App PDF signing keys", () => {
     openStampTool();
     const keys = await generateKeys();
     const pdf = new File(["%PDF-1.4"], "source.pdf", { type: "application/pdf" });
-    fireEvent.change(screen.getByLabelText("PDF file"), { target: { files: [pdf] } });
-    fireEvent.click(screen.getByRole("button", { name: "Upload PDF and Stamp QR Seals" }));
+    fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [pdf] } });
+    fireEvent.click(screen.getByRole("button", { name: "Stamp and save PDF" }));
     await screen.findByText(/Sealed source\.pdf in this browser\./);
     expect(sealPdfInBrowser).toHaveBeenCalledWith(expect.objectContaining({ file: pdf, ...keys }));
     fireEvent.click(screen.getByRole("button", { name: "Use public key to verify" }));
@@ -100,11 +100,11 @@ describe("App PDF signing keys", () => {
   it("downloads reusable raw keys separately, with no private data in the public download", async () => {
     openStampTool();
     const keys = await generateKeys();
-    fireEvent.click(screen.getByRole("button", { name: "Download public key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save public key" }));
     const publicDownload = await readBlob(URL.createObjectURL.mock.calls[0][0]);
     expect(publicDownload).toBe(keys.publicKey + "\n");
     expect(publicDownload).not.toContain(keys.privateKey);
-    fireEvent.click(screen.getByRole("button", { name: "Download private key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save private key" }));
     expect(await readBlob(URL.createObjectURL.mock.calls[1][0])).toBe(keys.privateKey + "\n");
     expect(HTMLAnchorElement.prototype.click.mock.instances.map((link) => link.download)).toEqual([
       "qred-ed25519-public-key.txt", "qred-ed25519-private-key.txt",
@@ -120,8 +120,8 @@ describe("App PDF signing keys", () => {
     expect(screen.getByLabelText("Private Key").value).toBe(privateKey);
     expect(screen.getByLabelText("Public Key").value).toBe(publicKey.replace(/=$/, ""));
     const pdf = new File(["%PDF-1.4"], "saved-key.pdf", { type: "application/pdf" });
-    fireEvent.change(screen.getByLabelText("PDF file"), { target: { files: [pdf] } });
-    fireEvent.click(screen.getByRole("button", { name: "Upload PDF and Stamp QR Seals" }));
+    fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [pdf] } });
+    fireEvent.click(screen.getByRole("button", { name: "Stamp and save PDF" }));
     await screen.findByText(/Sealed saved-key\.pdf/);
   });
 
@@ -133,8 +133,8 @@ describe("App PDF signing keys", () => {
     openStampTool();
     fireEvent.change(screen.getByLabelText("Private Key"), { target: { value: privateValue } });
     fireEvent.change(screen.getByLabelText("Public Key"), { target: { value: publicValue } });
-    fireEvent.change(screen.getByLabelText("PDF file"), { target: { files: [new File(["pdf"], "test.pdf")] } });
-    fireEvent.click(screen.getByRole("button", { name: "Upload PDF and Stamp QR Seals" }));
+    fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [new File(["pdf"], "test.pdf")] } });
+    fireEvent.click(screen.getByRole("button", { name: "Stamp and save PDF" }));
     expect(await screen.findByText(error)).toBeTruthy();
     expect(sealPdfInBrowser).not.toHaveBeenCalled();
   });

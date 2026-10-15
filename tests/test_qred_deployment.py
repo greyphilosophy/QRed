@@ -231,7 +231,7 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
         # Use fill() — Playwright v2 handles React state updates automatically
         pk_input.fill(private_key)
         # Wait for the seal button to become enabled (confirms React state synced)
-        seal_button = page.locator('button:has-text("Upload PDF and Stamp QR Seals")').first
+        seal_button = page.locator('button:has-text("Stamp and save PDF")').first
         expect_playwright(seal_button).to_be_enabled(timeout=5_000)
     except Exception as exc:
         raise AssertionError(f"Failed to fill private key or wait for seal button: {exc}") from exc
@@ -258,7 +258,7 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
     # Click the seal button and wait for download
     seal_btn = None
     try:
-        seal_btn = page.locator('button:has-text("Upload PDF and Stamp QR Seals")').first
+        seal_btn = page.locator('button:has-text("Stamp and save PDF")').first
     except Exception:
         # Try alternative selectors
         try:
@@ -538,12 +538,12 @@ class TestImageOnlyPdfs:
         page.goto(base_url, wait_until="networkidle")
         page.get_by_role("button", name="Open PDF stamping tool").click()
         expect(page.get_by_role("button", name="Generate key pair")).to_be_enabled()
-        page.get_by_label("PDF file", exact=True).set_input_files(image_only_pdf_path)
+        page.get_by_label("Open PDF", exact=True).set_input_files(image_only_pdf_path)
         page.get_by_label("Private Key", exact=True).fill(DEMO_PRIVATE_KEY)
         page.get_by_label("Public Key", exact=True).fill(DEMO_PUBLIC_KEY)
         downloads = []
         page.on("download", lambda download: downloads.append(download))
-        page.get_by_role("button", name="Upload PDF and Stamp QR Seals", exact=True).click()
+        page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
         expect(page.get_by_text("PDF sealing failed: No readable text", exact=False)).to_be_visible()
         assert not downloads, "An unreadable PDF must not produce a sealed download"
 
@@ -610,12 +610,12 @@ class TestPdfExtractionIntegrity:
         page.goto(base_url, wait_until="networkidle")
         page.get_by_role("button", name="Open PDF stamping tool").click()
         expect(page.get_by_role("button", name="Generate key pair", exact=True)).to_be_enabled()
-        page.get_by_label("PDF file", exact=True).set_input_files(source)
+        page.get_by_label("Open PDF", exact=True).set_input_files(source)
         page.get_by_label("Private Key", exact=True).fill(DEMO_PRIVATE_KEY)
         page.get_by_label("Public Key", exact=True).fill(DEMO_PUBLIC_KEY)
         downloads = []
         page.on("download", lambda download: downloads.append(download))
-        page.get_by_role("button", name="Upload PDF and Stamp QR Seals", exact=True).click()
+        page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
         expect(page.locator("#stamp-result")).to_contain_text(message, timeout=30_000)
         assert not downloads, "Rejected PDF must not produce a signed download"
 
@@ -649,7 +649,7 @@ class TestKeyGenerationImportAndSignatureVerification:
 
         for kind, expected in [("private", generated_private), ("public", generated_public)]:
             with page.expect_download() as download_info:
-                page.get_by_role("button", name=f"Download {kind} key", exact=True).click()
+                page.get_by_role("button", name=f"Save {kind} key", exact=True).click()
             download = download_info.value
             assert download.suggested_filename == f"qred-ed25519-{kind}-key.txt"
             path = tmp_path / download.suggested_filename
@@ -670,10 +670,10 @@ class TestKeyGenerationImportAndSignatureVerification:
         page.get_by_role("button", name="Use public key to verify", exact=True).click()
         expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(generated_public)
 
-        page.get_by_label("PDF file", exact=True).set_input_files(simple_pdf_path)
+        page.get_by_label("Open PDF", exact=True).set_input_files(simple_pdf_path)
         page.get_by_label("Issuer", exact=True).fill("Generated Key Test")
         with page.expect_download(timeout=60_000) as download_info:
-            page.get_by_role("button", name="Upload PDF and Stamp QR Seals", exact=True).click()
+            page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
         sealed_path = tmp_path / download_info.value.suggested_filename
         download_info.value.save_as(sealed_path)
         assert sealed_path.read_bytes().startswith(b"%PDF-")
@@ -765,7 +765,7 @@ class TestRenderedQrImageUploads:
     def test_verifies_previously_unreadable_rendered_image(self, page: Page, image_name):
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
         page.get_by_label("Issuer public key", exact=True).fill(self.PUBLIC_KEY)
-        page.get_by_label("QR image", exact=True).set_input_files(str(self.FIXTURES / image_name))
+        page.get_by_label("Choose QR image", exact=True).set_input_files(str(self.FIXTURES / image_name))
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("QRed PDF page integrity")
         page.get_by_label("Issuer public key", exact=True).fill(DEMO_PUBLIC_KEY)
@@ -775,7 +775,7 @@ class TestRenderedQrImageUploads:
         page.set_viewport_size({"width": 390, "height": 844})
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
         page.get_by_label("Issuer public key", exact=True).fill(self.PUBLIC_KEY)
-        upload = page.get_by_label("QR image", exact=True)
+        upload = page.get_by_label("Choose QR image", exact=True)
         upload.set_input_files(str(self.FIXTURES / "manifest-seal-1-300dpi.png"))
         expect(page.get_by_role("heading", name="INCOMPLETE", exact=True)).to_be_visible(timeout=20000)
         upload.set_input_files(str(self.FIXTURES / "manifest-seal-1-300dpi.png"))
@@ -787,7 +787,7 @@ class TestRenderedQrImageUploads:
     def test_verifies_image_with_damaged_hidden_length(self, page: Page):
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
         page.get_by_label("Issuer public key", exact=True).fill(self.PUBLIC_KEY)
-        page.get_by_label("QR image", exact=True).set_input_files({
+        page.get_by_label("Choose QR image", exact=True).set_input_files({
             "name": "damaged-invoice.png", "mimeType": "image/png", "buffer": _invoice_camera_pixels(damaged=True),
         })
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)

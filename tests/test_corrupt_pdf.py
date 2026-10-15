@@ -223,7 +223,7 @@ def _upload_file_to_stamp_tool(
         page.get_by_label("Public Key", exact=True).fill("eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=")
 
         # Click the Seal button — must exist after upload
-        seal_btn = page.get_by_role("button", name="Upload PDF and Stamp QR Seals", exact=True)
+        seal_btn = page.get_by_role("button", name="Stamp and save PDF", exact=True)
         expect(seal_btn).to_be_enabled(timeout=SEAL_BUTTON_TIMEOUT)
         seal_btn.click(timeout=5_000)
         expect(page.locator("#stamp-result")).to_have_text(
