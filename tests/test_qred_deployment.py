@@ -19,6 +19,7 @@ Run:
 
 import os
 import json
+import base64
 import subprocess
 import sys
 import tempfile
@@ -765,6 +766,79 @@ class TestRenderedQrImageUploads:
         upload.set_input_files(str(self.FIXTURES / "manifest-seal-2-300dpi.png"))
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("END OF MANIFEST - 56 synthetic line items.")
+
+
+class TestCameraFrameScanning:
+    """Exercise the real video/canvas/decoder path with synthetic camera pixels.
+
+    These cover framing and verification, not physical focus, glare, or moire.
+    """
+
+    @pytest.mark.parametrize("manual", [False, True], ids=["automatic", "scan-photo"])
+    @pytest.mark.parametrize("width,height,left,top,size", [
+        (720, 1280, 90, 180, 540),
+        (1280, 720, 90, 30, 660),
+    ], ids=["portrait", "landscape"])
+    def test_verifies_seal_outside_center_crop(self, page: Page, manual, width, height, left, top, size):
+        fixture = Path(__file__).parent / "fixtures" / "qr-scans" / "invoice-footer-300dpi.png"
+        camera = {
+            "image": "data:image/png;base64," + base64.b64encode(fixture.read_bytes()).decode("ascii"),
+            "width": width, "height": height, "left": left, "top": top, "size": size, "manual": manual,
+        }
+        page.set_viewport_size({"width": 390, "height": 844} if width < height else {"width": 1280, "height": 800})
+        page.add_init_script("""
+        (() => {
+            const camera = CAMERA_FIXTURE;
+            // Freeze the scanner's cooldown clock for the button case, so
+            // only Scan photo can produce the result after the blank frame.
+            if (camera.manual) performance.now = () => 1000;
+            Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: {
+                enumerateDevices: async () => [],
+                getUserMedia: async () => {
+                    const image = new Image();
+                    image.src = camera.image;
+                    await image.decode();
+                    const canvas = document.createElement('canvas');
+                    canvas.width = camera.width;
+                    canvas.height = camera.height;
+                    const context = canvas.getContext('2d');
+                    context.fillStyle = 'white';
+                    context.fillRect(0, 0, canvas.width, canvas.height);
+                    const stream = canvas.captureStream(10);
+                    window.showCameraSeal = () => {
+                        // Crop the existing PDF fixture with its quiet zone,
+                        // then put its corners beyond the old center 50% ROI.
+                        context.drawImage(image, 45, 116, 740, 740, camera.left, camera.top, camera.size, camera.size);
+                        stream.getVideoTracks()[0].requestFrame();
+                    };
+                    return stream;
+                },
+            }});
+        })();
+        """.replace("CAMERA_FIXTURE", json.dumps(camera)))
+        page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
+        page.get_by_label("Issuer public key", exact=True).fill(TestRenderedQrImageUploads.PUBLIC_KEY)
+        page.get_by_role("button", name="Start scanning", exact=True).click()
+        page.wait_for_function("""() => {
+            const video = document.querySelector('.ar-camera video');
+            return video?.readyState >= 2 && video.videoWidth > 0;
+        }""")
+        page.locator(".ar-camera video").scroll_into_view_if_needed()
+        page.evaluate("window.showCameraSeal()")
+        if manual:
+            page.wait_for_function("""() => {
+                const video = document.querySelector('.ar-camera video');
+                const canvas = document.createElement('canvas');
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const context = canvas.getContext('2d');
+                context.drawImage(video, 0, 0);
+                return context.getImageData(0, 0, canvas.width, canvas.height).data.some((value, i) => i % 4 !== 3 && value < 128);
+            }""", timeout=5000)
+            page.get_by_role("button", name="Scan photo", exact=True).click()
+        expect(page.get_by_role("heading", name="QR captured", exact=True)).to_be_visible(timeout=10000)
+        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible()
+        expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45")
 
 
 class TestExistingSealCompatibility:
