@@ -6,6 +6,8 @@ const CACHE_VERSION = "v4";
 const CACHE_NAME = `qred-${CACHE_VERSION}`;
 const STATIC_ORIGINS = new Set([self.location.origin]);
 const JS_CSS_ASSET_RE = /\.(?:m?js|css|woff2?|ttf|otf|pfb|bcmap|wasm|png|jpg|jpeg|webp|svg|ico)$/i;
+// Vite bundles include a content hash; PDF resources include the PDF.js version.
+const VERSIONED_ASSET_RE = /^\/(?:assets\/|pdfjs\/[^/]+\/)/;
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
@@ -56,11 +58,14 @@ self.addEventListener("fetch", (event) => {
   // Cross-origin (e.g. CDN): network only
   if (!STATIC_ORIGINS.has(url.origin)) return;
 
-  // Same-origin hashed assets: cache-first with background refresh (stale-while-revalidate)
+  // Versioned assets need no background refresh: a changed version has a new
+  // URL. Reusing these cached resources must not make network requests.
+  // Other static assets retain background refresh for their unversioned URLs.
   if (JS_CSS_ASSET_RE.test(url.pathname)) {
     event.respondWith(
       caches.open(CACHE_NAME).then((cache) =>
         cache.match(request).then((cached) => {
+          if (cached && VERSIONED_ASSET_RE.test(url.pathname)) return cached;
           const fetchPromise = fetch(request)
             .then((response) => {
               if (response && response.ok) cache.put(request, response.clone());

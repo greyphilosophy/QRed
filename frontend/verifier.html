@@ -310,6 +310,12 @@
   <header>
     <h1>QRed Verifier</h1>
     <p>Scan QR seals to verify a document</p>
+    <p>Camera frames and seal text are processed in this browser and are not sent to a server.</p>
+    <details>
+      <summary>Optional: use airplane mode</summary>
+      <p>Load QRed, then enable airplane mode and turn Wi-Fi and Bluetooth off in your device settings to limit network access while you work. Keep this tab open.</p>
+      <p>Try your workflow with a non-sensitive file before opening sensitive documents. Some PDF fonts and text-recognition resources may still need an internet connection.</p>
+    </details>
   </header>
 
   <main>
@@ -331,8 +337,9 @@
       <div class="result-card" style="margin-bottom: 1rem;">
         <label for="publicKeyInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Issuer public key</label>
         <input id="publicKeyInput" type="text" placeholder="Paste issuer public key for signature verification" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;">
-        <label for="manualSealInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Manual seal entry or uploaded seal text</label>
+        <label for="manualSealInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Seal text</label>
         <textarea id="manualSealInput" rows="4" placeholder="Paste QRed seal strings here, one per line" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;"></textarea>
+        <label for="sealFileInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Open seal text file</label>
         <input id="sealFileInput" type="file" accept=".txt,text/plain" style="width:100%; margin-bottom:0.75rem;">
         <label for="pageTextInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Page text read by scanner or pasted for comparison</label>
         <textarea id="pageTextInput" rows="4" placeholder="Scan QR Code to OCR the page, or paste document text here" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;"></textarea>

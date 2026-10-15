@@ -26,7 +26,7 @@ export function useSealVerification() {
 
   const addSeal = useCallback((text) => {
     if (text === VISIBLE_QR_TEXT) {
-      setNotice("QR found, but its hidden payload could not be read. Move closer or upload a clearer image.");
+      setNotice("QR found, but its hidden payload could not be read. Move closer or choose a clearer image.");
       return;
     }
     if (!decodeSeal(text)) {
@@ -77,7 +77,7 @@ export function SealVerification({ verification }) {
       context.drawImage(image, 0, 0);
       const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
       const code = scanQrImage(pixels.data, pixels.width, pixels.height);
-      if (!code) throw new Error("No QR code found. Upload a clear image of one seal.");
+      if (!code) throw new Error("No QR code found. Choose a clear image of one seal.");
       addSeal(qredPayloadFromPhotoScanResult(pixels.data, pixels.width, pixels.height, code));
     } catch (error) {
       setNotice(error.message);
@@ -90,10 +90,16 @@ export function SealVerification({ verification }) {
   return <section className="verification-card" aria-label="Seal verification">
     <h2>Verify collected seals</h2>
     <p>Scan each QR seal for a page. A valid signature authenticates the recovered text and signed metadata against the public key below. Compare the recovered text with the document.</p>
+    <p className="verification-note">QR images and camera frames are processed in this browser and are not sent to a server.</p>
+    <details>
+      <summary>Optional: use airplane mode</summary>
+      <p>Load QRed, then enable airplane mode and turn Wi-Fi and Bluetooth off in your device settings to limit network access while you work. Keep this tab open.</p>
+      <p>Try your workflow with a non-sensitive file before opening sensitive documents. Some PDF fonts and text-recognition resources may still need an internet connection.</p>
+    </details>
     <label htmlFor="issuer-verification-key">Issuer public key</label>
     <input id="issuer-verification-key" value={publicKey} onChange={(event) => setPublicKey(event.target.value)} />
     <p className="verification-note">Use a key obtained from the issuer through a trusted channel. The default demo key is public test data and proves no issuer identity.</p>
-    <label htmlFor="qr-image">QR image</label>
+    <label htmlFor="qr-image">Choose QR image</label>
     <input id="qr-image" type="file" accept="image/*" onChange={readImage} />
     <details>
       <summary>Manual seal entry</summary>

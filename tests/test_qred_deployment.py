@@ -19,6 +19,7 @@ Run:
 
 import os
 import json
+import base64
 import subprocess
 import sys
 import tempfile
@@ -230,7 +231,7 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
         # Use fill() — Playwright v2 handles React state updates automatically
         pk_input.fill(private_key)
         # Wait for the seal button to become enabled (confirms React state synced)
-        seal_button = page.locator('button:has-text("Upload PDF and Stamp QR Seals")').first
+        seal_button = page.locator('button:has-text("Stamp and save PDF")').first
         expect_playwright(seal_button).to_be_enabled(timeout=5_000)
     except Exception as exc:
         raise AssertionError(f"Failed to fill private key or wait for seal button: {exc}") from exc
@@ -257,7 +258,7 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
     # Click the seal button and wait for download
     seal_btn = None
     try:
-        seal_btn = page.locator('button:has-text("Upload PDF and Stamp QR Seals")').first
+        seal_btn = page.locator('button:has-text("Stamp and save PDF")').first
     except Exception:
         # Try alternative selectors
         try:
@@ -537,12 +538,12 @@ class TestImageOnlyPdfs:
         page.goto(base_url, wait_until="networkidle")
         page.get_by_role("button", name="Open PDF stamping tool").click()
         expect(page.get_by_role("button", name="Generate key pair")).to_be_enabled()
-        page.get_by_label("PDF file", exact=True).set_input_files(image_only_pdf_path)
+        page.get_by_label("Open PDF", exact=True).set_input_files(image_only_pdf_path)
         page.get_by_label("Private Key", exact=True).fill(DEMO_PRIVATE_KEY)
         page.get_by_label("Public Key", exact=True).fill(DEMO_PUBLIC_KEY)
         downloads = []
         page.on("download", lambda download: downloads.append(download))
-        page.get_by_role("button", name="Upload PDF and Stamp QR Seals", exact=True).click()
+        page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
         expect(page.get_by_text("PDF sealing failed: No readable text", exact=False)).to_be_visible()
         assert not downloads, "An unreadable PDF must not produce a sealed download"
 
@@ -609,12 +610,12 @@ class TestPdfExtractionIntegrity:
         page.goto(base_url, wait_until="networkidle")
         page.get_by_role("button", name="Open PDF stamping tool").click()
         expect(page.get_by_role("button", name="Generate key pair", exact=True)).to_be_enabled()
-        page.get_by_label("PDF file", exact=True).set_input_files(source)
+        page.get_by_label("Open PDF", exact=True).set_input_files(source)
         page.get_by_label("Private Key", exact=True).fill(DEMO_PRIVATE_KEY)
         page.get_by_label("Public Key", exact=True).fill(DEMO_PUBLIC_KEY)
         downloads = []
         page.on("download", lambda download: downloads.append(download))
-        page.get_by_role("button", name="Upload PDF and Stamp QR Seals", exact=True).click()
+        page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
         expect(page.locator("#stamp-result")).to_contain_text(message, timeout=30_000)
         assert not downloads, "Rejected PDF must not produce a signed download"
 
@@ -648,7 +649,7 @@ class TestKeyGenerationImportAndSignatureVerification:
 
         for kind, expected in [("private", generated_private), ("public", generated_public)]:
             with page.expect_download() as download_info:
-                page.get_by_role("button", name=f"Download {kind} key", exact=True).click()
+                page.get_by_role("button", name=f"Save {kind} key", exact=True).click()
             download = download_info.value
             assert download.suggested_filename == f"qred-ed25519-{kind}-key.txt"
             path = tmp_path / download.suggested_filename
@@ -669,10 +670,10 @@ class TestKeyGenerationImportAndSignatureVerification:
         page.get_by_role("button", name="Use public key to verify", exact=True).click()
         expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(generated_public)
 
-        page.get_by_label("PDF file", exact=True).set_input_files(simple_pdf_path)
+        page.get_by_label("Open PDF", exact=True).set_input_files(simple_pdf_path)
         page.get_by_label("Issuer", exact=True).fill("Generated Key Test")
         with page.expect_download(timeout=60_000) as download_info:
-            page.get_by_role("button", name="Upload PDF and Stamp QR Seals", exact=True).click()
+            page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
         sealed_path = tmp_path / download_info.value.suggested_filename
         download_info.value.save_as(sealed_path)
         assert sealed_path.read_bytes().startswith(b"%PDF-")
@@ -733,6 +734,23 @@ class TestKeyGenerationImportAndSignatureVerification:
         assert verified, "Verification failed for seal with custom key"
 
 
+def _invoice_camera_pixels(damaged=False):
+    fixture = Path(__file__).parent / "fixtures" / "qr-scans" / "invoice-footer-300dpi.png"
+    pixels = fixture.read_bytes()
+    if not damaged:
+        return pixels
+    if not PIL_AVAILABLE:
+        pytest.skip("Pillow not installed")
+    with Image.open(pillow_io.BytesIO(pixels)) as image:
+        image = image.convert("RGBA")
+        # Version 35-H, module (row 98, column 126): the high bit of the
+        # hidden length field. jsQR can correct this; raw sampling cannot.
+        image.paste((255, 255, 255, 255), (627, 572, 632, 578))
+        buffer = pillow_io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+
 class TestRenderedQrImageUploads:
     """Use actual downloaded-PDF pixels, without manual strings or test hooks."""
 
@@ -747,7 +765,7 @@ class TestRenderedQrImageUploads:
     def test_verifies_previously_unreadable_rendered_image(self, page: Page, image_name):
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
         page.get_by_label("Issuer public key", exact=True).fill(self.PUBLIC_KEY)
-        page.get_by_label("QR image", exact=True).set_input_files(str(self.FIXTURES / image_name))
+        page.get_by_label("Choose QR image", exact=True).set_input_files(str(self.FIXTURES / image_name))
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("QRed PDF page integrity")
         page.get_by_label("Issuer public key", exact=True).fill(DEMO_PUBLIC_KEY)
@@ -757,7 +775,7 @@ class TestRenderedQrImageUploads:
         page.set_viewport_size({"width": 390, "height": 844})
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
         page.get_by_label("Issuer public key", exact=True).fill(self.PUBLIC_KEY)
-        upload = page.get_by_label("QR image", exact=True)
+        upload = page.get_by_label("Choose QR image", exact=True)
         upload.set_input_files(str(self.FIXTURES / "manifest-seal-1-300dpi.png"))
         expect(page.get_by_role("heading", name="INCOMPLETE", exact=True)).to_be_visible(timeout=20000)
         upload.set_input_files(str(self.FIXTURES / "manifest-seal-1-300dpi.png"))
@@ -765,6 +783,90 @@ class TestRenderedQrImageUploads:
         upload.set_input_files(str(self.FIXTURES / "manifest-seal-2-300dpi.png"))
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("END OF MANIFEST - 56 synthetic line items.")
+
+    def test_verifies_image_with_damaged_hidden_length(self, page: Page):
+        page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
+        page.get_by_label("Issuer public key", exact=True).fill(self.PUBLIC_KEY)
+        page.get_by_label("Choose QR image", exact=True).set_input_files({
+            "name": "damaged-invoice.png", "mimeType": "image/png", "buffer": _invoice_camera_pixels(damaged=True),
+        })
+        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
+        expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45")
+        page.get_by_label("Issuer public key", exact=True).fill(DEMO_PUBLIC_KEY)
+        expect(page.get_by_role("heading", name="INVALID", exact=True)).to_be_visible()
+
+
+class TestCameraFrameScanning:
+    """Exercise the real video/canvas/decoder path with synthetic camera pixels.
+
+    These cover framing and verification, not physical focus, glare, or moire.
+    """
+
+    @pytest.mark.parametrize("damaged", [False, True], ids=["clean", "damaged-hidden-data"])
+    @pytest.mark.parametrize("manual", [False, True], ids=["automatic", "scan-photo"])
+    @pytest.mark.parametrize("width,height,left,top,size", [
+        (720, 1280, 90, 180, 540),
+        (1280, 720, 90, 30, 660),
+    ], ids=["portrait", "landscape"])
+    def test_verifies_seal_outside_center_crop(self, page: Page, manual, width, height, left, top, size, damaged):
+        camera = {
+            "image": "data:image/png;base64," + base64.b64encode(_invoice_camera_pixels(damaged)).decode("ascii"),
+            "width": width, "height": height, "left": left, "top": top, "size": size, "manual": manual,
+        }
+        page.set_viewport_size({"width": 390, "height": 844} if width < height else {"width": 1280, "height": 800})
+        page.add_init_script("""
+        (() => {
+            const camera = CAMERA_FIXTURE;
+            // Freeze the scanner's cooldown clock for the button case, so
+            // only Scan photo can produce the result after the blank frame.
+            if (camera.manual) performance.now = () => 1000;
+            Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: {
+                enumerateDevices: async () => [],
+                getUserMedia: async () => {
+                    const image = new Image();
+                    image.src = camera.image;
+                    await image.decode();
+                    const canvas = document.createElement('canvas');
+                    canvas.width = camera.width;
+                    canvas.height = camera.height;
+                    const context = canvas.getContext('2d');
+                    context.fillStyle = 'white';
+                    context.fillRect(0, 0, canvas.width, canvas.height);
+                    const stream = canvas.captureStream(10);
+                    window.showCameraSeal = () => {
+                        // Crop the existing PDF fixture with its quiet zone,
+                        // then put its corners beyond the old center 50% ROI.
+                        context.drawImage(image, 45, 116, 740, 740, camera.left, camera.top, camera.size, camera.size);
+                        stream.getVideoTracks()[0].requestFrame();
+                    };
+                    return stream;
+                },
+            }});
+        })();
+        """.replace("CAMERA_FIXTURE", json.dumps(camera)))
+        page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
+        page.get_by_label("Issuer public key", exact=True).fill(TestRenderedQrImageUploads.PUBLIC_KEY)
+        page.get_by_role("button", name="Start scanning", exact=True).click()
+        page.wait_for_function("""() => {
+            const video = document.querySelector('.ar-camera video');
+            return video?.readyState >= 2 && video.videoWidth > 0;
+        }""")
+        page.locator(".ar-camera video").scroll_into_view_if_needed()
+        page.evaluate("window.showCameraSeal()")
+        if manual:
+            page.wait_for_function("""() => {
+                const video = document.querySelector('.ar-camera video');
+                const canvas = document.createElement('canvas');
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const context = canvas.getContext('2d');
+                context.drawImage(video, 0, 0);
+                return context.getImageData(0, 0, canvas.width, canvas.height).data.some((value, i) => i % 4 !== 3 && value < 128);
+            }""", timeout=5000)
+            page.get_by_role("button", name="Scan photo", exact=True).click()
+        expect(page.get_by_role("heading", name="QR captured", exact=True)).to_be_visible(timeout=10000)
+        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible()
+        expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45")
 
 
 class TestExistingSealCompatibility:

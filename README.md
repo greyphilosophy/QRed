@@ -77,6 +77,17 @@ cd ../tests
 pytest            # Playwright E2E parity tests
 ```
 
+With the production build served at `QRED_BASE_URL` (default `http://localhost:3000`),
+`tests/test_network_privacy.py` checks both a connected browser with outgoing
+requests blocked and a browser set offline. It keeps the real service worker
+enabled, warms PDF resources with a disposable document, then requires zero
+HTTP or WebSocket attempts while generating/restoring/saving keys, stamping
+and saving a PDF, and verifying seal text and QR image pixels. Loading permits
+only same-origin GETs for known build files and the default public key. Probe
+requests verify that the guard catches page and service-worker traffic.
+This covers the tested workflows after their resources load; first-use assets,
+OCR resources, page reloads, and device-wide traffic are outside that assertion.
+
 ## Deploy to Cloudflare
 
 ```bash

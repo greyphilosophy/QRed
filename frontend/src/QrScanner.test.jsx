@@ -309,7 +309,7 @@ describe("decodeCanvasFrame", () => {
   });
 
   function frame({ readyState = 2, width = 320, height = 240 } = {}) {
-    const imageData = { data: new Uint8ClampedArray(Math.floor(width / 2) * Math.floor(height / 2) * 4) };
+    const imageData = { data: new Uint8ClampedArray(width * height * 4) };
     const ctx = { drawImage: vi.fn(), getImageData: vi.fn(() => imageData) };
     const canvas = { width, height, getContext: vi.fn(() => ctx) };
     const video = { readyState, videoWidth: width, videoHeight: height };
@@ -344,8 +344,9 @@ describe("decodeCanvasFrame", () => {
     vi.mocked(jsQR).mockReturnValue({ data: "https://example.test" });
 
     expect(decodeCanvasFrame(video, canvas)).toEqual({ status: "found", text: "https://example.test" });
-    // ROI crop: center 50% of 320x240 → draw from video(80,60) at 160x120 onto canvas(0,0)
-    expect(ctx.drawImage).toHaveBeenCalledWith(video, 80, 60, 160, 120, 0, 0, 160, 120);
+    expect(ctx.drawImage).toHaveBeenCalledWith(video, 0, 0, 320, 240);
+    expect(ctx.getImageData).toHaveBeenCalledWith(0, 0, 320, 240);
+    expect(jsQR).toHaveBeenCalledWith(expect.any(Uint8ClampedArray), 320, 240, expect.any(Object));
   });
 
   it("gives manual photo feedback when no QR is found", () => {
@@ -354,7 +355,7 @@ describe("decodeCanvasFrame", () => {
 
     expect(decodeCanvasFrame(video, canvas, { manual: true })).toEqual({
       status: "feedback",
-      message: "No QR code found in this photo. Center a QR seal in the frame and try again.",
+      message: "No QR code found in this photo. Keep the whole seal in view, hold steady, and avoid glare. Then try again.",
     });
     expect(jsQR).toHaveBeenCalledTimes(4);
   });

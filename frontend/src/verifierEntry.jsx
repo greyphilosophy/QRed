@@ -197,6 +197,12 @@ function VerifierApp() {
       <header>
         <h1>QRed Verifier</h1>
         <p>Scan QR seals to verify a document — camera or manual entry</p>
+        <p>Camera frames and seal text are processed in this browser and are not sent to a server.</p>
+        <details>
+          <summary>Optional: use airplane mode</summary>
+          <p>Load QRed, then enable airplane mode and turn Wi-Fi and Bluetooth off in your device settings to limit network access while you work. Keep this tab open.</p>
+          <p>Try your workflow with a non-sensitive file before opening sensitive documents. Some PDF fonts and text-recognition resources may still need an internet connection.</p>
+        </details>
       </header>
 
       <main>
@@ -222,7 +228,7 @@ function VerifierApp() {
           />
 
           <label htmlFor="manualSealInput" className="field-label">
-            Manual seal entry or uploaded seal text
+            Seal text
           </label>
           <textarea
             id="manualSealInput"
@@ -234,6 +240,7 @@ function VerifierApp() {
             style={{ resize: "vertical" }}
           />
 
+          <label htmlFor="sealFileInput" className="field-label">Open seal text file</label>
           <input
             id="sealFileInput"
             type="file"

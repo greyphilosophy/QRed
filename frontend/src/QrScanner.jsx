@@ -199,17 +199,6 @@ export function manualCapturePendingAction(startedAt, now = performance.now()) {
   };
 }
 
-// ROI cropping: only decode the center 50% of the frame for jsQR
-const ROI_FACTOR = 0.5;
-
-function getROICropRegion(videoWidth, videoHeight) {
-  const roiW = Math.floor(videoWidth * ROI_FACTOR);
-  const roiH = Math.floor(videoHeight * ROI_FACTOR);
-  const x = Math.floor((videoWidth - roiW) / 2);
-  const y = Math.floor((videoHeight - roiH) / 2);
-  return { x, y, width: roiW, height: roiH };
-}
-
 export function decodeCanvasFrame(video, canvas, options = {}) {
   const manual = Boolean(options.manual);
   const returnPayload = Boolean(options.returnPayload);
@@ -230,35 +219,30 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
     canvas.height = vHeight;
   }
 
-  // Draw only the ROI crop for performance (center 50%)
-  const roi = getROICropRegion(vWidth, vHeight);
-  ctx.drawImage(video, roi.x, roi.y, roi.width, roi.height, 0, 0, roi.width, roi.height);
+  // Scan every native camera pixel. A center crop can cut off QR finder
+  // patterns that are visible in the object-fit: cover preview; the reticle
+  // is an aiming guide, not a boundary. Keep recovery in this same frame.
+  ctx.drawImage(video, 0, 0, vWidth, vHeight);
+  const imageData = ctx.getImageData(0, 0, vWidth, vHeight);
+  const code = !manual && options.scanQrFrame
+    ? options.scanQrFrame(imageData.data, vWidth, vHeight)
+    : scanQrImage(imageData.data, vWidth, vHeight, { tryRescaling: manual });
 
-  // Decode the ROI region for jsQR
-  if (roi.width > 0 && roi.height > 0) {
-    const imageData = ctx.getImageData(0, 0, roi.width, roi.height);
-    const code = !manual && options.scanQrFrame
-      ? options.scanQrFrame(imageData.data, roi.width, roi.height)
-      : scanQrImage(imageData.data, roi.width, roi.height, { tryRescaling: manual });
-
-    if (manual && !code?.data) {
-      return { status: "feedback", message: "No QR code found in this photo. Center a QR seal in the frame and try again." };
+  if (manual && !code?.data) {
+    return { status: "feedback", message: "No QR code found in this photo. Keep the whole seal in view, hold steady, and avoid glare. Then try again." };
+  }
+  if (manual && (code.data === VISIBLE_QR_TEXT || code.data.includes("QRED1") || code.data.includes("qred.org"))) {
+    const text = returnPayload
+      ? qredPayloadFromPhotoScanResult(imageData.data, vWidth, vHeight, code)
+      : qredTextFromPhotoScanResult(imageData.data, vWidth, vHeight, code);
+    if (text && text !== VISIBLE_QR_TEXT) return { status: "found", text };
+    if (code.data === VISIBLE_QR_TEXT) {
+      return { status: "feedback", message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again." };
     }
-    if (manual && (code.data === VISIBLE_QR_TEXT || code.data.includes("QRED1") || code.data.includes("qred.org"))) {
-      const text = returnPayload
-        ? qredPayloadFromPhotoScanResult(imageData.data, roi.width, roi.height, code)
-        : qredTextFromPhotoScanResult(imageData.data, roi.width, roi.height, code);
-      if (text && text !== VISIBLE_QR_TEXT) return { status: "found", text };
-      if (code.data === VISIBLE_QR_TEXT) {
-        return { status: "feedback", message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again." };
-      }
-      return { status: "found", text: qredTextFromScanResult(code) };
-    }
-
-    return qrScanAction(imageData.data, roi.width, roi.height, code, { returnPayload });
+    return { status: "found", text: qredTextFromScanResult(code) };
   }
 
-  return { status: "continue" };
+  return qrScanAction(imageData.data, vWidth, vHeight, code, { returnPayload });
 }
 
 function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayload }) {
