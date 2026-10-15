@@ -59,8 +59,10 @@ print margin. Larger sets use the grid that allows the largest codes within
 that same footer. The caption sits beside the codes where space permits.
 
 The image and camera scanners retry failed detections at a few nearby image
-scales to handle dense QR codes whose edges fall between pixels. Signature
-verification still uses the recovered signed payload and the issuer's key.
+scales to handle dense QR codes whose edges fall between pixels. Live camera
+scanning tries one scale per frame, with time for input and rendering between
+attempts. Uploaded images and manual photo captures try all scales immediately.
+Signature verification still uses the recovered signed payload and the issuer's key.
 
 To reuse a saved signing identity, paste the private key file's contents into **Private Key**, then click **Derive public key**. You can also paste an existing matching pair. Both fields accept Base64URL or standard Base64, with or without padding. The private key is a raw 32-byte Ed25519 seed; the public key is a raw 32-byte Ed25519 public key (43 encoded characters, optionally followed by `=`). PEM, SSH, hex, and expanded 64-byte private keys are not accepted. Key generation, derivation, validation, and signing happen locally; keys are never sent to a server or saved in browser storage.
 

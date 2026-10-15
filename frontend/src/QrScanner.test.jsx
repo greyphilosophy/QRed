@@ -3,6 +3,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import jsQR from "jsqr";
+import { createQrFrameScanner } from "./qr/scanQrImage.js";
 import { applyCameraQualityControls, applyContinuousCameraFocus, decodeCanvasFrame, findPreferredZoomCamera, getPreferredCameraStream, isCameraFrameReady, manualCapturePendingAction, MANUAL_CAPTURE_PENDING_TIMEOUT_MS, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
 
 vi.mock("jsqr", () => ({ default: vi.fn() }));
@@ -355,6 +356,22 @@ describe("decodeCanvasFrame", () => {
       status: "feedback",
       message: "No QR code found in this photo. Center a QR seal in the frame and try again.",
     });
+    expect(jsQR).toHaveBeenCalledTimes(4);
+  });
+
+  it("runs only one decode per automatic frame while keeping manual capture independent", () => {
+    const { canvas, video } = frame();
+    const scanQrFrame = createQrFrameScanner();
+    vi.mocked(jsQR).mockReturnValue(null);
+    for (let index = 0; index < 4; index += 1) {
+      expect(decodeCanvasFrame(video, canvas, { scanQrFrame })).toEqual({ status: "continue" });
+      expect(jsQR).toHaveBeenCalledTimes(index + 1);
+    }
+    const liveScanner = vi.fn(scanQrFrame);
+    vi.mocked(jsQR).mockClear();
+    decodeCanvasFrame(video, canvas, { manual: true, scanQrFrame: liveScanner });
+    expect(liveScanner).not.toHaveBeenCalled();
+    expect(jsQR).toHaveBeenCalledTimes(4);
   });
 
   it("gives manual photo feedback when a bootstrap QR has no hidden QRed payload", () => {

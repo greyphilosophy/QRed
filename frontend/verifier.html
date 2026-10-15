@@ -389,7 +389,7 @@
   </div>
 
   <script type="module">
-    import { scanQrImage } from "./src/qr/scanQrImage.js";
+    import { createQrFrameScanner } from "./src/qr/scanQrImage.js";
     import { compareDocumentText, classifyOcrWords, decodeSeal as decodeQRedSeal, verifyQRedSeals, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./src/qredVerifier.js";
     import { captureDocumentFrameForOcr, drawArOverlay } from "./src/verifier/ocrAr.js";
 
@@ -430,6 +430,7 @@
       arQrFrameId: null,
       arQrBusy: false,
       arQrLastScanAt: 0,
+      arQrScanner: null,
       arBusy: false,
       arErrorShown: false,
       defaultKeysPromise: null,
@@ -793,12 +794,18 @@
           statusBar.classList.add("visible");
 
           var ctx = canvas.getContext("2d");
+          var scanQrFrame = createQrFrameScanner();
+          var lastScanAt = -Infinity;
 
           function scanFrame() {
             if (!state.isScanning) return;
+            if (performance.now() - lastScanAt < 125) {
+              state.animFrameId = requestAnimationFrame(scanFrame);
+              return;
+            }
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            var code = scanQrImage(imageData.data, canvas.width, canvas.height);
+            var code = scanQrFrame(imageData.data, canvas.width, canvas.height);
             if (code) {
               var payload = qredPayloadFromPhotoScanResult(imageData.data, canvas.width, canvas.height, code);
               if (payload === VISIBLE_QR_TEXT) {
@@ -807,6 +814,7 @@
                 processScannedSeal(payload);
               }
             }
+            lastScanAt = performance.now();
             state.animFrameId = requestAnimationFrame(scanFrame);
           }
           scanFrame();
@@ -999,6 +1007,7 @@
         state.arStream = mediaStream;
         state.arErrorShown = false;
         state.arQrLastScanAt = 0;
+        state.arQrScanner = createQrFrameScanner();
         video.srcObject = mediaStream;
         return video.play();
       }).then(function() {
@@ -1028,6 +1037,7 @@
       }
       state.arBusy = false;
       state.arQrBusy = false;
+      state.arQrScanner = null;
       btnStartAr.textContent = "Start AR Overlay";
       var arCard = document.getElementById("arCard");
       if (arCard) arCard.style.display = "none";
@@ -1047,17 +1057,17 @@
         state.arQrFrameId = requestAnimationFrame(runArQrFrame);
         return;
       }
-      state.arQrLastScanAt = Date.now();
       state.arQrBusy = true;
       var capture = document.createElement("canvas");
       capture.width = video.videoWidth;
       capture.height = video.videoHeight;
       capture.getContext("2d").drawImage(video, 0, 0, capture.width, capture.height);
       var imageData = capture.getContext("2d").getImageData(0, 0, capture.width, capture.height);
-      var code = scanQrImage(imageData.data, capture.width, capture.height);
+      var code = state.arQrScanner(imageData.data, capture.width, capture.height);
       if (code && code.data) {
         processArQrDetection(code, capture.width, capture.height, imageData.data);
       }
+      state.arQrLastScanAt = Date.now();
       state.arQrBusy = false;
       if (state.arStream) {
         state.arQrFrameId = requestAnimationFrame(runArQrFrame);
@@ -1076,11 +1086,7 @@
       capture.width = video.videoWidth;
       capture.height = video.videoHeight;
       capture.getContext("2d").drawImage(video, 0, 0, capture.width, capture.height);
-      var imageData = capture.getContext("2d").getImageData(0, 0, capture.width, capture.height);
-      var qrCode = scanQrImage(imageData.data, capture.width, capture.height);
-      if (qrCode && qrCode.data) {
-        processArQrDetection(qrCode, capture.width, capture.height, imageData.data);
-      }
+      // The separate QR loop handles detection; OCR must not duplicate its work.
       import("tesseract.js").then(function(module) {
         var workerApi = module.default || module;
         return workerApi.recognize(capture, "eng");

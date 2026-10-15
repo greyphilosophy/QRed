@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { scanQrImage } from "./qr/scanQrImage.js";
+import { createQrFrameScanner, scanQrImage } from "./qr/scanQrImage.js";
 import { VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult, qredTextFromScanResult } from "./qredVerifier.js";
 
 /**
@@ -237,7 +237,9 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
   // Decode the ROI region for jsQR
   if (roi.width > 0 && roi.height > 0) {
     const imageData = ctx.getImageData(0, 0, roi.width, roi.height);
-    const code = scanQrImage(imageData.data, roi.width, roi.height);
+    const code = !manual && options.scanQrFrame
+      ? options.scanQrFrame(imageData.data, roi.width, roi.height)
+      : scanQrImage(imageData.data, roi.width, roi.height, { tryRescaling: manual });
 
     if (manual && !code?.data) {
       return { status: "feedback", message: "No QR code found in this photo. Center a QR seal in the frame and try again." };
@@ -285,6 +287,7 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
     let stream = null;
     let stopped = false;
     let throttleTimer = null;
+    const scanQrFrame = createQrFrameScanner();
 
     function stop() {
       stopped = true;
@@ -349,14 +352,15 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
       const scanAction = timedOutManualCapture
         || (pendingManualCaptureRef.current && frameReady
           ? decodeCanvasFrame(video, canvas, { manual: true, returnPayload })
-          : decodeCanvasFrame(video, canvas, { returnPayload }));
+          : decodeCanvasFrame(video, canvas, { returnPayload, scanQrFrame }));
       if (pendingManualCaptureRef.current && (frameReady || timedOutManualCapture)) {
         pendingManualCaptureRef.current = false;
         pendingManualCaptureStartedAtRef.current = null;
       }
       if (handleScanActionRef.current(scanAction)) return;
 
-      lastScanTimeRef.current = now;
+      // Leave time for rendering and input even when a decode is slow.
+      lastScanTimeRef.current = performance.now();
       animId = requestAnimationFrame(scanFrame);
     }
 
