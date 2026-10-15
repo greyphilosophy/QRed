@@ -148,6 +148,11 @@ export function PdfSealForm({ onUsePublicKey }) {
         Open a PDF from your device, seal the readable text on every page, and save the stamped copy. Supported form fields are automatically flattened before their text is signed. Images, handwriting, checkbox marks, and page appearance are not authenticated. Scanned or blank pages require a checked text layer before sealing. Review the values in your saved copy.
       </p>
       <p>Your PDF stays on your device. Stamping happens in this browser, and the file is not sent to a server.</p>
+      <details>
+        <summary>Optional: use airplane mode</summary>
+        <p>Load QRed, then enable airplane mode and turn Wi-Fi and Bluetooth off in your device settings to limit network access while you work. Keep this tab open.</p>
+        <p>Try your workflow with a non-sensitive file before opening sensitive documents. Some PDF fonts and text-recognition resources may still need an internet connection.</p>
+      </details>
       <div className="signing-key-help">
         <h3>Signing keys</h3>
         <p>New to QRed? Generate an Ed25519 key pair below. The private key signs your PDFs; the public key lets others verify them. Keys are generated in this browser and are never sent to a server.</p>
