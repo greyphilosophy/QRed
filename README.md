@@ -52,6 +52,18 @@ Open `http://localhost:3000` in your browser. Click "Open PDF stamping tool" to 
 4. Choose a PDF, enter your issuer name, and click **Upload PDF and Stamp QR Seals**.
 5. To test your seals on the same page, click **Use public key to verify**. This sets the key in **Verify collected seals**, where you can scan or upload the QR images from your stamped PDF.
 
+Letter-to-legal stamping preserves the original letter content at its original
+size and uses the added three-inch footer for QR seals. One or two seals are
+2.75 inches square, including their quiet zones, with a quarter-inch bottom
+print margin. Larger sets use the grid that allows the largest codes within
+that same footer. The caption sits beside the codes where space permits.
+
+The image and camera scanners retry failed detections at a few nearby image
+scales to handle dense QR codes whose edges fall between pixels. Live camera
+scanning tries one scale per frame, with time for input and rendering between
+attempts. Uploaded images and manual photo captures try all scales immediately.
+Signature verification still uses the recovered signed payload and the issuer's key.
+
 To reuse a saved signing identity, paste the private key file's contents into **Private Key**, then click **Derive public key**. You can also paste an existing matching pair. Both fields accept Base64URL or standard Base64, with or without padding. The private key is a raw 32-byte Ed25519 seed; the public key is a raw 32-byte Ed25519 public key (43 encoded characters, optionally followed by `=`). PEM, SSH, hex, and expanded 64-byte private keys are not accepted. Key generation, derivation, validation, and signing happen locally; keys are never sent to a server or saved in browser storage.
 
 The configured/default public key is for verification only. The stamping tool does not preload it because an unrelated private key cannot sign for it. A generated key proves control of that signing key, not an independently verified issuer identity.

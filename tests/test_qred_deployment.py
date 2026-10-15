@@ -733,6 +733,40 @@ class TestKeyGenerationImportAndSignatureVerification:
         assert verified, "Verification failed for seal with custom key"
 
 
+class TestRenderedQrImageUploads:
+    """Use actual downloaded-PDF pixels, without manual strings or test hooks."""
+
+    PUBLIC_KEY = "Sz8MZnNyHPkt6J3hC_rcXEabv4rrQSgAH_krcitjlF8"
+    FIXTURES = Path(__file__).parent / "fixtures" / "qr-scans"
+
+    @pytest.mark.parametrize("image_name", [
+        "invoice-footer-300dpi.png",
+        "invoice-full-300dpi.png",
+        "inventory-four-inch-300dpi.png",
+    ])
+    def test_verifies_previously_unreadable_rendered_image(self, page: Page, image_name):
+        page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
+        page.get_by_label("Issuer public key", exact=True).fill(self.PUBLIC_KEY)
+        page.get_by_label("QR image", exact=True).set_input_files(str(self.FIXTURES / image_name))
+        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
+        expect(page.locator(".verification-result pre")).to_contain_text("QRed PDF page integrity")
+        page.get_by_label("Issuer public key", exact=True).fill(DEMO_PUBLIC_KEY)
+        expect(page.get_by_role("heading", name="INVALID", exact=True)).to_be_visible()
+
+    def test_mobile_image_upload_waits_for_both_distinct_seals(self, page: Page):
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
+        page.get_by_label("Issuer public key", exact=True).fill(self.PUBLIC_KEY)
+        upload = page.get_by_label("QR image", exact=True)
+        upload.set_input_files(str(self.FIXTURES / "manifest-seal-1-300dpi.png"))
+        expect(page.get_by_role("heading", name="INCOMPLETE", exact=True)).to_be_visible(timeout=20000)
+        upload.set_input_files(str(self.FIXTURES / "manifest-seal-1-300dpi.png"))
+        expect(page.get_by_role("heading", name="INCOMPLETE", exact=True)).to_be_visible()
+        upload.set_input_files(str(self.FIXTURES / "manifest-seal-2-300dpi.png"))
+        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
+        expect(page.locator(".verification-result pre")).to_contain_text("END OF MANIFEST - 56 synthetic line items.")
+
+
 class TestExistingSealCompatibility:
     """T5: Existing seal compatibility (re-verify seals from known documents)."""
 

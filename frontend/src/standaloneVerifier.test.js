@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
 import { fireEvent, waitFor } from "@testing-library/react";
 import jsQR from "jsqr";
+import { PNG } from "pngjs";
+import { createQrFrameScanner } from "./qr/scanQrImage.js";
 import * as verifier from "./qredVerifier.js";
 import { createQRedSeals } from "./qredSealer.js";
 import { createQRedQrSymbol } from "./qredQr.js";
@@ -25,7 +27,22 @@ function raster(symbol) {
   return { data, width, height: width };
 }
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = ""; });
+function loadStandalone(overrides = {}) {
+  document.documentElement.innerHTML = readFileSync("verifier.html", "utf8");
+  const source = document.querySelector('script[type="module"]').textContent.replace(/^\s*import .+;$/gm, "");
+  const bindings = {
+    createQrFrameScanner, ...verifier, decodeQRedSeal: verifier.decodeSeal,
+    captureDocumentFrameForOcr: vi.fn(), drawArOverlay: vi.fn(), ...overrides,
+  };
+  // Execute the shipped module with real QR/signature code, without injecting
+  // pre-decoded seals or using the verification test hook.
+  new Function(...Object.keys(bindings), source)(...Object.values(bindings));
+}
+
+afterEach(() => {
+  vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = "";
+  delete navigator.mediaDevices;
+});
 
 it("the standalone camera recovers hidden payload bytes before verifying and renders metadata safely", async () => {
   vi.stubGlobal("crypto", webcrypto);
@@ -36,16 +53,7 @@ it("the standalone camera recovers hidden payload bytes before verifying and ren
   const frame = raster(createQRedQrSymbol(seals[0]));
   expect(jsQR(frame.data, frame.width, frame.height).data).toBe("QRED.ORG");
 
-  const html = readFileSync("verifier.html", "utf8");
-  document.documentElement.innerHTML = html;
-  const source = document.querySelector('script[type="module"]').textContent.replace(/^\s*import .+;$/gm, "");
-  const bindings = {
-    jsQR, ...verifier, decodeQRedSeal: verifier.decodeSeal,
-    captureDocumentFrameForOcr: vi.fn(), drawArOverlay: vi.fn(),
-  };
-  // Execute the shipped inline module, with real QR/signature code and a fake
-  // camera frame. No test verification hook or pre-decoded seal is injected.
-  new Function(...Object.keys(bindings), source)(...Object.values(bindings));
+  loadStandalone();
   const video = document.getElementById("cameraVideo");
   Object.defineProperties(video, { videoWidth: { value: frame.width }, videoHeight: { value: frame.height } });
   vi.spyOn(video, "play").mockResolvedValue();
@@ -61,4 +69,43 @@ it("the standalone camera recovers hidden payload bytes before verifying and ren
   expect(document.getElementById("resultContent").textContent).toBe("Standalone camera document");
   expect(document.getElementById("resultMeta").textContent).toContain(issuer);
   expect(document.getElementById("resultMeta").querySelector("img")).toBeNull();
+});
+
+it("the standalone camera yields between retries and verifies a previously unreadable frame", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  let nextFrame;
+  vi.stubGlobal("requestAnimationFrame", vi.fn((callback) => { nextFrame = callback; return 1; }));
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  let now = 1000;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  const scan = vi.fn(createQrFrameScanner());
+  loadStandalone({ createQrFrameScanner: () => scan });
+
+  const frame = PNG.sync.read(readFileSync("../tests/fixtures/qr-scans/invoice-footer-300dpi.png"));
+  const video = document.getElementById("cameraVideo");
+  Object.defineProperties(video, { videoWidth: { value: frame.width }, videoHeight: { value: frame.height } });
+  vi.spyOn(video, "play").mockResolvedValue();
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage() {}, getImageData: () => frame });
+  Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: {
+    getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop() {} }] }),
+  } });
+  document.getElementById("publicKeyInput").value = "Sz8MZnNyHPkt6J3hC_rcXEabv4rrQSgAH_krcitjlF8";
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(typeof video.onloadedmetadata).toBe("function"));
+  video.onloadedmetadata();
+  expect(scan).toHaveBeenCalledTimes(1);
+  expect(scan.mock.results[0].value).toBeNull();
+
+  // Rendering frames during the cooldown must not do more decoding work.
+  now += 124;
+  nextFrame();
+  expect(scan).toHaveBeenCalledTimes(1);
+  for (let retry = 0; retry < 3 && !scan.mock.results.at(-1).value; retry += 1) {
+    now += 125;
+    const callsBefore = scan.mock.calls.length;
+    nextFrame();
+    expect(scan).toHaveBeenCalledTimes(callsBefore + 1);
+  }
+  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
+  expect(document.getElementById("resultContent").textContent).toContain("Approved total: $123.45");
 });

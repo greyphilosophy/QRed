@@ -3,6 +3,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import jsQR from "jsqr";
+import { createQrFrameScanner } from "./qr/scanQrImage.js";
 import { applyCameraQualityControls, applyContinuousCameraFocus, decodeCanvasFrame, findPreferredZoomCamera, getPreferredCameraStream, isCameraFrameReady, manualCapturePendingAction, MANUAL_CAPTURE_PENDING_TIMEOUT_MS, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
 
 vi.mock("jsqr", () => ({ default: vi.fn() }));
@@ -308,7 +309,7 @@ describe("decodeCanvasFrame", () => {
   });
 
   function frame({ readyState = 2, width = 320, height = 240 } = {}) {
-    const imageData = { data: new Uint8ClampedArray(width * height * 4) };
+    const imageData = { data: new Uint8ClampedArray(Math.floor(width / 2) * Math.floor(height / 2) * 4) };
     const ctx = { drawImage: vi.fn(), getImageData: vi.fn(() => imageData) };
     const canvas = { width, height, getContext: vi.fn(() => ctx) };
     const video = { readyState, videoWidth: width, videoHeight: height };
@@ -355,6 +356,22 @@ describe("decodeCanvasFrame", () => {
       status: "feedback",
       message: "No QR code found in this photo. Center a QR seal in the frame and try again.",
     });
+    expect(jsQR).toHaveBeenCalledTimes(4);
+  });
+
+  it("runs only one decode per automatic frame while keeping manual capture independent", () => {
+    const { canvas, video } = frame();
+    const scanQrFrame = createQrFrameScanner();
+    vi.mocked(jsQR).mockReturnValue(null);
+    for (let index = 0; index < 4; index += 1) {
+      expect(decodeCanvasFrame(video, canvas, { scanQrFrame })).toEqual({ status: "continue" });
+      expect(jsQR).toHaveBeenCalledTimes(index + 1);
+    }
+    const liveScanner = vi.fn(scanQrFrame);
+    vi.mocked(jsQR).mockClear();
+    decodeCanvasFrame(video, canvas, { manual: true, scanQrFrame: liveScanner });
+    expect(liveScanner).not.toHaveBeenCalled();
+    expect(jsQR).toHaveBeenCalledTimes(4);
   });
 
   it("gives manual photo feedback when a bootstrap QR has no hidden QRed payload", () => {
