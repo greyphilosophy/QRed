@@ -308,7 +308,7 @@ describe("decodeCanvasFrame", () => {
   });
 
   function frame({ readyState = 2, width = 320, height = 240 } = {}) {
-    const imageData = { data: new Uint8ClampedArray(width * height * 4) };
+    const imageData = { data: new Uint8ClampedArray(Math.floor(width / 2) * Math.floor(height / 2) * 4) };
     const ctx = { drawImage: vi.fn(), getImageData: vi.fn(() => imageData) };
     const canvas = { width, height, getContext: vi.fn(() => ctx) };
     const video = { readyState, videoWidth: width, videoHeight: height };

@@ -9,6 +9,7 @@ import { PNG } from "pngjs";
 import { describe, expect, it } from "vitest";
 import { extractPdfText, LEGAL_FOOTER_HEIGHT, planQrStampLayout, planQrStampLayoutForFooterBand, qrPngBytes, sealPdfInBrowser } from "./pdfClientSeal.js";
 import { qrScanAction } from "./QrScanner.jsx";
+import { scanQrImage } from "./qr/scanQrImage.js";
 import { createQRedQrData, qredQrPngDataUrl, qredRasterPlan, qredVisibleBitsLength } from "./qredQr.js";
 import { extractHiddenQRedPayload, qredPayloadFromPhotoScanResult, verifyQRedSeals, VISIBLE_QR_TEXT } from "./qredVerifier.js";
 
@@ -170,15 +171,47 @@ describe("browser PDF sealing", () => {
     expect(stampedQrValues).toEqual(pageSealStrings[0]);
   });
 
-  it("shrinks legal-footer QR seals to fit within the usable bottom 3-inch band", () => {
+  it("uses 2.75-inch QR seals for one or two seals in the legal footer", () => {
+    for (const count of [1, 2]) {
+      const layout = planQrStampLayoutForFooterBand(612, count);
+      expect(layout.qrSize / 72).toBe(2.75);
+      expect(layout.qrOffsetY).toBeGreaterThanOrEqual(18);
+      expect(layout.qrOffsetY + layout.gridHeight).toBeLessThanOrEqual(LEGAL_FOOTER_HEIGHT);
+      expect(layout.qrOffsetX + layout.gridWidth).toBeLessThanOrEqual(612 - 18);
+    }
+  });
+
+  it("uses a larger multi-row grid when six seals must fit the legal footer", () => {
     const layout = planQrStampLayoutForFooterBand(612, 6, {
       footerBandHeight: LEGAL_FOOTER_HEIGHT,
-      footerMargin: 1,
     });
 
-    expect(layout.rows).toBe(1);
-    expect(layout.qrSize).toBeLessThanOrEqual(84);
-    expect(layout.panelHeight).toBeLessThanOrEqual(LEGAL_FOOTER_HEIGHT - 1);
+    expect(layout.rows).toBe(2);
+    expect(layout.qrSize).toBeGreaterThan(84);
+    expect(layout.qrOffsetY + layout.gridHeight).toBeLessThanOrEqual(LEGAL_FOOTER_HEIGHT);
+    expect(layout.qrOffsetX + layout.gridWidth).toBeLessThanOrEqual(612 - 18);
+  });
+
+  it("preserves the original letter pixels and verifies its larger footer at 300 dpi", async () => {
+    const source = readFileSync("../tests/fixtures/live-qa-invoice.pdf");
+    const { blob } = await sealPdfInBrowser({
+      file: new File([source], "invoice.pdf", { type: "application/pdf" }),
+      issuer: "Print QA", privateKey, publicKey,
+    });
+    const original = renderPdfFirstPageToPng(source, 300);
+    const stamped = renderPdfFirstPageToPng(await blob.arrayBuffer(), 300);
+    expect(stamped.width).toBe(original.width);
+    expect(stamped.height - original.height).toBe(900);
+    expect(stamped.data.subarray(0, original.data.length).equals(original.data)).toBe(true);
+    const footer = new PNG({ width: stamped.width, height: 900 });
+    PNG.bitblt(stamped, footer, 0, original.height, stamped.width, 900, 0, 0);
+    const pixels = new Uint8ClampedArray(footer.data);
+    const code = scanQrImage(pixels, footer.width, footer.height);
+    expect(code?.data).toBe(VISIBLE_QR_TEXT);
+    const seal = qredPayloadFromPhotoScanResult(pixels, footer.width, footer.height, code);
+    await expect(verifyQRedSeals([seal], publicKey)).resolves.toMatchObject({
+      status: "VALID", content: expect.stringContaining("Approved total: $123.45"),
+    });
   });
 
   it("expands letter pages to legal size when asked to create a footer for QR seals", async () => {

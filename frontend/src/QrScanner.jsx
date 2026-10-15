@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import jsQR from "jsqr";
+import { scanQrImage } from "./qr/scanQrImage.js";
 import { VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult, qredTextFromScanResult } from "./qredVerifier.js";
 
 /**
@@ -237,7 +237,7 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
   // Decode the ROI region for jsQR
   if (roi.width > 0 && roi.height > 0) {
     const imageData = ctx.getImageData(0, 0, roi.width, roi.height);
-    const code = jsQR(imageData.data, roi.width, roi.height, { inversionAttempts: "attemptBoth" });
+    const code = scanQrImage(imageData.data, roi.width, roi.height);
 
     if (manual && !code?.data) {
       return { status: "feedback", message: "No QR code found in this photo. Center a QR seal in the frame and try again." };

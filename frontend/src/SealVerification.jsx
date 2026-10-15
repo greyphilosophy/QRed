@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import jsQR from "jsqr";
+import { scanQrImage } from "./qr/scanQrImage.js";
 import { decodeSeal, qredPayloadFromPhotoScanResult, verifyQRedSeals, VISIBLE_QR_TEXT } from "./qredVerifier.js";
 
 export function useSealVerification() {
@@ -76,7 +76,7 @@ export function SealVerification({ verification }) {
       const context = canvas.getContext("2d");
       context.drawImage(image, 0, 0);
       const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(pixels.data, pixels.width, pixels.height, { inversionAttempts: "attemptBoth" });
+      const code = scanQrImage(pixels.data, pixels.width, pixels.height);
       if (!code) throw new Error("No QR code found. Upload a clear image of one seal.");
       addSeal(qredPayloadFromPhotoScanResult(pixels.data, pixels.width, pixels.height, code));
     } catch (error) {

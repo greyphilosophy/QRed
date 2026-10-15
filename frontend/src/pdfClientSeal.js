@@ -90,24 +90,34 @@ export async function sealPdfInBrowser({ file, issuer, privateKey, publicKey, bo
     const { width, height } = page.getSize();
     const resolvedPageScalingStrategy = resolvePageScalingStrategy(pageScalingStrategy, width, height);
     const layout = resolvedPageScalingStrategy === "legal-footer"
-      ? planQrStampLayoutForFooterBand(width, qrImages.length, { footerBandHeight: LEGAL_FOOTER_HEIGHT, footerMargin: 1 })
+      ? planQrStampLayoutForFooterBand(width, qrImages.length, { footerBandHeight: LEGAL_FOOTER_HEIGHT })
       : planQrStampLayout(width, qrImages.length);
-    const footerMargin = resolvedPageScalingStrategy === "legal-footer" ? 1 : PANEL_MARGIN;
+    const footerMargin = resolvedPageScalingStrategy === "legal-footer" ? 0 : PANEL_MARGIN;
     const footerHeight = resolvedPageScalingStrategy === "legal-footer" ? LEGAL_FOOTER_HEIGHT : footerMargin + layout.panelHeight;
     page = await applyPageScaling(pdf, pageIndex, page, resolvedPageScalingStrategy, footerHeight);
     page.drawRectangle({ x: footerMargin, y: footerMargin, width: layout.panelWidth, height: layout.panelHeight, color: rgb(1, 1, 1), opacity: 0.94 });
-    page.drawText("QRed sealed PDF page", {
-      x: footerMargin + PANEL_PADDING,
-      y: footerMargin + layout.panelHeight - PANEL_PADDING - 9,
-      size: 9,
-      font,
-      color: rgb(0.05, 0.12, 0.22),
-    });
+    const caption = "QRed sealed PDF page";
+    const captionX = layout.labelBeside
+      ? layout.qrOffsetX + layout.gridWidth + 12
+      : footerMargin + PANEL_PADDING;
+    // A crowded grid uses the full footer width; never draw a label over a QR
+    // or its quiet zone merely to keep the decorative caption.
+    if (!layout.labelBeside || captionX + font.widthOfTextAtSize(caption, 9) <= width - PANEL_MARGIN) {
+      page.drawText(caption, {
+        x: captionX,
+        y: layout.labelBeside
+          ? layout.qrOffsetY + (layout.gridHeight / 2)
+          : footerMargin + layout.panelHeight - PANEL_PADDING - 9,
+        size: 9,
+        font,
+        color: rgb(0.05, 0.12, 0.22),
+      });
+    }
     qrImages.forEach((image, index) => {
       const column = index % layout.columns;
       const row = Math.floor(index / layout.columns);
-      const x = footerMargin + PANEL_PADDING + (column * (layout.qrSize + layout.gap));
-      const y = footerMargin + PANEL_PADDING + ((layout.rows - row - 1) * (layout.qrSize + layout.gap));
+      const x = footerMargin + (layout.qrOffsetX ?? PANEL_PADDING) + (column * (layout.qrSize + layout.gap));
+      const y = footerMargin + (layout.qrOffsetY ?? PANEL_PADDING) + ((layout.rows - row - 1) * (layout.qrSize + layout.gap));
       page.drawImage(image, { x, y, width: layout.qrSize, height: layout.qrSize });
     });
   }

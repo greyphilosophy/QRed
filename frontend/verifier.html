@@ -389,7 +389,7 @@
   </div>
 
   <script type="module">
-    import jsQR from "jsqr";
+    import { scanQrImage } from "./src/qr/scanQrImage.js";
     import { compareDocumentText, classifyOcrWords, decodeSeal as decodeQRedSeal, verifyQRedSeals, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./src/qredVerifier.js";
     import { captureDocumentFrameForOcr, drawArOverlay } from "./src/verifier/ocrAr.js";
 
@@ -798,7 +798,7 @@
             if (!state.isScanning) return;
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            var code = jsQR(imageData.data, canvas.width, canvas.height);
+            var code = scanQrImage(imageData.data, canvas.width, canvas.height);
             if (code) {
               var payload = qredPayloadFromPhotoScanResult(imageData.data, canvas.width, canvas.height, code);
               if (payload === VISIBLE_QR_TEXT) {
@@ -1054,7 +1054,7 @@
       capture.height = video.videoHeight;
       capture.getContext("2d").drawImage(video, 0, 0, capture.width, capture.height);
       var imageData = capture.getContext("2d").getImageData(0, 0, capture.width, capture.height);
-      var code = jsQR(imageData.data, capture.width, capture.height);
+      var code = scanQrImage(imageData.data, capture.width, capture.height);
       if (code && code.data) {
         processArQrDetection(code, capture.width, capture.height, imageData.data);
       }
@@ -1077,7 +1077,7 @@
       capture.height = video.videoHeight;
       capture.getContext("2d").drawImage(video, 0, 0, capture.width, capture.height);
       var imageData = capture.getContext("2d").getImageData(0, 0, capture.width, capture.height);
-      var qrCode = jsQR(imageData.data, capture.width, capture.height);
+      var qrCode = scanQrImage(imageData.data, capture.width, capture.height);
       if (qrCode && qrCode.data) {
         processArQrDetection(qrCode, capture.width, capture.height, imageData.data);
       }

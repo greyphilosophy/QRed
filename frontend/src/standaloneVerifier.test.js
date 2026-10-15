@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
 import { fireEvent, waitFor } from "@testing-library/react";
 import jsQR from "jsqr";
+import { scanQrImage } from "./qr/scanQrImage.js";
 import * as verifier from "./qredVerifier.js";
 import { createQRedSeals } from "./qredSealer.js";
 import { createQRedQrSymbol } from "./qredQr.js";
@@ -40,7 +41,7 @@ it("the standalone camera recovers hidden payload bytes before verifying and ren
   document.documentElement.innerHTML = html;
   const source = document.querySelector('script[type="module"]').textContent.replace(/^\s*import .+;$/gm, "");
   const bindings = {
-    jsQR, ...verifier, decodeQRedSeal: verifier.decodeSeal,
+    scanQrImage, ...verifier, decodeQRedSeal: verifier.decodeSeal,
     captureDocumentFrameForOcr: vi.fn(), drawArOverlay: vi.fn(),
   };
   // Execute the shipped inline module, with real QR/signature code and a fake
