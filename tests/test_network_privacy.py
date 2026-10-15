@@ -126,10 +126,14 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline):
             assert path.read_text().strip() == key
         page.get_by_role("button", name="Close", exact=True).click()
         page.get_by_role("button", name="Open PDF stamping tool").click()
-        page.get_by_label("Private Key", exact=True).fill(private_key)
-        page.get_by_role("button", name="Derive public key", exact=True).click()
+        page.get_by_label("Open private key file", exact=True).set_input_files(tmp_path / "qred-ed25519-private-key.txt")
+        expect(page.locator("#signing-key-status")).to_contain_text("Private key opened. Matching public key derived.")
+        expect(page.get_by_label("Private Key", exact=True)).to_have_value(private_key)
         expect(page.get_by_label("Public Key", exact=True)).to_have_value(public_key)
-        page.get_by_role("button", name="Use public key to verify", exact=True).click()
+        page.get_by_label("Open public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
+        expect(page.locator("#signing-key-status")).to_contain_text("Public key opened from your device.")
+        page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
+        expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(public_key)
 
         text = "Private offline invoice NETWORK-1042. Approved total: $123.45."
         _stamp_and_save(page, tmp_path, "private-invoice.pdf", text)

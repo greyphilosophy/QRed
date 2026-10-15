@@ -56,3 +56,26 @@ it("keeps a normal QR visible without treating it as a verified document", async
   expect(screen.getByText("Unverified QR content: https://example.org/ordinary")).toBeTruthy();
   expect(screen.queryByRole("heading", { name: "VALID" })).toBeNull();
 });
+
+it("opens an issuer key locally and rechecks collected seals, preserving the key on invalid imports", async () => {
+  const { seals } = await createQRedSeals({ content: "Saved issuer identity", issuer: "QA", privateKey, publicKey });
+  render(<App />);
+  await act(async () => scanner.props.onSealDetected(seals[0]));
+  expect(await screen.findByRole("heading", { name: "UNVERIFIED" })).toBeTruthy();
+  const requestsBefore = fetch.mock.calls.length;
+  const select = (text, name = "issuer.txt") => fireEvent.change(screen.getByLabelText("Open issuer public key file"), {
+    target: { files: [{ name, size: text.length, text: async () => text }] },
+  });
+  select(publicKey);
+  expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
+  const imported = screen.getByLabelText("Issuer public key").value;
+  select(privateKey, "qred-ed25519-private-key.txt");
+  await screen.findByText(/Choose a public key file instead/);
+  expect(screen.getByLabelText("Issuer public key").value).toBe(imported);
+  expect(screen.getByRole("heading", { name: "VALID" })).toBeTruthy();
+  select("Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=");
+  expect(await screen.findByRole("heading", { name: "INVALID" })).toBeTruthy();
+  select(publicKey);
+  expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
+  expect(fetch.mock.calls.length).toBe(requestsBefore);
+});

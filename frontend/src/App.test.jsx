@@ -37,6 +37,13 @@ function readBlob(blob) {
   });
 }
 
+function keyFile(contents, name) {
+  const file = new File([contents], name, { type: "text/plain" });
+  // jsdom's File lacks text(); keep a real File and read its actual bytes.
+  file.text = () => readBlob(file);
+  return file;
+}
+
 describe("App PDF signing keys", () => {
   beforeEach(() => {
     vi.stubGlobal("crypto", webcrypto);
@@ -123,6 +130,80 @@ describe("App PDF signing keys", () => {
     fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [pdf] } });
     fireEvent.click(screen.getByRole("button", { name: "Stamp and save PDF" }));
     await screen.findByText(/Sealed saved-key\.pdf/);
+  });
+
+  it("opens saved key files in a fresh tool and stamps with the same identity without networking", async () => {
+    render(<PdfSealForm />);
+    const keys = await generateKeys();
+    fireEvent.click(screen.getByRole("button", { name: "Save private key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save public key" }));
+    const privateFile = keyFile(URL.createObjectURL.mock.calls[0][0], "qred-ed25519-private-key.txt");
+    const publicFile = keyFile(URL.createObjectURL.mock.calls[1][0], "qred-ed25519-public-key.txt");
+    cleanup();
+    render(<PdfSealForm />);
+    fireEvent.click(screen.getByRole("button", { name: "Show private key" }));
+    fireEvent.change(screen.getByLabelText("Open private key file"), { target: { files: [privateFile] } });
+    await screen.findByText(/Private key opened\. Matching public key derived/);
+    expect(screen.getByLabelText("Private Key").value).toBe(keys.privateKey);
+    expect(screen.getByLabelText("Private Key").type).toBe("password");
+    expect(screen.getByLabelText("Public Key").value).toBe(keys.publicKey);
+    fireEvent.change(screen.getByLabelText("Open public key file"), { target: { files: [publicFile] } });
+    await screen.findByText("Public key opened from your device.");
+    fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [new File(["pdf"], "imported.pdf")] } });
+    fireEvent.click(screen.getByRole("button", { name: "Stamp and save PDF" }));
+    await screen.findByText(/Sealed imported\.pdf in this browser/);
+    expect(sealPdfInBrowser).toHaveBeenCalledWith(expect.objectContaining(keys));
+    expect(fetch).not.toHaveBeenCalled();
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["private", "not a key", "key.txt", /Private key must be/],
+    ["private", publicKey, "qred-ed25519-public-key.txt", /Choose a private key file instead/],
+    ["public", privateKey, "qred-ed25519-private-key.txt", /Choose a public key file instead/],
+    ["private", "x".repeat(4097), "document.txt", /4 KB or less/],
+    ["public", publicKey, "qred-ed25519-public-key.txt", /does not match the private key/],
+  ])("keeps the current pair when a %s file is invalid or mismatched (%#)", async (kind, text, name, error) => {
+    render(<PdfSealForm />);
+    const keys = await generateKeys();
+    fireEvent.change(screen.getByLabelText(`Open ${kind} key file`), { target: { files: [keyFile(text, name)] } });
+    await screen.findByText(error);
+    expect(screen.getByLabelText("Private Key").value).toBe(keys.privateKey);
+    expect(screen.getByLabelText("Public Key").value).toBe(keys.publicKey);
+    expect(window.confirm).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(`Open ${kind} key file`).value).toBe("");
+  });
+
+  it("keeps keys on a file read failure and allows retrying a cancelled replacement", async () => {
+    render(<PdfSealForm />);
+    const keys = await generateKeys();
+    const broken = keyFile(privateKey, "key.txt");
+    broken.text = () => Promise.reject(new Error("read failed"));
+    fireEvent.change(screen.getByLabelText("Open private key file"), { target: { files: [broken] } });
+    await screen.findByText(/Could not read the key file/);
+    expect(screen.getByLabelText("Private Key").value).toBe(keys.privateKey);
+    expect(screen.getByLabelText("Public Key").value).toBe(keys.publicKey);
+    const saved = keyFile(privateKey, "qred-ed25519-private-key.txt");
+    window.confirm.mockReturnValue(false);
+    fireEvent.change(screen.getByLabelText("Open private key file"), { target: { files: [saved] } });
+    await screen.findByText("Key import cancelled. Current keys kept.");
+    expect(screen.getByLabelText("Private Key").value).toBe(keys.privateKey);
+    expect(screen.getByLabelText("Public Key").value).toBe(keys.publicKey);
+    window.confirm.mockReturnValue(true);
+    fireEvent.change(screen.getByLabelText("Open private key file"), { target: { files: [saved] } });
+    await screen.findByText(/Private key opened\. Matching public key derived/);
+    expect(screen.getByLabelText("Private Key").value).toBe(privateKey.replace(/=$/, ""));
+    expect(screen.getByLabelText("Public Key").value).toBe(publicKey.replace(/=$/, ""));
+  });
+
+  it("opens a public key alone for verification without inventing a private key", async () => {
+    const onUsePublicKey = vi.fn();
+    render(<PdfSealForm onUsePublicKey={onUsePublicKey} />);
+    fireEvent.change(screen.getByLabelText("Open public key file"), { target: { files: [keyFile(publicKey, "issuer.txt")] } });
+    await screen.findByText("Public key opened from your device.");
+    expect(screen.getByLabelText("Private Key").value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Use public key to verify" }));
+    expect(onUsePublicKey).toHaveBeenCalledWith(publicKey.replace(/=$/, ""));
   });
 
   it.each([
