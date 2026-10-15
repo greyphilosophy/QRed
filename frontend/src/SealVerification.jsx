@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { scanQrImage } from "./qr/scanQrImage.js";
 import { decodeSeal, qredPayloadFromPhotoScanResult, verifyQRedSeals, VISIBLE_QR_TEXT } from "./qredVerifier.js";
+import { readSigningKeyFile } from "./signingKeys.js";
 
 export function useSealVerification() {
   const [seals, setSeals] = useState([]);
@@ -60,7 +61,26 @@ export function useSealVerification() {
 
 export function SealVerification({ verification }) {
   const [manual, setManual] = React.useState("");
+  const [openingKey, setOpeningKey] = useState(false);
+  const [keyFileStatus, setKeyFileStatus] = useState("");
   const { publicKey, setPublicKey, results, notice, setNotice, busy, addSeal } = verification;
+
+  async function openPublicKeyFile(event) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    setOpeningKey(true);
+    setKeyFileStatus("Reading public key on this device...");
+    try {
+      setPublicKey(await readSigningKeyFile(file, "public"));
+      setKeyFileStatus("Public key opened. Collected seals are checked with this key.");
+    } catch (error) {
+      setKeyFileStatus(`Key import failed: ${error.message}`);
+    } finally {
+      setOpeningKey(false);
+    }
+  }
 
   async function readImage(event) {
     const file = event.target.files?.[0];
@@ -97,7 +117,10 @@ export function SealVerification({ verification }) {
       <p>Try your workflow with a non-sensitive file before opening sensitive documents. Some PDF fonts and text-recognition resources may still need an internet connection.</p>
     </details>
     <label htmlFor="issuer-verification-key">Issuer public key</label>
-    <input id="issuer-verification-key" value={publicKey} onChange={(event) => setPublicKey(event.target.value)} />
+    <input id="issuer-verification-key" value={publicKey} onChange={(event) => { setPublicKey(event.target.value); setKeyFileStatus(""); }} disabled={openingKey} />
+    <label htmlFor="issuer-public-key-file">Open issuer public key file</label>
+    <input id="issuer-public-key-file" type="file" accept=".txt,text/plain" onChange={openPublicKeyFile} disabled={openingKey} />
+    <p role="status">{keyFileStatus}</p>
     <p className="verification-note">Use a key obtained from the issuer through a trusted channel. The default demo key is public test data and proves no issuer identity.</p>
     <label htmlFor="qr-image">Choose QR image</label>
     <input id="qr-image" type="file" accept="image/*" onChange={readImage} />

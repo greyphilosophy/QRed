@@ -1,7 +1,7 @@
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { decodeSigningKey, deriveSigningPublicKey, generateSigningKeyPair, validateSigningKeyPair } from "./signingKeys.js";
+import { decodeSigningKey, deriveSigningPublicKey, generateSigningKeyPair, readSigningKeyFile, validateSigningKeyPair } from "./signingKeys.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
@@ -48,5 +48,37 @@ describe("Ed25519 signing keys", () => {
   it("fails explicitly when a secure random generator or Web Crypto is unavailable", async () => {
     vi.stubGlobal("crypto", undefined);
     await expect(generateSigningKeyPair()).rejects.toThrow(/HTTPS.*Web Crypto/);
+  });
+});
+
+describe("saved key files", () => {
+  it.each(["private", "public"])("opens saved %s keys and normalizes supported text encodings", async (kind) => {
+    const key = kind === "private" ? privateKey : publicKey;
+    for (const text of [key, key.replace(/=$/, ""), key.replace(/-/g, "+").replace(/_/g, "/")]) {
+      const file = new File([`\uFEFF \r\n${text}\r\n`], `qred-ed25519-${kind}-key.txt`);
+      await expect(readSigningKeyFile(file, kind)).resolves.toBe(key.replace(/=$/, ""));
+    }
+  });
+
+  it.each(["private", "public"])("rejects the opposite QRed export in the %s picker", async (kind) => {
+    const opposite = kind === "private" ? "public" : "private";
+    for (const suffix of ["", " (1)"]) {
+      const file = new File([privateKey], `qred-ed25519-${opposite}-key${suffix}.txt`);
+      await expect(readSigningKeyFile(file, kind)).rejects.toThrow(`Choose a ${kind} key file instead`);
+    }
+  });
+
+  it("rejects oversized selections without reading them", async () => {
+    const file = new File(["x".repeat(4097)], "document.txt");
+    const read = vi.spyOn(file, "text");
+    await expect(readSigningKeyFile(file, "private")).rejects.toThrow(/4 KB or less/);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("reports unreadable and malformed files without echoing their contents", async () => {
+    await expect(readSigningKeyFile({ size: 44, text: () => Promise.reject(new Error("reader failed")) }, "private")).rejects.toThrow(/Could not read the key file/);
+    const file = new File(["not a key; confidential text"], "key.txt");
+    await expect(readSigningKeyFile(file, "public")).rejects.toThrow(/Base64URL- or Base64-encoded/);
+    await expect(readSigningKeyFile(file, "public")).rejects.not.toThrow(/confidential/);
   });
 });

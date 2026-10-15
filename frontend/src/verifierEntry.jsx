@@ -8,6 +8,7 @@ import {
   VISIBLE_QR_TEXT,
 } from "./qredVerifier.js";
 import "./verifier.css";
+import { readSigningKeyFile } from "./signingKeys.js";
 
 const BUNDLED_PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 
@@ -74,6 +75,8 @@ function OCRComparisonView({ comparison }) {
 
 function VerifierApp() {
   const [publicKey, setPublicKey] = useState("");
+  const [openingKey, setOpeningKey] = useState(false);
+  const [keyFileStatus, setKeyFileStatus] = useState("");
   const [sealText, setSealText] = useState("");
   const [pageText, setPageText] = useState("");
 
@@ -97,10 +100,9 @@ function VerifierApp() {
         const resp = await fetch("/api/keys/default");
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
-        if (!cancelled && data?.public_key) setPublicKey(data.public_key);
-        else if (!cancelled) setPublicKey(BUNDLED_PUBLIC_KEY);
+        if (!cancelled) setPublicKey((current) => current || data?.public_key || BUNDLED_PUBLIC_KEY);
       } catch {
-        if (!cancelled) setPublicKey(BUNDLED_PUBLIC_KEY);
+        if (!cancelled) setPublicKey((current) => current || BUNDLED_PUBLIC_KEY);
       }
     })();
     return () => {
@@ -192,6 +194,23 @@ function VerifierApp() {
     });
   }
 
+  async function openPublicKeyFile(event) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    setOpeningKey(true);
+    setKeyFileStatus("Reading public key on this device...");
+    try {
+      setPublicKey(await readSigningKeyFile(file, "public"));
+      setKeyFileStatus("Public key opened. Collected seals are checked with this key.");
+    } catch (error) {
+      setKeyFileStatus(`Key import failed: ${error.message}`);
+    } finally {
+      setOpeningKey(false);
+    }
+  }
+
   return (
     <div className="verifier-page">
       <header>
@@ -222,10 +241,14 @@ function VerifierApp() {
             id="publicKeyInput"
             type="text"
             value={publicKey}
-            onChange={(e) => setPublicKey(e.target.value)}
+            onChange={(e) => { setPublicKey(e.target.value); setKeyFileStatus(""); }}
+            disabled={openingKey}
             placeholder="Paste issuer public key for signature verification"
             className="field-input"
           />
+          <label htmlFor="publicKeyFileInput" className="field-label">Open issuer public key file</label>
+          <input id="publicKeyFileInput" type="file" accept=".txt,text/plain" className="field-input file-input" onChange={openPublicKeyFile} disabled={openingKey} />
+          <p role="status">{keyFileStatus}</p>
 
           <label htmlFor="manualSealInput" className="field-label">
             Seal text

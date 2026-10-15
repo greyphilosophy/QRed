@@ -623,10 +623,12 @@ class TestPdfExtractionIntegrity:
 class TestKeyGenerationImportAndSignatureVerification:
     """T4: Key generation/import and signature verification."""
 
-    def test_generate_download_restore_stamp_and_verify(self, page: Page, simple_pdf_path: str, tmp_path):
+    @pytest.mark.parametrize("viewport_width", [1280, 390], ids=["desktop", "mobile"])
+    def test_generate_download_restore_stamp_and_verify(self, page: Page, simple_pdf_path: str, tmp_path, viewport_width):
         """Generate in a real browser, reuse the downloaded seed, and verify a stamped PDF."""
         import re
 
+        page.set_viewport_size({"width": viewport_width, "height": 844})
         page.add_init_script("window.__qredTestMode = true;")
         base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
         page.goto(base_url, wait_until="networkidle")
@@ -664,10 +666,14 @@ class TestKeyGenerationImportAndSignatureVerification:
         page.get_by_role("button", name="Open PDF stamping tool").click()
         expect(private_input).to_have_value("")
         expect(public_input).to_have_value("")
-        private_input.fill((tmp_path / "qred-ed25519-private-key.txt").read_text().strip())
-        page.get_by_role("button", name="Derive public key", exact=True).click()
+        page.get_by_label("Open private key file", exact=True).set_input_files(tmp_path / "qred-ed25519-private-key.txt")
+        expect(page.locator("#signing-key-status")).to_contain_text("Private key opened. Matching public key derived.")
+        expect(private_input).to_have_value(generated_private)
+        expect(private_input).to_have_attribute("type", "password")
         expect(public_input).to_have_value(generated_public)
-        page.get_by_role("button", name="Use public key to verify", exact=True).click()
+        page.get_by_label("Open public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
+        expect(page.locator("#signing-key-status")).to_contain_text("Public key opened from your device.")
+        page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
         expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(generated_public)
 
         page.get_by_label("Open PDF", exact=True).set_input_files(simple_pdf_path)
@@ -687,6 +693,15 @@ class TestKeyGenerationImportAndSignatureVerification:
         for request in requests:
             assert generated_private not in request.url
             assert generated_private not in (request.post_data or "")
+
+        # The standalone verifier accepts the same public-key file from an issuer.
+        page.goto(f"{base_url}/verifier.html", wait_until="networkidle")
+        page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
+        expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(generated_public)
+        page.get_by_label("Seal text", exact=True).fill("\n".join(seal_result["seal_strings"]))
+        page.get_by_role("button", name="Add Manual Seals", exact=True).click()
+        expect(page.locator("#resultStatus")).to_have_text("VALID")
+        expect(page.locator("#resultContent")).to_contain_text("Testing client-side sealing")
 
     def test_seal_with_custom_private_key(self, page: Page, simple_pdf_path: str):
         """Seal using a user-provided private key (not from server)."""

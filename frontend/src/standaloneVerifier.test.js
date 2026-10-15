@@ -9,6 +9,7 @@ import { createQrFrameScanner } from "./qr/scanQrImage.js";
 import * as verifier from "./qredVerifier.js";
 import { createQRedSeals } from "./qredSealer.js";
 import { createQRedQrSymbol } from "./qredQr.js";
+import { readSigningKeyFile } from "./signingKeys.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
@@ -31,7 +32,7 @@ function loadStandalone(overrides = {}) {
   document.documentElement.innerHTML = readFileSync("verifier.html", "utf8");
   const source = document.querySelector('script[type="module"]').textContent.replace(/^\s*import .+;$/gm, "");
   const bindings = {
-    createQrFrameScanner, ...verifier, decodeQRedSeal: verifier.decodeSeal,
+    createQrFrameScanner, readSigningKeyFile, ...verifier, decodeQRedSeal: verifier.decodeSeal,
     captureDocumentFrameForOcr: vi.fn(), drawArOverlay: vi.fn(), ...overrides,
   };
   // Execute the shipped module with real QR/signature code, without injecting
@@ -42,6 +43,24 @@ function loadStandalone(overrides = {}) {
 afterEach(() => {
   vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = "";
   delete navigator.mediaDevices;
+});
+
+it("opens a saved issuer key in the standalone verifier and rejects invalid files without replacing it", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+  const { seals } = await createQRedSeals({ content: "Standalone imported key", issuer: "QA", privateKey, publicKey });
+  loadStandalone();
+  const picker = document.getElementById("publicKeyFileInput");
+  fireEvent.change(picker, { target: { files: [{ name: "qred-ed25519-public-key.txt", size: 45, text: async () => publicKey + "\n" }] } });
+  await waitFor(() => expect(document.getElementById("publicKeyInput").value).toBe(publicKey.replace(/=$/, "")));
+  fireEvent.change(picker, { target: { files: [{ name: "key.txt", size: 3, text: async () => "bad" }] } });
+  await waitFor(() => expect(document.getElementById("publicKeyFileStatus").textContent).toContain("Key import failed"));
+  expect(document.getElementById("publicKeyInput").value).toBe(publicKey.replace(/=$/, ""));
+  document.getElementById("manualSealInput").value = seals.join("\n");
+  fireEvent.click(document.getElementById("btnAddManual"));
+  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
+  expect(document.getElementById("resultContent").textContent).toBe("Standalone imported key");
+  expect(fetch).not.toHaveBeenCalled();
 });
 
 it("the standalone camera recovers hidden payload bytes before verifying and renders metadata safely", async () => {

@@ -15,6 +15,26 @@ export function decodeSigningKey(value, kind) {
   return bytes;
 }
 
+export async function readSigningKeyFile(file, kind) {
+  if (!file) throw new Error("Choose a key text file saved by QRed.");
+  // Saved keys are 44 bytes including the newline. Bound accidental selections
+  // before reading them, while allowing surrounding whitespace and a UTF-8 BOM.
+  if (file.size > 4096) throw new Error("Key files must be small text files (4 KB or less) containing one raw Ed25519 key.");
+  // Raw private/public keys have the same encoding. Recognize our export names
+  // (including browser duplicate suffixes) to catch the common wrong-file mix-up.
+  const exportedKind = /^qred-ed25519-(private|public)-key(?: ?\(\d+\))?\.txt$/i.exec(file.name)?.[1].toLowerCase();
+  if (exportedKind && exportedKind !== kind) {
+    throw new Error(`This is a QRed ${exportedKind} key file. Choose a ${kind} key file instead.`);
+  }
+  let text;
+  try {
+    text = await file.text();
+  } catch {
+    throw new Error("Could not read the key file. Choose it again from your device.");
+  }
+  return encodeBase64Url(decodeSigningKey(text, kind));
+}
+
 export async function generateSigningKeyPair() {
   if (!globalThis.crypto?.getRandomValues || !globalThis.crypto?.subtle) {
     throw new Error("Secure key generation is unavailable. Open QRed over HTTPS (or localhost) in a browser with Web Crypto support.");

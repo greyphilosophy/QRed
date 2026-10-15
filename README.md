@@ -42,15 +42,15 @@ npm install
 npm start
 ```
 
-Open `http://localhost:3000` in your browser. Click "Open PDF stamping tool" to upload a PDF and seal it in-browser.
+Open `http://localhost:3000` in your browser. Click "Open PDF stamping tool" to open a PDF from your device and seal it in-browser.
 
 ## Generate signing keys and stamp a PDF
 
 1. Open the PDF stamping tool and click **Generate key pair**. QRed creates a fresh Ed25519 pair using the browser's secure random generator and fills both key fields. Use HTTPS or localhost with Web Crypto support.
-2. **Download private key** and keep the file private. It is an unencrypted text file; QRed does not save the key, and closing the tool or reloading clears it. Anyone with this key can sign as you.
-3. **Download public key** to share with recipients through a trusted channel. This file contains only the public key.
-4. Choose a PDF, enter your issuer name, and click **Upload PDF and Stamp QR Seals**.
-5. To test your seals on the same page, click **Use public key to verify**. This sets the key in **Verify collected seals**, where you can scan or upload the QR images from your stamped PDF.
+2. **Save private key** and keep the file private. It is an unencrypted text file; QRed does not keep a copy, and closing the tool or reloading clears it. Anyone with this key can sign as you.
+3. **Save public key** to share with recipients through a trusted channel. This file contains only the public key.
+4. Choose a PDF, enter your issuer name, and click **Stamp and save PDF**.
+5. To test your seals on the same page, click **Use public key to verify**. This sets the key in **Verify collected seals**, where you can scan or choose the QR images from your stamped PDF. Recipients can choose **Open issuer public key file** on the home page or standalone verifier.
 
 Letter-to-legal stamping preserves the original letter content at its original
 size and uses the added three-inch footer for QR seals. One or two seals are
@@ -61,10 +61,12 @@ that same footer. The caption sits beside the codes where space permits.
 The image and camera scanners retry failed detections at a few nearby image
 scales to handle dense QR codes whose edges fall between pixels. Live camera
 scanning tries one scale per frame, with time for input and rendering between
-attempts. Uploaded images and manual photo captures try all scales immediately.
+attempts. Chosen images and manual photo captures try all scales immediately.
 Signature verification still uses the recovered signed payload and the issuer's key.
 
-To reuse a saved signing identity, paste the private key file's contents into **Private Key**, then click **Derive public key**. You can also paste an existing matching pair. Both fields accept Base64URL or standard Base64, with or without padding. The private key is a raw 32-byte Ed25519 seed; the public key is a raw 32-byte Ed25519 public key (43 encoded characters, optionally followed by `=`). PEM, SSH, hex, and expanded 64-byte private keys are not accepted. Key generation, derivation, validation, and signing happen locally; keys are never sent to a server or saved in browser storage.
+To reuse a saved signing identity, choose **Open private key file** and select the `.txt` file saved by QRed. Its matching public key is derived automatically. **Open public key file** also accepts a saved public key; if a private key is already entered, the pair must match. Invalid or unreadable files leave existing keys intact, and replacing a different private key asks for confirmation. You can still paste a private key and click **Derive public key**, or paste a matching pair.
+
+Key files contain one raw key as Base64URL or standard Base64, with or without padding. Surrounding whitespace and a UTF-8 BOM are accepted; files larger than 4 KB are rejected. The private key is a raw 32-byte Ed25519 seed; the public key is a raw 32-byte Ed25519 public key (43 encoded characters, optionally followed by `=`). PEM, SSH, hex, and expanded 64-byte private keys are not accepted. Because raw private and public keys have the same encoding, use the appropriate file control; QRed catches swapped files when they retain its saved filenames. Key generation, file reading, derivation, validation, and signing happen locally; keys are never sent to a server or saved in browser storage.
 
 The configured/default public key is for verification only. The stamping tool does not preload it because an unrelated private key cannot sign for it. A generated key proves control of that signing key, not an independently verified issuer identity.
 
@@ -81,7 +83,7 @@ With the production build served at `QRED_BASE_URL` (default `http://localhost:3
 `tests/test_network_privacy.py` checks both a connected browser with outgoing
 requests blocked and a browser set offline. It keeps the real service worker
 enabled, warms PDF resources with a disposable document, then requires zero
-HTTP or WebSocket attempts while generating/restoring/saving keys, stamping
+HTTP or WebSocket attempts while generating/opening/saving keys, stamping
 and saving a PDF, and verifying seal text and QR image pixels. Loading permits
 only same-origin GETs for known build files and the default public key. Probe
 requests verify that the guard catches page and service-worker traffic.
