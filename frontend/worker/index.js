@@ -3,10 +3,11 @@
  *
  * Serves the static frontend assets and exposes only the public signing key.
  * All PDF sealing happens client-side in the browser — no PDFs ever touch
- * the server, and no private keys are served.
+ * the server. User private keys are never sent to the server; the frontend
+ * bundle includes a deliberately public demo seed for the demo preset.
  *
- * To configure a custom keypair, set QRED_DEFAULT_PUBLIC_KEY on the Worker.
- * The private key must remain secret and must never be set on the server.
+ * To configure a custom verification key, set QRED_DEFAULT_PUBLIC_KEY on the
+ * Worker. Its private key must remain secret and must never be set on the server.
  */
 
 // ---------------------------------------------------------------------------
@@ -59,7 +60,8 @@ async function computeKeyId(publicKey) {
 /**
  * Return the effective default public key: env var when present, else demo.
  * NOTE: The private key is NEVER returned by this endpoint.
- * Users must supply their own private key in the browser.
+ * Users can supply their own key or explicitly choose the public demo preset
+ * bundled in the frontend. Custom private keys are never served by this API.
  */
 async function defaultPublicKey(env) {
   const publicKey = env.QRED_DEFAULT_PUBLIC_KEY?.trim() || DEMO_PUBLIC_KEY;
