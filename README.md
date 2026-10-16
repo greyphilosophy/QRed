@@ -44,6 +44,14 @@ npm start
 
 Open `http://localhost:3000` in your browser. Click "Open PDF stamping tool" to open a PDF from your device and seal it in-browser.
 
+## Try the shared demo keys
+
+1. Open the PDF stamping tool and click **Use demo key pair**. This fills both signing keys and selects the matching public key in **Verify collected seals**.
+2. Open a PDF and click **Stamp and save PDF**.
+3. Scan or choose the QR images from the stamped copy to verify it. No copying between key fields is needed.
+
+The demo pair matches the Worker's built-in default verification key, so a fresh verifier also accepts these seals unless the deployment configures a custom default. The button always selects the built-in demo pair, even if a different verification key was previously selected. Demo keys are deliberately public: anyone can sign with them, so they do not prove issuer identity. Use generated or imported keys for real documents.
+
 ## Generate signing keys and stamp a PDF
 
 1. Open the PDF stamping tool and click **Generate key pair**. QRed creates a fresh Ed25519 pair using the browser's secure random generator and fills both key fields. Use HTTPS or localhost with Web Crypto support.
@@ -68,7 +76,7 @@ To reuse a saved signing identity, choose **Open private key file** and select t
 
 Key files contain one raw key as Base64URL or standard Base64, with or without padding. Surrounding whitespace and a UTF-8 BOM are accepted; files larger than 4 KB are rejected. The private key is a raw 32-byte Ed25519 seed; the public key is a raw 32-byte Ed25519 public key (43 encoded characters, optionally followed by `=`). PEM, SSH, hex, and expanded 64-byte private keys are not accepted. Because raw private and public keys have the same encoding, use the appropriate file control; QRed catches swapped files when they retain its saved filenames. Key generation, file reading, derivation, validation, and signing happen locally; keys are never sent to a server or saved in browser storage.
 
-The configured/default public key is for verification only. The stamping tool does not preload it because an unrelated private key cannot sign for it. A generated key proves control of that signing key, not an independently verified issuer identity.
+Signing fields start empty until you generate, open, paste, or explicitly select demo keys. A custom configured public key is for verification only; its matching private key must be supplied by its owner. A generated key proves control of that signing key, not an independently verified issuer identity.
 
 ## Run tests
 
@@ -83,7 +91,7 @@ With the production build served at `QRED_BASE_URL` (default `http://localhost:3
 `tests/test_network_privacy.py` checks both a connected browser with outgoing
 requests blocked and a browser set offline. It keeps the real service worker
 enabled, warms PDF resources with a disposable document, then requires zero
-HTTP or WebSocket attempts while generating/opening/saving keys, stamping
+HTTP or WebSocket attempts while generating/opening/saving keys, selecting the demo pair, stamping
 and saving a PDF, and verifying seal text and QR image pixels. Loading permits
 only same-origin GETs for known build files and the default public key. Probe
 requests verify that the guard catches page and service-worker traffic.
@@ -118,7 +126,7 @@ Configure the Cloudflare Pages project with these settings:
 
 Use `npm ci && npm run build:pages` after setting the project root to `frontend`, where `package.json` and `package-lock.json` live. The `build:pages` script builds the static frontend and copies `frontend/worker/index.js` to `build/_worker.js`, which is required for Cloudflare Pages to run the `/api/*` Worker routes in production. If Cloudflare runs from the repository root, use the root `npm run build` script and publish `frontend/build`; the root `wrangler.jsonc` declares that Pages output directory. If the UI requires manual settings instead, use `cd frontend && npm ci && npm run build:pages` and set the build output directory to `frontend/build`.
 
-The production frontend is a Cloudflare Pages deployment with a small Worker in `frontend/worker/index.js`. All PDF sealing, QR generation, and signature operations happen client-side in the browser. The Worker serves only static assets and the public signing key at `/api/keys/default`. No private keys are ever exposed or processed by the server.
+The production frontend is a Cloudflare Pages deployment with a small Worker in `frontend/worker/index.js`. All PDF sealing, QR generation, and signature operations happen client-side in the browser. The Worker serves static assets and the public signing key at `/api/keys/default`. User private keys are never sent to the server. The static frontend includes the deliberately public demo seed for the demo button; the key API returns only a public key.
 
 Optional Worker variables for a custom public key are:
 
@@ -127,7 +135,7 @@ Optional Worker variables for a custom public key are:
 | `QRED_DEFAULT_PUBLIC_KEY` | Base64URL-encoded Ed25519 public key. |
 | `QRED_DEFAULT_KEY_ID` | Optional key ID. If omitted, the Worker derives it from `QRED_DEFAULT_PUBLIC_KEY`. |
 
-Users generate a new pair in the browser or supply their own private key — the server never stores, returns, or processes private keys.
+For real documents, users generate a new pair in the browser or supply their own private key. The server never receives or processes those private keys.
 
 ## Cloudflare Pages custom domains
 
@@ -255,16 +263,16 @@ QRed relies on public key cryptography.
 
 Each issuing authority maintains a signing key pair:
 
-- Private key: used to sign document payloads. Must be generated and stored securely by the issuer — never uploaded to any server.
-- Public key: used by the verifier to validate signatures. This is the only key that may be served from the server (e.g., via `/api/keys/default`).
+- Private key: used to sign document payloads. Must be generated and stored securely by the issuer — never sent to any server.
+- Public key: used by the verifier to validate signatures. The public key API (e.g., `/api/keys/default`) serves only this key.
 
-**The QRed Cloudflare Worker never stores, processes, or returns private keys.** All sealing operations — including Ed25519 signature generation — happen entirely in the user's browser using the private key the user provides. This ensures that:
+**User private keys stay in the browser.** All sealing operations — including Ed25519 signature generation — happen entirely in the user's browser using the selected private key. This ensures that:
 
 - PDFs never leave the user's machine.
-- Private keys never touch the server.
+- User-generated or imported private keys never touch the server.
 - Seals made with user-provided keys cannot be forged by anyone who accesses the public key endpoint.
 
-The default demo keypair is provided solely for testing. In production, issuers should generate their own keypair and supply the private key directly in the browser.
+The shared demo pair, including its private seed, is bundled in the static frontend solely for testing. Anyone can create seals with it; a valid demo signature does not authenticate a real issuer. For real documents, issuers should generate their own pair and supply the private key directly in the browser.
 
 Changing signed text or v2 identity metadata invalidates the signature. A
 recipient must also compare that recovered text with the visible document;

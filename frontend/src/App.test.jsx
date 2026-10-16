@@ -8,6 +8,7 @@ import { PdfSealForm } from "./PdfSealForm.jsx";
 import { sealPdfInBrowser } from "./pdfClientSeal.js";
 import { createQRedSeals } from "./qredSealer.js";
 import { deriveSigningPublicKey } from "./signingKeys.js";
+import { DEMO_SIGNING_KEYS } from "./demoKeys.js";
 
 vi.mock("./pdfClientSeal.js", () => ({ sealPdfInBrowser: vi.fn() }));
 
@@ -77,7 +78,7 @@ describe("App PDF signing keys", () => {
     render(React.createElement(PdfSealForm));
     expect(screen.getByLabelText("Private Key").value).toBe("");
     expect(screen.getByLabelText("Public Key").value).toBe("");
-    expect(screen.queryByRole("button", { name: "Use Default Keys" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Use demo key pair" }).disabled).toBe(false);
     expect(screen.getByText(/Raw 32-byte Ed25519 seed/)).toBeTruthy();
     const keys = await generateKeys();
     expect(keys.privateKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -102,6 +103,52 @@ describe("App PDF signing keys", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add seals" }));
     expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
     expect(screen.getByText("Generated key test")).toBeTruthy();
+  });
+
+  it("selects the demo signing and verification keys without a request, even if a different default arrives later", async () => {
+    let finishDefaultLookup;
+    fetch.mockReturnValue(new Promise((resolve) => { finishDefaultLookup = resolve; }));
+    openStampTool();
+    const requestsBefore = fetch.mock.calls.length;
+    const otherPublicKey = "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=";
+    fireEvent.change(screen.getByLabelText("Issuer public key"), { target: { value: otherPublicKey } });
+    fireEvent.click(screen.getByRole("button", { name: "Use demo key pair" }));
+    expect(screen.getByLabelText("Private Key").value).toBe(DEMO_SIGNING_KEYS.privateKey);
+    expect(screen.getByLabelText("Public Key").value).toBe(DEMO_SIGNING_KEYS.publicKey);
+    expect(screen.getByLabelText("Private Key").type).toBe("password");
+    expect(screen.getByLabelText("Issuer public key").value).toBe(DEMO_SIGNING_KEYS.publicKey);
+    expect(screen.getByText(/Demo keys are public: anyone can sign with them/)).toBeTruthy();
+    expect(window.confirm).not.toHaveBeenCalled();
+
+    finishDefaultLookup({ ok: true, json: async () => ({ public_key: otherPublicKey }) });
+    const { seals } = await createQRedSeals({ content: "Demo button signature", issuer: "QRed Demo Authority", ...DEMO_SIGNING_KEYS });
+    fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [new File(["pdf"], "demo.pdf")] } });
+    fireEvent.click(screen.getByRole("button", { name: "Stamp and save PDF" }));
+    await screen.findByText(/Sealed demo\.pdf in this browser/);
+    expect(sealPdfInBrowser).toHaveBeenCalledWith(expect.objectContaining(DEMO_SIGNING_KEYS));
+    fireEvent.change(screen.getByLabelText("Seal strings, one per line"), { target: { value: seals.join("\n") } });
+    fireEvent.click(screen.getByRole("button", { name: "Add seals" }));
+    expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
+    expect(screen.getByLabelText("Issuer public key").value).toBe(DEMO_SIGNING_KEYS.publicKey);
+    expect(fetch.mock.calls.length).toBe(requestsBefore);
+  });
+
+  it("preserves existing keys when demo replacement is cancelled and selects both demo fields when accepted", async () => {
+    openStampTool();
+    const keys = await generateKeys();
+    fireEvent.click(screen.getByRole("button", { name: "Use public key to verify" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show private key" }));
+    window.confirm.mockReturnValue(false);
+    fireEvent.click(screen.getByRole("button", { name: "Use demo key pair" }));
+    expect(screen.getByLabelText("Private Key").value).toBe(keys.privateKey);
+    expect(screen.getByLabelText("Public Key").value).toBe(keys.publicKey);
+    expect(screen.getByLabelText("Issuer public key").value).toBe(keys.publicKey);
+    window.confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "Use demo key pair" }));
+    expect(screen.getByLabelText("Private Key").value).toBe(DEMO_SIGNING_KEYS.privateKey);
+    expect(screen.getByLabelText("Public Key").value).toBe(DEMO_SIGNING_KEYS.publicKey);
+    expect(screen.getByLabelText("Issuer public key").value).toBe(DEMO_SIGNING_KEYS.publicKey);
+    expect(screen.getByLabelText("Private Key").type).toBe("password");
   });
 
   it("downloads reusable raw keys separately, with no private data in the public download", async () => {

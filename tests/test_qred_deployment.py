@@ -125,7 +125,7 @@ def make_multi_page_pdf(path: str, num_pages: int = 3) -> bytes:
 # The demo public key — matches the hardcoded verification value in the worker
 DEMO_PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="
 
-# A demo private key for in-browser sealing (not exposed by the server)
+# A deliberately public demo seed for in-browser sealing.
 DEMO_PRIVATE_KEY = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes="
 
 # ---------------------------------------------------------------------------
@@ -622,6 +622,55 @@ class TestPdfExtractionIntegrity:
 
 class TestKeyGenerationImportAndSignatureVerification:
     """T4: Key generation/import and signature verification."""
+
+    @pytest.mark.parametrize("viewport_width", [1280, 390], ids=["desktop", "mobile"])
+    def test_demo_button_stamps_and_verifies_with_default_key(self, page: Page, simple_pdf_path: str, tmp_path, viewport_width):
+        """Use the demo button, then verify in this tab and a fresh default verifier."""
+        # Vite preview has no Worker runtime. Serve the real Worker's response
+        # at its normal endpoint so fresh verifier defaults are covered too.
+        defaults = json.loads(subprocess.check_output([
+            "node", "--input-type=module", "-e",
+            "import worker from './frontend/worker/index.js'; "
+            "const response = await worker.fetch(new Request('https://qred.org/api/keys/default'), {}); "
+            "process.stdout.write(await response.text());",
+        ], cwd=Path(__file__).resolve().parents[1], text=True))
+        page.route("**/api/keys/default", lambda route: route.fulfill(json=defaults))
+        page.set_viewport_size({"width": viewport_width, "height": 844})
+        page.add_init_script("window.__qredTestMode = true;")
+        base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
+        page.goto(base_url, wait_until="networkidle")
+        expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(defaults["public_key"])
+        page.get_by_role("button", name="Open PDF stamping tool").click()
+        expect(page.get_by_label("Private Key", exact=True)).to_have_value("")
+        page.get_by_role("button", name="Use demo key pair", exact=True).click()
+        expect(page.get_by_label("Private Key", exact=True)).to_have_attribute("type", "password")
+        expect(page.get_by_label("Public Key", exact=True)).to_have_value(DEMO_PUBLIC_KEY.rstrip("="))
+        expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(DEMO_PUBLIC_KEY.rstrip("="))
+        expect(page.locator("#signing-key-status")).to_contain_text("The verifier now uses the matching demo public key.")
+        page.get_by_label("Open PDF", exact=True).set_input_files(simple_pdf_path)
+        with page.expect_download(timeout=60_000) as saved:
+            page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
+        sealed_path = tmp_path / saved.value.suggested_filename
+        saved.value.save_as(sealed_path)
+        assert sealed_path.read_bytes().startswith(b"%PDF-")
+        seals = _extract_seal_result(page)["seal_strings"]
+        assert seals
+        page.locator("summary", has_text="Manual seal entry").click()
+        page.get_by_label("Seal strings, one per line").fill("\n".join(seals))
+        page.get_by_role("button", name="Add seals", exact=True).click()
+        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible()
+        expect(page.locator(".verification-result pre")).to_contain_text("Testing client-side sealing")
+
+        # Neither verifier needs a pasted key or the "Use public key to verify"
+        # action. A fresh standalone page selects the matching default after
+        # reading the seal's key ID.
+        page.goto(f"{base_url}/verifier.html", wait_until="networkidle")
+        expect(page.get_by_label("Issuer public key", exact=True)).to_have_value("")
+        page.get_by_label("Seal text", exact=True).fill("\n".join(seals))
+        page.get_by_role("button", name="Add Manual Seals", exact=True).click()
+        expect(page.locator("#resultStatus")).to_have_text("VALID")
+        expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(defaults["public_key"])
+        expect(page.locator("#resultContent")).to_contain_text("Testing client-side sealing")
 
     @pytest.mark.parametrize("viewport_width", [1280, 390], ids=["desktop", "mobile"])
     def test_generate_download_restore_stamp_and_verify(self, page: Page, simple_pdf_path: str, tmp_path, viewport_width):

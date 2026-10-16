@@ -159,6 +159,22 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline):
         page.get_by_label("Issuer public key", exact=True).fill(public_key)
         expect(page.get_by_role("heading", name="INVALID", exact=True)).to_be_visible()
 
+        # The explicit demo preset also replaces the verifier's prior key and
+        # works entirely locally, without fetching a signing pair.
+        page.get_by_role("button", name="Clear collected seals", exact=True).click()
+        page.get_by_role("button", name="Close", exact=True).click()
+        page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Use demo key pair", exact=True).click()
+        expect(page.get_by_label("Issuer public key", exact=True)).to_have_value("eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q")
+        demo_text = "Shared demo sealed and verified without network access."
+        _stamp_and_save(page, tmp_path, "offline-demo.pdf", demo_text)
+        demo_seals = page.evaluate("window.__lastSealResult.seals")
+        assert demo_seals
+        page.get_by_label("Seal strings, one per line").fill("\n".join(demo_seals))
+        page.get_by_role("button", name="Add seals", exact=True).click()
+        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible()
+        expect(page.locator(".verification-result pre")).to_contain_text(demo_text)
+
         # Flush pending request callbacks, including background SW fetches.
         page.wait_for_load_state("networkidle")
         assert attempts == [], "Network traffic attempted during local processing: " + repr(attempts)

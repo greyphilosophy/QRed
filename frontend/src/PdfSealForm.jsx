@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { sealPdfInBrowser } from "./pdfClientSeal.js";
 import { decodeSigningKey, deriveSigningPublicKey, generateSigningKeyPair, readSigningKeyFile, validateSigningKeyPair } from "./signingKeys.js";
 import { encodeBase64Url } from "./sealSignature.js";
+import { DEMO_SIGNING_KEYS } from "./demoKeys.js";
 
 const BOOTSTRAP_URL = "https://qred.org/";
 
@@ -69,6 +70,19 @@ export function PdfSealForm({ onUsePublicKey }) {
     } finally {
       setLoadingKeys(false);
     }
+  }
+
+  function useDemoKeys() {
+    const hasDifferentKeys = (privateKey || publicKey)
+      && (privateKey !== DEMO_SIGNING_KEYS.privateKey || publicKey !== DEMO_SIGNING_KEYS.publicKey);
+    if (hasDifferentKeys && !window.confirm("Replace the current signing keys with the public demo key pair? Save your private key first if you want to reuse it.")) return;
+    setPrivateKey(DEMO_SIGNING_KEYS.privateKey);
+    setPublicKey(DEMO_SIGNING_KEYS.publicKey);
+    setShowPrivateKey(false);
+    onUsePublicKey?.(DEMO_SIGNING_KEYS.publicKey);
+    reportKeyStatus(onUsePublicKey
+      ? "Demo key pair loaded. The verifier now uses the matching demo public key. These keys are public test data."
+      : "Demo key pair loaded. These keys are public test data.");
   }
 
   async function openKeyFile(event, kind) {
@@ -187,10 +201,14 @@ export function PdfSealForm({ onUsePublicKey }) {
       </details>
       <div className="signing-key-help">
         <h3>Signing keys</h3>
-        <p>New to QRed? Generate an Ed25519 key pair below. The private key signs your PDFs; the public key lets others verify them. Keys are generated or opened in this browser and are never sent to a server.</p>
-        <button type="button" onClick={generateKeys} disabled={loadingKeys || loading}>
-          {loadingKeys ? "Preparing keys..." : "Generate key pair"}
-        </button>
+        <p>Generate an Ed25519 key pair for your own documents, or use the public demo pair to try QRed. The private key signs your PDFs; the public key lets others verify them. Your own keys are generated or opened in this browser and are never sent to a server.</p>
+        <div className="key-actions">
+          <button type="button" onClick={generateKeys} disabled={loadingKeys || loading}>
+            {loadingKeys ? "Preparing keys..." : "Generate key pair"}
+          </button>
+          <button type="button" onClick={useDemoKeys} disabled={loadingKeys || loading} aria-describedby="demo-key-help">Use demo key pair</button>
+        </div>
+        <p id="demo-key-help">The demo option also selects the matching verification key. Demo keys are public: anyone can sign with them, so they do not prove issuer identity. Use generated or imported keys for real documents.</p>
         <p>Save your private key to your device before closing this tool or reloading the page. QRed does not keep a copy. The saved file is unencrypted; keep it private. To reuse it, choose Open private key file; the matching public key is filled automatically. You can also paste a private key and choose Derive public key.</p>
       </div>
       <div className="demo-grid">
