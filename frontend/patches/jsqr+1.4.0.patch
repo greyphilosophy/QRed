@@ -67,3 +67,12 @@ diff --git a/node_modules/jsqr/dist/jsQR.js b/node_modules/jsqr/dist/jsQR.js
      }
      catch (_a) {
          return null;
+@@ -8962,7 +8979,7 @@
+     {
+         infoBits: 0x177EC,
+         versionNumber: 23,
+-        alignmentPatternCenters: [6, 30, 54, 74, 102],
++        alignmentPatternCenters: [6, 30, 54, 78, 102],
+         errorCorrectionLevels: [
+             {
+                 ecCodewordsPerBlock: 30,
