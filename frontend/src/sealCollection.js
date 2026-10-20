@@ -1,5 +1,20 @@
 import { decodeSeal, verifyQRedSeals } from "./qredVerifier.js";
 
+// Keep documents/iterations in first-seen order, with their recovered pages
+// together in numeric order. Incomplete chunks have no page metadata yet.
+export function orderSealResults(results) {
+  const documents = new Map();
+  for (const result of results) {
+    const identity = result.pdf && Number.isInteger(result.page_number)
+      && result.document_root && result.key_id && result.timestamp
+      ? JSON.stringify([result.document_root, result.key_id, result.timestamp, result.page_count])
+      : result;
+    if (!documents.has(identity)) documents.set(identity, []);
+    documents.get(identity).push(result);
+  }
+  return [...documents.values()].flatMap(pages => [...pages].sort((a, b) => a.page_number - b.page_number));
+}
+
 export async function verifySealCollection(seals, publicKey) {
   const groups = new Map();
   for (const seal of seals) {
@@ -7,10 +22,10 @@ export async function verifySealCollection(seals, publicKey) {
     if (!groups.has(id)) groups.set(id, []);
     groups.get(id).push(seal);
   }
-  return Promise.all([...groups].map(async ([id, group]) => {
+  return orderSealResults(await Promise.all([...groups].map(async ([id, group]) => {
     const result = await verifyQRedSeals(group, publicKey);
     return { ...result, document_id: result.document_id || id };
-  }));
+  })));
 }
 
 // A chunk identifies its page record, not its PDF. Page membership becomes

@@ -20,6 +20,31 @@ function readSeal(image) {
 }
 
 describe("scanning rendered production PDF seals", () => {
+  it("recovers dense v3 grids surrounded by whitespace and verifies their corrected payloads", async () => {
+    const seals = [];
+    for (const part of [2, 1]) {
+      const image = PNG.sync.read(readFileSync(`../tests/fixtures/compact-qr/delivery-part-${part}-200dpi.png`));
+      const width = 700, offset = 75;
+      const pixels = new Uint8ClampedArray(width * width * 4).fill(255);
+      for (let y = 0; y < image.height; y += 1) {
+        pixels.set(image.data.subarray(y * image.width * 4, (y + 1) * image.width * 4), ((offset + y) * width + offset) * 4);
+      }
+      // The old locator estimated 141 modules here; the printed grid has 137.
+      const code = scanQrImage(pixels, width, width);
+      expect(code).toMatchObject({ data: VISIBLE_QR_TEXT, version: 30 });
+      expect(code.correctedData.length).toBeGreaterThan(0);
+      expect(code.location.topLeftCorner.x).toBeGreaterThan(offset);
+      expect(code.location.bottomRightCorner.x).toBeLessThan(offset + image.width);
+      const seal = qredPayloadFromPhotoScanResult(pixels, width, width, code);
+      seals.push(seal);
+      const liveCode = createQrFrameScanner()(pixels, width, width);
+      expect(qredPayloadFromPhotoScanResult(pixels, width, width, liveCode)).toBe(seal);
+    }
+    await expect(verifyQRedSeals(seals, "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="))
+      .resolves.toMatchObject({ status: "VALID", page_number: 1, page_count: 2,
+        content: expect.stringContaining("Item 45: Received and inspected") });
+  });
+
   it.each([
     ["invoice-footer-300dpi", "Approved total: $123.45"],
     ["invoice-full-300dpi", "Approved total: $123.45"],

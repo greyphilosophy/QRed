@@ -60,6 +60,22 @@ it("keeps a normal QR visible without treating it as a verified document", async
   expect(screen.queryByRole("heading", { name: "VALID" })).toBeNull();
 });
 
+it("displays recovered PDF pages in page order when scanned in reverse", async () => {
+  const timestamp = "2026-10-20T17:55:14.123Z";
+  const pages = await Promise.all([2, 1].map(pageNumber => createQRedSeals({
+    content: `Document page ${pageNumber}`, timestamp, privateKey, publicKey,
+    pageContext: { pageNumber, pageCount: 2, documentRoot: "a1".repeat(32) },
+  })));
+  render(<App />);
+  fireEvent.change(screen.getByLabelText("Issuer public key"), { target: { value: publicKey } });
+  await act(async () => pages[0].seals.forEach(scanner.props.onSealDetected));
+  expect(await screen.findByText("Page 2 of 2")).toBeTruthy();
+  await act(async () => pages[1].seals.forEach(scanner.props.onSealDetected));
+  await waitFor(() => expect(screen.getAllByRole("heading", { name: "VALID" })).toHaveLength(2));
+  expect([...document.querySelectorAll(".verification-result pre")].map(item => item.textContent))
+    .toEqual(["Document page 1", "Document page 2"]);
+});
+
 it("opens an issuer key locally and rechecks collected seals, preserving the key on invalid imports", async () => {
   const { seals } = await createQRedSeals({ content: "Saved issuer identity", privateKey, publicKey });
   render(<App />);

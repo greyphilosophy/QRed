@@ -10,7 +10,7 @@ import * as verifier from "./qredVerifier.js";
 import { createQRedSeals } from "./qredSealer.js";
 import { createQRedQrSymbol } from "./qredQr.js";
 import { readSigningKeyFile } from "./signingKeys.js";
-import { sealCollectionProgress } from "./sealCollection.js";
+import { orderSealResults, sealCollectionProgress } from "./sealCollection.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
@@ -33,7 +33,7 @@ function loadStandalone(overrides = {}) {
   document.documentElement.innerHTML = readFileSync("verifier.html", "utf8");
   const source = document.querySelector('script[type="module"]').textContent.replace(/^\s*import .+;$/gm, "");
   const bindings = {
-    createQrFrameScanner, readSigningKeyFile, sealCollectionProgress, ...verifier, decodeQRedSeal: verifier.decodeSeal,
+    createQrFrameScanner, readSigningKeyFile, orderSealResults, sealCollectionProgress, ...verifier, decodeQRedSeal: verifier.decodeSeal,
     captureDocumentFrameForOcr: vi.fn(), drawArOverlay: vi.fn(), ...overrides,
   };
   // Execute the shipped module with real QR/signature code. Camera tests

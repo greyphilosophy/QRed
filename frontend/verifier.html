@@ -296,6 +296,12 @@
       word-wrap: break-word;
       font-family: "Georgia", serif;
     }
+    .verification-result + .verification-result {
+      margin-top: 1.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--surface-2);
+    }
+    .verification-result .btn { margin-top: 1rem; }
 
     .footer {
       text-align: center;
@@ -395,7 +401,7 @@
     import { compareDocumentText, classifyOcrWords, decodeSeal as decodeQRedSeal, verifyQRedSeals, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./src/qredVerifier.js";
     import { captureDocumentFrameForOcr, drawArOverlay } from "./src/verifier/ocrAr.js";
     import { readSigningKeyFile } from "./src/signingKeys.js";
-    import { sealCollectionProgress } from "./src/sealCollection.js";
+    import { orderSealResults, sealCollectionProgress } from "./src/sealCollection.js";
 
     // QRed Protocol - decode QRed seal strings for scanner UI state.
     function decodeSeal(str) {
@@ -883,7 +889,9 @@
         btnScan.textContent = "Scan QR Code";
       }
       if (result && result.status !== "INCOMPLETE") {
-        showResult(result.status, result, { keepScanView: !progress.finished, progress: progress });
+        var results = orderSealResults(Object.keys(state.sealsByDocument)
+          .map(function(id) { return state.verificationResults[id]; }).filter(Boolean));
+        showResult(result.status, result, { keepScanView: !progress.finished, progress: progress, results: results });
       }
     }
 
@@ -971,14 +979,18 @@
     function showResult(status, payload, options) {
       options = options || {};
       document.getElementById("scanMode").style.display = options.keepScanView ? "block" : "none";
+      var results = options.results || [payload];
       state.verifiedContent = payload.content || "";
-      btnStartAr.style.display = status === "VALID" && state.verifiedContent ? "block" : "none";
+      btnStartAr.style.display = results.length === 1 && status === "VALID" && state.verifiedContent ? "block" : "none";
       var rv = document.getElementById("resultView");
       rv.classList.add("visible");
 
       var rs = document.getElementById("resultStatus");
-      rs.textContent = status;
-      rs.className = "result-status " + status.toLowerCase();
+      var summaryStatus = ["ERROR", "INVALID", "INCOMPLETE", "UNVERIFIED"].find(function(value) {
+        return results.some(function(result) { return result.status === value; });
+      }) || status;
+      rs.textContent = summaryStatus;
+      rs.className = "result-status " + summaryStatus.toLowerCase();
 
       var rm = document.getElementById("resultMeta");
       rm.innerHTML = "";
@@ -989,6 +1001,45 @@
         rm.appendChild(summary);
       }
 
+      if (!options.keepScanView) statusBar.classList.remove("visible");
+      var rc = document.getElementById("resultContent");
+      rc.innerHTML = "";
+      if (results.length === 1) {
+        renderResultMetadata(rm, payload);
+        renderResultContent(rc, payload);
+        return;
+      }
+      results.forEach(function(result) {
+        var article = document.createElement("article");
+        article.className = "verification-result";
+        var heading = document.createElement("h3");
+        heading.textContent = (result.pdf ? "Page " + result.page_number + " of " + result.page_count + " · " : "") + result.status;
+        article.appendChild(heading);
+        var metadata = document.createElement("div");
+        metadata.className = "result-meta";
+        renderResultMetadata(metadata, result);
+        article.appendChild(metadata);
+        var content = document.createElement("div");
+        renderResultContent(content, result);
+        article.appendChild(content);
+        if (result.status === "VALID" && result.content) {
+          var arButton = document.createElement("button");
+          arButton.type = "button";
+          arButton.className = "btn btn-secondary";
+          arButton.textContent = "Compare this page in AR";
+          arButton.onclick = function() {
+            stopArOverlay();
+            state.verifiedContent = result.content;
+            btnStartAr.style.display = "block";
+            startArOverlay();
+          };
+          article.appendChild(arButton);
+        }
+        rc.appendChild(article);
+      });
+    }
+
+    function renderResultMetadata(rm, payload) {
       if (payload.document_id) {
         rm.innerHTML += "<div class='meta-item'><strong>Doc ID:</strong> " + escapeHtml(payload.document_id) + "</div>";
       }
@@ -1008,10 +1059,9 @@
         rm.innerHTML += "<div class='meta-item'><strong>Error:</strong> " + escapeHtml(payload.error_message) + "</div>";
       }
 
-      if (!options.keepScanView) statusBar.classList.remove("visible");
+    }
 
-      var rc = document.getElementById("resultContent");
-      rc.innerHTML = "";
+    function renderResultContent(rc, payload) {
       if (payload.content && payload.page_text) {
         var comparison = compareDocumentText(payload.content, payload.page_text);
         var summary = document.createElement("div");

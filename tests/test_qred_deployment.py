@@ -23,6 +23,8 @@ import base64
 import subprocess
 import sys
 import tempfile
+import random
+import string
 from pathlib import Path
 
 import pytest
@@ -127,6 +129,15 @@ def make_delivery_records_pdf(path):
     pdf.save()
 
 
+def draw_dense_records_page(pdf):
+    """Enough varied text to require two seals even with automatic gzip."""
+    rng = random.Random(1042)
+    pdf.setFont("Helvetica", 8)
+    for i in range(45):
+        reference = "".join(rng.choices(string.ascii_letters + string.digits, k=100))
+        pdf.drawString(40, 740 - i * 14, f"Record {i + 1}: {reference}")
+
+
 # ---------------------------------------------------------------------------
 # Test constants
 # ---------------------------------------------------------------------------
@@ -176,7 +187,7 @@ def multi_page_pdf_path(pdf_dir):
 # Helper to upload a file via Playwright and wait for the download
 # ---------------------------------------------------------------------------
 
-def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_key: str = "", encoding: str = "plaintext"):
+def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_key: str = ""):
     """
     Upload a PDF to the Playwright-dev frontend and trigger sealing.
     
@@ -247,21 +258,7 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
 
     page.get_by_label("Public Key", exact=True).fill(public_key or DEMO_PUBLIC_KEY)
 
-    # If encoding strategy needs to be changed, verify it was selected
-    if encoding:
-        try:
-            encoding_select = page.locator('select[aria-label="Encoding Strategy"]').first
-            encoding_select.select_option(encoding)
-            # Verify the selection was applied
-            selected_value = encoding_select.input_value()
-            if selected_value != encoding:
-                raise AssertionError(f"Encoding selection failed: expected '{encoding}', got '{selected_value}'")
-        except AssertionError:
-            raise
-        except Exception as exc:
-            # If encoding selector doesn't exist, warn but don't fail yet
-            # (it will fail when we check seal_result encoding later)
-            print(f"[WARN] Could not select encoding: {exc}")
+    expect_playwright(page.get_by_label("Encoding Strategy")).to_have_count(0)
 
     # Click the seal button and wait for download
     seal_btn = None
@@ -524,22 +521,19 @@ class TestPdfTextSealing:
         assert _verify_seal_with_seal_strings(page, seal_result, public_key=DEMO_PUBLIC_KEY)
         expect(page.locator("#resultMeta")).to_contain_text(seal_result["full_result"]["timestamp"])
 
-    def test_seal_with_gzip_encoding(self, page: Page, simple_pdf_path: str):
-        """Seal using the gzip encoding strategy."""
+    def test_seal_automatically_selects_encoding(self, page: Page, simple_pdf_path: str):
+        """The stamping UI needs no encoding choice."""
         sealed, seal_result = _upload_and_seal(
-            page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, encoding="gzip"
+            page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY
         )
-        assert os.path.exists(sealed), "gzip-encoded sealed PDF was not downloaded"
-        
-        # Verify encoding was selected in the UI
-        assert seal_result["encoding"] == "gzip"
+        assert os.path.exists(sealed)
+        assert seal_result["full_result"]["encoding_strategy"] == "automatic"
         _verify_seal_with_seal_strings(page, seal_result, public_key=DEMO_PUBLIC_KEY)
 
     def test_gzip_reduces_a_page_to_one_seal_and_verifies_printed_pixels(self, page: Page, tmp_path):
         source = tmp_path / "delivery-records.pdf"
         make_delivery_records_pdf(source)
-        stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY,
-                                          encoding="automatic")
+        stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY)
         details = result["full_result"]
         assert details["encoding"] == "gzip"
         assert details["total_seals"] == 1
@@ -565,9 +559,10 @@ class TestPdfTextSealing:
 
     def test_balanced_two_code_pdf_verifies_both_printed_grids(self, page: Page, tmp_path):
         source = tmp_path / "delivery-records.pdf"
-        make_delivery_records_pdf(source)
-        stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY,
-                                          encoding="plaintext")
+        pdf = rl_canvas.Canvas(str(source), pagesize=letter)
+        draw_dense_records_page(pdf)
+        pdf.save()
+        stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY)
         assert result["full_result"]["total_seals"] == 2
         page.get_by_label("Issuer public key", exact=True).fill(DEMO_PUBLIC_KEY)
         # Scan the second code first, using pixels from the saved PDF. Each
@@ -581,7 +576,7 @@ class TestPdfTextSealing:
             page.get_by_label("Choose QR image", exact=True).set_input_files(crop.with_suffix(".png"))
             status = "INCOMPLETE" if index == 1 else "VALID"
             expect(page.get_by_role("heading", name=status, exact=True)).to_be_visible(timeout=20000)
-        expect(page.locator(".verification-result pre")).to_contain_text("Item 45: Received and inspected")
+        expect(page.locator(".verification-result pre")).to_contain_text("Record 45:")
 
 
 class TestImageOnlyPdfs:
@@ -945,17 +940,14 @@ class TestContinuousSealScanning:
     def test_collects_out_of_order_pieces_and_pages_without_restarting_camera(self, page: Page, tmp_path, route):
         source = tmp_path / "two-page-delivery.pdf"
         pdf = rl_canvas.Canvas(str(source), pagesize=letter)
-        pdf.setFont("Helvetica", 9)
-        for i in range(45):
-            pdf.drawString(40, 740 - i * 14,
-                           f"Item {i + 1}: Received and inspected; quantity {i * 7 + 3}; approved for delivery.")
+        draw_dense_records_page(pdf)
         pdf.showPage()
         pdf.drawString(40, 740, "Final delivery page. All items received.")
         pdf.save()
-        stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY, encoding="plaintext")
+        stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY)
         assert result["full_result"]["total_seals"] == 2  # First page; the short second page needs one.
         frames = []
-        for index, (page_number, column) in enumerate([(1, 1), (2, 0), (1, 0)]):
+        for index, (page_number, column) in enumerate([(2, 0), (1, 1), (1, 0)]):
             target = tmp_path / f"continuous-{index}"
             subprocess.run(["pdftoppm", "-f", str(page_number), "-singlefile", "-r", "200",
                             "-x", str(round((18 + column * 208) * 200 / 72)), "-y", "2200",
@@ -1000,19 +992,23 @@ class TestContinuousSealScanning:
         page.locator("video").first.scroll_into_view_if_needed()
         progress = page.locator(".ar-collection-progress" if route == "/" else "#statusText")
         page.evaluate("window.showSealFrame(0)")
-        expect(progress).to_contain_text("1 of 2 QR seals", timeout=20000)
+        expect(progress).to_contain_text("1 of 2 pages collected", timeout=20000)
         # Repeated camera frames must not add duplicate pieces or stop the stream.
         page.wait_for_timeout(400)
-        expect(progress).to_contain_text("1 of 2 QR seals")
+        expect(progress).to_contain_text("1 of 2 pages collected")
         assert page.evaluate("window.cameraStream.getTracks().every(track => track.readyState === 'live')")
         page.evaluate("window.showSealFrame(1)")
-        expect(progress).to_contain_text("1 of 2 pages collected", timeout=20000)
+        expect(progress).to_contain_text("1 of 2 QR seals", timeout=20000)
         assert page.evaluate("window.cameraOpenCount") == 1
         page.evaluate("window.showSealFrame(2)")
         summary = page.locator(".verification-card .collection-progress" if route == "/" else "#resultMeta .collection-progress")
         expect(summary).to_have_text("All 2 pages collected.", timeout=20000)
         page.wait_for_function("window.cameraStream.getTracks().every(track => track.readyState === 'ended')")
         assert page.evaluate("window.cameraOpenCount") == 1
+        results = page.locator(".verification-card .verification-result" if route == "/" else "#resultContent .verification-result")
+        expect(results).to_have_count(2)
+        expect(results.nth(0)).to_contain_text("Record 45:")
+        expect(results.nth(1)).to_contain_text("Final delivery page.")
         if route == "/":
             expect(page.get_by_role("heading", name="VALID", exact=True)).to_have_count(2)
             # Clearing resets duplicate suppression as well as collected results.
@@ -1021,7 +1017,7 @@ class TestContinuousSealScanning:
             page.wait_for_function("window.cameraOpenCount === 2 && document.querySelector('video')?.readyState >= 2")
             page.locator("video").first.scroll_into_view_if_needed()
             page.evaluate("window.showSealFrame(0)")
-            expect(progress).to_contain_text("1 of 2 QR seals", timeout=20000)
+            expect(progress).to_contain_text("1 of 2 pages collected", timeout=20000)
         else:
             expect(page.locator("#resultStatus")).to_have_text("VALID")
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getPublicKeyAsync } from "@noble/ed25519";
 import { createQRedSeals } from "./qredSealer.js";
-import { sealCollectionProgress, verifySealCollection } from "./sealCollection.js";
+import { orderSealResults, sealCollectionProgress, verifySealCollection } from "./sealCollection.js";
 import { encodeBase64Url, qrPayloadBytes, sealString } from "./sealFormat.js";
 
 const keys = { privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=", publicKey: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=" };
@@ -26,6 +26,26 @@ it("collects out-of-order pages and chunks before completing a PDF", async () =>
   expect(await progress(scans)).toMatchObject({ pagesCollected: 1, pagesTotal: 2, finished: false });
   scans.push(first.seals[0]);
   expect(await progress(scans)).toMatchObject({ pagesCollected: 2, pagesTotal: 2, complete: true });
+});
+
+it("orders recovered pages numerically, including a page completed after a later page", async () => {
+  const first = await page(1, { content: "A".repeat(3000), encodingStrategy: "plaintext" });
+  const second = await page(2);
+  const scans = [...second.seals, first.seals[1]];
+  expect((await verifySealCollection(scans, keys.publicKey)).map(item => item.status)).toEqual(["VALID", "INCOMPLETE"]);
+  scans.push(first.seals[0]);
+  expect((await verifySealCollection(scans, keys.publicKey)).map(item => item.page_number)).toEqual([1, 2]);
+});
+
+it("keeps documents and signing iterations separate while sorting their pages", () => {
+  const result = (number, overrides = {}) => ({ pdf: true, page_number: number, page_count: 12,
+    document_root: root, key_id: "key", timestamp, ...overrides });
+  const pages = [result(12), result(2, { timestamp: "later" }), result(1, { key_id: "other" }),
+    result(2), { status: "INCOMPLETE" }, result(1, { timestamp: "later" }),
+    result(1, { document_root: "other" }), result(1, { page_count: 2 })];
+  const original = [...pages];
+  expect(orderSealResults(pages)).toEqual([pages[3], pages[0], pages[5], pages[1], pages[2], pages[4], pages[6], pages[7]]);
+  expect(pages).toEqual(original);
 });
 
 it("counts an identical page position only once", async () => {

@@ -26,7 +26,8 @@ os.environ["PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS"] = "1"
 def _pdf_bytes(text):
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter)
-    pdf.drawString(50, 700, text)
+    for index, line in enumerate(text.splitlines()):
+        pdf.drawString(50, 700 - index * 16, line)
     pdf.save()
     return buffer.getvalue()
 
@@ -85,7 +86,6 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline):
         page.get_by_role("button", name="Open PDF stamping tool").click()
         page.get_by_role("button", name="Generate key pair", exact=True).click()
         expect(page.locator("#signing-key-status")).to_contain_text("Key pair generated.")
-        page.get_by_label("Encoding Strategy").select_option("gzip")
         _stamp_and_save(page, tmp_path, "public-warmup.pdf", "Non-sensitive resource warm-up")
         page.get_by_role("button", name="Close", exact=True).click()
         page.wait_for_load_state("networkidle")
@@ -119,7 +119,6 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline):
         page.get_by_role("button", name="Open PDF stamping tool").click()
         page.get_by_role("button", name="Generate key pair", exact=True).click()
         expect(page.locator("#signing-key-status")).to_contain_text("Key pair generated.")
-        page.get_by_label("Encoding Strategy").select_option("gzip")
         private_key = page.get_by_label("Private Key", exact=True).input_value()
         public_key = page.get_by_label("Public Key", exact=True).input_value()
         for kind, key in [("private", private_key), ("public", public_key)]:
@@ -139,11 +138,10 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline):
         page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
         expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(public_key)
 
-        page.get_by_label("Encoding Strategy").select_option("gzip")
         text = "Private offline invoice NETWORK-1042. Approved total: $123.45."
-        sealed_path = _stamp_and_save(page, tmp_path, "private-invoice.pdf", text)
-        # The test hook only checks the selected encoding. Verification reads
-        # actual saved-PDF pixels through the normal image-selection UI.
+        sealed_path = _stamp_and_save(page, tmp_path, "private-invoice.pdf", "\n".join([text] * 5))
+        # Check that compression was chosen automatically, then verify actual
+        # saved-PDF pixels through the normal image-selection UI.
         assert page.evaluate("window.__lastSealResult.encoding") == "gzip"
         footer = tmp_path / "private-invoice-footer"
         subprocess.run(["pdftoppm", "-f", "1", "-singlefile", "-r", "200",
