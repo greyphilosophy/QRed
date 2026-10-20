@@ -940,6 +940,92 @@ class TestCameraFrameScanning:
         expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45")
 
 
+class TestContinuousSealScanning:
+    @pytest.mark.parametrize("route", ["/", "/verifier.html"], ids=["homepage", "standalone"])
+    def test_collects_out_of_order_pieces_and_pages_without_restarting_camera(self, page: Page, tmp_path, route):
+        source = tmp_path / "two-page-delivery.pdf"
+        pdf = rl_canvas.Canvas(str(source), pagesize=letter)
+        pdf.setFont("Helvetica", 9)
+        for i in range(45):
+            pdf.drawString(40, 740 - i * 14,
+                           f"Item {i + 1}: Received and inspected; quantity {i * 7 + 3}; approved for delivery.")
+        pdf.showPage()
+        pdf.drawString(40, 740, "Final delivery page. All items received.")
+        pdf.save()
+        stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY, encoding="plaintext")
+        assert result["full_result"]["total_seals"] == 2  # First page; the short second page needs one.
+        frames = []
+        for index, (page_number, column) in enumerate([(1, 1), (2, 0), (1, 0)]):
+            target = tmp_path / f"continuous-{index}"
+            subprocess.run(["pdftoppm", "-f", str(page_number), "-singlefile", "-r", "200",
+                            "-x", str(round((18 + column * 208) * 200 / 72)), "-y", "2200",
+                            "-W", "550", "-H", "550", "-png", stamped, str(target)],
+                           check=True, capture_output=True)
+            frames.append("data:image/png;base64," + base64.b64encode(target.with_suffix(".png").read_bytes()).decode("ascii"))
+        page.add_init_script("""
+        (() => {
+            const frames = FRAMES;
+            window.cameraOpenCount = 0;
+            Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: {
+                enumerateDevices: async () => [],
+                getUserMedia: async () => {
+                    window.cameraOpenCount++;
+                    const canvas = document.createElement('canvas');
+                    canvas.width = canvas.height = 550;
+                    const context = canvas.getContext('2d');
+                    context.fillStyle = 'white';
+                    context.fillRect(0, 0, 550, 550);
+                    const stream = canvas.captureStream(10);
+                    window.cameraStream = stream;
+                    window.showSealFrame = async index => {
+                        const image = new Image();
+                        image.src = frames[index];
+                        await image.decode();
+                        context.fillStyle = 'white';
+                        context.fillRect(0, 0, 550, 550);
+                        // Preserve the saved-PDF pixels and their quiet zone.
+                        context.drawImage(image, 0, 0);
+                        stream.getVideoTracks()[0].requestFrame();
+                    };
+                    return stream;
+                },
+            }});
+        })();
+        """.replace("FRAMES", json.dumps(frames)))
+        base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
+        page.goto(base_url + route, wait_until="networkidle")
+        page.get_by_label("Issuer public key", exact=True).fill(DEMO_PUBLIC_KEY)
+        page.get_by_role("button", name="Start scanning" if route == "/" else "Scan QR Code", exact=True).click()
+        page.wait_for_function("document.querySelector('video')?.readyState >= 2")
+        page.locator("video").first.scroll_into_view_if_needed()
+        progress = page.locator(".ar-collection-progress" if route == "/" else "#statusText")
+        page.evaluate("window.showSealFrame(0)")
+        expect(progress).to_contain_text("1 of 2 QR seals", timeout=20000)
+        # Repeated camera frames must not add duplicate pieces or stop the stream.
+        page.wait_for_timeout(400)
+        expect(progress).to_contain_text("1 of 2 QR seals")
+        assert page.evaluate("window.cameraStream.getTracks().every(track => track.readyState === 'live')")
+        page.evaluate("window.showSealFrame(1)")
+        expect(progress).to_contain_text("1 of 2 pages collected", timeout=20000)
+        assert page.evaluate("window.cameraOpenCount") == 1
+        page.evaluate("window.showSealFrame(2)")
+        summary = page.locator(".verification-card .collection-progress" if route == "/" else "#resultMeta .collection-progress")
+        expect(summary).to_have_text("All 2 pages collected.", timeout=20000)
+        page.wait_for_function("window.cameraStream.getTracks().every(track => track.readyState === 'ended')")
+        assert page.evaluate("window.cameraOpenCount") == 1
+        if route == "/":
+            expect(page.get_by_role("heading", name="VALID", exact=True)).to_have_count(2)
+            # Clearing resets duplicate suppression as well as collected results.
+            page.get_by_role("button", name="Clear collected seals", exact=True).click()
+            page.get_by_role("button", name="Start scanning", exact=True).click()
+            page.wait_for_function("window.cameraOpenCount === 2 && document.querySelector('video')?.readyState >= 2")
+            page.locator("video").first.scroll_into_view_if_needed()
+            page.evaluate("window.showSealFrame(0)")
+            expect(progress).to_contain_text("1 of 2 QR seals", timeout=20000)
+        else:
+            expect(page.locator("#resultStatus")).to_have_text("VALID")
+
+
 class TestExistingSealCompatibility:
     """T5: Existing seal compatibility (re-verify seals from known documents)."""
 

@@ -12,10 +12,13 @@ function App() {
   return (
     <main className="homepage">
       <QrScanner
+        key={verification.session}
         returnPayload
+        collectSeals
+        collectionProgress={verification.progress}
         onSealDetected={verification.addSeal}
         onOpenPdfStampTool={() => setShowPdfStampTool(true)}
-        resultPanel={<div className="ar-result-panel"><h2>QR captured</h2><p>See verification results below. Scan again to collect the next seal.</p></div>}
+        resultPanel={<div className="ar-result-panel"><h2>QR captured</h2><p>{verification.progress?.message || "See verification results below."}</p></div>}
       />
       <SealVerification verification={verification} />
       {showPdfStampTool && (

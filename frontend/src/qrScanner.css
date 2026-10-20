@@ -1,0 +1,14 @@
+.ar-collection-progress {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  right: 5.5rem;
+  z-index: 5;
+  margin: 0;
+  padding: .75rem 1rem;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, .9);
+  color: #fff;
+  line-height: 1.4;
+  pointer-events: none;
+}

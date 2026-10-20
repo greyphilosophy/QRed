@@ -395,6 +395,7 @@
     import { compareDocumentText, classifyOcrWords, decodeSeal as decodeQRedSeal, verifyQRedSeals, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./src/qredVerifier.js";
     import { captureDocumentFrameForOcr, drawArOverlay } from "./src/verifier/ocrAr.js";
     import { readSigningKeyFile } from "./src/signingKeys.js";
+    import { sealCollectionProgress } from "./src/sealCollection.js";
 
     // QRed Protocol - decode QRed seal strings for scanner UI state.
     function decodeSeal(str) {
@@ -419,6 +420,8 @@
       sealsByDocument: Object.create(null),
       scannedSeals: [],
       seenSeals: new Set(),
+      verificationResults: Object.create(null),
+      scanSession: 0,
       arItems: [],
       arItemsByRaw: new Map(),
       arSelectedRaw: "",
@@ -467,6 +470,9 @@
     };
 
     btnNewScan.onclick = function() {
+      stopScanning();
+      state.scanSession += 1;
+      state.verificationResults = Object.create(null);
       state.sealsByDocument = Object.create(null);
       state.scannedSeals = [];
       stopArOverlay();
@@ -539,6 +545,12 @@
         var decoded = decodeQRedSeal(seal);
         return decoded && decoded.key_id ? decoded.key_id : "";
       }).filter(Boolean);
+      if (keyIds.length === 0) {
+        // Multipart wrappers carry only a grouping digest. Reconstruct the
+        // record to discover its key ID before looking up the default key.
+        var reconstructed = await verifyQRedSeals(seals, "");
+        if (reconstructed.key_id) keyIds.push(reconstructed.key_id);
+      }
       if (keyIds.length === 0) {
         state.defaultKeyLookupMessage = "No default trusted key could be selected because the seal does not include a key ID.";
         return "";
@@ -667,6 +679,8 @@
         state.sealsByDocument[docId] = { chunks: {}, total: decoded.totalChunks };
       }
       state.sealsByDocument[docId].chunks[decoded.chunkNumber] = decoded.data;
+      state.sealsByDocument[docId].revision = (state.sealsByDocument[docId].revision || 0) + 1;
+      delete state.verificationResults[docId];
       updateSealList();
       return state.sealsByDocument[docId];
     }
@@ -806,7 +820,7 @@
               }
             }
             lastScanAt = performance.now();
-            state.animFrameId = requestAnimationFrame(scanFrame);
+            if (state.isScanning) state.animFrameId = requestAnimationFrame(scanFrame);
           }
           scanFrame();
         };
@@ -847,15 +861,29 @@
       var docId = decoded.documentId;
       var docData = state.sealsByDocument[docId];
       var collected = Object.keys(docData.chunks).length;
-      var pct = Math.min(100, (collected / docData.total) * 100);
-      statusText.textContent = collected + " / " + docData.total + " seals";
-      progressFill.style.width = pct + "%";
-      progressContainer.style.display = "block";
+      refreshCollectionProgress();
 
       if (collected >= docData.total) {
+        reconstructAndShow(docId, { capturePageText: false });
+      }
+    }
+
+    function refreshCollectionProgress() {
+      var progress = sealCollectionProgress(state.scannedSeals, Object.values(state.verificationResults));
+      if (!progress) return;
+      statusText.textContent = progress.message;
+      var collected = progress.pagesCollected || progress.collected;
+      var total = progress.pagesTotal || progress.total;
+      progressFill.style.width = Math.min(100, collected / total * 100) + "%";
+      progressContainer.style.display = "block";
+      var active = decodeSeal(progress.activeSeal);
+      var result = state.verificationResults[active.documentId];
+      if (progress.finished) {
         stopScanning();
         btnScan.textContent = "Scan QR Code";
-        reconstructAndShow(docId, { capturePageText: false });
+      }
+      if (result && result.status !== "INCOMPLETE") {
+        showResult(result.status, result, { keepScanView: !progress.finished, progress: progress });
       }
     }
 
@@ -908,6 +936,8 @@
     async function reconstructAndShow(docId, options) {
       options = options || {};
       var docData = state.sealsByDocument[docId];
+      var session = state.scanSession;
+      var revision = docData.revision;
       var total = docData.total;
       var seals = [];
       for (var i = 0; i < total; i++) {
@@ -928,14 +958,19 @@
           result.error_message = state.defaultKeyLookupMessage + (result.error_message ? " " + result.error_message : "");
         }
         result.page_text = options.capturePageText ? await readPageTextFromScanner() : (pageTextInput.value.trim() || state.pageText || "");
-        showResult(result.status || "ERROR", result);
+        if (state.scanSession !== session || docData.revision !== revision) return;
+        state.verificationResults[docId] = { ...result, document_id: docId };
+        refreshCollectionProgress();
       } catch (e) {
-        showResult("ERROR", { error_message: e.message });
+        if (state.scanSession !== session || docData.revision !== revision) return;
+        state.verificationResults[docId] = { status: "ERROR", document_id: docId, error_message: e.message };
+        refreshCollectionProgress();
       }
     }
 
-    function showResult(status, payload) {
-      document.getElementById("scanMode").style.display = "none";
+    function showResult(status, payload, options) {
+      options = options || {};
+      document.getElementById("scanMode").style.display = options.keepScanView ? "block" : "none";
       state.verifiedContent = payload.content || "";
       btnStartAr.style.display = status === "VALID" && state.verifiedContent ? "block" : "none";
       var rv = document.getElementById("resultView");
@@ -947,6 +982,12 @@
 
       var rm = document.getElementById("resultMeta");
       rm.innerHTML = "";
+      if (options.progress) {
+        var summary = document.createElement("p");
+        summary.className = "collection-progress";
+        summary.textContent = options.progress.message;
+        rm.appendChild(summary);
+      }
 
       if (payload.document_id) {
         rm.innerHTML += "<div class='meta-item'><strong>Doc ID:</strong> " + escapeHtml(payload.document_id) + "</div>";
@@ -967,7 +1008,7 @@
         rm.innerHTML += "<div class='meta-item'><strong>Error:</strong> " + escapeHtml(payload.error_message) + "</div>";
       }
 
-      statusBar.classList.remove("visible");
+      if (!options.keepScanView) statusBar.classList.remove("visible");
 
       var rc = document.getElementById("resultContent");
       rc.innerHTML = "";

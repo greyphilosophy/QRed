@@ -23,11 +23,14 @@ it("connects homepage scans to real signature verification and waits for every c
   expect(seals.length).toBeGreaterThan(1);
   render(<App />);
   expect(scanner.props.returnPayload).toBe(true);
+  expect(scanner.props.collectSeals).toBe(true);
   fireEvent.change(screen.getByLabelText("Issuer public key"), { target: { value: publicKey } });
   await act(async () => scanner.props.onSealDetected(seals[0]));
   expect(await screen.findByRole("heading", { name: "INCOMPLETE" })).toBeTruthy();
+  expect(scanner.props.collectionProgress).toMatchObject({ collected: 1, total: seals.length, finished: false });
   await act(async () => seals.slice(1).forEach(scanner.props.onSealDetected));
   expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
+  await waitFor(() => expect(scanner.props.collectionProgress.complete).toBe(true));
   expect(document.querySelector(".verification-result pre").textContent).toBe(content);
 
   fireEvent.change(screen.getByLabelText("Issuer public key"), { target: { value: "" } });
