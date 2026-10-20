@@ -83,6 +83,7 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline):
         page.get_by_role("button", name="Open PDF stamping tool").click()
         page.get_by_role("button", name="Generate key pair", exact=True).click()
         expect(page.locator("#signing-key-status")).to_contain_text("Key pair generated.")
+        page.get_by_label("Encoding Strategy").select_option("gzip")
         _stamp_and_save(page, tmp_path, "public-warmup.pdf", "Non-sensitive resource warm-up")
         page.get_by_role("button", name="Close", exact=True).click()
         page.wait_for_load_state("networkidle")
@@ -116,6 +117,7 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline):
         page.get_by_role("button", name="Open PDF stamping tool").click()
         page.get_by_role("button", name="Generate key pair", exact=True).click()
         expect(page.locator("#signing-key-status")).to_contain_text("Key pair generated.")
+        page.get_by_label("Encoding Strategy").select_option("gzip")
         private_key = page.get_by_label("Private Key", exact=True).input_value()
         public_key = page.get_by_label("Public Key", exact=True).input_value()
         for kind, key in [("private", private_key), ("public", public_key)]:
@@ -135,10 +137,12 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline):
         page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
         expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(public_key)
 
+        page.get_by_label("Encoding Strategy").select_option("gzip")
         text = "Private offline invoice NETWORK-1042. Approved total: $123.45."
         _stamp_and_save(page, tmp_path, "private-invoice.pdf", text)
         # The existing test hook only reads the actual signed result; all
         # generation, saving and verification use the normal browser UI.
+        assert page.evaluate("window.__lastSealResult.encoding") == "gzip"
         seals = page.evaluate("window.__lastSealResult.seals")
         assert seals
         page.locator("summary", has_text="Manual seal entry").click()

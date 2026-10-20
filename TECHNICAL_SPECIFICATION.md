@@ -42,45 +42,31 @@ Signatures are computed over restored canonical text.
 
 Ordinary QR scanners see only:
 
-    https://qred.org/
+    QRED.ORG
 
 Ordinary camera apps pass only that visible URL to the browser. QRed-aware readers recover the signed payload bytes only by scanning the QR image itself.
 
-### Recipe
+### Plaintext and gzip
 
-Current recipe: `b45` (`base45ish`).
-
-Recipes must satisfy:
-
-    decode(encode(text)) == text
-
-### Legacy Compression
-
-    (compressed pipe seals are no longer emitted or accepted)
+The browser supports uncompressed canonical text and gzip-compressed UTF-8 text.
+Both restore exactly the signed canonical text before verification.
 
 ## 5. Encoding Strategy
 
-Automatic mode:
+Automatic mode minimizes QR count, then total encoded payload bytes, with
+plaintext winning an exact tie. An explicit selection can force plaintext or
+gzip. Reported savings measure payload bytes, not the number of QR codes.
 
-1.  Reject non-reversible candidates.
-2.  Minimize QR count.
-3.  Prefer readability.
-4.  Prefer simpler encodings.
+## 6. Gzip Transport
 
-## 6. b45 Recipe
+Compress the full canonical page text once, then split the resulting stream
+into byte chunks. Each hidden QR contains `QRG1`, a two-byte big-endian metadata
+length, UTF-8 metadata, and raw gzip chunk bytes. Base64URL is used only in the
+copyable seal URL, never for the compressed data inside a QR.
 
-  Original     Encoded
-  ------------ ---------------------
-  a-z          A-Z
-  A-Z          +A ... +Z
-  \+           ++
-  \%           %%
-  digits       unchanged
-  space        unchanged
-  . - / : \$   unchanged
-  others       UTF-8 `%HH` escapes
-
-Malformed escapes MUST be rejected.
+See [GZIP_SEALS.md](docs/GZIP_SEALS.md) for the complete wire format,
+reassembly rules, bounds, and failure handling. Generation and decompression
+are limited to 8 MiB of canonical UTF-8 text per seal group.
 
 ## 7. Chunking
 
@@ -92,7 +78,7 @@ Missing chunks produce `INCOMPLETE`.
 
 ## 8. Verification
 
-Verification reconstructs the payload, decodes recipes, restores
+Verification reconstructs the payload, decompresses gzip when selected, restores
 canonical text, verifies the signature, and reports one of:
 
 -   VALID
@@ -102,7 +88,7 @@ canonical text, verifies the signature, and reports one of:
 
 ## 9. Scanner
 
-The scanner recognizes arbitrary QR codes, scanner-safe QRed payloads with hidden signed data, recipe payloads, and malformed QRed payloads. Hidden signed data is not supplied by a normal camera URL handoff; the QRed scanner must read the QR image.
+The scanner recognizes arbitrary QR codes, scanner-safe QRed payloads with hidden signed data, gzip payloads, and malformed QRed payloads. Hidden signed data is not supplied by a normal camera URL handoff; the QRed scanner must read the QR image.
 
 Unknown QR codes remain viewable.
 
@@ -125,7 +111,7 @@ Production verifier URL:
 
 Payload QR codes:
 
-    visible scan result: https://qred.org/
+    visible scan result: QRED.ORG
     hidden data: signed payload bytes recoverable only from the QR image
 
 The verifier should operate entirely within the browser after payload
@@ -133,5 +119,5 @@ acquisition.
 
 ## 13. Extensibility
 
-Future payload versions, reversible recipes, and signature algorithms
+Future payload versions, compression formats, and signature algorithms
 may be added while preserving interoperability whenever practical.

@@ -319,9 +319,9 @@ function VerifierApp() {
                 <strong>Issuer:</strong> {result.issuer}
               </div>
             ) : null}
-            {result?.recipe ? (
+            {result?.encoding ? (
               <div className="meta-item">
-                <strong>Recipe:</strong> {result.recipe}
+                <strong>Encoding:</strong> {result.encoding}
               </div>
             ) : null}
             {result?.key_id ? (

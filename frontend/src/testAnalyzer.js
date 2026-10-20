@@ -4,6 +4,8 @@
 // Originally lived inside frontend/test.html as a 900-line <script type=module>.
 
 import jsQR from "jsqr";
+import { scanQrImage } from "./qr/scanQrImage.js";
+import { decodeSeal, verifyQRedSeals } from "./qredVerifier.js";
 import { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset, hiddenPayloadFromScanResult } from "./qr/hiddenPayload.js";
 import { codewordsFromMatrix, deinterleaveDataCodewordsWithTables, QR_MODULE_COUNT_BY_VERSION } from "./qr/qrLowLevel.js";
 import { sampleQrMatrix } from "./qr/qrImageRecovery.js";
@@ -23,6 +25,7 @@ function decodePlaintextFragment(fragment) {
   const totalChunks = Number.parseInt(params.get("n") || "", 10);
   const documentId = params.get("doc") || "";
   if (!documentId || !Number.isInteger(chunkNumber) || !Number.isInteger(totalChunks)) return null;
+  if (params.has("rc") && params.get("rc") !== "plaintext") return null;
   return params.get("txt") || "";
 }
 
@@ -98,7 +101,7 @@ export async function detectQRCodeFromImage(imgElement) {
   const ctx = canvas.getContext("2d");
   ctx.drawImage(imgElement, 0, 0);
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  return jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "attemptBoth" });
+  return scanQrImage(imageData.data, imageData.width, imageData.height);
 }
 
 // — formatting
@@ -139,7 +142,7 @@ export function createTestAnalyzerController({ uploadZone, fileInput: _fileInput
     uploadZone.classList.toggle("scanning", tone === "loading");
   }
 
-  function updateHiddenPayloadSection(card, code, imgElement, version, payloadOffset) {
+  async function updateHiddenPayloadSection(card, code, imgElement, version, payloadOffset) {
     const section = card.querySelector("[data-hidden-payload-state]");
     if (!section) return;
 
@@ -154,9 +157,19 @@ export function createTestAnalyzerController({ uploadZone, fileInput: _fileInput
 
     qrCtx.drawImage(imgElement, 0, 0);
     const qrImageData = qrCtx.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
-    const recoveredText = qredTextFromPhotoScanResult(qrImageData.data, qrImageData.width, qrImageData.height, code);
+    let recoveredText = qredTextFromPhotoScanResult(qrImageData.data, qrImageData.width, qrImageData.height, code);
+    const payload = extractHiddenQRedPayloadFromImage(qrImageData.data, qrImageData.width, qrImageData.height, code) || code.data;
+    const decoded = decodeSeal(payload);
+    if (decoded?.encoding === "gzip") {
+      const result = await verifyQRedSeals([payload], "");
+      recoveredText = result.content
+        ? `Recovered text (signature not verified):\n${result.content}`
+        : result.status === "INCOMPLETE"
+          ? `Compressed seal ${decoded.chunk_number + 1} of ${decoded.total_chunks}. Collect all seals in the verifier to restore the text.`
+          : `Cannot restore compressed text: ${result.error_message}`;
+    }
     if (recoveredText !== code.data) {
-      section.innerHTML = `\n      <h4>🔍 Hidden QRed Payload Found</h4>\n      <p style="margin-bottom: 0.5rem;"><span class="badge badge-success">Hidden payload: YES</span></p>\n      <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.5rem;">Payload byte offset: ${payloadOffset} | Payload length: ${recoveredText.length} bytes</p>\n      <div class="payload-text">${escapeHtml(recoveredText)}</div>\n    `;
+      section.innerHTML = `\n      <h4>🔍 Hidden QRed Payload Found</h4>\n      <p style="margin-bottom: 0.5rem;"><span class="badge badge-success">Hidden payload: YES</span></p>\n      <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.5rem;">Payload byte offset: ${payloadOffset} | Displayed text: ${recoveredText.length} characters</p>\n      <div class="payload-text">${escapeHtml(recoveredText)}</div>\n    `;
       return;
     }
 

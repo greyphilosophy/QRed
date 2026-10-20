@@ -1,6 +1,6 @@
 import { signAsync as signEd25519 } from "@noble/ed25519";
 import { createQRedQrData } from "./qredQr.js";
-import { validateSimpleEnglish } from "./textRecipes.js";
+import { gzipText, MAX_SEAL_TEXT_BYTES, qrPayloadBytes } from "./sealCompression.js";
 import { computeKeyId, encodeBase64Url, sealSignatureMessage } from "./sealSignature.js";
 import { validateSigningKeyPair } from "./signingKeys.js";
 
@@ -17,7 +17,7 @@ function fragmentBase(bootstrapUrl) {
   return base.includes("#") ? base.slice(0, base.indexOf("#")) : base;
 }
 
-function buildFragmentData({ payload, chunkText, chunkNumber, totalChunks, recipeId = "plaintext" }) {
+function buildFragmentData({ payload, chunkText, chunkNumber, totalChunks, encoding = "plaintext" }) {
   const params = new URLSearchParams();
   params.set("v", payload.version);
   params.set("alg", payload.algorithm);
@@ -27,8 +27,7 @@ function buildFragmentData({ payload, chunkText, chunkNumber, totalChunks, recip
   params.set("iss", payload.issuer);
   params.set("kid", payload.key_id);
   params.set("ts", payload.timestamp);
-  if (recipeId && recipeId !== "plaintext") params.set("rc", recipeId);
-  else if (payload.recipe && payload.recipe !== "plaintext") params.set("rc", payload.recipe);
+  if (encoding === "gzip") params.set("rc", "gzip");
   if (chunkNumber === 0) params.set("sig", payload.signature);
   params.set("txt", chunkText);
   return `QRED1?${params.toString()}`;
@@ -47,34 +46,33 @@ function fragmentFitsQr(bootstrapUrl, fragmentData) {
   }
 }
 
-function splitTextForQrUrls(text, payload, bootstrapUrl, recipeId = "plaintext") {
-  if (!text) {
-    return [""];
-  }
-
+function splitForQrUrls(data, payload, bootstrapUrl, encoding = "plaintext") {
   let totalChunks = 1;
-  // Split on Unicode code points; cutting a surrogate pair changes the signed
-  // text when URLSearchParams replaces each lone surrogate with U+FFFD.
-  const characters = Array.from(text);
+  // Gzip is split into bytes. Plaintext uses Unicode code points so splitting
+  // cannot turn a surrogate pair into replacement characters in a URL.
+  const units = encoding === "gzip" ? data : Array.from(data);
+  const chunkValue = (start, end) => encoding === "gzip"
+    ? encodeBase64Url(units.subarray(start, end))
+    : units.slice(start, end).join("");
   let chunks = [];
   let stable = false;
 
   while (!stable) {
     chunks = [];
     let offset = 0;
-    while (offset < characters.length) {
+    while (offset < units.length) {
       let low = 1;
-      let high = characters.length - offset;
+      let high = Math.min(2945, units.length - offset);
       let best = 0;
       while (low <= high) {
         const mid = Math.floor((low + high) / 2);
-        const chunkText = characters.slice(offset, offset + mid).join("");
+        const chunkText = chunkValue(offset, offset + mid);
         const fragmentData = buildFragmentData({
           payload,
           chunkText,
           chunkNumber: chunks.length,
           totalChunks,
-          recipeId,
+          encoding,
         });
         if (fragmentFitsQr(bootstrapUrl, fragmentData)) {
           best = mid;
@@ -86,7 +84,7 @@ function splitTextForQrUrls(text, payload, bootstrapUrl, recipeId = "plaintext")
       if (best === 0) {
         throw new Error("QRed metadata and signature exceed the QR code capacity before adding document text");
       }
-      chunks.push(characters.slice(offset, offset + best).join(""));
+      chunks.push(chunkValue(offset, offset + best));
       if (chunks.length > 4096) throw new Error("Document exceeds the 4096-seal limit");
       offset += best;
     }
@@ -96,7 +94,7 @@ function splitTextForQrUrls(text, payload, bootstrapUrl, recipeId = "plaintext")
 
   return chunks.map((chunkText, index) => buildFragmentUrl(
     bootstrapUrl,
-    buildFragmentData({ payload, chunkText, chunkNumber: index, totalChunks: chunks.length, recipeId }),
+    buildFragmentData({ payload, chunkText, chunkNumber: index, totalChunks: chunks.length, encoding }),
   ));
 }
 
@@ -123,35 +121,11 @@ export function generateDocumentId() {
   return `DOC-${bytesToHex(bytes).toUpperCase()}`;
 }
 
-function buildPayload(baseFields, content, recipe = "plaintext") {
-  return { ...baseFields, content, recipe };
-}
-
-function candidateReport(encoding, qrCount, reversible, diagnostics, recipeId = "") {
-  return { encoding, qr_count: qrCount, reversible, diagnostics, recipe_id: recipeId };
-}
-
-function selectCandidate(candidates, preferred = "automatic") {
-  const selectable = candidates.filter((candidate) => candidate.reversible);
-  if (selectable.length === 0) return candidates[0];
-
-  const aliases = {
-    base45ish: "b45",
-    b45: "b45",
-    recipe1: "b45",
-    simple_english: "b45",
+function candidate(encoding, seals) {
+  return {
+    encoding, seals, qr_count: seals.length,
+    payload_bytes: seals.reduce((total, seal) => total + qrPayloadBytes(seal).length, 0),
   };
-  const normalizedPreferred = aliases[preferred] || preferred;
-
-  const preferredCandidate = candidates.find((candidate) => candidate.encoding === normalizedPreferred || candidate.recipe === normalizedPreferred);
-  if (preferredCandidate && preferredCandidate.reversible) return preferredCandidate;
-
-  if (preferred === "plaintext") {
-    return candidates.find((candidate) => candidate.encoding === "plaintext");
-  }
-  return selectable
-    .map((candidate, index) => ({ candidate, index }))
-    .sort((a, b) => (a.candidate.qr_count - b.candidate.qr_count) || (a.index - b.index))[0].candidate;
 }
 
 export async function createQRedSeals({
@@ -166,9 +140,10 @@ export async function createQRedSeals({
   const canonical = canonicalizeText(content);
   if (!canonical.trim()) throw new Error("Cannot seal empty document text");
   if (!issuer?.trim()) throw new Error("An issuer is required");
-  if (!["automatic", "plaintext", "b45", "base45ish", "recipe1", "simple_english"].includes(encodingStrategy)) {
+  if (!["automatic", "plaintext", "gzip"].includes(encodingStrategy)) {
     throw new Error(`Unsupported encoding strategy: ${encodingStrategy}`);
   }
+  if (new TextEncoder().encode(canonical).length > MAX_SEAL_TEXT_BYTES) throw new Error("Seal text exceeds the 8 MiB limit");
   if (!documentId) documentId = generateDocumentId();
   const { privateBytes } = await validateSigningKeyPair({ privateKey, publicKey });
   const keyId = await computeKeyId(publicKey);
@@ -182,44 +157,46 @@ export async function createQRedSeals({
   };
   baseFields.signature = encodeBase64Url(await signEd25519(sealSignatureMessage(baseFields, canonical), privateBytes));
 
-  const plaintextPayload = buildPayload(baseFields, canonical, "plaintext");
-  const plaintextJson = JSON.stringify(plaintextPayload, Object.keys(plaintextPayload).sort());
-  const plaintextUrls = splitTextForQrUrls(canonical, plaintextPayload, bootstrapUrl, "plaintext");
-  const plaintextReport = candidateReport("plaintext", plaintextUrls.length, true, []);
-
-  const recipeResult = validateSimpleEnglish(canonical);
-  const recipeReport = candidateReport("b45", 0, recipeResult.reversible, recipeResult.diagnostics, recipeResult.recipe_id);
-  let recipeUrls = [];
-  let recipeJson = "";
-  if (recipeResult.reversible) {
-    const recipePayload = buildPayload(baseFields, recipeResult.compact, recipeResult.recipe_id);
-    recipeUrls = splitTextForQrUrls(recipeResult.compact, recipePayload, bootstrapUrl, recipeResult.recipe_id);
-    recipeReport.qr_count = recipeUrls.length;
-    recipeJson = JSON.stringify(recipePayload, Object.keys(recipePayload).sort());
+  const candidates = [];
+  const failures = [];
+  function addCandidate(encoding, data) {
+    try {
+      candidates.push(candidate(encoding, splitForQrUrls(data, baseFields, bootstrapUrl, encoding)));
+    } catch (error) {
+      failures.push({ encoding, error_message: error.message });
+    }
   }
-
-  const candidates = [
-    { encoding: "plaintext", strings: plaintextUrls, payload_json: plaintextJson, recipe: "plaintext", ...plaintextReport },
-  ];
-  if (recipeResult.reversible) {
-    candidates.splice(1, 0, { encoding: "b45", strings: recipeUrls, payload_json: recipeJson, recipe: recipeResult.recipe_id, ...recipeReport });
+  addCandidate("plaintext", canonical);
+  if (encodingStrategy !== "plaintext" && typeof CompressionStream === "function") {
+    const compressed = await gzipText(canonical);
+    addCandidate("gzip", compressed);
+  } else if (encodingStrategy === "gzip") {
+    throw new Error("Gzip compression is not available in this browser");
   }
-  const selected = selectCandidate(candidates, encodingStrategy);
-  const seals = selected.strings;
+  const selected = encodingStrategy === "automatic"
+    ? [...candidates].sort((a, b) => a.qr_count - b.qr_count || a.payload_bytes - b.payload_bytes)[0]
+    : candidates.find((item) => item.encoding === encodingStrategy);
+  if (!selected) throw new Error(failures.find(item => item.encoding === encodingStrategy)?.error_message || failures[0]?.error_message || "No supported seal encoding is available");
+  const plaintext = candidates.find(item => item.encoding === "plaintext");
+  const payload = { ...baseFields, content: canonical };
 
   return {
     bootstrap_url: fragmentBase(bootstrapUrl),
     document_id: documentId,
     issuer,
     key_id: keyId,
-    payload_json: selected.payload_json,
-    seals,
-    total_seals: seals.length,
+    payload_json: JSON.stringify(payload, Object.keys(payload).sort()),
+    seals: selected.seals,
+    total_seals: selected.qr_count,
     encoding: selected.encoding,
     encoding_strategy: encodingStrategy,
-    selected_recipe: selected.recipe,
     estimated_qr_count: selected.qr_count,
-    compression_savings_pct: plaintextUrls.length > selected.qr_count ? Math.round(((plaintextUrls.length - selected.qr_count) / plaintextUrls.length) * 100) : 0,
-    candidate_reports: candidates.map(({ encoding, qr_count, reversible, diagnostics, recipe_id }) => ({ encoding, qr_count, reversible, diagnostics, recipe_id })),
+    payload_bytes: selected.payload_bytes,
+    uncompressed_payload_bytes: plaintext?.payload_bytes ?? null,
+    compression_savings_pct: plaintext ? Math.round((1 - selected.payload_bytes / plaintext.payload_bytes) * 100) : null,
+    candidate_reports: [
+      ...candidates.map(({ encoding, qr_count, payload_bytes }) => ({ encoding, qr_count, payload_bytes })),
+      ...failures,
+    ],
   };
 }

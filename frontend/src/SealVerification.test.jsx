@@ -18,7 +18,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it("connects homepage scans to real signature verification and waits for every chunk", async () => {
-  const content = "A document with several seals. ".repeat(160).trim();
+  const content = Array.from({ length: 700 }, (_, i) => `Record ${i}: ${Math.imul(i + 17, 2654435761) >>> 0}.`).join("\n");
   const { seals } = await createQRedSeals({ content, issuer: "QA", privateKey, publicKey });
   expect(seals.length).toBeGreaterThan(1);
   render(<App />);
@@ -28,7 +28,7 @@ it("connects homepage scans to real signature verification and waits for every c
   expect(await screen.findByRole("heading", { name: "INCOMPLETE" })).toBeTruthy();
   await act(async () => seals.slice(1).forEach(scanner.props.onSealDetected));
   expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
-  expect(screen.getByText(content)).toBeTruthy();
+  expect(document.querySelector(".verification-result pre").textContent).toBe(content);
 
   fireEvent.change(screen.getByLabelText("Issuer public key"), { target: { value: "" } });
   expect(await screen.findByRole("heading", { name: "UNVERIFIED" })).toBeTruthy();

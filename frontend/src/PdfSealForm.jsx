@@ -160,9 +160,8 @@ export function PdfSealForm({ onUsePublicKey }) {
           ...(flattenedFieldCount ? [`Flattened ${flattenedFieldCount} form field(s) before sealing.`] : []),
           `Selected encoding: ${sealResult.encoding || encodingStrategy}`,
           `Selected page scaling: ${pageScalingStrategy}`,
-          `Selected recipe: ${sealResult.selected_recipe || "plaintext"}`,
           `Estimated QR count: ${sealResult.estimated_qr_count || sealResult.total_seals || 0}`,
-          `Compression savings: ${sealResult.compression_savings_pct || 0}%`,
+          `QR payload savings: ${sealResult.compression_savings_pct == null ? "not available" : `${sealResult.compression_savings_pct}%`}`,
           `Document ID: ${sealResult.document_id}`,
         ].join("\n")
       );
@@ -247,14 +246,14 @@ export function PdfSealForm({ onUsePublicKey }) {
             aria-label="Encoding Strategy"
             value={encodingStrategy}
             onChange={(e) => setEncodingStrategy(e.target.value)}
-            title="Automatic tries every reversible recipe and chooses the smallest successful encoding."
+            title="Automatic chooses plaintext or gzip to use fewer QR codes, then fewer bytes."
           >
             <option value="automatic">Automatic (recommended)</option>
             <option value="plaintext">Plaintext</option>
-            <option value="b45">Recipe 1 – b45</option>
+            <option value="gzip">Gzip</option>
           </select>
           <small style={{ color: "#64748b", display: "block", marginTop: "0.5rem" }}>
-            Automatic tries every reversible recipe and chooses the smallest successful encoding.
+            Automatic chooses plaintext or gzip to use fewer QR codes, then fewer bytes.
           </small>
         </div>
         <div className="demo-input">

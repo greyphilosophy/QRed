@@ -11,11 +11,14 @@ const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 const content = "Camera recovery regression: invoice QA-1042. Approved total: $123.45.";
 let seal;
+let gzipSeal;
 
 beforeAll(async () => {
   const result = await createQRedSeals({ content, issuer: "QRed Camera QA", privateKey, publicKey,
     documentId: "DOC-CAMERA-RECOVERY", encodingStrategy: "plaintext" });
   [seal] = result.seals;
+  [gzipSeal] = (await createQRedSeals({ content, issuer: "QRed Camera QA", privateKey, publicKey,
+    documentId: "DOC-CAMERA-GZIP", encodingStrategy: "gzip" })).seals;
 });
 
 function damageCodewords(qr, indexes) {
@@ -72,13 +75,14 @@ function recover(image) {
 }
 
 describe("error-corrected hidden QR data", () => {
-  it.each(["L", "M", "Q", "H"])("recovers signed data after damage to its length field (%s)", async (level) => {
-    const qr = createQRedQrSymbol(seal, { errorCorrectionLevel: level });
+  it.each(["plaintext", "gzip"].flatMap(encoding => ["L", "M", "Q", "H"].map(level => [encoding, level])))("recovers %s data after damage to its length field (%s)", async (encoding, level) => {
+    const original = encoding === "gzip" ? gzipSeal : seal;
+    const qr = createQRedQrSymbol(original, { errorCorrectionLevel: level });
     damageHiddenLength(qr);
     const { code, payload } = recover(render(qr));
     // The patch must preserve the upstream public message API.
     expect(code.binaryData).toEqual(Array.from(new TextEncoder().encode(VISIBLE_QR_TEXT)));
-    expect(payload).toBe(seal);
+    expect(payload).toBe(original);
     await expect(verifyQRedSeals([payload], publicKey)).resolves.toMatchObject({ status: "VALID", content });
   });
 

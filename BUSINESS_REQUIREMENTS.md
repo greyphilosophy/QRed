@@ -55,37 +55,37 @@
 ## 6. Payload Formats
 
 1.  QRed shall support scanner-safe hidden payloads that visibly scan as the bootstrap URL in ordinary camera apps, while requiring a QRed-aware QR-image scan to recover hidden signed data.
-2.  QRed shall support reversible text recipes.
+2.  QRed shall support plaintext and lossless gzip compression.
 3.  QRed does not need compressed legacy payload compatibility until users create a compatibility requirement.
 4.  Payloads shall contain sufficient information to reconstruct and
     verify certified contents.
 
 ## 7. Encoding Selection
 
-1.  Scanner-safe hidden payloads behind the bootstrap URL shall be preferred when they are not worse than alternatives.
-2.  Automatic mode shall evaluate all supported reversible recipes.
+1.  Plaintext and gzip shall both use scanner-safe hidden payloads behind the bootstrap URL.
+2.  Automatic mode shall evaluate plaintext and gzip candidates.
 3.  Automatic mode may add encodings freely until compatibility requirements exist.
 4.  Only reversible encodings may be selected.
 5.  Selection shall prioritize:
     -   reversibility,
     -   fewer QR codes,
-    -   readability,
-    -   simplicity.
+    -   fewer encoded payload bytes,
+    -   plaintext when both measures tie.
 
-## 8. Reversible Recipes
+## 8. Lossless Compression
 
-1.  Recipes shall satisfy:
+1.  Compression formats shall satisfy:
 
         decode(encode(text)) == text
 
-2.  Recipes shall decode into canonical text before verification.
+2.  Compression formats shall decode into canonical text before verification.
 
 3.  Signatures shall verify restored canonical text, never encoded
     representations.
 
-4.  Failed recipes should provide actionable diagnostics.
+4.  Failed compression formats should provide actionable diagnostics.
 
-5.  Recipes shall be extensible without redesigning the verification
+5.  Compression formats shall be extensible without redesigning the verification
     pipeline.
 
 ## 9. Chunking
