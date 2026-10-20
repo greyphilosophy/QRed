@@ -23,11 +23,11 @@ The payload seals contain the signed document data required to reconstruct and v
 1. Source document is provided.
 2. A canonical text representation is produced.
 3. The canonical text is digitally signed using Ed25519.
-4. In automatic mode, implementations SHALL evaluate all reversible supported payload candidates, currently scanner-safe hidden payloads behind the bootstrap URL and reversible recipe payloads such as `b45`.
+4. In automatic mode, implementations SHALL evaluate plaintext and gzip candidates carried as scanner-safe hidden payloads.
 5. Only reversible candidates are selectable.
 6. Automatic mode SHALL choose the candidate with the smallest QR count.
-7. QR-count ties SHALL prefer scanner-safe hidden payloads behind the bootstrap URL, then recipe encodings.
-8. Explicit encoding strategies MAY request scanner-safe hidden payloads, `b45`, or additional modular recipes supported by the implementation.
+7. QR-count ties SHALL prefer fewer encoded payload bytes, then plaintext.
+8. Explicit encoding strategies MAY request plaintext or gzip.
 9. The chosen payload form is divided into chunks and encoded into machine-readable seals.
 10. The payload seals are placed on the document.
 
@@ -95,13 +95,12 @@ The reference implementation encodes the payload as a JSON object:
 }
 ```
 
-The reference implementation stores the signed payload as JSON with sorted keys and compact separators, then automatic mode evaluates all reversible supported candidates, currently:
-
-- scanner-safe QR payloads that show only the bootstrap URL to ordinary scanners while making signed data recoverable only to a QRed-aware scanner reading the QR image,
-- reversible recipe payloads such as `b45`, and
-
-
-Only reversible candidates are selectable. Automatic mode selects the candidate with the smallest QR count. Ties prefer scanner-safe hidden payloads behind the bootstrap URL, then recipe encodings. Explicit strategies may request scanner-safe hidden payloads, `b45`, or additional modular recipes supported by the implementation.
+The reference implementation retains a JSON representation for inspection and
+compares plaintext with gzip-compressed canonical text for QR transport. Both
+use scanner-safe hidden data behind the visible `QRED.ORG` marker. Automatic
+mode selects the fewest QR codes, then the fewest encoded payload bytes, with
+plaintext winning an exact tie. Explicit strategies may request plaintext or
+gzip. See [GZIP_SEALS.md](docs/GZIP_SEALS.md) for binary framing and limits.
 
 ---
 

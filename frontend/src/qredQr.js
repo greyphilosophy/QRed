@@ -7,7 +7,8 @@ import ReedSolomonEncoder from "qrcode/lib/core/reed-solomon-encoder";
 import Mode from "qrcode/lib/core/mode";
 import AlphanumericData from "qrcode/lib/core/alphanumeric-data";
 import MaskPattern from "qrcode/lib/core/mask-pattern";
-import { VISIBLE_QR_TEXT } from "./qredVerifier.js";
+import { VISIBLE_QR_TEXT } from "./qr/hiddenPayload.js";
+import { qrPayloadBytes } from "./sealCompression.js";
 
 const HIDDEN_PAYLOAD_LENGTH_BYTES = 2;
 const MIN_MODULE_PIXELS = 4;
@@ -130,7 +131,7 @@ function setupData(matrix, data) {
 }
 
 export function createQRedQrData(value, options = DEFAULT_QR_OPTIONS) {
-  const payloadBytes = new TextEncoder().encode(value);
+  const payloadBytes = qrPayloadBytes(value);
   if (payloadBytes.length > 0xffff) throw new Error("QRed payload is too large to frame");
   const { version, errorCorrectionLevel } = chooseQrShape(payloadBytes, options.errorCorrectionLevel);
   const buffer = new BitBuffer();

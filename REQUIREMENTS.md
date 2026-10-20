@@ -70,7 +70,7 @@ The canonical representation shall be digitally signed by the issuing authority.
 
 FR4. Seal Generation
 
-The signed payload shall be encoded into one or more machine-readable seals. In automatic mode, implementations shall evaluate all reversible supported candidates, currently scanner-safe hidden payloads behind the bootstrap URL and reversible recipe payloads such as `b45`. Only reversible candidates are selectable; automatic mode shall minimize QR count, with ties preferring scanner-safe hidden payloads behind the bootstrap URL, then recipe encodings. Explicit strategies may request scanner-safe hidden payloads, `b45`, or implementation-supported modular recipes.
+The signed payload shall be encoded into one or more machine-readable seals. In automatic mode, implementations shall evaluate plaintext and gzip candidates carried as scanner-safe hidden payloads. Only reversible candidates are selectable; automatic mode shall minimize QR count, with ties preferring fewer encoded payload bytes, then plaintext. Explicit strategies may request plaintext or gzip.
 
 FR5. Bootstrap Seal
 

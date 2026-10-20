@@ -1,5 +1,5 @@
 // The QRED1 carrier remains unchanged; v=2 signs this domain-separated envelope.
-// Transport recipes and chunk boundaries may change, but the restored content
+// Transport encoding and chunk boundaries may change, but the restored content
 // and every identity field must agree before a seal is considered VALID.
 export function sealSignatureMessage(metadata, content) {
   return new TextEncoder().encode(JSON.stringify([

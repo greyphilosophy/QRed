@@ -103,7 +103,7 @@ async function createTestSeals() {
 
 describe("qredVerifier", () => {
   it("extracts length-framed scanner-safe QRed data from the post-terminator byte offset", () => {
-    const payload = "https://qred.org/#QRED1?doc=DOC&i=0&n=1&rc=b45&txt=HELLO";
+    const payload = "https://qred.org/#QRED1?doc=DOC&i=0&n=1&rc=gzip&txt=HELLO";
     const binaryData = new Uint8Array([
       0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
       ...backendFramedPayloadBytes(payload),
@@ -116,7 +116,7 @@ describe("qredVerifier", () => {
   });
 
   it("extracts compressed and encoded QRed chunk text from compact backend framing", () => {
-    const payload = "rc=brotli&txt=G8YA%2BE-brotli_payload";
+    const payload = "rc=gzip&txt=H4sI-gzip_payload";
     const binaryData = new Uint8Array([
       0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
       ...backendFramedPayloadBytes(payload),

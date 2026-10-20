@@ -179,7 +179,7 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
     - seal_type: always "QRED"
     - encoding: the encoding strategy used
     - document_id: the seal's document ID
-    - recipe: the recipe used (plaintext, b45, etc.)
+    - encoding: the selected format (plaintext or gzip)
     - seal_count: number of seals created
     """
     from playwright.sync_api import expect as expect_playwright
@@ -316,7 +316,6 @@ def _extract_seal_result(page: Page) -> dict:
                             "seal_type": "QRED",
                             "encoding": result.get("encoding", "unknown"),
                             "document_id": result.get("document_id", ""),
-                            "recipe": result.get("selected_recipe", "unknown"),
                             "seal_count": result.get("estimated_qr_count", result.get("total_seals", 0)),
                             "seal_strings": seal_strings,  # List of raw seal strings for verification
                             "full_result": result,  # For debugging if needed
@@ -339,7 +338,6 @@ def _extract_seal_result(page: Page) -> dict:
                     "seal_type": "QRED",
                     "encoding": "unknown",
                     "document_id": "",
-                    "recipe": "unknown",
                     "seal_count": 0,
                     "seal_strings": [],
                 }
@@ -349,8 +347,6 @@ def _extract_seal_result(page: Page) -> dict:
                         result["encoding"] = line.split("Selected encoding:")[1].strip()
                     elif "Document ID:" in line:
                         result["document_id"] = line.split("Document ID:")[1].strip()
-                    elif "Selected recipe:" in line:
-                        result["recipe"] = line.split("Selected recipe:")[1].strip()
                     elif "Estimated QR count:" in line:
                         try:
                             result["seal_count"] = int(line.split(":")[-1].strip())
@@ -517,17 +513,49 @@ class TestPdfTextSealing:
         assert os.path.getsize(sealed) > 100, "Sealed PDF with custom issuer is too small"
         assert seal_result["full_result"]["issuer"] == "Custom Test Issuer"
 
-    def test_seal_with_b45_encoding(self, page: Page, simple_pdf_path: str):
-        """Seal using the b45 encoding strategy."""
+    def test_seal_with_gzip_encoding(self, page: Page, simple_pdf_path: str):
+        """Seal using the gzip encoding strategy."""
         sealed, seal_result = _upload_and_seal(
-            page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, encoding="b45", issuer="QRed B45 Test"
+            page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, encoding="gzip", issuer="QRed Gzip Test"
         )
-        assert os.path.exists(sealed), "b45-encoded sealed PDF was not downloaded"
+        assert os.path.exists(sealed), "gzip-encoded sealed PDF was not downloaded"
         
         # Verify encoding was selected in the UI
-        encoding = seal_result.get('encoding', 'unknown')
-        assert encoding in ('b45', 'automatic') or 'b45' in encoding, \
-            f"Expected b45 encoding, got: {encoding}"
+        assert seal_result["encoding"] == "gzip"
+        _verify_seal_with_seal_strings(page, seal_result, public_key=DEMO_PUBLIC_KEY)
+
+    def test_gzip_reduces_a_page_to_one_seal_and_verifies_printed_pixels(self, page: Page, tmp_path):
+        source = tmp_path / "delivery-records.pdf"
+        pdf = rl_canvas.Canvas(str(source), pagesize=letter)
+        pdf.setFont("Helvetica", 9)
+        for i in range(45):
+            pdf.drawString(40, 740 - i * 14,
+                           f"Item {i + 1}: Received and inspected; quantity {i * 7 + 3}; approved for delivery.")
+        pdf.save()
+        stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY,
+                                          encoding="automatic", issuer="Gzip PDF Test")
+        details = result["full_result"]
+        assert details["encoding"] == "gzip"
+        assert details["total_seals"] == 1
+        assert next(c for c in details["candidate_reports"] if c["encoding"] == "plaintext")["qr_count"] == 2
+        assert details["compression_savings_pct"] > 50
+
+        # Rasterize the saved PDF independently, then use the real image scanner.
+        footer = tmp_path / "gzip-footer"
+        subprocess.run(["pdftoppm", "-f", "1", "-singlefile", "-r", "200",
+                        "-x", "0", "-y", "2200", "-W", "1700", "-H", "600",
+                        "-png", stamped, str(footer)], check=True, capture_output=True)
+        page.get_by_label("Issuer public key", exact=True).fill(DEMO_PUBLIC_KEY)
+        page.get_by_label("Choose QR image", exact=True).set_input_files(footer.with_suffix(".png"))
+        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
+        expect(page.locator(".verification-result pre")).to_contain_text("Item 45: Received and inspected")
+
+        # The photo analyzer must show restored text, not a Base64 dump.
+        base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
+        page.goto(f"{base_url}/test.html", wait_until="networkidle")
+        page.locator("input[type=file]").set_input_files(footer.with_suffix(".png"))
+        expect(page.locator(".payload-text")).to_contain_text("Item 45: Received and inspected", timeout=20000)
+        expect(page.locator(".payload-text")).to_contain_text("signature not verified")
 
 
 class TestImageOnlyPdfs:

@@ -14,14 +14,14 @@ Ed25519 signs the UTF-8 bytes of this compact JSON array, using JavaScript
 ```
 
 Every element is a string. `version` is `"2"`; `algorithm` is `"Ed25519"`;
-`content` is the restored canonical text, before any transport recipe. The
+`content` is the restored canonical text, before any transport encoding. The
 domain prefix and fixed field order are part of the signed message. `key_id`
 is the first 16 lowercase hex characters of SHA-256 of the 32 public-key bytes.
 The stamper checks that its supplied private and public keys match.
 
-QR recipes and chunk boundaries are transport details. All chunks must agree
+QR encodings and chunk boundaries are transport details. All chunks must agree
 on document ID, total count, version, algorithm, issuer, key ID, timestamp,
-and recipe. Chunk indices must be integers in `[0,n)`, with `1 <= n <= 4096`.
+and encoding. Chunk indices must be integers in `[0,n)`, with `1 <= n <= 4096`.
 Only chunk 0 carries the signature. Identical repeated scans are harmless;
 conflicting duplicate chunks, inconsistent metadata, unknown formats, and
 malformed indices are rejected. Missing chunks cannot produce `VALID`.
@@ -97,9 +97,9 @@ module and uses the real QR decoder and verifier, not its verification hook.
 Physical-camera quality and arbitrary damaged/low-resolution scans remain
 outside these automated checks.
 
-The UI offers only implemented encoding strategies (automatic, plaintext,
-and b45); the old nonfunctional Brotli selection was removed. Existing Brotli
-payloads still require browser Brotli decompression support to decode.
+The UI offers automatic, plaintext, and gzip encoding. The former text-recipe
+encoders and decoders have been removed. See [GZIP_SEALS.md](GZIP_SEALS.md)
+for binary framing, compression limits, and joint stamper/verifier deployment.
 
 Use Node 24, `npm ci`, `npm test`, `npm run lint`, and `npm run build:pages`
 from `frontend`. Unit tests that rasterize PDFs also require `pdftoppm` from

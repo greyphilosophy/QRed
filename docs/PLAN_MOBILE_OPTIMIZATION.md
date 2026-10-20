@@ -10,7 +10,7 @@ The QRed scanner is already production-grade with camera controls, hidden payloa
 - Zoom/telephoto camera selection on mobile ✅
 - Torch (flashlight) toggle ✅
 - Browser-side Ed25519 verification ✅
-- Multiple encoding strategies (plaintext, b45, brotli) ✅
+- Multiple encoding strategies (plaintext and gzip) ✅
 - Responsive layout with CSS clamp() ✅
 
 ### Mobile Bottlenecks Found

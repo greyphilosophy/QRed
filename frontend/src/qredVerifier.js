@@ -8,7 +8,7 @@ import Utils from "qrcode/lib/core/utils.js";
 import ECCode from "qrcode/lib/core/error-correction-code.js";
 import ECLevel from "qrcode/lib/core/error-correction-level.js";
 import { verifyAsync as verifyEd25519 } from "@noble/ed25519";
-import { decodeB45ish } from "./textRecipes.js";
+import { gunzipChunks, MAX_SEAL_TEXT_BYTES } from "./sealCompression.js";
 import { computeKeyId, decodeBase64Url, sealSignatureMessage } from "./sealSignature.js";
 import { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset, hiddenPayloadFromScanResult } from "./qr/hiddenPayload.js";
 import { codewordsFromMatrix, deinterleaveDataCodewordsWithQrLib } from "./qr/qrLowLevel.js";
@@ -52,7 +52,7 @@ export function qredTextFromScanResult(scanResult) {
 
 export function qredDisplayTextFromScannedPayload(payload) {
   const decoded = decodeSeal(payload);
-  if (decoded?.recipe === "plaintext" && decoded.data) return decoded.data;
+  if (decoded?.encoding === "plaintext" && decoded.data) return decoded.data;
   return payload || "";
 }
 
@@ -137,13 +137,6 @@ export function qredPayloadFromPhotoScanResult(imageData, width, height, scanRes
 }
 
 // ── Seal parsing + signature verification ──
-async function decodeBrotli(value) {
-  if (typeof DecompressionStream !== "function") throw new Error("Brotli decoding is not available in this browser");
-  const stream = new Blob([decodeBase64Url(value)]).stream().pipeThrough(new DecompressionStream("br"));
-  const buffer = await new Response(stream).arrayBuffer();
-  return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
-}
-
 function sealFragment(sealString) {
   const hashIndex = sealString.indexOf("#");
   return hashIndex >= 0 ? sealString.slice(hashIndex + 1) : sealString;
@@ -165,7 +158,7 @@ function decodePlaintextFragment(fragment) {
     chunk_number: chunkNumber,
     total_chunks: totalChunks,
     data: params.get("txt") || "",
-    recipe: params.get("rc") || "plaintext",
+    encoding: params.get("rc") || "plaintext",
     algorithm: params.get("alg") || "Ed25519",
     issuer: params.get("iss") || "",
     key_id: params.get("kid") || "",
@@ -189,7 +182,7 @@ export async function verifyQRedSeals(seals, publicKey) {
   }
   const chunks = new Map();
   let metadata;
-  const consistentFields = ["document_id", "total_chunks", "version", "algorithm", "issuer", "key_id", "timestamp", "recipe"];
+  const consistentFields = ["document_id", "total_chunks", "version", "algorithm", "issuer", "key_id", "timestamp", "encoding"];
   for (const seal of seals) {
     const decoded = decodeSeal(seal);
     if (!decoded) return { status: "ERROR", error_message: "Malformed seal or invalid chunk index/count" };
@@ -219,22 +212,18 @@ export async function verifyQRedSeals(seals, publicKey) {
   if (missing.length) {
     return { status: "INCOMPLETE", document_id: metadata.document_id, error_message: `Missing chunks: [${missing.join(", ")}]`, collected_chunks: chunks.size, total_chunks: metadata.total_chunks };
   }
-  const recipeDecoders = new Map([
-    ["plaintext", (value) => value], ["b45", decodeB45ish],
-    ["base45ish", decodeB45ish], ["recipe1", decodeB45ish],
-    ["simple_english", decodeB45ish], ["brotli", decodeBrotli],
-  ]);
-  const decoder = recipeDecoders.get(metadata.recipe);
-  if (!decoder) return { status: "ERROR", error_message: "Unsupported text recipe" };
+  if (!["plaintext", "gzip"].includes(metadata.encoding)) return { status: "ERROR", error_message: "Unsupported seal encoding" };
   let content;
   try {
-    content = await decoder(Array.from({ length: metadata.total_chunks }, (_, i) => chunks.get(i).data).join(""));
+    const parts = Array.from({ length: metadata.total_chunks }, (_, i) => chunks.get(i).data);
+    content = metadata.encoding === "gzip" ? await gunzipChunks(parts) : parts.join("");
+    if (new TextEncoder().encode(content).length > MAX_SEAL_TEXT_BYTES) throw new Error("Seal text exceeds the 8 MiB limit");
   } catch (error) {
-    return { status: "ERROR", error_message: `Recipe decoding failed: ${error.message}` };
+    return { status: "ERROR", error_message: `Seal decoding failed: ${error.message}` };
   }
   const result = {
     issuer: metadata.issuer, document_id: metadata.document_id,
-    timestamp: metadata.timestamp, content, recipe: metadata.recipe,
+    timestamp: metadata.timestamp, content, encoding: metadata.encoding,
     key_id: metadata.key_id, version: metadata.version,
     metadata_authenticated: false, signature_valid: false,
   };

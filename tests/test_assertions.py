@@ -51,7 +51,6 @@ from backend.services.sealer import (
 )
 from backend.services.verifier import decode_seal, reconstruct_and_verify
 from backend.models import QRedChunk
-from backend.services.text_recipes import validate_simple_english
 
 import cv2
 

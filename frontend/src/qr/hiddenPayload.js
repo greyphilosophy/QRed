@@ -1,5 +1,6 @@
 // Single source of truth for QRed's hidden-payload carrier framing.
 // QRed QR codes visibly scan as QRED.ORG but hide signed data in padding.
+import { qrPayloadText } from "../sealCompression.js";
 
 export const VISIBLE_QR_TEXT = "QRED.ORG";
 const HIDDEN_PAYLOAD_LENGTH_BYTES = 2;
@@ -34,7 +35,7 @@ export function framedPayloadFrom(bytes, lengthOffset) {
   const payloadEnd = payloadOffset + payloadLength;
   if (payloadEnd > bytes.length) return null;
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes.slice(payloadOffset, payloadEnd));
+    return qrPayloadText(bytes.slice(payloadOffset, payloadEnd));
   } catch {
     return null;
   }

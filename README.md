@@ -195,15 +195,13 @@ This allows recipients to verify:
 
 1. A document is converted into a canonical text representation.
 3. The canonical text is digitally signed by the issuing authority.
-4. The implementation chooses the smaller QR count between:
-   - scanner-safe QR payloads that show only the bootstrap URL to ordinary scanners while making signed data recoverable only to a QRed-aware scanner reading the QR image, and
-   - reversible recipe payloads such as `b45`.
+4. Automatic encoding compares plaintext with gzip-compressed UTF-8 text, choosing fewer QR codes and then fewer payload bytes. Short text stays uncompressed when that is smaller. Gzip bytes are stored directly in the hidden QR carrier; Base64URL is only used for copying seal strings into the verifier.
 5. The chosen payload format is divided into one or more QR code seals.
 6. A bootstrap QR code containing a URL to a verifier web application is added to the document.
 7. The QR seals are printed alongside the document.
 8. A recipient scans the bootstrap QR code.
 9. The verifier web application scans the remaining QR seals.
-10. The payload is reconstructed and the signature is verified.
+10. The verifier joins the chunks, decompresses gzip when selected, and verifies the signature against the exact restored text and signed metadata.
 11. The certified contents are displayed to the user.
 
 # Design Goals
@@ -275,7 +273,7 @@ signature. Images, handwriting, and page appearance are not authenticated.
 
 QRed is currently an experimental specification and reference implementation.
 
-The format, payload structure, chunking rules, compression algorithms, and verification workflow may evolve as the project matures.
+The format, payload structure, chunking rules, compression algorithms, and verification workflow may evolve as the project matures. See [the gzip transport specification](docs/GZIP_SEALS.md) for the current binary framing, size limits, and deployment requirements.
 
 # License
 
