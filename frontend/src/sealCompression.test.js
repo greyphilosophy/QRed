@@ -58,13 +58,15 @@ it("keeps a successful plaintext candidate when gzip metadata cannot fit", async
 });
 
 it("collects gzip byte chunks out of order and rejects missing, conflicting, and mixed chunks", async () => {
-  const content = Array.from({ length: 650 }, (_, i) => `${i}: ${Math.imul(i + 17, 2654435761) >>> 0} — 猫 café 🐈`).join("\n");
+  // Leave a short final chunk so its grid must shrink independently.
+  const content = Array.from({ length: 700 }, (_, i) => `${i}: ${Math.imul(i + 17, 2654435761) >>> 0} — 猫 café 🐈`).join("\n");
   const { seals } = await createQRedSeals({ ...keys, content, encodingStrategy: "gzip" });
   expect(seals.length).toBeGreaterThan(1);
-  const scanned = seals.map(seal => {
-    const qr = createQRedQrData(seal);
-    return extractHiddenQRedPayload(qr.bytes, qr.version);
-  });
+  const qrs = seals.map(seal => createQRedQrData(seal));
+  expect(qrs[0].version).toBe(40);
+  expect(qrs.at(-1).version).toBeLessThan(qrs[0].version);
+  expect(qrs.at(-1).version).toBe(createQRedQrData(seals.at(-1), { errorCorrectionLevel: "L" }).version);
+  const scanned = qrs.map(qr => extractHiddenQRedPayload(qr.bytes, qr.version));
   expect(await verifyQRedSeals(scanned.toReversed(), keys.publicKey)).toMatchObject({ status: "VALID", content });
   expect(await verifyQRedSeals(scanned.slice(1), keys.publicKey)).toMatchObject({ status: "INCOMPLETE" });
   expect(await verifyQRedSeals([...scanned, scanned[0]], keys.publicKey)).toMatchObject({ status: "VALID" });

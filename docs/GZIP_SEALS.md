@@ -47,6 +47,13 @@ framing. At QR version 40-L the outer carrier permits 2,945 hidden bytes. The
 gzip header and metadata consume part of that budget. Normal QR error correction
 protects the complete stream, including the binary payload.
 
+Automatic QR sizing chooses the lowest version that fits, then the strongest
+error correction available at that version (H, Q, M, then L). Each chunk is
+sized independently using its actual carrier bytes, so a short final chunk can
+use a smaller grid. The PDF layout keeps its printed dimensions independent
+of QR version. Explicit error-correction settings still take precedence over
+automatic sizing.
+
 ## Reassembly and validation
 
 The verifier requires consistent document ID, version, algorithm, issuer, key

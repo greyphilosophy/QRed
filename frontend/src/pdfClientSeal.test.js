@@ -194,7 +194,7 @@ describe("browser PDF sealing", () => {
 
   it("preserves the original letter pixels and verifies its larger footer at 300 dpi", async () => {
     const source = readFileSync("../tests/fixtures/live-qa-invoice.pdf");
-    const { blob } = await sealPdfInBrowser({
+    const { blob, stampedQrValues } = await sealPdfInBrowser({
       file: new File([source], "invoice.pdf", { type: "application/pdf" }),
       issuer: "Print QA", privateKey, publicKey,
     });
@@ -208,6 +208,16 @@ describe("browser PDF sealing", () => {
     const pixels = new Uint8ClampedArray(footer.data);
     const code = scanQrImage(pixels, footer.width, footer.height);
     expect(code?.data).toBe(VISIBLE_QR_TEXT);
+    expect(code.version).toBe(createQRedQrData(stampedQrValues[0]).version);
+    expect(code.version).toBeLessThan(createQRedQrData(stampedQrValues[0], { errorCorrectionLevel: "H" }).version);
+    // Measure the saved PDF's QR footprint, including its four-module quiet
+    // zone, from the detected corners. A smaller grid must still print 2.75".
+    const modules = 17 + 4 * code.version;
+    const { topLeftCorner, topRightCorner, bottomLeftCorner } = code.location;
+    for (const corner of [topRightCorner, bottomLeftCorner]) {
+      const side = Math.hypot(corner.x - topLeftCorner.x, corner.y - topLeftCorner.y);
+      expect(side * (modules + 8) / modules / 300).toBeCloseTo(2.75, 1);
+    }
     const seal = qredPayloadFromPhotoScanResult(pixels, footer.width, footer.height, code);
     await expect(verifyQRedSeals([seal], publicKey)).resolves.toMatchObject({
       status: "VALID", content: expect.stringContaining("Approved total: $123.45"),
@@ -348,12 +358,14 @@ describe("browser PDF sealing", () => {
     });
   });
 
-  it("chooses error correction dynamically while allowing callers to pin a level", () => {
+  it("shrinks the automatic grid while allowing callers to pin stronger correction", () => {
     const autoData = createQRedQrData("small payload");
-    const pinnedData = createQRedQrData("small payload", { errorCorrectionLevel: "M" });
+    const pinnedData = createQRedQrData("small payload", { errorCorrectionLevel: "H" });
 
-    expect(autoData.errorCorrectionLevel.bit).toBe(2);
-    expect(pinnedData.errorCorrectionLevel.bit).toBe(0);
+    expect(autoData.version).toBe(2);
+    expect(autoData.errorCorrectionLevel.bit).toBe(0); // M fits in version 2.
+    expect(pinnedData.version).toBe(3);
+    expect(pinnedData.errorCorrectionLevel.bit).toBe(2); // Explicit H is honored.
     expect(extractHiddenQRedPayload(autoData.bytes, autoData.version)).toBe("small payload");
     expect(extractHiddenQRedPayload(pinnedData.bytes, pinnedData.version)).toBe("small payload");
   });

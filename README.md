@@ -58,6 +58,12 @@ size and uses the added three-inch footer for QR seals. One or two seals are
 print margin. Larger sets use the grid that allows the largest codes within
 that same footer. The caption sits beside the codes where space permits.
 
+Each seal uses the smallest QR grid that fits its actual payload, then the
+strongest error correction that fits that grid. Smaller payloads therefore
+produce fewer, larger modules within the same printed square. This favors
+module size over adding error correction that would require a larger grid;
+callers can still pin a correction level when needed.
+
 The image and camera scanners retry failed detections at a few nearby image
 scales to handle dense QR codes whose edges fall between pixels. Live camera
 scanning tries one scale per frame, with time for input and rendering between
