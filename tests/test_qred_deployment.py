@@ -176,7 +176,7 @@ def multi_page_pdf_path(pdf_dir):
 # Helper to upload a file via Playwright and wait for the download
 # ---------------------------------------------------------------------------
 
-def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_key: str = "", encoding: str = "plaintext", issuer: str = "QRed Test"):
+def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_key: str = "", encoding: str = "plaintext"):
     """
     Upload a PDF to the Playwright-dev frontend and trigger sealing.
     
@@ -245,7 +245,6 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
     except Exception as exc:
         raise AssertionError(f"Failed to fill private key or wait for seal button: {exc}") from exc
 
-    page.get_by_label("Issuer", exact=True).fill(issuer)
     page.get_by_label("Public Key", exact=True).fill(public_key or DEMO_PUBLIC_KEY)
 
     # If encoding strategy needs to be changed, verify it was selected
@@ -374,7 +373,7 @@ def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", 
     which bridges from Playwright's evaluate() to module-scoped verifyQRedSeals().
     
     The seal_payload should be one or more QRED seal strings (URL fragments
-    like "QRED1?v=1&alg=ed25519&..."), one per line.
+    like "QRED3:..."), one per line.
 
     public_key: the exact public key to use for signature verification.
     Raises AssertionError if any step fails.
@@ -467,7 +466,7 @@ class TestPlainTextSealAndVerify:
 
     def test_seal_simple_pdf(self, page: Page, simple_pdf_path: str):
         """Seal a simple text PDF and verify the download."""
-        sealed, seal_result = _upload_and_seal(page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Test")
+        sealed, seal_result = _upload_and_seal(page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY)
         assert os.path.exists(sealed), "Sealed PDF was not downloaded"
         assert os.path.getsize(sealed) > 100, "Sealed PDF is too small"
         with open(sealed, "rb") as f:
@@ -475,7 +474,7 @@ class TestPlainTextSealAndVerify:
 
     def test_verify_sealed_pdf(self, page: Page, simple_pdf_path: str):
         """Seal and verify a simple PDF using the actual seal strings."""
-        sealed, seal_result = _upload_and_seal(page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Test")
+        sealed, seal_result = _upload_and_seal(page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY)
         
         # Verify the seal result was captured
         assert seal_result, "Seal result was not captured from UI message"
@@ -493,7 +492,7 @@ class TestMultiQrDocuments:
 
     def test_seal_multi_page_pdf(self, page: Page, multi_page_pdf_path: str):
         """Seal a multi-page PDF and verify the download."""
-        sealed, seal_result = _upload_and_seal(page, multi_page_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Multi-PQR Test")
+        sealed, seal_result = _upload_and_seal(page, multi_page_pdf_path, private_key=DEMO_PRIVATE_KEY)
         assert os.path.exists(sealed), "Multi-page PDF was not sealed"
         assert os.path.getsize(sealed) > 100, "Sealed multi-page PDF is too small"
         with open(sealed, "rb") as f:
@@ -501,7 +500,7 @@ class TestMultiQrDocuments:
 
     def test_multi_page_verification(self, page: Page, multi_page_pdf_path: str):
         """Seal and verify a multi-page PDF."""
-        sealed, seal_result = _upload_and_seal(page, multi_page_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Multi-PQR Test")
+        sealed, seal_result = _upload_and_seal(page, multi_page_pdf_path, private_key=DEMO_PRIVATE_KEY)
         
         # Verify the seal result was captured with actual seal strings
         assert seal_result.get("seal_strings"), "No seal strings captured — cannot verify"
@@ -515,17 +514,20 @@ class TestMultiQrDocuments:
 class TestPdfTextSealing:
     """T2: PDF text sealing (QR seals embed text payload)."""
 
-    def test_seal_with_custom_issuer(self, page: Page, simple_pdf_path: str):
-        """Seal with a custom issuer string and verify the seal is applied."""
-        sealed, seal_result = _upload_and_seal(page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="Custom Test Issuer")
-        assert os.path.exists(sealed), "Sealed PDF with custom issuer was not downloaded"
-        assert os.path.getsize(sealed) > 100, "Sealed PDF with custom issuer is too small"
-        assert seal_result["full_result"]["issuer"] == "Custom Test Issuer"
+    def test_seal_without_issuer_name_preserves_timestamp(self, page: Page, simple_pdf_path: str):
+        """Issuer names are absent; the exact signed timestamp remains available."""
+        sealed, seal_result = _upload_and_seal(page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY)
+        assert os.path.exists(sealed), "Sealed PDF without issuer name was not downloaded"
+        assert os.path.getsize(sealed) > 100, "Sealed PDF without issuer name is too small"
+        assert "issuer" not in seal_result["full_result"]
+        assert seal_result["full_result"]["timestamp"].endswith("Z")
+        assert _verify_seal_with_seal_strings(page, seal_result, public_key=DEMO_PUBLIC_KEY)
+        expect(page.locator("#resultMeta")).to_contain_text(seal_result["full_result"]["timestamp"])
 
     def test_seal_with_gzip_encoding(self, page: Page, simple_pdf_path: str):
         """Seal using the gzip encoding strategy."""
         sealed, seal_result = _upload_and_seal(
-            page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, encoding="gzip", issuer="QRed Gzip Test"
+            page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, encoding="gzip"
         )
         assert os.path.exists(sealed), "gzip-encoded sealed PDF was not downloaded"
         
@@ -537,7 +539,7 @@ class TestPdfTextSealing:
         source = tmp_path / "delivery-records.pdf"
         make_delivery_records_pdf(source)
         stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY,
-                                          encoding="automatic", issuer="Gzip PDF Test")
+                                          encoding="automatic")
         details = result["full_result"]
         assert details["encoding"] == "gzip"
         assert details["total_seals"] == 1
@@ -565,7 +567,7 @@ class TestPdfTextSealing:
         source = tmp_path / "delivery-records.pdf"
         make_delivery_records_pdf(source)
         stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY,
-                                          encoding="plaintext", issuer="Balanced PDF Test")
+                                          encoding="plaintext")
         assert result["full_result"]["total_seals"] == 2
         page.get_by_label("Issuer public key", exact=True).fill(DEMO_PUBLIC_KEY)
         # Scan the second code first, using pixels from the saved PDF. Each
@@ -729,7 +731,6 @@ class TestKeyGenerationImportAndSignatureVerification:
         expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(generated_public)
 
         page.get_by_label("Open PDF", exact=True).set_input_files(simple_pdf_path)
-        page.get_by_label("Issuer", exact=True).fill("Generated Key Test")
         with page.expect_download(timeout=60_000) as download_info:
             page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
         sealed_path = tmp_path / download_info.value.suggested_filename
@@ -758,7 +759,7 @@ class TestKeyGenerationImportAndSignatureVerification:
     def test_seal_with_custom_private_key(self, page: Page, simple_pdf_path: str):
         """Seal using a user-provided private key (not from server)."""
         sealed, seal_result = _upload_and_seal(
-            page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Custom Key Test"
+            page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY
         )
         assert os.path.exists(sealed), "PDF sealed with custom private key was not downloaded"
 
@@ -791,7 +792,7 @@ class TestKeyGenerationImportAndSignatureVerification:
     def test_custom_key_verification(self, page: Page, simple_pdf_path: str):
         """Seal with custom key and verify the seal."""
         sealed, seal_result = _upload_and_seal(
-            page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Key Test"
+            page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY
         )
         
         # Use the actual seal strings with known public key for verification
@@ -802,7 +803,7 @@ class TestKeyGenerationImportAndSignatureVerification:
 
 
 def _invoice_camera_pixels(damaged=False):
-    fixture = Path(__file__).parent / "fixtures" / "qr-scans" / "invoice-footer-300dpi.png"
+    fixture = Path(__file__).parent / "fixtures" / "compact-qr" / "invoice-footer-300dpi.png"
     pixels = fixture.read_bytes()
     if not damaged:
         return pixels
@@ -810,9 +811,9 @@ def _invoice_camera_pixels(damaged=False):
         pytest.skip("Pillow not installed")
     with Image.open(pillow_io.BytesIO(pixels)) as image:
         image = image.convert("RGBA")
-        # Version 35-H, module (row 98, column 126): the high bit of the
-        # hidden length field. jsQR can correct this; raw sampling cannot.
-        image.paste((255, 255, 255, 255), (627, 572, 632, 578))
+        damage = json.loads((fixture.parent / "invoice-damage.json").read_text())
+        value = damage["value"]
+        image.paste((value, value, value, 255), tuple(damage["box"]))
         buffer = pillow_io.BytesIO()
         image.save(buffer, format="PNG")
         return buffer.getvalue()
@@ -821,8 +822,8 @@ def _invoice_camera_pixels(damaged=False):
 class TestRenderedQrImageUploads:
     """Use actual downloaded-PDF pixels, without manual strings or test hooks."""
 
-    PUBLIC_KEY = "Sz8MZnNyHPkt6J3hC_rcXEabv4rrQSgAH_krcitjlF8"
-    FIXTURES = Path(__file__).parent / "fixtures" / "qr-scans"
+    PUBLIC_KEY = DEMO_PUBLIC_KEY
+    FIXTURES = Path(__file__).parent / "fixtures" / "compact-qr"
 
     @pytest.mark.parametrize("image_name", [
         "invoice-footer-300dpi.png",
@@ -834,8 +835,8 @@ class TestRenderedQrImageUploads:
         page.get_by_label("Issuer public key", exact=True).fill(self.PUBLIC_KEY)
         page.get_by_label("Choose QR image", exact=True).set_input_files(str(self.FIXTURES / image_name))
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
-        expect(page.locator(".verification-result pre")).to_contain_text("QRed PDF page integrity")
-        page.get_by_label("Issuer public key", exact=True).fill(DEMO_PUBLIC_KEY)
+        expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45" if "invoice" in image_name else "Inventory dispatch QA-1042")
+        page.get_by_label("Issuer public key", exact=True).fill("Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=")
         expect(page.get_by_role("heading", name="INVALID", exact=True)).to_be_visible()
 
     def test_mobile_image_upload_waits_for_both_distinct_seals(self, page: Page):
@@ -859,7 +860,7 @@ class TestRenderedQrImageUploads:
         })
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45")
-        page.get_by_label("Issuer public key", exact=True).fill(DEMO_PUBLIC_KEY)
+        page.get_by_label("Issuer public key", exact=True).fill("Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=")
         expect(page.get_by_role("heading", name="INVALID", exact=True)).to_be_visible()
 
 
@@ -903,7 +904,7 @@ class TestCameraFrameScanning:
                     window.showCameraSeal = () => {
                         // Crop the existing PDF fixture with its quiet zone,
                         // then put its corners beyond the old center 50% ROI.
-                        context.drawImage(image, 45, 116, 740, 740, camera.left, camera.top, camera.size, camera.size);
+                        context.drawImage(image, 75, 0, 825, 825, camera.left, camera.top, camera.size, camera.size);
                         stream.getVideoTracks()[0].requestFrame();
                     };
                     return stream;
@@ -943,13 +944,13 @@ class TestExistingSealCompatibility:
         """Seal a document, then re-seal the result — verify compatibility."""
         # First seal
         sealed1, seal_result1 = _upload_and_seal(
-            page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY, issuer="QRed Compatibility Test"
+            page, simple_pdf_path, private_key=DEMO_PRIVATE_KEY
         )
         assert os.path.exists(sealed1)
 
         # Re-seal the already-sealed PDF
         sealed2, seal_result2 = _upload_and_seal(
-            page, sealed1, private_key=DEMO_PRIVATE_KEY, issuer="QRed Compatibility Test"
+            page, sealed1, private_key=DEMO_PRIVATE_KEY
         )
         assert os.path.exists(sealed2)
 

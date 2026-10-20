@@ -7,26 +7,34 @@ const RETRY_SCALES = [0.9, 1.25, 1.5];
 
 function resizeRgba(data, width, height, targetWidth, targetHeight) {
   const pixels = new Uint8ClampedArray(targetWidth * targetHeight * 4);
-  const xSamples = Array.from({ length: targetWidth }, (_, x) => {
-    const sourceX = Math.max(0, ((x + 0.5) * width / targetWidth) - 0.5);
-    const left = Math.floor(sourceX);
-    return { left, right: Math.min(width - 1, left + 1), weight: sourceX - left };
-  });
-  for (let y = 0; y < targetHeight; y += 1) {
-    const sourceY = Math.max(0, ((y + 0.5) * height / targetHeight) - 0.5);
-    const top = Math.floor(sourceY);
-    const bottom = Math.min(height - 1, top + 1);
-    const weightY = sourceY - top;
-    for (let x = 0; x < targetWidth; x += 1) {
-      const { left, right, weight } = xSamples[x];
-      const target = ((y * targetWidth) + x) * 4;
-      for (let channel = 0; channel < 4; channel += 1) {
-        const upper = (data[((top * width) + left) * 4 + channel] * (1 - weight))
-          + (data[((top * width) + right) * 4 + channel] * weight);
-        const lower = (data[((bottom * width) + left) * 4 + channel] * (1 - weight))
-          + (data[((bottom * width) + right) * 4 + channel] * weight);
-        pixels[target + channel] = (upper * (1 - weightY)) + (lower * weightY);
+  function samples(sourceSize, targetSize) {
+    const scale = sourceSize / targetSize;
+    // Widen the linear filter when reducing an image. Point sampling can
+    // alias narrow printed modules even when there are enough source pixels.
+    const radius = Math.max(1, scale);
+    return Array.from({ length: targetSize }, (_, index) => {
+      const center = (index + 0.5) * scale - 0.5;
+      const weights = [];
+      let sum = 0;
+      for (let source = Math.max(0, Math.ceil(center - radius)); source <= Math.min(sourceSize - 1, Math.floor(center + radius)); source += 1) {
+        const weight = Math.max(0, 1 - Math.abs(source - center) / radius);
+        if (weight) { weights.push([source, weight]); sum += weight; }
       }
+      return weights.map(([source, weight]) => [source, weight / sum]);
+    });
+  }
+  const xSamples = samples(width, targetWidth), ySamples = samples(height, targetHeight);
+  for (let y = 0; y < targetHeight; y += 1) {
+    for (let x = 0; x < targetWidth; x += 1) {
+      const target = (y * targetWidth + x) * 4;
+      let red = 0, green = 0, blue = 0, alpha = 0;
+      for (const [sy, wy] of ySamples[y]) for (const [sx, wx] of xSamples[x]) {
+        const source = (sy * width + sx) * 4, weight = wx * wy;
+        red += data[source] * weight; green += data[source + 1] * weight;
+        blue += data[source + 2] * weight; alpha += data[source + 3] * weight;
+      }
+      pixels[target] = red; pixels[target + 1] = green;
+      pixels[target + 2] = blue; pixels[target + 3] = alpha;
     }
   }
   return pixels;

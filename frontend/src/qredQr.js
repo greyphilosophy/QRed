@@ -7,8 +7,9 @@ import ReedSolomonEncoder from "qrcode/lib/core/reed-solomon-encoder";
 import Mode from "qrcode/lib/core/mode";
 import AlphanumericData from "qrcode/lib/core/alphanumeric-data";
 import MaskPattern from "qrcode/lib/core/mask-pattern";
+import FormatInfo from "qrcode/lib/core/format-info";
 import { VISIBLE_QR_TEXT } from "./qr/hiddenPayload.js";
-import { qrPayloadBytes } from "./sealCompression.js";
+import { qrPayloadBytes } from "./sealFormat.js";
 
 const HIDDEN_PAYLOAD_LENGTH_BYTES = 2;
 const MIN_MODULE_PIXELS = 4;
@@ -147,13 +148,30 @@ export function createQRedQrData(value, options = DEFAULT_QR_OPTIONS) {
   return { version, errorCorrectionLevel, bytes: new Uint8Array(buffer.buffer), codewords: createCodewords(buffer, version, errorCorrectionLevel) };
 }
 
+function setupFormatInfo(matrix, level, mask) {
+  const bits = FormatInfo.getEncodedBits(level, mask);
+  for (let index = 0; index < 15; index += 1) {
+    const dark = Boolean((bits >>> index) & 1);
+    const row = index < 6 ? index : index < 8 ? index + 1 : matrix.size - 15 + index;
+    const column = index < 8 ? matrix.size - index - 1 : index === 8 ? 7 : 14 - index;
+    matrix.set(row, 8, dark, true);
+    matrix.set(8, column, dark, true);
+  }
+  matrix.set(matrix.size - 8, 8, true, true);
+}
+
 export function createQRedQrSymbol(value, options = DEFAULT_QR_OPTIONS) {
   const { version, errorCorrectionLevel, codewords } = createQRedQrData(value, options);
   const visible = new AlphanumericData(VISIBLE_QR_TEXT);
   const qr = QRCode.create(VISIBLE_QR_TEXT, { errorCorrectionLevel, version });
   MaskPattern.applyMask(qr.maskPattern, qr.modules);
   setupData(qr.modules, codewords);
+  // The library originally chose a mask for the visible marker and standard
+  // padding. Score the actual hidden bytes and their parity to avoid patterns
+  // that become difficult to locate after printing or resampling.
+  qr.maskPattern = MaskPattern.getBestMask(qr.modules, mask => setupFormatInfo(qr.modules, errorCorrectionLevel, mask));
   MaskPattern.applyMask(qr.maskPattern, qr.modules);
+  setupFormatInfo(qr.modules, errorCorrectionLevel, qr.maskPattern);
   qr.segments = [visible];
   return qr;
 }

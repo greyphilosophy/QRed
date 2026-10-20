@@ -25,25 +25,22 @@ describe("scanning rendered production PDF seals", () => {
     ["invoice-full-300dpi", "Approved total: $123.45"],
     ["inventory-footer-300dpi", "Inventory dispatch QA-1042 | Page 1 of 2"],
     ["inventory-four-inch-300dpi", "Inventory dispatch QA-1042 | Page 1 of 2"],
-  ])("recovers and verifies %s after the original-scale decoder fails", async (name, content) => {
+  ])("recovers historical %s after the original-scale decoder fails", async (name, content) => {
     const image = fixture(name);
     expect(jsQR(image.data, image.width, image.height, { inversionAttempts: "attemptBoth" })).toBeNull();
     const seal = readSeal(image);
-    await expect(verifyQRedSeals([seal], publicKey)).resolves.toMatchObject({
-      status: "VALID", issuer: "QRed Live Test Authority", content: expect.stringContaining(content),
-    });
+    expect(new URLSearchParams(seal.split("#QRED1?")[1]).get("txt")).toContain(content);
+    await expect(verifyQRedSeals([seal], publicKey)).resolves.toMatchObject({ status: "ERROR" });
   }, 20000);
 
-  it("retains multi-seal completeness and signature checks after rescaling", async () => {
+  it("recovers distinct historical chunks and rejects their retired format", async () => {
     const first = readSeal(fixture("manifest-seal-1-300dpi"));
-    await expect(verifyQRedSeals([first], publicKey)).resolves.toMatchObject({ status: "INCOMPLETE" });
     const secondImage = fixture("manifest-seal-2-300dpi");
     expect(jsQR(secondImage.data, secondImage.width, secondImage.height)).toBeNull();
     const second = readSeal(secondImage);
-    await expect(verifyQRedSeals([first, second], publicKey)).resolves.toMatchObject({
-      status: "VALID", content: expect.stringContaining("END OF MANIFEST - 56 synthetic line items."),
-    });
-    await expect(verifyQRedSeals([first, second], "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=")).resolves.toMatchObject({ status: "INVALID" });
+    expect(first).not.toBe(second);
+    expect(new URLSearchParams(second.split("#QRED1?")[1]).get("txt")).toContain("END OF MANIFEST - 56 synthetic line items.");
+    await expect(verifyQRedSeals([first, second], publicKey)).resolves.toMatchObject({ status: "ERROR" });
   }, 20000);
 
   it.each(["invoice-full-300dpi", "inventory-footer-300dpi"])("recovers %s across live frames with original-image geometry", async (name) => {
@@ -56,7 +53,7 @@ describe("scanning rendered production PDF seals", () => {
     }
     expect(code?.data).toBe(VISIBLE_QR_TEXT);
     const seal = qredPayloadFromPhotoScanResult(image.data, image.width, image.height, code);
-    await expect(verifyQRedSeals([seal], publicKey)).resolves.toMatchObject({ status: "VALID" });
+    await expect(verifyQRedSeals([seal], publicKey)).resolves.toMatchObject({ status: "ERROR" });
   }, 20000);
 
   it("preserves ordinary QR content", async () => {

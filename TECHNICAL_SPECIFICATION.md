@@ -59,22 +59,22 @@ gzip. Reported savings measure payload bytes, not the number of QR codes.
 
 ## 6. Gzip Transport
 
-Compress the full canonical page text once, then split the resulting stream
-into byte chunks. Each hidden QR contains `QRG1`, a two-byte big-endian metadata
-length, UTF-8 metadata, and raw gzip chunk bytes. Base64URL is used only in the
-copyable seal URL, never for the compressed data inside a QR.
+Compress canonical page text once. Store the signed millisecond timestamp,
+8-byte key ID, full signature, and conditional multipage context in a compact
+binary `QRS3` record. Split the whole record into `QRC3` chunks only if needed.
+Each chunk carries a 32-byte record digest and two-byte index/count. Issuer
+names, URLs, and redundant page-hash text are omitted.
 
-See [GZIP_SEALS.md](docs/GZIP_SEALS.md) for the complete wire format,
-reassembly rules, bounds, and failure handling. Generation and decompression
-are limited to 8 MiB of canonical UTF-8 text per seal group.
+See [COMPACT_SEALS_V3.md](docs/COMPACT_SEALS_V3.md) for the complete wire format,
+signed message, reassembly rules, bounds, and compatibility. Text generation
+and decompression are limited to 8 MiB per page.
 
 ## 7. Chunking
 
-Chunks include document identifier, chunk number, and total chunk count.
-
-Mixed document IDs are invalid.
-
-Missing chunks produce `INCOMPLETE`.
+Multipart records have a 40-byte header per QR. Missing chunks produce
+`INCOMPLETE`; mixed sets, conflicting duplicates, and digest mismatches fail.
+Single-QR records require no extra grouping identifier. Balance multiple QRs
+when doing so reduces the largest grid without increasing their count.
 
 ## 8. Verification
 
@@ -85,6 +85,7 @@ canonical text, verifies the signature, and reports one of:
 -   INVALID
 -   INCOMPLETE
 -   ERROR
+-   UNVERIFIED (no trusted public key supplied)
 
 ## 9. Scanner
 

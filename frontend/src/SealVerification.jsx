@@ -137,7 +137,10 @@ export function SealVerification({ verification }) {
       {results.map((result, index) => <article key={result.document_id || index} className="verification-result">
         <h3>{result.status}</h3>
         <p>Document: {result.document_id}</p>
-        {result.issuer && <p>{result.metadata_authenticated ? "Issuer" : "Claimed issuer (not authenticated)"}: {result.issuer}</p>}
+        {result.timestamp && <p>{result.metadata_authenticated ? "Seal time" : "Claimed seal time"} (signer’s clock): <time dateTime={result.timestamp}>{result.timestamp}</time></p>}
+        {result.key_id && <p>Key ID: {result.key_id}</p>}
+        {result.pdf && <p>Page {result.page_number} of {result.page_count}</p>}
+        {result.document_root && <p>Document fingerprint: {result.document_root}</p>}
         {result.error_message && <p>{result.error_message}</p>}
         {result.status === "INCOMPLETE" && <p>{result.collected_chunks} of {result.total_chunks} seals collected. Scan the remaining seals.</p>}
         {result.content && <pre>{result.content}</pre>}

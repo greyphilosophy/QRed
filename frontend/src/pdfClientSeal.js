@@ -41,26 +41,17 @@ async function documentMerkleRoot(pageTexts) {
   return level[0];
 }
 
-async function pageIntegrityText(pageText, merkleRoot) {
-  const canonicalPageText = canonicalizeText(pageText);
-  const pageHash = await pageContentHash(pageText);
-  return ["QRed PDF page integrity", `Page SHA256: ${pageHash}`, `Document Merkle Root: ${merkleRoot}`, "", canonicalPageText].join("\n");
-}
-
-async function pageSealDocumentId(merkleRoot, pageText, sealOccurrenceNumber) {
-  return sha256Hex(`${merkleRoot}${await pageContentHash(pageText)}${sealOccurrenceNumber}`);
-}
-
-async function createPageSealResults({ file, issuer, privateKey, publicKey, bootstrapUrl, encodingStrategy }) {
+async function createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy }) {
   const pageTexts = await extractPdfPageTexts(file);
   const unreadablePages = pageTexts.flatMap((text, index) => text.trim() ? [] : [index + 1]);
   if (unreadablePages.length) {
     throw new Error(`No readable text on PDF page(s) ${unreadablePages.join(", ")}. Scanned, image-only, and blank pages cannot be sealed. Add a checked OCR text layer or use a text PDF.`);
   }
   const merkleRoot = await documentMerkleRoot(pageTexts);
+  const timestamp = new Date().toISOString();
   return Promise.all(pageTexts.map(async (pageText, pageIndex) => {
-    const documentId = await pageSealDocumentId(merkleRoot, pageText, pageIndex);
-    return createQRedSeals({ content: await pageIntegrityText(pageText, merkleRoot), issuer, privateKey, publicKey, documentId, bootstrapUrl, encodingStrategy });
+    return createQRedSeals({ content: pageText, privateKey, publicKey, bootstrapUrl, encodingStrategy, timestamp,
+      pageContext: { pageNumber: pageIndex + 1, pageCount: pageTexts.length, documentRoot: merkleRoot } });
   }));
 }
 
@@ -71,10 +62,10 @@ export async function qrPngBytes(value) {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
-export async function sealPdfInBrowser({ file, issuer, privateKey, publicKey, bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic", pageScalingStrategy = "automatic" }) {
+export async function sealPdfInBrowser({ file, privateKey, publicKey, bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic", pageScalingStrategy = "automatic" }) {
   const prepared = await flattenPdfForSealing(file);
   file = prepared.file;
-  const pageSealResults = await createPageSealResults({ file, issuer, privateKey, publicKey, bootstrapUrl, encodingStrategy });
+  const pageSealResults = await createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy });
   const pdf = await PDFDocument.load(await file.arrayBuffer());
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const pages = pdf.getPages();

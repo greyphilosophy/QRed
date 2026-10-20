@@ -45,6 +45,12 @@ function keyFile(contents, name) {
 }
 
 describe("App PDF signing keys", () => {
+  it("does not request or send an issuer name when stamping", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Open PDF stamping tool" }));
+    expect(screen.queryByLabelText("Issuer", { exact: true })).toBeNull();
+  });
+
   beforeEach(() => {
     vi.stubGlobal("crypto", webcrypto);
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
@@ -97,7 +103,7 @@ describe("App PDF signing keys", () => {
     expect(sealPdfInBrowser).toHaveBeenCalledWith(expect.objectContaining({ file: pdf, ...keys }));
     fireEvent.click(screen.getByRole("button", { name: "Use public key to verify" }));
     expect(screen.getByLabelText("Issuer public key").value).toBe(keys.publicKey);
-    const { seals } = await createQRedSeals({ content: "Generated key test", issuer: "QA", ...keys });
+    const { seals } = await createQRedSeals({ content: "Generated key test", ...keys });
     fireEvent.change(screen.getByLabelText("Seal strings, one per line"), { target: { value: seals.join("\n") } });
     fireEvent.click(screen.getByRole("button", { name: "Add seals" }));
     expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();

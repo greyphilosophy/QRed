@@ -1,0 +1,133 @@
+# Compact seals v3
+
+Version 3 removes issuer names and URL-formatted metadata from printed seals.
+It keeps a signed timestamp with millisecond precision, an 8-byte key ID, the
+full 64-byte Ed25519 signature, and the canonical document text. Multipage PDFs
+also carry their signed page position/count and full document Merkle root.
+
+The timestamp comes from the signing device's clock. It helps distinguish
+iterations; it is not an independently certified time. Key IDs help select a
+public key but do not establish which authority owns it. Recipients still need
+a trusted public key. A public key directory/table is future work; no issuer
+name is stored in a seal or requested in the stamping form.
+
+## Single-QR record
+
+The hidden payload is a binary record. Integers are unsigned, big endian.
+
+| Field | Bytes | Meaning |
+| --- | ---: | --- |
+| Magic/version | 4 | ASCII `QRS3`; signature algorithm is Ed25519 |
+| Flags | 1 | Bit 0: gzip; bit 1: PDF; bit 2: multipage PDF; other bits rejected |
+| Timestamp | 8 | Unix milliseconds; must be representable as a JavaScript date |
+| Key ID | 8 | First eight bytes of SHA-256 of the raw 32-byte public key |
+| Page index, if multipage | 2 | Zero based |
+| Page count, if multipage | 2 | 2–65,535; index must be below count |
+| Document root, if multipage | 32 | Full SHA-256 Merkle root |
+| Signature | 64 | Raw Ed25519 bytes |
+| Content | Remaining | UTF-8 text or one complete gzip stream |
+
+A text-only or single-page PDF record has **85 bytes** before its content.
+Multipage context adds **36 bytes**, for 121 bytes per page record. Single-page
+PDFs imply index zero/count one and derive the document root from the page text.
+Page hashes are computed from recovered text instead of stored. Human-readable
+integrity labels are never prepended to the document content.
+
+PDF extraction, canonicalization, flattening, and the text-only scope of the
+signature are unchanged. The PDF Merkle construction hashes canonical page text
+as leaves and hashes concatenated lowercase hexadecimal child hashes at each
+parent; an unmatched final child is duplicated. Page count and index are signed
+explicitly, including for identical pages. A root is a signed document
+fingerprint; scanning one page does not independently recompute the entire
+multipage document or establish a Merkle inclusion proof.
+
+## Signed message
+
+Ed25519 signs this unambiguous byte sequence:
+
+1. UTF-8 `QRed signed document v3` followed by one zero byte.
+2. The record's flags **with bit 0 cleared**, timestamp, key ID, and conditional
+   multipage fields, in exactly the layout above (17 or 53 bytes).
+3. The complete canonical UTF-8 text, before compression.
+
+The domain fixes the protocol version and algorithm. Compression and chunk
+boundaries may change without changing the signature. The timestamp, key ID,
+PDF context, page position/count, document root, and recovered text cannot.
+The signature and hashes are stored as bytes, without Base64/hex expansion.
+
+## Multiple QRs for one page
+
+First construct the complete record above. If it exceeds the maximum hidden
+QR payload (2,945 bytes at version 40-L), split that record into raw byte chunks.
+Every chunk has this header:
+
+| Field | Bytes | Meaning |
+| --- | ---: | --- |
+| Magic/version | 4 | ASCII `QRC3` |
+| Set digest | 32 | SHA-256 of the complete encoded record |
+| Chunk index | 2 | Zero based |
+| Chunk count | 2 | 2–4,096; index must be below count |
+| Data | Remaining | Nonempty slice of the record |
+
+The header is **40 bytes per QR**. Page metadata and the signature appear only
+once in the reassembled record, not in every QR. The digest distinguishes
+iterations, keys, page positions, and encoding choices. Missing chunks return
+`INCOMPLETE`; mixed sets/counts and conflicting duplicates are rejected. Scan
+order is irrelevant; identical repeated scans are harmless. Check the digest
+before interpreting or decompressing the reconstructed record, then verify its
+signature with the selected trusted key. A matching set digest alone is never
+authentication.
+
+Single-QR records need no stored grouping ID. Their displayed/collection ID is
+derived from the existing signature. Multipart IDs come from the set digest.
+Neither is an additional signed document-ID field.
+
+## QR size, recovery, and copyable strings
+
+Keep the minimum QR count. With multiple QRs, balance the record bytes if all
+codes can fit below version 40; otherwise retain the greedy split and its smaller
+last code. Each code chooses its smallest fitting version, then the strongest
+error correction fitting that grid. Printed dimensions remain unchanged.
+The QR mask is selected using the complete hidden data and error-correction
+codewords. Image downscaling uses an antialiasing filter so printed modules do
+not disappear through point sampling.
+
+Ordinary readers still see `QRED.ORG`. Its terminator/alignment and the two-byte
+hidden-payload length use 10–11 data bytes per QR, outside the record/chunk sizes
+above. Ordinary QR error correction, padding, patterns, and quiet zones are
+additional. No URL is embedded in the hidden record.
+
+Copyable strings use `https://qred.org/#QRED3:<Base64URL-of-binary-payload>`.
+A custom bootstrap URL changes only the copyable link. Image recovery returns
+the canonical default link; its binary payload is identical. Bare
+`QRED3:<Base64URL>` strings also work. Base64URL must be canonical and unpadded.
+
+## Bounds, compression, and compatibility
+
+Canonical text is limited to 8 MiB per page. Compressed input is limited to that
+size plus 64 KiB. Enforce decompression output bounds while streaming, validate
+the gzip checksum/length, and reject malformed UTF-8, framing, flags, or indices.
+The largest full record is the compressed limit plus its 121-byte header.
+Automatic encoding compares plaintext and gzip by QR count, then actual hidden
+payload bytes; plaintext wins a tie. Gzip adds 18 container bytes once per page.
+If compression is unavailable, automatic encoding uses plaintext; explicitly
+requesting gzip fails clearly. Processing remains local and makes no network
+requests.
+
+For the sample invoice, compressed text is 318 bytes, giving a 403-byte hidden
+record (85 + 318). With QRed framing, non-text overhead is 113 bytes: 85 record
+bytes + 18 gzip bytes + 10 QRed framing bytes. It fits QR version 13 at the same
+2.75-inch printed footprint. The prior format used 418 non-text bytes and
+version 18 for this fixture.
+
+Deploy the stamper and every verifier route together. Older QRED1/QRG1 seals
+are intentionally unsupported and must be re-sealed; no legacy verification
+path remains. Unknown QR content can still be displayed without being verified.
+
+## Verification coverage
+
+Tests include independent Node Ed25519 verification, timestamp/key/context/text
+tampering, replacement gzip streams, malformed headers, Unicode/BOM recovery,
+missing/duplicate/mixed chunks, forged grouping digests, identical PDF pages,
+capacity boundaries, saved-PDF recovery at 200/300 dpi, camera damage correction,
+all verifier routes, and workflows with network access blocked.

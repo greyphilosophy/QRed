@@ -19,7 +19,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it("connects homepage scans to real signature verification and waits for every chunk", async () => {
   const content = Array.from({ length: 700 }, (_, i) => `Record ${i}: ${Math.imul(i + 17, 2654435761) >>> 0}.`).join("\n");
-  const { seals } = await createQRedSeals({ content, issuer: "QA", privateKey, publicKey });
+  const { seals } = await createQRedSeals({ content, privateKey, publicKey });
   expect(seals.length).toBeGreaterThan(1);
   render(<App />);
   expect(scanner.props.returnPayload).toBe(true);
@@ -37,15 +37,16 @@ it("connects homepage scans to real signature verification and waits for every c
   expect(await screen.findByRole("heading", { name: "INVALID" })).toBeTruthy();
 });
 
-it("verifies manual seals, escapes issuer text, and clears previous results", async () => {
-  const issuer = '<img src=x onerror="alert(1)">';
-  const { seals } = await createQRedSeals({ content: "Manual document", issuer, privateKey, publicKey });
+it("verifies manual seals, displays their signed timestamp, and clears previous results", async () => {
+  const timestamp = "2026-10-20T17:55:14.123Z";
+  const { seals } = await createQRedSeals({ content: "Manual document", timestamp, privateKey, publicKey });
   const { container } = render(<App />);
   fireEvent.change(screen.getByLabelText("Issuer public key"), { target: { value: publicKey } });
   fireEvent.change(screen.getByLabelText("Seal strings, one per line"), { target: { value: seals.join("\n") } });
   fireEvent.click(screen.getByRole("button", { name: "Add seals" }));
   expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
-  expect(container.querySelector("img")).toBeNull();
+  expect(container.querySelector("time").textContent).toBe(timestamp);
+  expect(container.textContent).not.toContain("Claimed issuer");
   fireEvent.click(screen.getByRole("button", { name: "Clear collected seals" }));
   await waitFor(() => expect(screen.queryByRole("heading", { name: "VALID" })).toBeNull());
 });
@@ -58,7 +59,7 @@ it("keeps a normal QR visible without treating it as a verified document", async
 });
 
 it("opens an issuer key locally and rechecks collected seals, preserving the key on invalid imports", async () => {
-  const { seals } = await createQRedSeals({ content: "Saved issuer identity", issuer: "QA", privateKey, publicKey });
+  const { seals } = await createQRedSeals({ content: "Saved issuer identity", privateKey, publicKey });
   render(<App />);
   await act(async () => scanner.props.onSealDetected(seals[0]));
   expect(await screen.findByRole("heading", { name: "UNVERIFIED" })).toBeTruthy();

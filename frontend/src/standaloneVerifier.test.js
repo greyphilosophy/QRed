@@ -48,7 +48,7 @@ afterEach(() => {
 it("opens a saved issuer key in the standalone verifier and rejects invalid files without replacing it", async () => {
   vi.stubGlobal("crypto", webcrypto);
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-  const { seals } = await createQRedSeals({ content: "Standalone imported key", issuer: "QA", privateKey, publicKey });
+  const { seals } = await createQRedSeals({ content: "Standalone imported key", privateKey, publicKey });
   loadStandalone();
   const picker = document.getElementById("publicKeyFileInput");
   fireEvent.change(picker, { target: { files: [{ name: "qred-ed25519-public-key.txt", size: 45, text: async () => publicKey + "\n" }] } });
@@ -67,8 +67,8 @@ it("the standalone camera recovers hidden payload bytes before verifying and ren
   vi.stubGlobal("crypto", webcrypto);
   vi.stubGlobal("requestAnimationFrame", vi.fn());
   vi.stubGlobal("cancelAnimationFrame", vi.fn());
-  const issuer = '<img src=x onerror="alert(1)">';
-  const { seals } = await createQRedSeals({ content: "Standalone camera document", issuer, privateKey, publicKey });
+  const timestamp = "2026-10-20T17:55:14.123Z";
+  const { seals } = await createQRedSeals({ content: "Standalone camera document", timestamp, privateKey, publicKey });
   const frame = raster(createQRedQrSymbol(seals[0]));
   expect(jsQR(frame.data, frame.width, frame.height).data).toBe("QRED.ORG");
 
@@ -86,11 +86,11 @@ it("the standalone camera recovers hidden payload bytes before verifying and ren
   video.onloadedmetadata();
   await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
   expect(document.getElementById("resultContent").textContent).toBe("Standalone camera document");
-  expect(document.getElementById("resultMeta").textContent).toContain(issuer);
+  expect(document.getElementById("resultMeta").textContent).toContain(timestamp);
   expect(document.getElementById("resultMeta").querySelector("img")).toBeNull();
 });
 
-it("the standalone camera yields between retries and verifies a previously unreadable frame", async () => {
+it("the standalone camera yields between retries and recovers a historical frame without verifying its retired format", async () => {
   vi.stubGlobal("crypto", webcrypto);
   let nextFrame;
   vi.stubGlobal("requestAnimationFrame", vi.fn((callback) => { nextFrame = callback; return 1; }));
@@ -125,6 +125,6 @@ it("the standalone camera yields between retries and verifies a previously unrea
     nextFrame();
     expect(scan).toHaveBeenCalledTimes(callsBefore + 1);
   }
-  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
-  expect(document.getElementById("resultContent").textContent).toContain("Approved total: $123.45");
+  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("QR_CONTENT"));
+  expect(document.getElementById("resultContent").textContent).toContain("QRED1?");
 });
