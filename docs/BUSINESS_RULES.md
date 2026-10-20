@@ -34,7 +34,7 @@ This document summarizes the current business rules for QRed as implemented and 
 
 ## Payload and Metadata Rules
 
-1. A QRed payload contains the format version, issuer identifier, key ID, document identifier, creation timestamp, canonical content, signature metadata, and digital signature.
+1. Compact v3 records contain the format/version, signed timestamp, binary key ID, canonical text, and full signature. Multipage PDFs add signed page position/count and a document root. Issuer names are omitted; page hashes and standalone IDs are derived.
 2. Payloads include a `key_id` derived from the issuer public key.
 3. The reference key ID is the first 16 lowercase hexadecimal characters of the SHA-256 digest of the Ed25519 public key bytes.
 4. The issuer private key must never be embedded in generated seals.
@@ -47,7 +47,7 @@ This document summarizes the current business rules for QRed as implemented and 
 2. Verification must not require access to issuer private keys.
 3. Recipients must be able to determine whether a document was issued by a trusted authority.
 4. Verification requires a trusted public key source, either an explicitly supplied trusted public key or an issuer registry lookup.
-5. The issuer registry maps issuer identifiers and key IDs to issuer public keys.
+5. A future trusted key directory may map key IDs to public keys and authority names. That directory is not yet implemented; current verification uses a supplied trusted key.
 6. The issuer registry validates registrations by recomputing the key ID from the public key.
 7. Registry registration is rejected when the submitted key ID does not match the submitted public key.
 8. Missing registry keys are treated as lookup failures, not successful verification.

@@ -5,41 +5,20 @@
 
 import jsQR from "jsqr";
 import { scanQrImage } from "./qr/scanQrImage.js";
-import { decodeSeal, verifyQRedSeals } from "./qredVerifier.js";
+import { decodeSeal, verifyQRedSeals, qredDisplayTextFromScannedPayload } from "./qredVerifier.js";
 import { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset, hiddenPayloadFromScanResult } from "./qr/hiddenPayload.js";
 import { codewordsFromMatrix, deinterleaveDataCodewordsWithTables, QR_MODULE_COUNT_BY_VERSION } from "./qr/qrLowLevel.js";
 import { sampleQrMatrix } from "./qr/qrImageRecovery.js";
 
 export { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset, jsQR };
 
-// — seal fragment display helpers
-function sealFragment(sealString) {
-  const hashIndex = String(sealString || "").indexOf("#");
-  return hashIndex >= 0 ? sealString.slice(hashIndex + 1) : String(sealString || "");
-}
-
-function decodePlaintextFragment(fragment) {
-  if (!fragment.startsWith("QRED1?")) return null;
-  const params = new URLSearchParams(fragment.slice("QRED1?".length));
-  const chunkNumber = Number.parseInt(params.get("i") || "", 10);
-  const totalChunks = Number.parseInt(params.get("n") || "", 10);
-  const documentId = params.get("doc") || "";
-  if (!documentId || !Number.isInteger(chunkNumber) || !Number.isInteger(totalChunks)) return null;
-  if (params.has("rc") && params.get("rc") !== "plaintext") return null;
-  return params.get("txt") || "";
-}
-
-export function qredDisplayTextFromScannedPayload(payload) {
-  const fragment = sealFragment(payload);
-  const plaintext = decodePlaintextFragment(fragment);
-  return plaintext || (payload || "");
-}
+export { qredDisplayTextFromScannedPayload };
 
 export function qredTextFromScanResult(scanResult) {
   if (!scanResult || typeof scanResult === "string") return scanResult || "";
   const visibleText = scanResult.data || "";
   const hiddenPayload = hiddenPayloadFromScanResult(scanResult);
-  if (visibleText === VISIBLE_QR_TEXT || visibleText.includes("QRED1") || visibleText.includes("qred.org")) {
+  if (visibleText === VISIBLE_QR_TEXT || visibleText.includes("QRED3:") || visibleText.includes("qred.org")) {
     return hiddenPayload ? qredDisplayTextFromScannedPayload(hiddenPayload) : qredDisplayTextFromScannedPayload(visibleText);
   }
   return visibleText;
@@ -160,13 +139,13 @@ export function createTestAnalyzerController({ uploadZone, fileInput: _fileInput
     let recoveredText = qredTextFromPhotoScanResult(qrImageData.data, qrImageData.width, qrImageData.height, code);
     const payload = extractHiddenQRedPayloadFromImage(qrImageData.data, qrImageData.width, qrImageData.height, code) || code.data;
     const decoded = decodeSeal(payload);
-    if (decoded?.encoding === "gzip") {
+    if (decoded) {
       const result = await verifyQRedSeals([payload], "");
       recoveredText = result.content
         ? `Recovered text (signature not verified):\n${result.content}`
         : result.status === "INCOMPLETE"
-          ? `Compressed seal ${decoded.chunk_number + 1} of ${decoded.total_chunks}. Collect all seals in the verifier to restore the text.`
-          : `Cannot restore compressed text: ${result.error_message}`;
+          ? `Seal ${decoded.chunk_number + 1} of ${decoded.total_chunks}. Collect all seals in the verifier to restore the text.`
+          : `Cannot restore seal text: ${result.error_message}`;
     }
     if (recoveredText !== code.data) {
       section.innerHTML = `\n      <h4>🔍 Hidden QRed Payload Found</h4>\n      <p style="margin-bottom: 0.5rem;"><span class="badge badge-success">Hidden payload: YES</span></p>\n      <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.5rem;">Payload byte offset: ${payloadOffset} | Displayed text: ${recoveredText.length} characters</p>\n      <div class="payload-text">${escapeHtml(recoveredText)}</div>\n    `;
@@ -191,7 +170,7 @@ export function createTestAnalyzerController({ uploadZone, fileInput: _fileInput
     card.classList.add("success");
     const version = code.version || "—";
     const moduleCount = version !== "—" ? QR_MODULE_COUNT_BY_VERSION[version] : "—";
-    const looksLikeQRed = code.data === VISIBLE_QR_TEXT || code.data.includes("QRED1") || code.data.includes("qred.org");
+    const looksLikeQRed = code.data === VISIBLE_QR_TEXT || code.data.includes("QRED3:") || code.data.includes("qred.org");
     const payloadOffset = looksLikeQRed ? hiddenPayloadByteOffset(version) : "—";
 
     let hiddenSection = "";

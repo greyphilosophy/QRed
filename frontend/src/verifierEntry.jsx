@@ -314,10 +314,16 @@ function VerifierApp() {
                 <strong>Document:</strong> {result.document_id}
               </div>
             ) : null}
-            {result?.issuer ? (
+            {result?.timestamp ? (
               <div className="meta-item">
-                <strong>Issuer:</strong> {result.issuer}
+                <strong>{result.metadata_authenticated ? "Seal time" : "Claimed seal time"} (signer’s clock):</strong> <time dateTime={result.timestamp}>{result.timestamp}</time>
               </div>
+            ) : null}
+            {result?.pdf ? (
+              <div className="meta-item"><strong>Page:</strong> {result.page_number} of {result.page_count}</div>
+            ) : null}
+            {result?.document_root ? (
+              <div className="meta-item"><strong>Document fingerprint:</strong> {result.document_root}</div>
             ) : null}
             {result?.encoding ? (
               <div className="meta-item">

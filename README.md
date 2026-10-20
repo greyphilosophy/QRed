@@ -6,11 +6,11 @@ QRed encodes the signed contents of a document into one or more QR code seals pr
 
 No app installation is required.
 
-New seals use a v2 signature over the text and issuer/document metadata.
-Legacy content-only signatures are displayed as `LEGACY`, not `VALID`.
+New seals use compact v3 binary records with signed text, timestamp, key ID,
+and page context. Issuer names are omitted. Older seals must be re-sealed.
 PDFs must contain readable text on every page; scanned, image-only, or blank
 pages are rejected rather than signed as empty content. See
-[Signed seals v2](docs/SIGNED_SEALS_V2.md) for scope, compatibility, and tests.
+[Compact seals v3](docs/COMPACT_SEALS_V3.md) for scope, compatibility, and tests.
 Supported PDF forms are automatically flattened before text extraction and
 signing. Text fields and dropdowns are checked against their saved appearances;
 unsupported or inconsistent forms stop with an actionable error. Review the
@@ -49,7 +49,7 @@ Open `http://localhost:3000` in your browser. Click "Open PDF stamping tool" to 
 1. Open the PDF stamping tool and click **Generate key pair**. QRed creates a fresh Ed25519 pair using the browser's secure random generator and fills both key fields. Use HTTPS or localhost with Web Crypto support.
 2. **Save private key** and keep the file private. It is an unencrypted text file; QRed does not keep a copy, and closing the tool or reloading clears it. Anyone with this key can sign as you.
 3. **Save public key** to share with recipients through a trusted channel. This file contains only the public key.
-4. Choose a PDF, enter your issuer name, and click **Stamp and save PDF**.
+4. Choose a PDF and click **Stamp and save PDF**.
 5. To test your seals on the same page, click **Use public key to verify**. This sets the key in **Verify collected seals**, where you can scan or choose the QR images from your stamped PDF. Recipients can choose **Open issuer public key file** on the home page or standalone verifier.
 
 Letter-to-legal stamping preserves the original letter content at its original

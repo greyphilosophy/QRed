@@ -10,7 +10,6 @@ import { compareDocumentText, compareWordSequences, decodeSeal, extractHiddenQRe
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 const wrongPublicKey = "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=";
-const staticDemoPublicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 
 const noisyFixturePath = resolve(process.cwd(), "../tests/qred_hidden_payload_photo.jpg");
 
@@ -93,10 +92,10 @@ function imageDataFromMatrix(matrix, modulePixels = 2, darkValue = 0, lightValue
 async function createTestSeals() {
   const result = await createQRedSeals({
     content: "Confidential\n\nDocument",
-    issuer: "QRed QA",
+
     privateKey,
     publicKey,
-    documentId: "DOC-TESTBROWSER",
+
   });
   return result.seals;
 }
@@ -189,7 +188,7 @@ describe("qredVerifier", () => {
     expect(qredTextFromPhotoScanResult(image.data, image.width, image.height, code)).toBe(payload);
   });
 
-  it("decodes plaintext seal payloads into the original document text", () => {
+  it("does not treat retired seal content as a current-format record", () => {
     const payload = "https://qred.org/#QRED1?v=1&alg=Ed25519&doc=DOC-PLAINTEXT&i=0&n=1&iss=QRed+QA&kid=deadbeef&ts=2026-07-05T00%3A00%3A00.000Z&txt=PDF+file%3A+letter.pdf%0ASize%3A+965+bytes";
     const payloadBytes = new TextEncoder().encode(payload);
     const binaryData = new Uint8Array([
@@ -200,7 +199,7 @@ describe("qredVerifier", () => {
       0xec, 0x11,
     ]);
 
-    expect(qredTextFromPhotoScanResult(null, 0, 0, { data: "QRED.ORG", binaryData, version: 1 })).toBe("PDF file: letter.pdf\nSize: 965 bytes");
+    expect(qredTextFromPhotoScanResult(null, 0, 0, { data: "QRED.ORG", binaryData, version: 1 })).toBe(payload);
   });
 
   it("returns no hidden image payload when scan geometry is unavailable", () => {
@@ -253,8 +252,7 @@ describe("qredVerifier", () => {
   it("decodes QRed seal metadata", async () => {
     const seals = await createTestSeals();
     expect(decodeSeal(seals[0])).toMatchObject({
-      format_id: "QRED1",
-      document_id: "DOC-TESTBROWSER",
+      format_id: "QRED3",
       chunk_number: 0,
       total_chunks: 1,
     });
@@ -264,35 +262,22 @@ describe("qredVerifier", () => {
     const seals = await createTestSeals();
     await expect(verifyQRedSeals(seals, publicKey)).resolves.toMatchObject({
       status: "VALID",
-      issuer: "QRed QA",
-      document_id: "DOC-TESTBROWSER",
       content: "Confidential\n\nDocument",
     });
   });
 
 
-  it("labels the old content-only signature as legacy instead of authenticating its issuer", async () => {
-    const fragmentSeal = "https://qred.org/#QRED1?v=1&alg=Ed25519&doc=DOC-A58A798C5FB2&i=0&n=1&iss=QRed+Demo+Authority&kid=da522162396ab2d0&ts=2026-06-25T03%3A46%3A04.757Z&sig=LvusYUa1V3MtKgfVLeHbzMan8tDGQIpakRTJ39WD-LeiXzCBSMOrqNjSUNj7QyzfFhV2H5QpNnMKvjz9PWh_CA&txt=PDF+file%3A+Minutes_2023_05_23.pdf%0ASize%3A+346921+bytes%0ASHA-256%3A+c08048143569b6324147179a9a3d9e6b85d386aedff1260783d5fafd7b7a5f63";
-
-    await expect(verifyQRedSeals([fragmentSeal], staticDemoPublicKey)).resolves.toMatchObject({
-      status: "LEGACY",
-      signature_valid: true,
-      metadata_authenticated: false,
-      issuer: "QRed Demo Authority",
-      document_id: "DOC-A58A798C5FB2",
-      content: "PDF file: Minutes_2023_05_23.pdf\nSize: 346921 bytes\nSHA-256: c08048143569b6324147179a9a3d9e6b85d386aedff1260783d5fafd7b7a5f63",
-    });
+  it("rejects old seal formats rather than reporting them as verified", async () => {
+    for (const version of ["1", "2"]) {
+      const seal = `https://qred.org/#QRED1?v=${version}&doc=OLD&i=0&n=1&txt=Original`;
+      expect(decodeSeal(seal)).toBeNull();
+      expect(await verifyQRedSeals([seal], publicKey)).toMatchObject({ status: "ERROR" });
+    }
   });
 
-  it("returns plaintext fragment content when no public key is available", async () => {
-    const fragmentSeal = "https://qred.org/#QRED1?v=1&alg=Ed25519&doc=DOC-A58A798C5FB2&i=0&n=1&iss=QRed+Demo+Authority&kid=da522162396ab2d0&ts=2026-06-25T03%3A46%3A04.757Z&sig=LvusYUa1V3MtKgfVLeHbzMan8tDGQIpakRTJ39WD-LeiXzCBSMOrqNjSUNj7QyzfFhV2H5QpNnMKvjz9PWh_CA&txt=PDF+file%3A+Minutes_2023_05_23.pdf%0ASize%3A+346921+bytes%0ASHA-256%3A+c08048143569b6324147179a9a3d9e6b85d386aedff1260783d5fafd7b7a5f63";
-
-    await expect(verifyQRedSeals([fragmentSeal], "")).resolves.toMatchObject({
-      status: "UNVERIFIED",
-      issuer: "QRed Demo Authority",
-      document_id: "DOC-A58A798C5FB2",
-      content: "PDF file: Minutes_2023_05_23.pdf\nSize: 346921 bytes\nSHA-256: c08048143569b6324147179a9a3d9e6b85d386aedff1260783d5fafd7b7a5f63",
-      error_message: "No trusted public key available for signature verification",
+  it("returns recovered content as unverified when no trusted key is available", async () => {
+    expect(await verifyQRedSeals(await createTestSeals(), "")).toMatchObject({
+      status: "UNVERIFIED", signature_valid: false, metadata_authenticated: false, content: "Confidential\n\nDocument",
     });
   });
 
@@ -300,7 +285,6 @@ describe("qredVerifier", () => {
     const seals = await createTestSeals();
     await expect(verifyQRedSeals(seals, wrongPublicKey)).resolves.toMatchObject({
       status: "INVALID",
-      document_id: "DOC-TESTBROWSER",
       error_message: "Digital signature verification failed",
     });
   });
@@ -308,15 +292,13 @@ describe("qredVerifier", () => {
   it("reports missing chunks without attempting signature verification", async () => {
     const result = await createQRedSeals({
       content: "Confidential\n\nDocument".repeat(500),
-      issuer: "QRed QA",
       privateKey,
       publicKey,
-      documentId: "DOC-TESTBROWSER",
+
       encodingStrategy: "plaintext",
     });
     await expect(verifyQRedSeals(result.seals.slice(0, 1), publicKey)).resolves.toMatchObject({
       status: "INCOMPLETE",
-      document_id: "DOC-TESTBROWSER",
       error_message: expect.stringMatching(/^Missing chunks: \[/),
     });
   });

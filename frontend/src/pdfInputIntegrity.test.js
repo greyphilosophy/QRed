@@ -11,7 +11,7 @@ import { verifyQRedSeals } from "./qredVerifier.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
-const options = { issuer: "PDF regression QA", privateKey, publicKey };
+const options = { privateKey, publicKey };
 const japanese = "承認金額は一万円です";
 const asFile = (bytes) => new File([bytes], "input.pdf", { type: "application/pdf" });
 

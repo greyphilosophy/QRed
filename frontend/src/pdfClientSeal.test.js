@@ -91,7 +91,7 @@ describe("browser PDF sealing", () => {
   it("recovers the actual text from an ASCII85/Flate PDF's rendered stamped QR", async () => {
     const file = new File([readFileSync("../tests/fixtures/ascii85-text.pdf")], "ascii85.pdf", { type: "application/pdf" });
     expect(await extractPdfText(file)).toContain("The approved total is 123.45 dollars.");
-    const { blob } = await sealPdfInBrowser({ file, issuer: "Regression QA", privateKey, publicKey });
+    const { blob } = await sealPdfInBrowser({ file, privateKey, publicKey });
     // Read the actual printed footer at normal print resolution, not the seal
     // string held in memory by the stamper (which missed the original bug).
     const page = renderPdfFirstPageToPng(await blob.arrayBuffer(), 300);
@@ -128,7 +128,7 @@ describe("browser PDF sealing", () => {
       page.drawImage(image, { x: 72, y: 400, width: 200, height: 200 });
     }
     const file = new File([await pdf.save()], "unreadable.pdf", { type: "application/pdf" });
-    await expect(sealPdfInBrowser({ file, issuer: "QA", privateKey, publicKey })).rejects.toThrow(/No readable text on PDF page\(s\)/);
+    await expect(sealPdfInBrowser({ file, privateKey, publicKey })).rejects.toThrow(/No readable text on PDF page\(s\)/);
   });
 
   it("propagates invalid PDF errors instead of returning an empty extraction", async () => {
@@ -140,7 +140,6 @@ describe("browser PDF sealing", () => {
 
     const { blob, sealResult } = await sealPdfInBrowser({
       file,
-      issuer: "QRed Browser Demo",
       privateKey,
       publicKey,
     });
@@ -150,7 +149,6 @@ describe("browser PDF sealing", () => {
     expect(sealResult.seals.length).toBeGreaterThan(0);
     await expect(verifyQRedSeals(sealResult.seals, publicKey)).resolves.toMatchObject({
       status: "VALID",
-      issuer: "QRed Browser Demo",
     });
   });
 
@@ -159,7 +157,6 @@ describe("browser PDF sealing", () => {
 
     const { pageSealResults, pageSealStrings, stampedQrValues } = await sealPdfInBrowser({
       file,
-      issuer: "QRed Page Authority",
       privateKey,
       publicKey,
     });
@@ -169,6 +166,14 @@ describe("browser PDF sealing", () => {
     expect(pageSealStrings[0]).not.toEqual(pageSealStrings[1]);
     expect(pageSealResults[0].document_id).not.toEqual(pageSealResults[1].document_id);
     expect(stampedQrValues).toEqual(pageSealStrings[0]);
+    const results = await Promise.all(pageSealStrings.map(seals => verifyQRedSeals(seals, publicKey)));
+    expect(results.map(result => result.status)).toEqual(["VALID", "VALID"]);
+    expect(results.map(result => result.page_number)).toEqual([1, 2]);
+    expect(results.every(result => result.page_count === 2)).toBe(true);
+    expect(results[0].timestamp).toBe(results[1].timestamp);
+    expect(results[0].document_root).toBe(results[1].document_root);
+    expect(results[0].page_hash).not.toBe(results[1].page_hash);
+    expect(results[0].content).not.toContain("QRed PDF page integrity");
   });
 
   it("uses 2.75-inch QR seals for one or two seals in the legal footer", () => {
@@ -195,8 +200,7 @@ describe("browser PDF sealing", () => {
   it("preserves the original letter pixels and verifies its larger footer at 300 dpi", async () => {
     const source = readFileSync("../tests/fixtures/live-qa-invoice.pdf");
     const { blob, stampedQrValues } = await sealPdfInBrowser({
-      file: new File([source], "invoice.pdf", { type: "application/pdf" }),
-      issuer: "Print QA", privateKey, publicKey,
+      file: new File([source], "invoice.pdf", { type: "application/pdf" }), privateKey, publicKey,
     });
     const original = renderPdfFirstPageToPng(source, 300);
     const stamped = renderPdfFirstPageToPng(await blob.arrayBuffer(), 300);
@@ -229,7 +233,6 @@ describe("browser PDF sealing", () => {
 
     const { blob } = await sealPdfInBrowser({
       file,
-      issuer: "QRed Letter Authority",
       privateKey,
       publicKey,
       pageScalingStrategy: "legal-footer",
@@ -249,8 +252,7 @@ describe("browser PDF sealing", () => {
         { x: 40, y: 740 - i * 14, size: 9 });
     }
     const { blob, stampedQrValues } = await sealPdfInBrowser({
-      file: new File([await source.save()], "delivery-records.pdf", { type: "application/pdf" }),
-      issuer: "Balanced Print QA", privateKey, publicKey, encodingStrategy: "plaintext",
+      file: new File([await source.save()], "delivery-records.pdf", { type: "application/pdf" }), privateKey, publicKey, encodingStrategy: "plaintext",
     });
     expect(stampedQrValues).toHaveLength(2);
     const printed = renderPdfFirstPageToPng(await blob.arrayBuffer(), 200);
@@ -280,7 +282,6 @@ describe("browser PDF sealing", () => {
 
     const { blob, stampedQrValues } = await sealPdfInBrowser({
       file,
-      issuer: "QRed Letter Authority",
       privateKey,
       publicKey,
       encodingStrategy: "plaintext",
@@ -314,7 +315,6 @@ describe("browser PDF sealing", () => {
 
     const { blob } = await sealPdfInBrowser({
       file,
-      issuer: "QRed Letter Authority",
       privateKey,
       publicKey,
       pageScalingStrategy: "shrink-footer",
@@ -331,14 +331,13 @@ describe("browser PDF sealing", () => {
 
     const { blob, sealResult, stampedQrValues } = await sealPdfInBrowser({
       file,
-      issuer: "QRed Letter Authority",
       privateKey,
       publicKey,
     });
 
     expect(blob.type).toBe("application/pdf");
     expect(stampedQrValues).toEqual(sealResult.seals);
-    expect(stampedQrValues[0]).toMatch(/^https:\/\/qred\.org\/#QRED1\?/);
+    expect(stampedQrValues[0]).toMatch(/^https:\/\/qred\.org\/#QRED3:/);
 
     const layout = planQrStampLayout(612, stampedQrValues.length);
     expect(layout.qrSize).toBeGreaterThanOrEqual(177);
@@ -347,7 +346,6 @@ describe("browser PDF sealing", () => {
 
     await expect(verifyQRedSeals(stampedQrValues, publicKey)).resolves.toMatchObject({
       status: "VALID",
-      issuer: "QRed Letter Authority",
       content: expect.stringContaining("Dear verifier,"),
     });
   });
@@ -357,7 +355,6 @@ describe("browser PDF sealing", () => {
 
     const { blob, stampedQrValues } = await sealPdfInBrowser({
       file,
-      issuer: "QRed Print QA",
       privateKey,
       publicKey,
     });
@@ -379,7 +376,6 @@ describe("browser PDF sealing", () => {
 
     const { sealResult } = await sealPdfInBrowser({
       file,
-      issuer: "QRed Plaintext Authority",
       privateKey,
       publicKey,
       encodingStrategy: "plaintext",
@@ -408,7 +404,6 @@ describe("browser PDF sealing", () => {
     const file = await makeLetterPdfFile();
     const { stampedQrValues } = await sealPdfInBrowser({
       file,
-      issuer: "QRed Spec Authority",
       privateKey,
       publicKey,
     });
@@ -422,7 +417,6 @@ describe("browser PDF sealing", () => {
     expect(extractHiddenQRedPayload(qrData.bytes, qrData.version)).toBe(stampedQrValues[0]);
     await expect(verifyQRedSeals([extractHiddenQRedPayload(qrData.bytes, qrData.version)], publicKey)).resolves.toMatchObject({
       status: "VALID",
-      issuer: "QRed Spec Authority",
     });
   });
 

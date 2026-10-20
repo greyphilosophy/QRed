@@ -14,5 +14,6 @@ Public key: `Sz8MZnNyHPkt6J3hC_rcXEabv4rrQSgAH_krcitjlF8`
 - `manifest-seal-{1,2}-300dpi.png`: separate crops of a two-seal manifest page.
 
 Unmodified jsQR fails to locate the codes in all of these except manifest seal 1.
-Tests must recover the hidden payload from these pixels and verify its signature;
-detecting just the public `QRED.ORG` marker is insufficient.
+Tests still recover the historical payload from these pixels, but the retired
+seal format is intentionally no longer verified. Current-format signature and
+printed-image checks use the compact fixtures alongside these images.

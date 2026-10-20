@@ -69,38 +69,24 @@ Future versions may standardize canonicalization.
 
 # Payload Structure
 
-A QRed payload SHALL contain:
+The current implementation uses the compact binary v3 record specified in
+[COMPACT_SEALS_V3.md](docs/COMPACT_SEALS_V3.md). It contains a format/version
+marker, signed timestamp, 8-byte key ID, 64-byte Ed25519 signature, and canonical
+text (raw UTF-8 or gzip). Multipage PDFs additionally carry a signed page index,
+page count, and full document root. Issuer names are omitted; trusted key-to-
+authority mapping remains an external trust concern and future directory work.
 
-- Format version
-- Issuer identifier
-- Key ID (derived from the issuer's public key)
-- Document identifier
-- Creation timestamp
-- Canonical document text
-- Signature metadata
-- Digital signature
+A standalone record has no separately stored document ID or page hash. Its
+collection ID is derived from its signature. A multipart record carries a full
+record digest and binary chunk coordinates. Page hashes, and the document root
+for single-page PDFs, are recomputed from recovered text.
 
-The reference implementation encodes the payload as a JSON object:
-
-```json
-{
-  "version": "1",
-  "issuer": "Example Authority",
-  "key_id": "a1b2c3d4e5f6a1b2",
-  "document_id": "DOC-ABC123DEF456",
-  "timestamp": "2026-06-18T00:00:00+00:00",
-  "content": "...",
-  "signature": "...",
-  "algorithm": "Ed25519"
-}
-```
-
-The reference implementation retains a JSON representation for inspection and
-compares plaintext with gzip-compressed canonical text for QR transport. Both
-use scanner-safe hidden data behind the visible `QRED.ORG` marker. Automatic
-mode selects the fewest QR codes, then the fewest encoded payload bytes, with
-plaintext winning an exact tie. Explicit strategies may request plaintext or
-gzip. See [GZIP_SEALS.md](docs/GZIP_SEALS.md) for binary framing and limits.
+The timestamp records the signer's clock, with millisecond precision; it is not
+an independently certified time. It remains authenticated by the signature.
+A JSON representation is provided for inspection only. Both plaintext and gzip
+QRs carry raw binary records behind the visible `QRED.ORG` marker. Automatic
+mode selects the fewest QRs, then the fewest actual bytes; plaintext wins a tie.
+Older seal formats are intentionally no longer verified.
 
 ---
 
@@ -116,7 +102,7 @@ key_id = SHA-256(public_key_bytes).hexdigest()[:16]
 
 The key_id is a 16-character lowercase hexadecimal string (64-bit).
 
-The issuer registry validates key_id on registration: the caller-supplied key_id MUST match the computed value, or the registration returns a `400 Bad Request`.
+A future trusted key directory should validate key IDs against public keys. Key IDs alone do not prove authority identity; recipients currently supply a trusted public key.
 
 ---
 
@@ -156,18 +142,18 @@ Implementations SHALL:
 - Verify signatures using the corresponding Ed25519 public key.
 - Embed a key_id (derived from the public key) in the payload for registry lookup.
 
-The issuer registry allows verification applications to look up public keys by (issuer_id, key_id).
+A future issuer directory can map key IDs to trusted public keys and authority names without embedding names in seals.
 
 ---
 
 # Issuer Registry
 
-The issuer registry is a trusted key discovery mechanism for QRed verification.
+A trusted issuer directory is planned; its publication and registration mechanism have not been selected.
 
 The registry provides:
 
-- Registration of (issuer_id, key_id, public_key) triplets.
-- Key lookup by (issuer_id, key_id).
+- Trusted association of authority names, key IDs, and public keys.
+- Key lookup by key ID.
 - Key validation: key_id MUST match the public key (SHA-256 derivation).
 
 The reference implementation uses an in-memory dictionary. Production implementations may use a database, JSON file, or REST API.

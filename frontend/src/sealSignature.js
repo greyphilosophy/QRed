@@ -1,29 +1,15 @@
-// The QRED1 carrier remains unchanged; v=2 signs this domain-separated envelope.
-// Transport encoding and chunk boundaries may change, but the restored content
-// and every identity field must agree before a seal is considered VALID.
+import { bytesToHex, concatenate, decodeBase64Url, encodeMetadata, sha256, utf8 } from "./sealFormat.js";
+
+export { encodeBase64Url, decodeBase64Url } from "./sealFormat.js";
+
+// Version and Ed25519 are fixed by the domain. Compression and chunk boundaries
+// are transport details; timestamp, key ID, page context, and text are signed.
 export function sealSignatureMessage(metadata, content) {
-  return new TextEncoder().encode(JSON.stringify([
-    "QRed signed document", metadata.version, metadata.algorithm,
-    metadata.document_id, metadata.issuer, metadata.key_id, metadata.timestamp,
-    content,
-  ]));
-}
-
-export function encodeBase64Url(bytes) {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-
-export function decodeBase64Url(value) {
-  const normalized = value.trim().replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-  return Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+  return concatenate([utf8.encode("QRed signed document v3\0"), encodeMetadata(metadata), utf8.encode(content)]);
 }
 
 export async function computeKeyId(publicKey) {
   const bytes = decodeBase64Url(publicKey);
   if (bytes.length !== 32) throw new Error("An Ed25519 public key must contain 32 bytes");
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 16);
+  return bytesToHex((await sha256(bytes)).subarray(0, 8));
 }

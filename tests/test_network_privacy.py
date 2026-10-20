@@ -154,9 +154,9 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline):
         # Also exercise file reading, image decoding and hidden-payload
         # recovery from real stamped-PDF pixels while networking is blocked.
         page.get_by_role("button", name="Clear collected seals", exact=True).click()
-        fixture_key = "Sz8MZnNyHPkt6J3hC_rcXEabv4rrQSgAH_krcitjlF8"
+        fixture_key = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="
         page.get_by_label("Issuer public key", exact=True).fill(fixture_key)
-        fixture = Path(__file__).parent / "fixtures" / "qr-scans" / "invoice-footer-300dpi.png"
+        fixture = Path(__file__).parent / "fixtures" / "compact-qr" / "invoice-footer-300dpi.png"
         page.get_by_label("Choose QR image", exact=True).set_input_files(fixture)
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45")

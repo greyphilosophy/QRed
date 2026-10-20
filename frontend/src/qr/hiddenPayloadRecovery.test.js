@@ -1,3 +1,4 @@
+import { qrPayloadBytes, sealString } from "../sealFormat.js";
 import ECCode from "qrcode/lib/core/error-correction-code.js";
 import QRCode from "qrcode";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -14,11 +15,11 @@ let seal;
 let gzipSeal;
 
 beforeAll(async () => {
-  const result = await createQRedSeals({ content, issuer: "QRed Camera QA", privateKey, publicKey,
-    documentId: "DOC-CAMERA-RECOVERY", encodingStrategy: "plaintext" });
+  const result = await createQRedSeals({ content, privateKey, publicKey,
+    encodingStrategy: "plaintext" });
   [seal] = result.seals;
-  [gzipSeal] = (await createQRedSeals({ content, issuer: "QRed Camera QA", privateKey, publicKey,
-    documentId: "DOC-CAMERA-GZIP", encodingStrategy: "gzip" })).seals;
+  [gzipSeal] = (await createQRedSeals({ content, privateKey, publicKey,
+    encodingStrategy: "gzip" })).seals;
 });
 
 function damageCodewords(qr, indexes) {
@@ -126,9 +127,9 @@ describe("error-corrected hidden QR data", () => {
   it("still rejects a wrong verification key and an altered signed payload", async () => {
     const { payload } = recover(render(createQRedQrSymbol(seal)));
     await expect(verifyQRedSeals([payload], "Sz8MZnNyHPkt6J3hC_rcXEabv4rrQSgAH_krcitjlF8")).resolves.toMatchObject({ status: "INVALID" });
-    const params = new URLSearchParams(seal.split("#QRED1?")[1]);
-    params.set("txt", "Altered invoice total: $999.99");
-    const altered = `https://qred.org/#QRED1?${params}`;
+    const changed = qrPayloadBytes(seal);
+    changed[changed.length - 1] ^= 1;
+    const altered = sealString(changed);
     const qr = createQRedQrSymbol(altered);
     damageHiddenLength(qr);
     const recovered = recover(render(qr)).payload;

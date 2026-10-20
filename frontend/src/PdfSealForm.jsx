@@ -20,7 +20,6 @@ function saveText(text, filename) {
 
 export function PdfSealForm({ onUsePublicKey }) {
   const [file, setFile] = useState(null);
-  const [issuer, setIssuer] = useState("QRed Demo Authority");
   const [privateKey, setPrivateKey] = useState("");
   const [publicKey, setPublicKey] = useState("");
   const [message, setMessage] = useState("");
@@ -126,8 +125,8 @@ export function PdfSealForm({ onUsePublicKey }) {
   }
 
   async function sealPdf() {
-    if (!file || !issuer.trim() || !privateKey.trim() || !publicKey.trim()) {
-      setMessage("Choose a PDF, enter an issuer, and generate, open, or paste your Ed25519 keys before sealing.");
+    if (!file || !privateKey.trim() || !publicKey.trim()) {
+      setMessage("Choose a PDF and generate, open, or paste your Ed25519 keys before sealing.");
       return;
     }
     setLoading(true);
@@ -137,7 +136,6 @@ export function PdfSealForm({ onUsePublicKey }) {
       setMessage("Sealing in this browser...");
       const { blob, sealResult, flattenedFieldCount } = await sealPdfInBrowser({
         file,
-        issuer,
         privateKey,
         publicKey,
         bootstrapUrl: BOOTSTRAP_URL,
@@ -156,12 +154,13 @@ export function PdfSealForm({ onUsePublicKey }) {
 
       setMessage(
         [
-          `Sealed ${file.name} in this browser. Document ID: ${sealResult.document_id}`,
+          `Sealed ${file.name} in this browser.`,
           ...(flattenedFieldCount ? [`Flattened ${flattenedFieldCount} form field(s) before sealing.`] : []),
           `Selected encoding: ${sealResult.encoding || encodingStrategy}`,
           `Selected page scaling: ${pageScalingStrategy}`,
           `Estimated QR count: ${sealResult.estimated_qr_count || sealResult.total_seals || 0}`,
           `QR payload savings: ${sealResult.compression_savings_pct == null ? "not available" : `${sealResult.compression_savings_pct}%`}`,
+          `Seal time: ${sealResult.timestamp}`,
           `Document ID: ${sealResult.document_id}`,
         ].join("\n")
       );
@@ -196,10 +195,6 @@ export function PdfSealForm({ onUsePublicKey }) {
         <div className="demo-input">
           <label htmlFor="pdf-to-stamp">Open PDF</label>
           <input id="pdf-to-stamp" type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-        </div>
-        <div className="demo-input">
-          <label>Issuer</label>
-          <input aria-label="Issuer" value={issuer} onChange={(e) => setIssuer(e.target.value)} />
         </div>
         <div className="demo-input">
           <label htmlFor="signing-private-key">Private Key</label>

@@ -989,9 +989,6 @@
       var rm = document.getElementById("resultMeta");
       rm.innerHTML = "";
 
-      if (payload.issuer) {
-        rm.innerHTML += "<div class='meta-item'><strong>" + (payload.metadata_authenticated ? "Issuer:" : "Claimed issuer (not authenticated):") + "</strong> " + escapeHtml(payload.issuer) + "</div>";
-      }
       if (payload.document_id) {
         rm.innerHTML += "<div class='meta-item'><strong>Doc ID:</strong> " + escapeHtml(payload.document_id) + "</div>";
       }
@@ -999,7 +996,13 @@
         rm.innerHTML += "<div class='meta-item'><strong>Key ID:</strong> " + escapeHtml(payload.key_id) + "</div>";
       }
       if (payload.timestamp) {
-        rm.innerHTML += "<div class='meta-item'><strong>Timestamp:</strong> " + new Date(payload.timestamp).toLocaleString() + "</div>";
+        rm.innerHTML += "<div class='meta-item'><strong>" + (payload.metadata_authenticated ? "Seal time" : "Claimed seal time") + " (signer’s clock):</strong> " + escapeHtml(payload.timestamp) + "</div>";
+      }
+      if (payload.pdf) {
+        rm.innerHTML += "<div class='meta-item'><strong>Page:</strong> " + payload.page_number + " of " + payload.page_count + "</div>";
+      }
+      if (payload.document_root) {
+        rm.innerHTML += "<div class='meta-item'><strong>Document fingerprint:</strong> " + escapeHtml(payload.document_root) + "</div>";
       }
       if (payload.error_message) {
         rm.innerHTML += "<div class='meta-item'><strong>Error:</strong> " + escapeHtml(payload.error_message) + "</div>";
@@ -1157,72 +1160,18 @@
     // ── Test API: exposed on window so page.evaluate() can call module-scoped code ──
     // NOTE: CI E2E tests call this hook with either:
     //  - raw seal strings (preferred)
-    //  - URL-like strings containing a "QRED1?..." fragment
+    //  - URL-like strings containing a "QRED3:..." fragment
     window.__qredTestVerify = async function(sealStrings, publicKey) {
       try {
         var raw = Array.isArray(sealStrings)
           ? sealStrings
           : String(sealStrings || "").split("\n");
 
-        var seals = raw
-          .map(function(s) {
-            var trimmed = String(s || "").trim();
-            if (!trimmed) return null;
-
-            // Extract the QRED1?... part if this looks like a URL.
-            var m = trimmed.match(/(QRED1\?[^\s#]+)/);
-            if (m && m[1]) return m[1];
-
-            // Otherwise assume the entire value is already a seal string.
-            return trimmed;
-          })
-          .filter(Boolean);
+        var seals = raw.map(function(s) { return String(s || "").trim(); }).filter(Boolean);
 
         var result = await verifyQRedSeals(seals, publicKey || "");
 
-        // Update the DOM so tests can read #resultStatus / #resultContent
-        var resultView = document.getElementById("resultView");
-        var resultStatus = document.getElementById("resultStatus");
-        var resultMeta = document.getElementById("resultMeta");
-        var resultContent = document.getElementById("resultContent");
-
-        if (resultView && resultStatus) {
-          resultView.classList.add("visible");
-          resultStatus.textContent = result.status;
-          if (result.status === "VALID") {
-            resultStatus.className = "result-status valid";
-          } else if (result.status === "INVALID") {
-            resultStatus.className = "result-status error";
-          } else {
-            resultStatus.className = "result-status";
-          }
-        }
-
-        if (resultMeta) {
-          resultMeta.innerHTML = "";
-          if (result.document_id) {
-            var div = document.createElement("div");
-            div.className = "meta-item";
-            div.innerHTML = "<strong>Document:</strong> " + escapeHtml(result.document_id);
-            resultMeta.appendChild(div);
-          }
-          if (result.key_id) {
-            var div2 = document.createElement("div");
-            div2.className = "meta-item";
-            div2.innerHTML = "<strong>Key:</strong> " + escapeHtml(result.key_id);
-            resultMeta.appendChild(div2);
-          }
-          if (result.error_message) {
-            var div3 = document.createElement("div");
-            div3.className = "meta-item";
-            div3.innerHTML = "<strong>Error:</strong> " + escapeHtml(result.error_message);
-            resultMeta.appendChild(div3);
-          }
-        }
-
-        if (resultContent) {
-          resultContent.textContent = result.content || "";
-        }
+        showResult(result.status, result);
 
         return result;
       } catch (e) {
