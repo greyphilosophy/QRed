@@ -7,6 +7,7 @@ import App from "./App.jsx";
 import { PdfSealForm } from "./PdfSealForm.jsx";
 import { sealPdfInBrowser } from "./pdfClientSeal.js";
 import { createQRedSeals } from "./qredSealer.js";
+import { verifyQRedSeals } from "./qredVerifier.js";
 import { deriveSigningPublicKey } from "./signingKeys.js";
 
 vi.mock("./pdfClientSeal.js", () => ({ sealPdfInBrowser: vi.fn() }));
@@ -104,10 +105,8 @@ describe("App PDF signing keys", () => {
     fireEvent.click(screen.getByRole("button", { name: "Use public key to verify" }));
     expect(screen.getByLabelText("Issuer public key").value).toBe(keys.publicKey);
     const { seals } = await createQRedSeals({ content: "Generated key test", ...keys });
-    fireEvent.change(screen.getByLabelText("Seal strings, one per line"), { target: { value: seals.join("\n") } });
-    fireEvent.click(screen.getByRole("button", { name: "Add seals" }));
-    expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
-    expect(screen.getByText("Generated key test")).toBeTruthy();
+    await expect(verifyQRedSeals(seals, screen.getByLabelText("Issuer public key").value))
+      .resolves.toMatchObject({ status: "VALID", content: "Generated key test" });
   });
 
   it("downloads reusable raw keys separately, with no private data in the public download", async () => {

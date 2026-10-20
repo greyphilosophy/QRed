@@ -738,10 +738,12 @@ class TestKeyGenerationImportAndSignatureVerification:
         assert sealed_path.read_bytes().startswith(b"%PDF-")
         seal_result = _extract_seal_result(page)
         assert seal_result["seal_strings"]
-        page.locator("summary", has_text="Manual seal entry").click()
-        page.get_by_label("Seal strings, one per line").fill("\n".join(seal_result["seal_strings"]))
-        page.get_by_role("button", name="Add seals", exact=True).click()
-        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible()
+        footer = tmp_path / "generated-key-footer"
+        subprocess.run(["pdftoppm", "-f", "1", "-singlefile", "-r", "200",
+                        "-x", "0", "-y", "2200", "-W", "1700", "-H", "600",
+                        "-png", str(sealed_path), str(footer)], check=True, capture_output=True)
+        page.get_by_label("Choose QR image", exact=True).set_input_files(footer.with_suffix(".png"))
+        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("Testing client-side sealing")
         for request in requests:
             assert generated_private not in request.url
@@ -751,8 +753,9 @@ class TestKeyGenerationImportAndSignatureVerification:
         page.goto(f"{base_url}/verifier.html", wait_until="networkidle")
         page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
         expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(generated_public)
-        page.get_by_label("Seal text", exact=True).fill("\n".join(seal_result["seal_strings"]))
-        page.get_by_role("button", name="Add Manual Seals", exact=True).click()
+        page.evaluate("""seals => window.__qredTestVerify(
+            seals, document.getElementById('publicKeyInput').value
+        )""", seal_result["seal_strings"])
         expect(page.locator("#resultStatus")).to_have_text("VALID")
         expect(page.locator("#resultContent")).to_contain_text("Testing client-side sealing")
 

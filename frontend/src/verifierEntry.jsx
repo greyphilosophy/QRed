@@ -215,7 +215,7 @@ function VerifierApp() {
     <div className="verifier-page">
       <header>
         <h1>QRed Verifier</h1>
-        <p>Scan QR seals to verify a document — camera or manual entry</p>
+        <p>Scan QR seals with your camera to verify a document.</p>
         <p>Camera frames and seal text are processed in this browser and are not sent to a server.</p>
         <details>
           <summary>Optional: use airplane mode</summary>
@@ -249,33 +249,6 @@ function VerifierApp() {
           <label htmlFor="publicKeyFileInput" className="field-label">Open issuer public key file</label>
           <input id="publicKeyFileInput" type="file" accept=".txt,text/plain" className="field-input file-input" onChange={openPublicKeyFile} disabled={openingKey} />
           <p role="status">{keyFileStatus}</p>
-
-          <label htmlFor="manualSealInput" className="field-label">
-            Seal text
-          </label>
-          <textarea
-            id="manualSealInput"
-            rows={4}
-            value={sealText}
-            onChange={(e) => setSealText(e.target.value)}
-            placeholder="Paste QRed seal strings here, one per line"
-            className="field-input"
-            style={{ resize: "vertical" }}
-          />
-
-          <label htmlFor="sealFileInput" className="field-label">Open seal text file</label>
-          <input
-            id="sealFileInput"
-            type="file"
-            accept=".txt,text/plain"
-            className="field-input file-input"
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              const text = await file.text();
-              setSealText(text);
-            }}
-          />
 
           <label htmlFor="pageTextInput" className="field-label">
             Page text read by scanner or pasted for comparison

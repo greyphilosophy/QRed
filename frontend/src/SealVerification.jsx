@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { scanQrImage } from "./qr/scanQrImage.js";
 import { decodeSeal, qredPayloadFromPhotoScanResult, verifyQRedSeals, VISIBLE_QR_TEXT } from "./qredVerifier.js";
 import { readSigningKeyFile } from "./signingKeys.js";
@@ -60,7 +60,6 @@ export function useSealVerification() {
 }
 
 export function SealVerification({ verification }) {
-  const [manual, setManual] = React.useState("");
   const [openingKey, setOpeningKey] = useState(false);
   const [keyFileStatus, setKeyFileStatus] = useState("");
   const { publicKey, setPublicKey, results, notice, setNotice, busy, addSeal } = verification;
@@ -124,13 +123,7 @@ export function SealVerification({ verification }) {
     <p className="verification-note">Use a key obtained from the issuer through a trusted channel. The default demo key is public test data and proves no issuer identity.</p>
     <label htmlFor="qr-image">Choose QR image</label>
     <input id="qr-image" type="file" accept="image/*" onChange={readImage} />
-    <details>
-      <summary>Manual seal entry</summary>
-      <label htmlFor="manual-seals">Seal strings, one per line</label>
-      <textarea id="manual-seals" rows={4} value={manual} onChange={(event) => setManual(event.target.value)} />
-      <button type="button" onClick={() => manual.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).forEach(addSeal)}>Add seals</button>
-    </details>
-    <button type="button" onClick={() => { verification.clear(); setManual(""); }}>Clear collected seals</button>
+    <button type="button" onClick={verification.clear}>Clear collected seals</button>
     <div aria-live="polite">
       {notice && <p role="status">{notice}</p>}
       {busy && <p role="status">Verifying…</p>}
