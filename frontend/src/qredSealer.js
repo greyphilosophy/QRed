@@ -1,5 +1,5 @@
 import { signAsync as signEd25519 } from "@noble/ed25519";
-import { createQRedQrData } from "./qredQr.js";
+import { qredPayloadCapacity } from "./qredQr.js";
 import { gzipText, MAX_SEAL_TEXT_BYTES, qrPayloadBytes } from "./sealCompression.js";
 import { computeKeyId, encodeBase64Url, sealSignatureMessage } from "./sealSignature.js";
 import { validateSigningKeyPair } from "./signingKeys.js";
@@ -37,65 +37,103 @@ function buildFragmentUrl(bootstrapUrl, fragmentData) {
   return `${fragmentBase(bootstrapUrl)}#${fragmentData}`;
 }
 
-function fragmentFitsQr(bootstrapUrl, fragmentData) {
-  try {
-    createQRedQrData(buildFragmentUrl(bootstrapUrl, fragmentData));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function splitForQrUrls(data, payload, bootstrapUrl, encoding = "plaintext") {
-  let totalChunks = 1;
   // Gzip is split into bytes. Plaintext uses Unicode code points so splitting
   // cannot turn a surrogate pair into replacement characters in a URL.
   const units = encoding === "gzip" ? data : Array.from(data);
   const chunkValue = (start, end) => encoding === "gzip"
     ? encodeBase64Url(units.subarray(start, end))
     : units.slice(start, end).join("");
-  let chunks = [];
-  let stable = false;
 
-  while (!stable) {
-    chunks = [];
+  // Measure URL-encoded plaintext once, including escapes and multibyte text.
+  // Prefix sums let budget searches avoid repeatedly encoding large chunks or
+  // constructing QR error-correction codewords just to check their capacity.
+  const offsets = encoding === "plaintext" ? new Uint32Array(units.length + 1) : null;
+  if (offsets) {
+    const lengths = new Map();
+    units.forEach((unit, index) => {
+      if (!lengths.has(unit)) lengths.set(unit, new URLSearchParams({ txt: unit }).toString().length - 4);
+      offsets[index + 1] = offsets[index] + lengths.get(unit);
+    });
+  }
+  const dataBytes = (start, end) => offsets ? offsets[end] - offsets[start] : end - start;
+  const makeUrl = (chunkText, chunkNumber, totalChunks) => buildFragmentUrl(
+    bootstrapUrl, buildFragmentData({ payload, chunkText, chunkNumber, totalChunks, encoding }),
+  );
+  const overheads = new Map();
+  function overhead(chunkNumber, totalChunks) {
+    // Only the first chunk carries a signature. Later headers differ in size
+    // only when the decimal chunk index gains another digit.
+    const key = `${totalChunks}:${chunkNumber === 0 ? "signature" : String(chunkNumber).length}`;
+    if (!overheads.has(key)) {
+      const oneByte = encoding === "gzip" ? "AA" : "x";
+      overheads.set(key, qrPayloadBytes(makeUrl(oneByte, chunkNumber, totalChunks)).length - 1);
+    }
+    return overheads.get(key);
+  }
+
+  function splitWithinBudget(payloadBudget, totalChunks, limit) {
+    const ends = [];
     let offset = 0;
     while (offset < units.length) {
+      const available = payloadBudget - overhead(ends.length, totalChunks);
       let low = 1;
-      let high = Math.min(2945, units.length - offset);
+      let high = Math.min(available, units.length - offset);
       let best = 0;
       while (low <= high) {
         const mid = Math.floor((low + high) / 2);
-        const chunkText = chunkValue(offset, offset + mid);
-        const fragmentData = buildFragmentData({
-          payload,
-          chunkText,
-          chunkNumber: chunks.length,
-          totalChunks,
-          encoding,
-        });
-        if (fragmentFitsQr(bootstrapUrl, fragmentData)) {
+        if (dataBytes(offset, offset + mid) <= available) {
           best = mid;
           low = mid + 1;
         } else {
           high = mid - 1;
         }
       }
-      if (best === 0) {
-        throw new Error("QRed metadata and signature exceed the QR code capacity before adding document text");
-      }
-      chunks.push(chunkValue(offset, offset + best));
-      if (chunks.length > 4096) throw new Error("Document exceeds the 4096-seal limit");
+      if (best === 0) return null;
       offset += best;
+      ends.push(offset);
+      if (ends.length > limit) return ends;
     }
-    stable = chunks.length === totalChunks;
-    totalChunks = chunks.length;
+    return ends;
   }
 
-  return chunks.map((chunkText, index) => buildFragmentUrl(
-    bootstrapUrl,
-    buildFragmentData({ payload, chunkText, chunkNumber: index, totalChunks: chunks.length, encoding }),
-  ));
+  // Establish the fewest codes at full capacity, including any growth in the
+  // total-count header. Balancing must never increase that count.
+  let totalChunks = 1;
+  let ends;
+  while (true) {
+    ends = splitWithinBudget(qredPayloadCapacity(), totalChunks, 4096);
+    if (!ends) throw new Error("QRed metadata and signature exceed the QR code capacity before adding document text");
+    if (ends.length > 4096) throw new Error("Document exceeds the 4096-seal limit");
+    if (ends.length === totalChunks) break;
+    totalChunks = ends.length;
+  }
+
+  if (totalChunks > 1) {
+    let totalBytes = dataBytes(0, units.length);
+    for (let index = 0; index < totalChunks; index += 1) totalBytes += overhead(index, totalChunks);
+    let low = Math.ceil(totalBytes / totalChunks);
+    // A full first chunk needs version 40. Repack only if every code can use
+    // a smaller version; otherwise preserve the already smaller final grid.
+    let high = qredPayloadCapacity(39);
+    while (low <= high) {
+      const budget = Math.floor((low + high) / 2);
+      const balanced = splitWithinBudget(budget, totalChunks, totalChunks);
+      if (balanced && balanced.length === totalChunks) {
+        ends = balanced;
+        high = budget - 1;
+      } else {
+        low = budget + 1;
+      }
+    }
+  }
+
+  let start = 0;
+  return ends.map((end, index) => {
+    const url = makeUrl(chunkValue(start, end), index, totalChunks);
+    start = end;
+    return url;
+  });
 }
 
 export function canonicalizeText(text) {

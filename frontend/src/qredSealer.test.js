@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createQRedSeals } from "./qredSealer.js";
-import { verifyQRedSeals } from "./qredVerifier.js";
+import { createQRedQrData } from "./qredQr.js";
+import { qrPayloadBytes } from "./sealCompression.js";
+import { decodeSeal, verifyQRedSeals } from "./qredVerifier.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
@@ -70,5 +72,45 @@ describe("browser QRed sealing", () => {
     const sealed = await createQRedSeals({ content: "the document and the page ".repeat(70),
       issuer: "QA", privateKey, publicKey, encodingStrategy: "plaintext" });
     expect(sealed.seals[0].length).toBeGreaterThan(1200);
+  });
+
+  it("balances the signed header and text into two version-30 grids", async () => {
+    const content = "x".repeat(3000);
+    const { seals, total_seals } = await createQRedSeals({ content, issuer: "QA", privateKey, publicKey,
+      documentId: "DOC-BALANCED", encodingStrategy: "plaintext" });
+    expect(total_seals).toBe(2);
+    expect(seals.map(seal => createQRedQrData(seal).version)).toEqual([30, 30]);
+    expect(seals.map(seal => qrPayloadBytes(seal).length)).toEqual([1675, 1674]);
+    expect(decodeSeal(seals[0]).data.length).toBeLessThan(decodeSeal(seals[1]).data.length);
+    await expect(verifyQRedSeals(seals.toReversed(), publicKey)).resolves.toMatchObject({ status: "VALID", content });
+  });
+
+  it.each([[2600, [40]], [5300, [40, 39]]])("keeps the original split for %i bytes when balancing cannot reduce the largest grid", async (length, versions) => {
+    const { seals } = await createQRedSeals({ content: "x".repeat(length), issuer: "QA", privateKey, publicKey,
+      documentId: "DOC-BALANCED", encodingStrategy: "plaintext" });
+    expect(seals.map(seal => createQRedQrData(seal).version)).toEqual(versions);
+    if (seals.length > 1) expect(qrPayloadBytes(seals[0]).length).toBe(2945);
+  });
+
+  it.each([[26000, 10], [29000, 11]])("accounts for count and index header growth while balancing %i bytes across %i codes", async (length, count) => {
+    const content = "x".repeat(length);
+    const { seals } = await createQRedSeals({ content, issuer: "QA", privateKey, publicKey,
+      documentId: "DOC-BALANCED", encodingStrategy: "plaintext" });
+    expect(seals).toHaveLength(count);
+    expect(Math.max(...seals.map(seal => createQRedQrData(seal).version))).toBeLessThan(40);
+    const sizes = seals.map(seal => qrPayloadBytes(seal).length);
+    expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThan(count);
+    await expect(verifyQRedSeals(seals.toReversed(), publicKey)).resolves.toMatchObject({ status: "VALID", content });
+  });
+
+  it("balances encoded Unicode and punctuation bytes without splitting characters", async () => {
+    const content = ("A *-._~!+'%&= /猫é😀\n".repeat(45)).trim();
+    const { seals } = await createQRedSeals({ content, issuer: "QA / café 猫", privateKey, publicKey,
+      bootstrapUrl: "https://example.org/検証?mode=local", documentId: "DOC-BALANCED", encodingStrategy: "plaintext" });
+    expect(seals).toHaveLength(2);
+    expect(Math.max(...seals.map(seal => createQRedQrData(seal).version))).toBeLessThan(40);
+    const sizes = seals.map(seal => qrPayloadBytes(seal).length);
+    expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThanOrEqual(12);
+    await expect(verifyQRedSeals(seals.toReversed(), publicKey)).resolves.toMatchObject({ status: "VALID", content });
   });
 });

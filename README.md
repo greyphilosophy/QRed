@@ -64,6 +64,11 @@ produce fewer, larger modules within the same printed square. This favors
 module size over adding error correction that would require a larger grid;
 callers can still pin a correction level when needed.
 
+When a page needs multiple codes, QRed keeps the minimum code count and balances
+the complete payloads, including the first code's signature, to reduce the
+largest grid. If balancing cannot reduce it, the original split is retained
+so a smaller final code does not grow unnecessarily. Printed sizes stay the same.
+
 The image and camera scanners retry failed detections at a few nearby image
 scales to handle dense QR codes whose edges fall between pixels. Live camera
 scanning tries one scale per frame, with time for input and rendering between

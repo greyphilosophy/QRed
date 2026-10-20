@@ -48,11 +48,18 @@ gzip header and metadata consume part of that budget. Normal QR error correction
 protects the complete stream, including the binary payload.
 
 Automatic QR sizing chooses the lowest version that fits, then the strongest
-error correction available at that version (H, Q, M, then L). Each chunk is
-sized independently using its actual carrier bytes, so a short final chunk can
-use a smaller grid. The PDF layout keeps its printed dimensions independent
-of QR version. Explicit error-correction settings still take precedence over
-automatic sizing.
+error correction available at that version (H, Q, M, then L). Splitting first
+establishes the minimum code count at version 40 capacity. For multiple codes,
+it then finds the smallest shared payload-byte budget that fits that count,
+including each chunk's metadata, the first chunk's signature, and the encoded
+byte cost of each Unicode code point (or each raw gzip byte).
+
+Rebalancing is applied only when it lowers the largest QR version. If every
+code cannot fit below version 40, the original split is retained, preserving
+any smaller final grid. Each resulting chunk still selects its own smallest
+version. The PDF layout keeps its printed dimensions independent of QR
+version. Explicit error-correction settings still take precedence when
+rendering a QR.
 
 ## Reassembly and validation
 

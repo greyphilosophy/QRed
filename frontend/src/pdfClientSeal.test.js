@@ -241,6 +241,40 @@ describe("browser PDF sealing", () => {
     expect(Math.round(printedPage.getHeight())).toBe(1008);
   });
 
+  it("prints two balanced smaller grids at 2.75 inches and verifies their scanned contents", async () => {
+    const source = await PDFDocument.create();
+    const page = source.addPage([612, 792]);
+    for (let i = 0; i < 45; i += 1) {
+      page.drawText(`Item ${i + 1}: Received and inspected; quantity ${i * 7 + 3}; approved for delivery.`,
+        { x: 40, y: 740 - i * 14, size: 9 });
+    }
+    const { blob, stampedQrValues } = await sealPdfInBrowser({
+      file: new File([await source.save()], "delivery-records.pdf", { type: "application/pdf" }),
+      issuer: "Balanced Print QA", privateKey, publicKey, encodingStrategy: "plaintext",
+    });
+    expect(stampedQrValues).toHaveLength(2);
+    const printed = renderPdfFirstPageToPng(await blob.arrayBuffer(), 200);
+    const scanned = [];
+    for (let index = 0; index < 2; index += 1) {
+      // Crop the actual 2.75-inch stamps at their unchanged footer positions.
+      const png = new PNG({ width: 550, height: 550 });
+      PNG.bitblt(printed, png, Math.round((18 + index * 208) * 200 / 72), 2200, 550, 550, 0, 0);
+      const pixels = new Uint8ClampedArray(png.data);
+      const code = scanQrImage(pixels, png.width, png.height);
+      expect(code?.data).toBe(VISIBLE_QR_TEXT);
+      expect(code.version).toBeLessThan(40);
+      const modules = 17 + 4 * code.version;
+      const { topLeftCorner, topRightCorner } = code.location;
+      const side = Math.hypot(topRightCorner.x - topLeftCorner.x, topRightCorner.y - topLeftCorner.y);
+      expect(side * (modules + 8) / modules / 200).toBeCloseTo(2.75, 1);
+      scanned.push(qredPayloadFromPhotoScanResult(pixels, png.width, png.height, code));
+    }
+    expect(scanned).toEqual(stampedQrValues);
+    await expect(verifyQRedSeals(scanned.toReversed(), publicKey)).resolves.toMatchObject({
+      status: "VALID", content: expect.stringContaining("Item 45: Received and inspected"),
+    });
+  });
+
   it("stamps huge letter PDFs into legal pages without spilling past the footer band", async () => {
     const file = await makeHugeLetterPdfFile();
 

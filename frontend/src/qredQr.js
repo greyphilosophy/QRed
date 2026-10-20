@@ -31,6 +31,11 @@ function dataCapacityBytes(version, errorCorrectionLevel) {
   return Utils.getSymbolTotalCodewords(version) - ECCode.getTotalCodewordsCount(version, errorCorrectionLevel);
 }
 
+export function qredPayloadCapacity(version = 40, errorCorrectionLevel = ECLevel.L) {
+  return dataCapacityBytes(version, errorCorrectionLevel)
+    - qredHiddenPayloadByteOffset(version) - HIDDEN_PAYLOAD_LENGTH_BYTES;
+}
+
 function resolveErrorCorrectionLevel(value) {
   if (!value || value === "auto") {
     return null;
@@ -47,9 +52,8 @@ function chooseQrShape(payloadBytes, requestedErrorCorrectionLevel) {
   // Fewer modules make each printed square larger at the same physical size.
   // Spend spare capacity on error correction without enlarging the grid.
   for (let version = 1; version <= 40; version += 1) {
-    const required = qredHiddenPayloadByteOffset(version) + HIDDEN_PAYLOAD_LENGTH_BYTES + payloadBytes.length;
     for (const errorCorrectionLevel of levels) {
-      if (required <= dataCapacityBytes(version, errorCorrectionLevel)) return { version, errorCorrectionLevel };
+      if (payloadBytes.length <= qredPayloadCapacity(version, errorCorrectionLevel)) return { version, errorCorrectionLevel };
     }
   }
 

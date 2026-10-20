@@ -118,6 +118,15 @@ def make_multi_page_pdf(path: str, num_pages: int = 3) -> bytes:
     return buf.getvalue()
 
 
+def make_delivery_records_pdf(path):
+    pdf = rl_canvas.Canvas(str(path), pagesize=letter)
+    pdf.setFont("Helvetica", 9)
+    for i in range(45):
+        pdf.drawString(40, 740 - i * 14,
+                       f"Item {i + 1}: Received and inspected; quantity {i * 7 + 3}; approved for delivery.")
+    pdf.save()
+
+
 # ---------------------------------------------------------------------------
 # Test constants
 # ---------------------------------------------------------------------------
@@ -526,12 +535,7 @@ class TestPdfTextSealing:
 
     def test_gzip_reduces_a_page_to_one_seal_and_verifies_printed_pixels(self, page: Page, tmp_path):
         source = tmp_path / "delivery-records.pdf"
-        pdf = rl_canvas.Canvas(str(source), pagesize=letter)
-        pdf.setFont("Helvetica", 9)
-        for i in range(45):
-            pdf.drawString(40, 740 - i * 14,
-                           f"Item {i + 1}: Received and inspected; quantity {i * 7 + 3}; approved for delivery.")
-        pdf.save()
+        make_delivery_records_pdf(source)
         stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY,
                                           encoding="automatic", issuer="Gzip PDF Test")
         details = result["full_result"]
@@ -556,6 +560,26 @@ class TestPdfTextSealing:
         page.locator("input[type=file]").set_input_files(footer.with_suffix(".png"))
         expect(page.locator(".payload-text")).to_contain_text("Item 45: Received and inspected", timeout=20000)
         expect(page.locator(".payload-text")).to_contain_text("signature not verified")
+
+    def test_balanced_two_code_pdf_verifies_both_printed_grids(self, page: Page, tmp_path):
+        source = tmp_path / "delivery-records.pdf"
+        make_delivery_records_pdf(source)
+        stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY,
+                                          encoding="plaintext", issuer="Balanced PDF Test")
+        assert result["full_result"]["total_seals"] == 2
+        page.get_by_label("Issuer public key", exact=True).fill(DEMO_PUBLIC_KEY)
+        # Scan the second code first, using pixels from the saved PDF. Each
+        # crop is the unchanged 2.75-inch square (550 pixels at 200 dpi).
+        for index in [1, 0]:
+            crop = tmp_path / f"balanced-{index}"
+            subprocess.run(["pdftoppm", "-f", "1", "-singlefile", "-r", "200",
+                            "-x", str(round((18 + index * 208) * 200 / 72)), "-y", "2200",
+                            "-W", "550", "-H", "550", "-png", stamped, str(crop)],
+                           check=True, capture_output=True)
+            page.get_by_label("Choose QR image", exact=True).set_input_files(crop.with_suffix(".png"))
+            status = "INCOMPLETE" if index == 1 else "VALID"
+            expect(page.get_by_role("heading", name=status, exact=True)).to_be_visible(timeout=20000)
+        expect(page.locator(".verification-result pre")).to_contain_text("Item 45: Received and inspected")
 
 
 class TestImageOnlyPdfs:
