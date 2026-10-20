@@ -35,8 +35,8 @@ function loadStandalone(overrides = {}) {
     createQrFrameScanner, readSigningKeyFile, ...verifier, decodeQRedSeal: verifier.decodeSeal,
     captureDocumentFrameForOcr: vi.fn(), drawArOverlay: vi.fn(), ...overrides,
   };
-  // Execute the shipped module with real QR/signature code, without injecting
-  // pre-decoded seals or using the verification test hook.
+  // Execute the shipped module with real QR/signature code. Camera tests
+  // supply image pixels; direct verification tests use the existing test API.
   new Function(...Object.keys(bindings), source)(...Object.values(bindings));
 }
 
@@ -56,8 +56,7 @@ it("opens a saved issuer key in the standalone verifier and rejects invalid file
   fireEvent.change(picker, { target: { files: [{ name: "key.txt", size: 3, text: async () => "bad" }] } });
   await waitFor(() => expect(document.getElementById("publicKeyFileStatus").textContent).toContain("Key import failed"));
   expect(document.getElementById("publicKeyInput").value).toBe(publicKey.replace(/=$/, ""));
-  document.getElementById("manualSealInput").value = seals.join("\n");
-  fireEvent.click(document.getElementById("btnAddManual"));
+  await window.__qredTestVerify(seals, document.getElementById("publicKeyInput").value);
   await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
   expect(document.getElementById("resultContent").textContent).toBe("Standalone imported key");
   expect(fetch).not.toHaveBeenCalled();

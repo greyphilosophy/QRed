@@ -340,16 +340,8 @@
         <label for="publicKeyFileInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Open issuer public key file</label>
         <input id="publicKeyFileInput" type="file" accept=".txt,text/plain" style="width:100%; margin-bottom:0.75rem;">
         <p id="publicKeyFileStatus" role="status"></p>
-        <label for="manualSealInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Seal text</label>
-        <textarea id="manualSealInput" rows="4" placeholder="Paste QRed seal strings here, one per line" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;"></textarea>
-        <label for="sealFileInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Open seal text file</label>
-        <input id="sealFileInput" type="file" accept=".txt,text/plain" style="width:100%; margin-bottom:0.75rem;">
         <label for="pageTextInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Page text read by scanner or pasted for comparison</label>
         <textarea id="pageTextInput" rows="4" placeholder="Scan QR Code to OCR the page, or paste document text here" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;"></textarea>
-        <div class="controls" style="margin-bottom:0;">
-          <button class="btn btn-secondary" id="btnAddManual">Add Manual Seals</button>
-          <button class="btn btn-primary" id="btnVerifyManual">Verify Collected Seals</button>
-        </div>
       </div>
 
       <div class="status-bar" id="statusBar">
@@ -462,10 +454,6 @@
     var publicKeyInput = document.getElementById("publicKeyInput");
     var publicKeyFileInput = document.getElementById("publicKeyFileInput");
     var publicKeyFileStatus = document.getElementById("publicKeyFileStatus");
-    var manualSealInput = document.getElementById("manualSealInput");
-    var sealFileInput = document.getElementById("sealFileInput");
-    var btnAddManual = document.getElementById("btnAddManual");
-    var btnVerifyManual = document.getElementById("btnVerifyManual");
     var pageTextInput = document.getElementById("pageTextInput");
 
     btnScan.onclick = function() {
@@ -513,31 +501,6 @@
       }
     };
 
-    btnAddManual.onclick = function() {
-      addManualSeals(manualSealInput.value);
-    };
-
-    btnVerifyManual.onclick = function() {
-      addManualSeals(manualSealInput.value);
-      var docIds = Object.keys(state.sealsByDocument);
-      if (docIds.length === 0) {
-        showError("Add or scan at least one QRed payload seal before verifying.");
-        return;
-      }
-      reconstructAndShow(docIds[0]);
-    };
-
-    sealFileInput.onchange = function(event) {
-      var file = event.target.files && event.target.files[0];
-      if (!file) return;
-      file.text().then(function(text) {
-        manualSealInput.value = text;
-        addManualSeals(text);
-      }).catch(function(err) {
-        showError("Could not read seal file: " + err.message);
-      });
-    };
-
     publicKeyFileInput.onchange = async function(event) {
       var file = event.target.files && event.target.files[0];
       event.target.value = "";
@@ -546,7 +509,7 @@
       publicKeyFileStatus.textContent = "Reading public key on this device...";
       try {
         publicKeyInput.value = await readSigningKeyFile(file, "public");
-        publicKeyFileStatus.textContent = "Public key opened from your device. Add or scan seals to verify them.";
+        publicKeyFileStatus.textContent = "Public key opened from your device. Scan seals to verify them.";
       } catch (error) {
         publicKeyFileStatus.textContent = "Key import failed: " + error.message;
       } finally {
@@ -554,10 +517,6 @@
       }
     };
     publicKeyInput.oninput = function() { publicKeyFileStatus.textContent = ""; };
-
-    function addManualSeals(text) {
-      text.split(/\r?\n/).map(function(line) { return line.trim(); }).filter(Boolean).forEach(processScannedSeal);
-    }
 
     function fetchDefaultKeys() {
       if (!state.defaultKeysPromise) {

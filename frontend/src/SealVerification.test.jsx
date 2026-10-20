@@ -37,13 +37,12 @@ it("connects homepage scans to real signature verification and waits for every c
   expect(await screen.findByRole("heading", { name: "INVALID" })).toBeTruthy();
 });
 
-it("verifies manual seals, displays their signed timestamp, and clears previous results", async () => {
+it("displays the signed timestamp of scanned seals and clears previous results", async () => {
   const timestamp = "2026-10-20T17:55:14.123Z";
-  const { seals } = await createQRedSeals({ content: "Manual document", timestamp, privateKey, publicKey });
+  const { seals } = await createQRedSeals({ content: "Scanned document", timestamp, privateKey, publicKey });
   const { container } = render(<App />);
   fireEvent.change(screen.getByLabelText("Issuer public key"), { target: { value: publicKey } });
-  fireEvent.change(screen.getByLabelText("Seal strings, one per line"), { target: { value: seals.join("\n") } });
-  fireEvent.click(screen.getByRole("button", { name: "Add seals" }));
+  await act(async () => seals.forEach(scanner.props.onSealDetected));
   expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
   expect(container.querySelector("time").textContent).toBe(timestamp);
   expect(container.textContent).not.toContain("Claimed issuer");

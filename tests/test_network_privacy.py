@@ -8,6 +8,7 @@ are blocked; local blob URLs and service-worker cache reads remain available.
 import io
 import os
 import re
+import subprocess
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -40,6 +41,7 @@ def _stamp_and_save(page, directory, name, text):
     saved.value.save_as(path)
     assert path.read_bytes().startswith(b"%PDF-")
     expect(page.locator("#stamp-result")).to_contain_text(f"Sealed {name} in this browser.")
+    return path
 
 
 @pytest.mark.parametrize("offline", [False, True], ids=["connected-but-guarded", "airplane-mode"])
@@ -139,16 +141,16 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline):
 
         page.get_by_label("Encoding Strategy").select_option("gzip")
         text = "Private offline invoice NETWORK-1042. Approved total: $123.45."
-        _stamp_and_save(page, tmp_path, "private-invoice.pdf", text)
-        # The existing test hook only reads the actual signed result; all
-        # generation, saving and verification use the normal browser UI.
+        sealed_path = _stamp_and_save(page, tmp_path, "private-invoice.pdf", text)
+        # The test hook only checks the selected encoding. Verification reads
+        # actual saved-PDF pixels through the normal image-selection UI.
         assert page.evaluate("window.__lastSealResult.encoding") == "gzip"
-        seals = page.evaluate("window.__lastSealResult.seals")
-        assert seals
-        page.locator("summary", has_text="Manual seal entry").click()
-        page.get_by_label("Seal strings, one per line").fill("\n".join(seals))
-        page.get_by_role("button", name="Add seals", exact=True).click()
-        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible()
+        footer = tmp_path / "private-invoice-footer"
+        subprocess.run(["pdftoppm", "-f", "1", "-singlefile", "-r", "200",
+                        "-x", "0", "-y", "2200", "-W", "1700", "-H", "600",
+                        "-png", str(sealed_path), str(footer)], check=True, capture_output=True)
+        page.get_by_label("Choose QR image", exact=True).set_input_files(footer.with_suffix(".png"))
+        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text(text)
 
         # Also exercise file reading, image decoding and hidden-payload
