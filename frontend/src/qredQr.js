@@ -31,12 +31,9 @@ function dataCapacityBytes(version, errorCorrectionLevel) {
   return Utils.getSymbolTotalCodewords(version) - ECCode.getTotalCodewordsCount(version, errorCorrectionLevel);
 }
 
-function chooseVersion(payloadBytes, errorCorrectionLevel) {
-  for (let version = 1; version <= 40; version += 1) {
-    const required = qredHiddenPayloadByteOffset(version) + HIDDEN_PAYLOAD_LENGTH_BYTES + payloadBytes.length;
-    if (required <= dataCapacityBytes(version, errorCorrectionLevel)) return version;
-  }
-  return null;
+export function qredPayloadCapacity(version = 40, errorCorrectionLevel = ECLevel.L) {
+  return dataCapacityBytes(version, errorCorrectionLevel)
+    - qredHiddenPayloadByteOffset(version) - HIDDEN_PAYLOAD_LENGTH_BYTES;
 }
 
 function resolveErrorCorrectionLevel(value) {
@@ -48,16 +45,16 @@ function resolveErrorCorrectionLevel(value) {
 
 function chooseQrShape(payloadBytes, requestedErrorCorrectionLevel) {
   const fixedErrorCorrectionLevel = resolveErrorCorrectionLevel(requestedErrorCorrectionLevel);
-  if (fixedErrorCorrectionLevel) {
-    const version = chooseVersion(payloadBytes, fixedErrorCorrectionLevel);
-    if (version) return { version, errorCorrectionLevel: fixedErrorCorrectionLevel };
-    throw new Error("The amount of QRed payload data is too big to be stored in a QR Code");
-  }
+  const levels = fixedErrorCorrectionLevel
+    ? [fixedErrorCorrectionLevel]
+    : ERROR_CORRECTION_LEVELS_DESC.map((level) => ECLevel.from(level, ECLevel.M));
 
-  for (const level of ERROR_CORRECTION_LEVELS_DESC) {
-    const errorCorrectionLevel = ECLevel.from(level, ECLevel.M);
-    const version = chooseVersion(payloadBytes, errorCorrectionLevel);
-    if (version) return { version, errorCorrectionLevel };
+  // Fewer modules make each printed square larger at the same physical size.
+  // Spend spare capacity on error correction without enlarging the grid.
+  for (let version = 1; version <= 40; version += 1) {
+    for (const errorCorrectionLevel of levels) {
+      if (payloadBytes.length <= qredPayloadCapacity(version, errorCorrectionLevel)) return { version, errorCorrectionLevel };
+    }
   }
 
   throw new Error("The amount of QRed payload data is too big to be stored in a QR Code");

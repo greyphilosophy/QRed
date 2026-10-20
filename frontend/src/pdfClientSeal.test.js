@@ -194,7 +194,7 @@ describe("browser PDF sealing", () => {
 
   it("preserves the original letter pixels and verifies its larger footer at 300 dpi", async () => {
     const source = readFileSync("../tests/fixtures/live-qa-invoice.pdf");
-    const { blob } = await sealPdfInBrowser({
+    const { blob, stampedQrValues } = await sealPdfInBrowser({
       file: new File([source], "invoice.pdf", { type: "application/pdf" }),
       issuer: "Print QA", privateKey, publicKey,
     });
@@ -208,6 +208,16 @@ describe("browser PDF sealing", () => {
     const pixels = new Uint8ClampedArray(footer.data);
     const code = scanQrImage(pixels, footer.width, footer.height);
     expect(code?.data).toBe(VISIBLE_QR_TEXT);
+    expect(code.version).toBe(createQRedQrData(stampedQrValues[0]).version);
+    expect(code.version).toBeLessThan(createQRedQrData(stampedQrValues[0], { errorCorrectionLevel: "H" }).version);
+    // Measure the saved PDF's QR footprint, including its four-module quiet
+    // zone, from the detected corners. A smaller grid must still print 2.75".
+    const modules = 17 + 4 * code.version;
+    const { topLeftCorner, topRightCorner, bottomLeftCorner } = code.location;
+    for (const corner of [topRightCorner, bottomLeftCorner]) {
+      const side = Math.hypot(corner.x - topLeftCorner.x, corner.y - topLeftCorner.y);
+      expect(side * (modules + 8) / modules / 300).toBeCloseTo(2.75, 1);
+    }
     const seal = qredPayloadFromPhotoScanResult(pixels, footer.width, footer.height, code);
     await expect(verifyQRedSeals([seal], publicKey)).resolves.toMatchObject({
       status: "VALID", content: expect.stringContaining("Approved total: $123.45"),
@@ -229,6 +239,40 @@ describe("browser PDF sealing", () => {
     const [printedPage] = printedPdf.getPages();
     expect(Math.round(printedPage.getWidth())).toBe(612);
     expect(Math.round(printedPage.getHeight())).toBe(1008);
+  });
+
+  it("prints two balanced smaller grids at 2.75 inches and verifies their scanned contents", async () => {
+    const source = await PDFDocument.create();
+    const page = source.addPage([612, 792]);
+    for (let i = 0; i < 45; i += 1) {
+      page.drawText(`Item ${i + 1}: Received and inspected; quantity ${i * 7 + 3}; approved for delivery.`,
+        { x: 40, y: 740 - i * 14, size: 9 });
+    }
+    const { blob, stampedQrValues } = await sealPdfInBrowser({
+      file: new File([await source.save()], "delivery-records.pdf", { type: "application/pdf" }),
+      issuer: "Balanced Print QA", privateKey, publicKey, encodingStrategy: "plaintext",
+    });
+    expect(stampedQrValues).toHaveLength(2);
+    const printed = renderPdfFirstPageToPng(await blob.arrayBuffer(), 200);
+    const scanned = [];
+    for (let index = 0; index < 2; index += 1) {
+      // Crop the actual 2.75-inch stamps at their unchanged footer positions.
+      const png = new PNG({ width: 550, height: 550 });
+      PNG.bitblt(printed, png, Math.round((18 + index * 208) * 200 / 72), 2200, 550, 550, 0, 0);
+      const pixels = new Uint8ClampedArray(png.data);
+      const code = scanQrImage(pixels, png.width, png.height);
+      expect(code?.data).toBe(VISIBLE_QR_TEXT);
+      expect(code.version).toBeLessThan(40);
+      const modules = 17 + 4 * code.version;
+      const { topLeftCorner, topRightCorner } = code.location;
+      const side = Math.hypot(topRightCorner.x - topLeftCorner.x, topRightCorner.y - topLeftCorner.y);
+      expect(side * (modules + 8) / modules / 200).toBeCloseTo(2.75, 1);
+      scanned.push(qredPayloadFromPhotoScanResult(pixels, png.width, png.height, code));
+    }
+    expect(scanned).toEqual(stampedQrValues);
+    await expect(verifyQRedSeals(scanned.toReversed(), publicKey)).resolves.toMatchObject({
+      status: "VALID", content: expect.stringContaining("Item 45: Received and inspected"),
+    });
   });
 
   it("stamps huge letter PDFs into legal pages without spilling past the footer band", async () => {
@@ -348,12 +392,14 @@ describe("browser PDF sealing", () => {
     });
   });
 
-  it("chooses error correction dynamically while allowing callers to pin a level", () => {
+  it("shrinks the automatic grid while allowing callers to pin stronger correction", () => {
     const autoData = createQRedQrData("small payload");
-    const pinnedData = createQRedQrData("small payload", { errorCorrectionLevel: "M" });
+    const pinnedData = createQRedQrData("small payload", { errorCorrectionLevel: "H" });
 
-    expect(autoData.errorCorrectionLevel.bit).toBe(2);
-    expect(pinnedData.errorCorrectionLevel.bit).toBe(0);
+    expect(autoData.version).toBe(2);
+    expect(autoData.errorCorrectionLevel.bit).toBe(0); // M fits in version 2.
+    expect(pinnedData.version).toBe(3);
+    expect(pinnedData.errorCorrectionLevel.bit).toBe(2); // Explicit H is honored.
     expect(extractHiddenQRedPayload(autoData.bytes, autoData.version)).toBe("small payload");
     expect(extractHiddenQRedPayload(pinnedData.bytes, pinnedData.version)).toBe("small payload");
   });

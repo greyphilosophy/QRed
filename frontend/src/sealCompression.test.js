@@ -57,14 +57,18 @@ it("keeps a successful plaintext candidate when gzip metadata cannot fit", async
   expect(await verifyQRedSeals(sealed.seals, keys.publicKey)).toMatchObject({ status: "VALID", content: "OK" });
 });
 
-it("collects gzip byte chunks out of order and rejects missing, conflicting, and mixed chunks", async () => {
-  const content = Array.from({ length: 650 }, (_, i) => `${i}: ${Math.imul(i + 17, 2654435761) >>> 0} — 猫 café 🐈`).join("\n");
+it.each([[500, 2], [700, 3]])("balances %i gzip records across %i grids and verifies reassembled chunks", async (records, count) => {
+  const content = Array.from({ length: records }, (_, i) => `${i}: ${Math.imul(i + 17, 2654435761) >>> 0} — 猫 café 🐈`).join("\n");
   const { seals } = await createQRedSeals({ ...keys, content, encodingStrategy: "gzip" });
-  expect(seals.length).toBeGreaterThan(1);
-  const scanned = seals.map(seal => {
-    const qr = createQRedQrData(seal);
-    return extractHiddenQRedPayload(qr.bytes, qr.version);
-  });
+  expect(seals).toHaveLength(count);
+  const qrs = seals.map(seal => createQRedQrData(seal));
+  expect(Math.max(...qrs.map(qr => qr.version))).toBeLessThan(40);
+  const sizes = seals.map(seal => qrPayloadBytes(seal).length);
+  expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThan(count);
+  // Equalize the entire carrier: the signature leaves less space for data in
+  // the first code, and Base64 length must not determine a gzip chunk's size.
+  expect(decodeBase64Url(decodeSeal(seals[0]).data).length).toBeLessThan(decodeBase64Url(decodeSeal(seals[1]).data).length);
+  const scanned = qrs.map(qr => extractHiddenQRedPayload(qr.bytes, qr.version));
   expect(await verifyQRedSeals(scanned.toReversed(), keys.publicKey)).toMatchObject({ status: "VALID", content });
   expect(await verifyQRedSeals(scanned.slice(1), keys.publicKey)).toMatchObject({ status: "INCOMPLETE" });
   expect(await verifyQRedSeals([...scanned, scanned[0]], keys.publicKey)).toMatchObject({ status: "VALID" });
