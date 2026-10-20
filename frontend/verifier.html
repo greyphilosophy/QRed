@@ -296,6 +296,12 @@
       word-wrap: break-word;
       font-family: "Georgia", serif;
     }
+    .verification-result + .verification-result {
+      margin-top: 1.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--surface-2);
+    }
+    .verification-result .btn { margin-top: 1rem; }
 
     .footer {
       text-align: center;
@@ -395,6 +401,7 @@
     import { compareDocumentText, classifyOcrWords, decodeSeal as decodeQRedSeal, verifyQRedSeals, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./src/qredVerifier.js";
     import { captureDocumentFrameForOcr, drawArOverlay } from "./src/verifier/ocrAr.js";
     import { readSigningKeyFile } from "./src/signingKeys.js";
+    import { orderSealResults, sealCollectionProgress } from "./src/sealCollection.js";
 
     // QRed Protocol - decode QRed seal strings for scanner UI state.
     function decodeSeal(str) {
@@ -419,6 +426,8 @@
       sealsByDocument: Object.create(null),
       scannedSeals: [],
       seenSeals: new Set(),
+      verificationResults: Object.create(null),
+      scanSession: 0,
       arItems: [],
       arItemsByRaw: new Map(),
       arSelectedRaw: "",
@@ -467,6 +476,9 @@
     };
 
     btnNewScan.onclick = function() {
+      stopScanning();
+      state.scanSession += 1;
+      state.verificationResults = Object.create(null);
       state.sealsByDocument = Object.create(null);
       state.scannedSeals = [];
       stopArOverlay();
@@ -539,6 +551,12 @@
         var decoded = decodeQRedSeal(seal);
         return decoded && decoded.key_id ? decoded.key_id : "";
       }).filter(Boolean);
+      if (keyIds.length === 0) {
+        // Multipart wrappers carry only a grouping digest. Reconstruct the
+        // record to discover its key ID before looking up the default key.
+        var reconstructed = await verifyQRedSeals(seals, "");
+        if (reconstructed.key_id) keyIds.push(reconstructed.key_id);
+      }
       if (keyIds.length === 0) {
         state.defaultKeyLookupMessage = "No default trusted key could be selected because the seal does not include a key ID.";
         return "";
@@ -667,6 +685,8 @@
         state.sealsByDocument[docId] = { chunks: {}, total: decoded.totalChunks };
       }
       state.sealsByDocument[docId].chunks[decoded.chunkNumber] = decoded.data;
+      state.sealsByDocument[docId].revision = (state.sealsByDocument[docId].revision || 0) + 1;
+      delete state.verificationResults[docId];
       updateSealList();
       return state.sealsByDocument[docId];
     }
@@ -806,7 +826,7 @@
               }
             }
             lastScanAt = performance.now();
-            state.animFrameId = requestAnimationFrame(scanFrame);
+            if (state.isScanning) state.animFrameId = requestAnimationFrame(scanFrame);
           }
           scanFrame();
         };
@@ -847,15 +867,31 @@
       var docId = decoded.documentId;
       var docData = state.sealsByDocument[docId];
       var collected = Object.keys(docData.chunks).length;
-      var pct = Math.min(100, (collected / docData.total) * 100);
-      statusText.textContent = collected + " / " + docData.total + " seals";
-      progressFill.style.width = pct + "%";
-      progressContainer.style.display = "block";
+      refreshCollectionProgress();
 
       if (collected >= docData.total) {
+        reconstructAndShow(docId, { capturePageText: false });
+      }
+    }
+
+    function refreshCollectionProgress() {
+      var progress = sealCollectionProgress(state.scannedSeals, Object.values(state.verificationResults));
+      if (!progress) return;
+      statusText.textContent = progress.message;
+      var collected = progress.pagesCollected || progress.collected;
+      var total = progress.pagesTotal || progress.total;
+      progressFill.style.width = Math.min(100, collected / total * 100) + "%";
+      progressContainer.style.display = "block";
+      var active = decodeSeal(progress.activeSeal);
+      var result = state.verificationResults[active.documentId];
+      if (progress.finished) {
         stopScanning();
         btnScan.textContent = "Scan QR Code";
-        reconstructAndShow(docId, { capturePageText: false });
+      }
+      if (result && result.status !== "INCOMPLETE") {
+        var results = orderSealResults(Object.keys(state.sealsByDocument)
+          .map(function(id) { return state.verificationResults[id]; }).filter(Boolean));
+        showResult(result.status, result, { keepScanView: !progress.finished, progress: progress, results: results });
       }
     }
 
@@ -908,6 +944,8 @@
     async function reconstructAndShow(docId, options) {
       options = options || {};
       var docData = state.sealsByDocument[docId];
+      var session = state.scanSession;
+      var revision = docData.revision;
       var total = docData.total;
       var seals = [];
       for (var i = 0; i < total; i++) {
@@ -928,26 +966,80 @@
           result.error_message = state.defaultKeyLookupMessage + (result.error_message ? " " + result.error_message : "");
         }
         result.page_text = options.capturePageText ? await readPageTextFromScanner() : (pageTextInput.value.trim() || state.pageText || "");
-        showResult(result.status || "ERROR", result);
+        if (state.scanSession !== session || docData.revision !== revision) return;
+        state.verificationResults[docId] = { ...result, document_id: docId };
+        refreshCollectionProgress();
       } catch (e) {
-        showResult("ERROR", { error_message: e.message });
+        if (state.scanSession !== session || docData.revision !== revision) return;
+        state.verificationResults[docId] = { status: "ERROR", document_id: docId, error_message: e.message };
+        refreshCollectionProgress();
       }
     }
 
-    function showResult(status, payload) {
-      document.getElementById("scanMode").style.display = "none";
+    function showResult(status, payload, options) {
+      options = options || {};
+      document.getElementById("scanMode").style.display = options.keepScanView ? "block" : "none";
+      var results = options.results || [payload];
       state.verifiedContent = payload.content || "";
-      btnStartAr.style.display = status === "VALID" && state.verifiedContent ? "block" : "none";
+      btnStartAr.style.display = results.length === 1 && status === "VALID" && state.verifiedContent ? "block" : "none";
       var rv = document.getElementById("resultView");
       rv.classList.add("visible");
 
       var rs = document.getElementById("resultStatus");
-      rs.textContent = status;
-      rs.className = "result-status " + status.toLowerCase();
+      var summaryStatus = ["ERROR", "INVALID", "INCOMPLETE", "UNVERIFIED"].find(function(value) {
+        return results.some(function(result) { return result.status === value; });
+      }) || status;
+      rs.textContent = summaryStatus;
+      rs.className = "result-status " + summaryStatus.toLowerCase();
 
       var rm = document.getElementById("resultMeta");
       rm.innerHTML = "";
+      if (options.progress) {
+        var summary = document.createElement("p");
+        summary.className = "collection-progress";
+        summary.textContent = options.progress.message;
+        rm.appendChild(summary);
+      }
 
+      if (!options.keepScanView) statusBar.classList.remove("visible");
+      var rc = document.getElementById("resultContent");
+      rc.innerHTML = "";
+      if (results.length === 1) {
+        renderResultMetadata(rm, payload);
+        renderResultContent(rc, payload);
+        return;
+      }
+      results.forEach(function(result) {
+        var article = document.createElement("article");
+        article.className = "verification-result";
+        var heading = document.createElement("h3");
+        heading.textContent = (result.pdf ? "Page " + result.page_number + " of " + result.page_count + " · " : "") + result.status;
+        article.appendChild(heading);
+        var metadata = document.createElement("div");
+        metadata.className = "result-meta";
+        renderResultMetadata(metadata, result);
+        article.appendChild(metadata);
+        var content = document.createElement("div");
+        renderResultContent(content, result);
+        article.appendChild(content);
+        if (result.status === "VALID" && result.content) {
+          var arButton = document.createElement("button");
+          arButton.type = "button";
+          arButton.className = "btn btn-secondary";
+          arButton.textContent = "Compare this page in AR";
+          arButton.onclick = function() {
+            stopArOverlay();
+            state.verifiedContent = result.content;
+            btnStartAr.style.display = "block";
+            startArOverlay();
+          };
+          article.appendChild(arButton);
+        }
+        rc.appendChild(article);
+      });
+    }
+
+    function renderResultMetadata(rm, payload) {
       if (payload.document_id) {
         rm.innerHTML += "<div class='meta-item'><strong>Doc ID:</strong> " + escapeHtml(payload.document_id) + "</div>";
       }
@@ -967,10 +1059,9 @@
         rm.innerHTML += "<div class='meta-item'><strong>Error:</strong> " + escapeHtml(payload.error_message) + "</div>";
       }
 
-      statusBar.classList.remove("visible");
+    }
 
-      var rc = document.getElementById("resultContent");
-      rc.innerHTML = "";
+    function renderResultContent(rc, payload) {
       if (payload.content && payload.page_text) {
         var comparison = compareDocumentText(payload.content, payload.page_text);
         var summary = document.createElement("div");

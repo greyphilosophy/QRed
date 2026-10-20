@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { scanQrImage } from "./qr/scanQrImage.js";
-import { decodeSeal, qredPayloadFromPhotoScanResult, verifyQRedSeals, VISIBLE_QR_TEXT } from "./qredVerifier.js";
+import { decodeSeal, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./qredVerifier.js";
 import { readSigningKeyFile } from "./signingKeys.js";
+import { sealCollectionProgress, verifySealCollection } from "./sealCollection.js";
 
 export function useSealVerification() {
   const [seals, setSeals] = useState([]);
@@ -9,6 +10,8 @@ export function useSealVerification() {
   const [results, setResults] = useState([]);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [checked, setChecked] = useState(null);
+  const [session, setSession] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -40,23 +43,19 @@ export function useSealVerification() {
 
   useEffect(() => {
     let cancelled = false;
-    const groups = new Map();
-    for (const seal of seals) {
-      const id = decodeSeal(seal).document_id;
-      if (!groups.has(id)) groups.set(id, []);
-      groups.get(id).push(seal);
-    }
-    setBusy(groups.size > 0);
+    setBusy(seals.length > 0);
     setResults([]);
-    Promise.all([...groups.values()].map((group) => verifyQRedSeals(group, publicKey)))
-      .then((next) => { if (!cancelled) setResults(next); })
+    verifySealCollection(seals, publicKey)
+      .then((next) => { if (!cancelled) { setResults(next); setChecked({ seals, publicKey }); } })
       .catch((error) => { if (!cancelled) setNotice(`Verification failed: ${error.message}`); })
       .finally(() => { if (!cancelled) setBusy(false); });
     return () => { cancelled = true; };
   }, [seals, publicKey]);
 
-  return { seals, publicKey, setPublicKey, results, notice, setNotice, busy, addSeal,
-    clear: () => { setSeals([]); setResults([]); setNotice(""); } };
+  const progress = useMemo(() => sealCollectionProgress(seals,
+    checked?.seals === seals && checked.publicKey === publicKey ? results : []), [seals, publicKey, checked, results]);
+  return { seals, publicKey, setPublicKey, results, notice, setNotice, busy, addSeal, progress, session,
+    clear: () => { setSeals([]); setResults([]); setNotice(""); setSession(value => value + 1); } };
 }
 
 export function SealVerification({ verification }) {
@@ -125,6 +124,7 @@ export function SealVerification({ verification }) {
     <input id="qr-image" type="file" accept="image/*" onChange={readImage} />
     <button type="button" onClick={verification.clear}>Clear collected seals</button>
     <div aria-live="polite">
+      {verification.progress && <p className="collection-progress">{verification.progress.message}</p>}
       {notice && <p role="status">{notice}</p>}
       {busy && <p role="status">Verifying…</p>}
       {results.map((result, index) => <article key={result.document_id || index} className="verification-result">

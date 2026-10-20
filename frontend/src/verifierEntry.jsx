@@ -1,14 +1,15 @@
 import { createRoot } from "react-dom/client";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { QrScanner } from "./QrScanner.jsx";
 import {
-  verifyQRedSeals,
+  decodeSeal,
   compareDocumentText,
   qredTextFromScanResult,
   VISIBLE_QR_TEXT,
 } from "./qredVerifier.js";
 import "./verifier.css";
 import { readSigningKeyFile } from "./signingKeys.js";
+import { sealCollectionProgress, verifySealCollection } from "./sealCollection.js";
 
 const BUNDLED_PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 
@@ -81,6 +82,9 @@ function VerifierApp() {
   const [pageText, setPageText] = useState("");
 
   const [result, setResult] = useState(null);
+  const [collectionResults, setCollectionResults] = useState([]);
+  const [checked, setChecked] = useState(null);
+  const [session, setSession] = useState(0);
   const [comparison, setComparison] = useState(null);
   const [busy, setBusy] = useState(false);
   const [ocrStatusText, setOcrStatusText] = useState("");
@@ -111,6 +115,9 @@ function VerifierApp() {
   }, []);
 
   const sealStrings = useMemo(() => parseSealStrings(sealText), [sealText]);
+  const collectionProgress = useMemo(() => sealCollectionProgress(sealStrings,
+    checked?.seals === sealStrings && checked.publicKey === publicKey ? collectionResults : []),
+  [sealStrings, publicKey, checked, collectionResults]);
 
   async function runVerification(nextSealStrings, nextPublicKey) {
     const runId = ++resultRunIdRef.current;
@@ -118,8 +125,13 @@ function VerifierApp() {
 
     try {
       const pk = nextPublicKey ?? publicKeyRef.current ?? "";
-      const res = await verifyQRedSeals(nextSealStrings, pk);
+      const next = await verifySealCollection(nextSealStrings, pk);
+      const activeId = decodeSeal(nextSealStrings.at(-1))?.document_id;
+      const res = next.find(item => item.document_id === activeId) || next.at(-1)
+        || { status: "ERROR", error_message: "No valid chunks found" };
       if (runId !== resultRunIdRef.current) return;
+      setCollectionResults(next);
+      setChecked({ seals: nextSealStrings, publicKey: pk });
       setResult(res);
       return res;
     } finally {
@@ -130,6 +142,7 @@ function VerifierApp() {
   // Auto-verify whenever seals or public key changes.
   useEffect(() => {
     if (sealStrings.length === 0) {
+      resultRunIdRef.current += 1;
       setResult(null);
       setComparison(null);
       setOcrStatusText("");
@@ -178,6 +191,10 @@ function VerifierApp() {
   }
 
   function onClear() {
+    resultRunIdRef.current += 1;
+    setSession(value => value + 1);
+    setCollectionResults([]);
+    setChecked(null);
     setSealText("");
     setPageText("");
     setResult(null);
@@ -185,14 +202,14 @@ function VerifierApp() {
     setOcrStatusText("");
   }
 
-  function appendSealLine(newSeal) {
+  const appendSealLine = useCallback((newSeal) => {
     if (!newSeal) return;
     setSealText((prev) => {
       const current = parseSealStrings(prev);
       if (current.includes(newSeal)) return prev;
       return prev ? `${prev}\n${newSeal}` : newSeal;
     });
-  }
+  }, []);
 
   async function openPublicKeyFile(event) {
     const input = event.currentTarget;
@@ -226,11 +243,11 @@ function VerifierApp() {
 
       <main>
         <QrScanner
+          key={session}
           returnPayload
-          onSealDetected={(sealString) => {
-            // Prefer raw seal payload strings so the verifier can reconstruct + verify.
-            appendSealLine(sealString);
-          }}
+          collectSeals
+          collectionProgress={collectionProgress}
+          onSealDetected={appendSealLine}
         />
 
         <section className="result-card" style={{ marginTop: "1.25rem" }}>

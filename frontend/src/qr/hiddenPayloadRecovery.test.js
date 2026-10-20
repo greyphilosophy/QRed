@@ -1,8 +1,9 @@
 import { qrPayloadBytes, sealString } from "../sealFormat.js";
 import ECCode from "qrcode/lib/core/error-correction-code.js";
+import ECLevel from "qrcode/lib/core/error-correction-level.js";
 import QRCode from "qrcode";
 import { beforeAll, describe, expect, it } from "vitest";
-import { createQRedQrSymbol, qredHiddenPayloadByteOffset } from "../qredQr.js";
+import { createQRedQrSymbol, qredHiddenPayloadByteOffset, qredPayloadCapacity } from "../qredQr.js";
 import { createQRedSeals } from "../qredSealer.js";
 import { qredPayloadFromPhotoScanResult, verifyQRedSeals, VISIBLE_QR_TEXT } from "../qredVerifier.js";
 import { scanQrImage } from "./scanQrImage.js";
@@ -76,6 +77,26 @@ function recover(image) {
 }
 
 describe("error-corrected hidden QR data", () => {
+  it.each(["L", "M", "Q", "H"])("recovers signed version 23 seals with correction %s", async level => {
+    // jsQR 1.4.0's version-23 table placed alignment patterns at 74 instead
+    // of 78. Synthetic data keeps the reported private QR out of the tests.
+    const overhead = qrPayloadBytes(seal).length - new TextEncoder().encode(content).length;
+    const length = qredPayloadCapacity(22, ECLevel[level]) + 1 - overhead;
+    const sample = "Synthetic-v23-alignment-regression.";
+    const text = sample.repeat(Math.ceil(length / sample.length)).slice(0, length);
+    const [original] = (await createQRedSeals({ content: text, privateKey, publicKey,
+      encodingStrategy: "plaintext" })).seals;
+    const qr = createQRedQrSymbol(original, { errorCorrectionLevel: level });
+    expect(qr.version).toBe(23);
+    for (const damaged of [false, true]) {
+      if (damaged) damageHiddenLength(qr);
+      const { code, payload } = recover(render(qr));
+      expect(code.version).toBe(23);
+      expect(payload).toBe(original);
+      await expect(verifyQRedSeals([payload], publicKey)).resolves.toMatchObject({ status: "VALID", content: text });
+    }
+  });
+
   it.each(["plaintext", "gzip"].flatMap(encoding => ["L", "M", "Q", "H"].map(level => [encoding, level])))("recovers %s data after damage to its length field (%s)", async (encoding, level) => {
     const original = encoding === "gzip" ? gzipSeal : seal;
     const qr = createQRedQrSymbol(original, { errorCorrectionLevel: level });

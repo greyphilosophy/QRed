@@ -24,10 +24,29 @@ index d341eb7..d37cb9e 100644
      chunks: Chunks;
      version: number;
 diff --git a/node_modules/jsqr/dist/jsQR.js b/node_modules/jsqr/dist/jsQR.js
-index 429896a..8517395 100644
 --- a/node_modules/jsqr/dist/jsQR.js
 +++ b/node_modules/jsqr/dist/jsQR.js
-@@ -340,6 +340,7 @@ function scan(matrix) {
+@@ -333,6 +333,19 @@
+     if (!locations) {
+         return null;
+     }
++    // Dense printed symbols can put the finder-pattern module estimate one
++    // version off. Try the normal locations first, then adjacent valid grids.
++    // Every candidate still passes the full QR decoder and Reed-Solomon checks.
++    var nearbyLocations = [];
++    locations.forEach(function (location) {
++        [-4, 4].forEach(function (delta) {
++            var dimension = location.dimension + delta;
++            if (dimension >= 21 && dimension <= 177 && dimension % 4 === 1) {
++                nearbyLocations.push(Object.assign({}, location, { dimension: dimension }));
++            }
++        });
++    });
++    locations = locations.concat(nearbyLocations);
+     for (var _i = 0, locations_1 = locations; _i < locations_1.length; _i++) {
+         var location_1 = locations_1[_i];
+         var extracted = extractor_1.extract(matrix, location_1);
+@@ -340,6 +353,7 @@
          if (decoded) {
              return {
                  binaryData: decoded.bytes,
@@ -35,7 +54,7 @@ index 429896a..8517395 100644
                  data: decoded.text,
                  chunks: decoded.chunks,
                  version: decoded.version,
-@@ -788,7 +789,11 @@ function decodeMatrix(matrix) {
+@@ -788,7 +802,11 @@
          }
      }
      try {
@@ -48,3 +67,12 @@ index 429896a..8517395 100644
      }
      catch (_a) {
          return null;
+@@ -8962,7 +8979,7 @@
+     {
+         infoBits: 0x177EC,
+         versionNumber: 23,
+-        alignmentPatternCenters: [6, 30, 54, 74, 102],
++        alignmentPatternCenters: [6, 30, 54, 78, 102],
+         errorCorrectionLevels: [
+             {
+                 ecCodewordsPerBlock: 30,

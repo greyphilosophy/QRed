@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createQrFrameScanner, scanQrImage } from "./qr/scanQrImage.js";
-import { VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult, qredTextFromScanResult } from "./qredVerifier.js";
+import { decodeSeal, VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult, qredTextFromScanResult } from "./qredVerifier.js";
+import "./qrScanner.css";
 
 /**
  * QrScanner — Camera-based QR code scanner that can scan ANY QR code and
@@ -8,10 +9,11 @@ import { VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanR
  *
  * Three states:
  * 1. Idle — shows the AR viewport and "Start scanning" button (user-initiated camera access)
- * 2. Scanning — camera feed + jsQR loop
+ * 2. Scanning — camera feed + jsQR loop; collection mode waits for all pages
  * 3. Result — displays the scanned QR text, "New scan" resumes scanning
  */
-export function QrScanner({ onOpenPdfStampTool, onSealDetected, returnPayload = false, resultPanel }) {
+export function QrScanner({ onOpenPdfStampTool, onSealDetected, returnPayload = false, resultPanel,
+  collectSeals = false, collectionProgress }) {
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
   const [captureRequest, setCaptureRequest] = useState(0);
@@ -19,8 +21,15 @@ export function QrScanner({ onOpenPdfStampTool, onSealDetected, returnPayload = 
   const handleScan = useCallback((text) => {
     onSealDetected?.(text);
     setScannedText(text);
-    setMode("result");
-  }, [onSealDetected]);
+    const keepScanning = collectSeals && Boolean(decodeSeal(text));
+    if (!keepScanning) setMode("result");
+    return keepScanning;
+  }, [onSealDetected, collectSeals]);
+
+  useEffect(() => {
+    if (mode === "scanning" && scannedText && collectionProgress?.finished
+      && collectionProgress.activeSeal === scannedText) setMode("result");
+  }, [mode, scannedText, collectionProgress]);
 
   const scanButtonLabel = mode === "scanning" ? "Scan photo" : mode === "result" ? "Scan again" : "Start scanning";
   const controls = React.createElement("div", { className: "ar-controls" },
@@ -31,6 +40,7 @@ export function QrScanner({ onOpenPdfStampTool, onSealDetected, returnPayload = 
           setCaptureRequest((request) => request + 1);
           return;
         }
+        setScannedText(null);
         setMode("scanning");
       },
     }, scanButtonLabel),
@@ -67,6 +77,7 @@ export function QrScanner({ onOpenPdfStampTool, onSealDetected, returnPayload = 
         torchEnabled,
         returnPayload,
       }),
+      collectionProgress ? React.createElement("p", { className: "ar-collection-progress", role: "status", "aria-live": "polite" }, collectionProgress.message) : null,
       controls
     );
   }
@@ -271,6 +282,7 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
     let stream = null;
     let stopped = false;
     let throttleTimer = null;
+    const seen = new Set();
     const scanQrFrame = createQrFrameScanner();
 
     function stop() {
@@ -293,13 +305,15 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
 
     handleScanActionRef.current = (scanAction) => {
       if (scanAction.status === "found") {
+        if (seen.has(scanAction.text)) return false;
+        seen.add(scanAction.text);
         // Haptic feedback on successful decode
         if (typeof navigator.vibrate === "function") {
           navigator.vibrate(80);
         }
         setFeedback(null);
+        if (onScan(scanAction.text)) return false;
         stop();
-        onScan(scanAction.text);
         return true;
       }
       if (scanAction.status === "feedback") {

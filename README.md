@@ -75,6 +75,15 @@ scanning tries one scale per frame, with time for input and rendering between
 attempts. Chosen images and manual photo captures try all scales immediately.
 Signature verification still uses the recovered signed payload and the issuer's key.
 
+Start the camera once, then move between seals. It stays open while QR pieces or
+PDF pages are missing, ignores repeated scans, and stops when the expected pages
+are collected (or verification fails). Progress shows the current page's QR count
+or the document's page count. Any piece identifies its page's chunk count; a split
+page must be reconstructed before its document page count is available. Counts
+from unverified signatures are labeled as unverified. Different document roots,
+keys, timestamps, or page counts are kept separate. Use **Close** to pause scanning
+or **Clear collected seals** to start a fresh collection on the homepage.
+
 To reuse a saved signing identity, choose **Open private key file** and select the `.txt` file saved by QRed. Its matching public key is derived automatically. **Open public key file** also accepts a saved public key; if a private key is already entered, the pair must match. Invalid or unreadable files leave existing keys intact, and replacing a different private key asks for confirmation. You can still paste a private key and click **Derive public key**, or paste a matching pair.
 
 Key files contain one raw key as Base64URL or standard Base64, with or without padding. Surrounding whitespace and a UTF-8 BOM are accepted; files larger than 4 KB are rejected. The private key is a raw 32-byte Ed25519 seed; the public key is a raw 32-byte Ed25519 public key (43 encoded characters, optionally followed by `=`). PEM, SSH, hex, and expanded 64-byte private keys are not accepted. Because raw private and public keys have the same encoding, use the appropriate file control; QRed catches swapped files when they retain its saved filenames. Key generation, file reading, derivation, validation, and signing happen locally; keys are never sent to a server or saved in browser storage.

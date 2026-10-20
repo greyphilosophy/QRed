@@ -10,6 +10,7 @@ import * as verifier from "./qredVerifier.js";
 import { createQRedSeals } from "./qredSealer.js";
 import { createQRedQrSymbol } from "./qredQr.js";
 import { readSigningKeyFile } from "./signingKeys.js";
+import { orderSealResults, sealCollectionProgress } from "./sealCollection.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
@@ -32,7 +33,7 @@ function loadStandalone(overrides = {}) {
   document.documentElement.innerHTML = readFileSync("verifier.html", "utf8");
   const source = document.querySelector('script[type="module"]').textContent.replace(/^\s*import .+;$/gm, "");
   const bindings = {
-    createQrFrameScanner, readSigningKeyFile, ...verifier, decodeQRedSeal: verifier.decodeSeal,
+    createQrFrameScanner, readSigningKeyFile, orderSealResults, sealCollectionProgress, ...verifier, decodeQRedSeal: verifier.decodeSeal,
     captureDocumentFrameForOcr: vi.fn(), drawArOverlay: vi.fn(), ...overrides,
   };
   // Execute the shipped module with real QR/signature code. Camera tests
@@ -126,4 +127,39 @@ it("the standalone camera yields between retries and recovers a historical frame
   }
   await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("QR_CONTENT"));
   expect(document.getElementById("resultContent").textContent).toContain("QRED1?");
+});
+
+it("keeps one camera session for multipart seals and resolves the default key after reconstruction", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const sealed = await createQRedSeals({ content: "A".repeat(3000), encodingStrategy: "plaintext", privateKey, publicKey });
+  expect(sealed.seals).toHaveLength(2);
+  const frames = sealed.seals.map(seal => raster(createQRedQrSymbol(seal)));
+  let frame = frames[1], nextFrame, now = 1000;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  vi.stubGlobal("requestAnimationFrame", vi.fn(callback => { nextFrame = callback; return 1; }));
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ public_key: publicKey, key_id: sealed.key_id }) }));
+  const stop = vi.fn();
+  Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: {
+    getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop }] }),
+  } });
+  loadStandalone();
+  const video = document.getElementById("cameraVideo");
+  Object.defineProperties(video, { videoWidth: { value: frame.width }, videoHeight: { value: frame.height } });
+  vi.spyOn(video, "play").mockResolvedValue();
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage() {}, getImageData: () => frame });
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(typeof video.onloadedmetadata).toBe("function"));
+  video.onloadedmetadata();
+  expect(document.getElementById("statusText").textContent).toContain("1 of 2 QR seals");
+  now += 125; nextFrame();
+  expect(document.querySelectorAll(".seal-item")).toHaveLength(1);
+  expect(stop).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
+  frame = frames[0]; now += 125; nextFrame();
+  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
+  expect(document.getElementById("resultContent").textContent).toBe("A".repeat(3000));
+  expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
+  expect(stop).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledTimes(1);
 });
