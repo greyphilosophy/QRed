@@ -7,7 +7,7 @@ export function orderSealResults(results) {
   for (const result of results) {
     const identity = result.pdf && Number.isInteger(result.page_number)
       && result.document_root && result.key_id && result.timestamp
-      ? JSON.stringify([result.document_root, result.key_id, result.timestamp, result.page_count])
+      ? JSON.stringify([result.document_root, result.key_id, result.timestamp, result.page_count, result.identity])
       : result;
     if (!documents.has(identity)) documents.set(identity, []);
     documents.get(identity).push(result);
@@ -52,7 +52,8 @@ export function sealCollectionProgress(seals, results = []) {
   if (result.pdf && result.page_count > 1) {
     const members = results.filter(item => (item.status === "VALID" || item.status === "UNVERIFIED")
       && item.pdf && item.document_root === result.document_root && item.key_id === result.key_id
-      && item.timestamp === result.timestamp && item.page_count === result.page_count);
+      && item.timestamp === result.timestamp && item.page_count === result.page_count
+      && JSON.stringify(item.identity) === JSON.stringify(result.identity));
     const pages = new Set(members.map(item => item.page_number));
     const complete = pages.size === result.page_count;
     const message = complete ? `All ${result.page_count} pages collected.`

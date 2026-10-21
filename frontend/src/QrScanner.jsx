@@ -242,7 +242,7 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
   if (manual && !code?.data) {
     return { status: "feedback", message: "No QR code found in this photo. Keep the whole seal in view, hold steady, and avoid glare. Then try again." };
   }
-  if (manual && (code.data === VISIBLE_QR_TEXT || code.data.includes("QRED3:") || code.data.includes("qred.org"))) {
+  if (manual && (code.data === VISIBLE_QR_TEXT || /QRED[34]:/.test(code.data) || code.data.includes("qred.org"))) {
     const text = returnPayload
       ? qredPayloadFromPhotoScanResult(imageData.data, vWidth, vHeight, code)
       : qredTextFromPhotoScanResult(imageData.data, vWidth, vHeight, code);

@@ -13,10 +13,11 @@
     "lint": "eslint src/ --ext .jsx,.tsx",
     "test:ci": "vitest run --passWithNoTests",
     "build:worker": "npm run build",
-    "build:pages": "npm run build && cp worker/index.js build/_worker.js"
+    "build:pages": "npm run build && node scripts/buildPagesWorker.mjs"
   },
   "dependencies": {
     "@noble/ed25519": "^3.1.0",
+    "jose": "^6.2.13",
     "jsqr": "1.4.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "6.1.200",

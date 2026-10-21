@@ -120,7 +120,8 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline):
         page.get_by_role("button", name="Generate key pair", exact=True).click()
         expect(page.locator("#signing-key-status")).to_contain_text("Key pair generated.")
         private_key = page.get_by_label("Private Key", exact=True).input_value()
-        public_key = page.get_by_label("Public Key", exact=True).input_value()
+        page.wait_for_function("window.__qredPublicKeys && window.__qredPublicKeys.length === 43")
+        public_key = page.evaluate("window.__qredPublicKeys")
         for kind, key in [("private", private_key), ("public", public_key)]:
             with page.expect_download() as saved:
                 page.get_by_role("button", name=f"Save {kind} key", exact=True).click()
@@ -132,9 +133,8 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline):
         page.get_by_label("Open private key file", exact=True).set_input_files(tmp_path / "qred-ed25519-private-key.txt")
         expect(page.locator("#signing-key-status")).to_contain_text("Private key opened. Matching public key derived.")
         expect(page.get_by_label("Private Key", exact=True)).to_have_value(private_key)
-        expect(page.get_by_label("Public Key", exact=True)).to_have_value(public_key)
-        page.get_by_label("Open public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
-        expect(page.locator("#signing-key-status")).to_contain_text("Public key opened from your device.")
+        expect(page.get_by_label("Public Key", exact=True)).to_have_count(0)
+        page.wait_for_function("key => window.__qredPublicKeys === key", arg=public_key)
         page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
         expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(public_key)
 

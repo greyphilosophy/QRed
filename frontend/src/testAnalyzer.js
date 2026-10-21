@@ -18,7 +18,7 @@ export function qredTextFromScanResult(scanResult) {
   if (!scanResult || typeof scanResult === "string") return scanResult || "";
   const visibleText = scanResult.data || "";
   const hiddenPayload = hiddenPayloadFromScanResult(scanResult);
-  if (visibleText === VISIBLE_QR_TEXT || visibleText.includes("QRED3:") || visibleText.includes("qred.org")) {
+  if (visibleText === VISIBLE_QR_TEXT || /QRED[34]:/.test(visibleText) || visibleText.includes("qred.org")) {
     return hiddenPayload ? qredDisplayTextFromScannedPayload(hiddenPayload) : qredDisplayTextFromScannedPayload(visibleText);
   }
   return visibleText;
@@ -170,7 +170,7 @@ export function createTestAnalyzerController({ uploadZone, fileInput: _fileInput
     card.classList.add("success");
     const version = code.version || "—";
     const moduleCount = version !== "—" ? QR_MODULE_COUNT_BY_VERSION[version] : "—";
-    const looksLikeQRed = code.data === VISIBLE_QR_TEXT || code.data.includes("QRED3:") || code.data.includes("qred.org");
+    const looksLikeQRed = code.data === VISIBLE_QR_TEXT || /QRED[34]:/.test(code.data) || code.data.includes("qred.org");
     const payloadOffset = looksLikeQRed ? hiddenPayloadByteOffset(version) : "—";
 
     let hiddenSection = "";

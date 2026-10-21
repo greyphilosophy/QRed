@@ -107,7 +107,7 @@ export function SealVerification({ verification }) {
 
   return <section className="verification-card" aria-label="Seal verification">
     <h2>Verify collected seals</h2>
-    <p>Scan each QR seal for a page. A valid signature authenticates the recovered text and signed metadata against the public key below. Compare the recovered text with the document.</p>
+    <p>Scan each QR seal for a page. QRed Google attestations use the trusted authority keys included in this app. Local signatures use the issuer public key below. Compare the recovered text with the document.</p>
     <p className="verification-note">QR images and camera frames are processed in this browser and are not sent to a server.</p>
     <details>
       <summary>Optional: use airplane mode</summary>
@@ -130,7 +130,8 @@ export function SealVerification({ verification }) {
       {results.map((result, index) => <article key={result.document_id || index} className="verification-result">
         <h3>{result.status}</h3>
         <p>Document: {result.document_id}</p>
-        {result.timestamp && <p>{result.metadata_authenticated ? "Seal time" : "Claimed seal time"} (signer’s clock): <time dateTime={result.timestamp}>{result.timestamp}</time></p>}
+        {result.identity && <p>{result.identity_authenticated ? "Account authenticated through Google" : "Unverified identity claim"}: {result.identity.email}. Name: {result.identity.name} ({result.identity.name_source === "google" ? "Google profile" : "self-declared"}).</p>}
+        {result.timestamp && <p>{result.metadata_authenticated ? "Seal time" : "Claimed seal time"} ({result.attestation ? "QRed server clock" : "signer’s clock"}): <time dateTime={result.timestamp}>{result.timestamp}</time></p>}
         {result.key_id && <p>Key ID: {result.key_id}</p>}
         {result.pdf && <p>Page {result.page_number} of {result.page_count}</p>}
         {result.document_root && <p>Document fingerprint: {result.document_root}</p>}

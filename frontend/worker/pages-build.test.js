@@ -7,10 +7,10 @@ function readJson(path) {
 }
 
 describe("Cloudflare Pages build wiring", () => {
-  it("copies the Worker into the Pages output directory", () => {
+  it("bundles the Worker into the Pages output directory", () => {
     const frontendPackage = readJson("../package.json");
 
-    expect(frontendPackage.scripts["build:pages"]).toBe("npm run build && cp worker/index.js build/_worker.js");
+    expect(frontendPackage.scripts["build:pages"]).toBe("npm run build && node scripts/buildPagesWorker.mjs");
   });
 
   it("uses the Pages-ready build from repository-root scripts", () => {

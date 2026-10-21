@@ -16,6 +16,8 @@ import { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset, hid
 import { codewordsFromMatrix, deinterleaveDataCodewordsWithQrLib } from "./qr/qrLowLevel.js";
 import { sampleQrMatrix } from "./qr/qrImageRecovery.js";
 import { tokenizeDocumentText, compareWordSequences, compareDocumentText } from "./qr/qrTextDiff.js";
+import { attestationMessage, pageCommitment } from "./attestation.js";
+import trustedAuthorities from "./trustedAuthorities.json";
 
 export { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset, tokenizeDocumentText, compareWordSequences, compareDocumentText };
 
@@ -46,7 +48,7 @@ export function qredTextFromScanResult(scanResult) {
   if (!scanResult || typeof scanResult === "string") return scanResult || "";
   const visibleText = scanResult.data || "";
   const hiddenPayload = hiddenPayloadFromScanResult(scanResult);
-  if (visibleText === VISIBLE_QR_TEXT || visibleText.includes("QRED3:") || visibleText.includes("qred.org")) {
+  if (visibleText === VISIBLE_QR_TEXT || /QRED[34]:/.test(visibleText) || visibleText.includes("qred.org")) {
     return hiddenPayload || visibleText;
   }
   return visibleText;
@@ -144,11 +146,11 @@ export function qredPayloadFromPhotoScanResult(imageData, width, height, scanRes
 export function decodeSeal(sealString) {
   if (typeof sealString !== "string") return null;
   const fragment = sealString.includes("#") ? sealString.slice(sealString.indexOf("#") + 1) : sealString;
-  if (!fragment.startsWith("QRED3:")) return null;
+  if (!/^QRED[34]:/.test(fragment)) return null;
   try { return decodeTransport(qrPayloadBytes(sealString)); } catch { return null; }
 }
 
-export async function verifyQRedSeals(seals, publicKey) {
+export async function verifyQRedSeals(seals, publicKey, authorities = trustedAuthorities) {
   if (!Array.isArray(seals) || !seals.length) return { status: "ERROR", error_message: "No valid chunks found" };
   const chunks = new Map();
   let first, length = 0;
@@ -156,7 +158,7 @@ export async function verifyQRedSeals(seals, publicKey) {
     const decoded = decodeSeal(seal);
     if (!decoded) return { status: "ERROR", error_message: "Malformed or unsupported seal. Re-seal older documents with the current format." };
     first ??= decoded;
-    if (decoded.document_id !== first.document_id || decoded.total_chunks !== first.total_chunks || decoded.multipart !== first.multipart) {
+    if (decoded.version !== first.version || decoded.document_id !== first.document_id || decoded.total_chunks !== first.total_chunks || decoded.multipart !== first.multipart) {
       return { status: "INVALID", document_id: first.document_id, error_message: "Mixed seal sets or inconsistent chunk counts" };
     }
     const previous = chunks.get(decoded.chunk_number);
@@ -175,6 +177,7 @@ export async function verifyQRedSeals(seals, publicKey) {
       const record = concatenate(Array.from({ length: first.total_chunks }, (_, index) => chunks.get(index).data));
       if (!bytesEqual(await sha256(record), first.digest)) return { status: "INVALID", error_message: "Seal set digest does not match its contents" };
       metadata = decodeEnvelope(record);
+      if (metadata.version !== first.version) throw new Error("Seal version does not match its chunks");
     }
     content = metadata.encoding === "gzip" ? await gunzipChunks([metadata.data]) : strictUtf8.decode(metadata.data);
     if (utf8.encode(content).length > MAX_SEAL_TEXT_BYTES) throw new Error("Seal text exceeds the 8 MiB limit");
@@ -186,15 +189,21 @@ export async function verifyQRedSeals(seals, publicKey) {
     page_number: metadata.page_number, page_count: metadata.page_count, page_hash: pageHash,
     document_root: metadata.pdf ? metadata.document_root || pageHash : null,
     metadata_authenticated: false, signature_valid: false,
+    ...(metadata.version === "4" ? { identity: metadata.identity, attestation: "google", identity_authenticated: false } : {}),
   };
+  if (metadata.version === "4") publicKey = authorities[metadata.key_id];
   if (!publicKey?.trim()) return { ...result, status: "UNVERIFIED", error_message: "No trusted public key available for signature verification" };
   let isValid = false;
   try {
+    const message = metadata.version === "4"
+      ? attestationMessage(metadata, await pageCommitment(metadata, content, metadata.salt))
+      : sealSignatureMessage(metadata, content);
     isValid = await computeKeyId(publicKey) === metadata.key_id &&
-      await verifyEd25519(metadata.signature, sealSignatureMessage(metadata, content), decodeBase64Url(publicKey));
+      await verifyEd25519(metadata.signature, message, decodeBase64Url(publicKey));
   } catch { /* malformed keys or signatures are invalid */ }
   if (!isValid) return { ...result, status: "INVALID", error_message: "Digital signature verification failed" };
-  return { ...result, status: "VALID", signature_valid: true, metadata_authenticated: true };
+  return { ...result, status: "VALID", signature_valid: true, metadata_authenticated: true,
+    ...(metadata.version === "4" ? { identity_authenticated: true } : {}) };
 }
 
 // Re-export kept for test compatibility (module::codewordsFromMatrix etc were re-exported)

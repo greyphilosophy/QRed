@@ -546,6 +546,7 @@
 
     async function loadMatchingDefaultPublicKey(seals) {
       state.defaultKeyLookupMessage = "";
+      if (seals.some(function(seal) { return decodeQRedSeal(seal)?.version === "4"; })) return "";
       if (publicKeyInput.value.trim()) return publicKeyInput.value.trim();
       var keyIds = seals.map(function(seal) {
         var decoded = decodeQRedSeal(seal);
@@ -1040,6 +1041,10 @@
     }
 
     function renderResultMetadata(rm, payload) {
+      if (payload.identity) {
+        rm.innerHTML += "<div class='meta-item'><strong>" + (payload.identity_authenticated ? "Account authenticated through Google:" : "Unverified identity claim:") + "</strong> " + escapeHtml(payload.identity.email) + "</div>";
+        rm.innerHTML += "<div class='meta-item'><strong>Name (" + (payload.identity.name_source === "google" ? "Google profile" : "self-declared") + "):</strong> " + escapeHtml(payload.identity.name) + "</div>";
+      }
       if (payload.document_id) {
         rm.innerHTML += "<div class='meta-item'><strong>Doc ID:</strong> " + escapeHtml(payload.document_id) + "</div>";
       }
@@ -1047,7 +1052,7 @@
         rm.innerHTML += "<div class='meta-item'><strong>Key ID:</strong> " + escapeHtml(payload.key_id) + "</div>";
       }
       if (payload.timestamp) {
-        rm.innerHTML += "<div class='meta-item'><strong>" + (payload.metadata_authenticated ? "Seal time" : "Claimed seal time") + " (signer’s clock):</strong> " + escapeHtml(payload.timestamp) + "</div>";
+        rm.innerHTML += "<div class='meta-item'><strong>" + (payload.metadata_authenticated ? "Seal time" : "Claimed seal time") + (payload.attestation ? " (QRed server clock):</strong> " : " (signer’s clock):</strong> ") + escapeHtml(payload.timestamp) + "</div>";
       }
       if (payload.pdf) {
         rm.innerHTML += "<div class='meta-item'><strong>Page:</strong> " + payload.page_number + " of " + payload.page_count + "</div>";

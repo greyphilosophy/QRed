@@ -2,14 +2,16 @@ import { signAsync as signEd25519 } from "@noble/ed25519";
 import { qredPayloadCapacity } from "./qredQr.js";
 import { gzipText } from "./sealCompression.js";
 import { computeKeyId, sealSignatureMessage } from "./sealSignature.js";
-import { validateSigningKeyPair } from "./signingKeys.js";
+import { deriveSigningPublicKey, validateSigningKeyPair } from "./signingKeys.js";
+import { attestationMessage, pageCommitment, decodeFixedBase64 } from "./attestation.js";
+import { verifyAsync } from "@noble/ed25519";
 import { CHUNK_HEADER_BYTES, DEFAULT_BOOTSTRAP_URL, MAX_CHUNKS, MAX_SEAL_TEXT_BYTES,
   decodeTransport, encodeBase64Url, encodeChunk, encodeEnvelope, sealString, sha256, utf8 } from "./sealFormat.js";
 
 export { computeKeyId } from "./sealSignature.js";
 export { DEFAULT_BOOTSTRAP_URL } from "./sealFormat.js";
 
-async function splitRecord(record) {
+async function splitRecord(record, version) {
   if (record.length <= qredPayloadCapacity()) return [record];
   const maximumBody = qredPayloadCapacity() - CHUNK_HEADER_BYTES;
   const count = Math.ceil(record.length / maximumBody);
@@ -23,7 +25,7 @@ async function splitRecord(record) {
   let offset = 0;
   for (let index = 0; index < count; index += 1) {
     const length = balance ? Math.ceil((record.length - offset) / (count - index)) : maximumBody;
-    chunks.push(encodeChunk(digest, index, count, record.subarray(offset, offset + length)));
+    chunks.push(encodeChunk(digest, index, count, record.subarray(offset, offset + length), version));
     offset += length;
   }
   return chunks;
@@ -47,7 +49,7 @@ export function canonicalizeText(text) {
 }
 
 export async function createQRedSeals({
-  content, privateKey, publicKey, pageContext = null,
+  content, privateKey, publicKey, pageContext = null, attestation = null,
   timestamp = new Date().toISOString(), bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic",
 }) {
   const canonical = canonicalizeText(content);
@@ -55,18 +57,31 @@ export async function createQRedSeals({
   if (!["automatic", "plaintext", "gzip"].includes(encodingStrategy)) throw new Error(`Unsupported encoding strategy: ${encodingStrategy}`);
   const textBytes = utf8.encode(canonical);
   if (textBytes.length > MAX_SEAL_TEXT_BYTES) throw new Error("Seal text exceeds the 8 MiB limit");
-  const { privateBytes } = await validateSigningKeyPair({ privateKey, publicKey });
+  if (!attestation && !publicKey) publicKey = await deriveSigningPublicKey(privateKey);
   const metadata = {
-    version: "3", algorithm: "Ed25519", timestamp, key_id: await computeKeyId(publicKey),
+    version: attestation ? "4" : "3", algorithm: "Ed25519", timestamp: attestation?.timestamp || timestamp,
+    key_id: attestation?.key_id || await computeKeyId(publicKey),
     pdf: Boolean(pageContext), page_number: pageContext?.pageNumber ?? null,
     page_count: pageContext?.pageCount ?? null,
     document_root: pageContext?.pageCount > 1 ? pageContext.documentRoot : null,
   };
-  const signature = await signEd25519(sealSignatureMessage(metadata, canonical), privateBytes);
+  let signature;
+  if (attestation) {
+    Object.assign(metadata, { identity: attestation.identity, salt: attestation.salt });
+    signature = decodeFixedBase64(attestation.signature, 64);
+    const commitment = await pageCommitment(metadata, canonical, metadata.salt);
+    if (await computeKeyId(attestation.public_key) !== metadata.key_id ||
+        !await verifyAsync(signature, attestationMessage(metadata, commitment), decodeFixedBase64(attestation.public_key, 32))) {
+      throw new Error("QRed attestation does not match this page");
+    }
+  } else {
+    const { privateBytes } = await validateSigningKeyPair({ privateKey, publicKey });
+    signature = await signEd25519(sealSignatureMessage(metadata, canonical), privateBytes);
+  }
   const candidates = [], failures = [];
   async function addCandidate(encoding, body) {
     try {
-      const chunks = await splitRecord(encodeEnvelope(metadata, signature, body, encoding));
+      const chunks = await splitRecord(encodeEnvelope(metadata, signature, body, encoding), metadata.version);
       candidates.push({ encoding, chunks, qr_count: chunks.length, payload_bytes: chunks.reduce((sum, chunk) => sum + chunk.length, 0) });
     } catch (error) { failures.push({ encoding, error_message: error.message }); }
   }

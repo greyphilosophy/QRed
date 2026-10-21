@@ -11,6 +11,9 @@ import { createQRedSeals } from "./qredSealer.js";
 import { createQRedQrSymbol } from "./qredQr.js";
 import { readSigningKeyFile } from "./signingKeys.js";
 import { orderSealResults, sealCollectionProgress } from "./sealCollection.js";
+import { signAsync } from "@noble/ed25519";
+import { attestationMessage, pageCommitment } from "./attestation.js";
+import { decodeBase64Url, encodeBase64Url } from "./sealFormat.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
@@ -44,6 +47,28 @@ function loadStandalone(overrides = {}) {
 afterEach(() => {
   vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = "";
   delete navigator.mediaDevices;
+});
+
+it("shows an authenticated Google identity and server time offline with safely escaped names", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+  const metadata = { pdf: false, key_id: "da522162396ab2d0", timestamp: "2026-10-20T12:00:00Z",
+    identity: { provider: "google", email: "alice@gmail.com", subject: "123", name: "<img src=x onerror=alert(1)>", name_source: "google" } };
+  const salt = crypto.getRandomValues(new Uint8Array(32));
+  const content = "Synthetic attested document";
+  const signature = await signAsync(attestationMessage(metadata, await pageCommitment(metadata, content, salt)), decodeBase64Url(privateKey));
+  const { seals } = await createQRedSeals({ content,
+    attestation: { ...metadata, salt, public_key: publicKey.replace(/=$/, ""), signature: encodeBase64Url(signature) } });
+  loadStandalone({ verifyQRedSeals: (items, key) => verifier.verifyQRedSeals(items, key, { [metadata.key_id]: publicKey }) });
+  await window.__qredTestVerify(seals, "");
+  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
+  const details = document.getElementById("resultMeta");
+  expect(details.textContent).toContain("alice@gmail.com");
+  expect(details.textContent).toContain("Account authenticated through Google");
+  expect(details.textContent).toContain("QRed server clock");
+  expect(details.textContent).toContain(metadata.identity.name);
+  expect(details.querySelector("img")).toBeNull();
+  expect(fetch).not.toHaveBeenCalled();
 });
 
 it("opens a saved issuer key in the standalone verifier and rejects invalid files without replacing it", async () => {
