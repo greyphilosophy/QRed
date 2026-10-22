@@ -113,7 +113,7 @@ export function SealVerification({ verification }) {
 
   return <section className="verification-card" aria-label="Seal verification">
     <h2>Verify collected seals</h2>
-    <p>Scan each QR seal for a page. Google seals automatically select a trusted authority key included in QRed. Compare the recovered text with the document.</p>
+    <p>Scan each QR seal for a page. Compare the recovered text with the document.</p>
     <p className="verification-note">QR images and camera frames are processed in this browser and are not sent to a server.</p>
     <details>
       <summary>Optional: use airplane mode</summary>
