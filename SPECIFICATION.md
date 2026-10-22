@@ -23,11 +23,11 @@ The payload seals contain the signed document data required to reconstruct and v
 1. Source document is provided.
 2. A canonical text representation is produced.
 3. The canonical text is digitally signed using Ed25519.
-4. In automatic mode, implementations SHALL evaluate plaintext and gzip candidates carried as scanner-safe hidden payloads.
+4. In automatic mode, implementations SHALL evaluate plaintext and zlib candidates carried as scanner-safe hidden payloads, using gzip as a fallback when zlib is unavailable.
 5. Only reversible candidates are selectable.
 6. Automatic mode SHALL choose the candidate with the smallest QR count.
 7. QR-count ties SHALL prefer fewer encoded payload bytes, then plaintext.
-8. Explicit encoding strategies MAY request plaintext or gzip.
+8. Explicit encoding strategies MAY request plaintext, zlib, or gzip.
 9. The chosen payload form is divided into chunks and encoded into machine-readable seals.
 10. The payload seals are placed on the document.
 
@@ -72,7 +72,7 @@ Future versions may standardize canonicalization.
 The current implementation uses the compact binary v3 record specified in
 [COMPACT_SEALS_V3.md](docs/COMPACT_SEALS_V3.md). It contains a format/version
 marker, signed timestamp, 8-byte key ID, 64-byte Ed25519 signature, and canonical
-text (raw UTF-8 or gzip). Multipage PDFs additionally carry a signed page index,
+text (raw UTF-8, zlib, or gzip). Multipage PDFs additionally carry a signed page index,
 page count, and full document root. Issuer names are omitted; trusted key-to-
 authority mapping remains an external trust concern and future directory work.
 
@@ -83,7 +83,7 @@ for single-page PDFs, are recomputed from recovered text.
 
 The timestamp records the signer's clock, with millisecond precision; it is not
 an independently certified time. It remains authenticated by the signature.
-A JSON representation is provided for inspection only. Both plaintext and gzip
+A JSON representation is provided for inspection only. Plaintext and compressed
 QRs carry raw binary records behind the visible `QRED.ORG` marker. Automatic
 mode selects the fewest QRs, then the fewest actual bytes; plaintext wins a tie.
 Older seal formats are intentionally no longer verified.

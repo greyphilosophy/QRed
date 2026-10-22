@@ -1,6 +1,6 @@
 import { signAsync as signEd25519 } from "@noble/ed25519";
 import { qredPayloadCapacity } from "./qredQr.js";
-import { gzipText } from "./sealCompression.js";
+import { compressText } from "./sealCompression.js";
 import { computeKeyId, sealSignatureMessage } from "./sealSignature.js";
 import { deriveSigningPublicKey, validateSigningKeyPair } from "./signingKeys.js";
 import { attestationMessage, pageCommitment, decodeFixedBase64 } from "./attestation.js";
@@ -54,7 +54,7 @@ export async function createQRedSeals({
 }) {
   const canonical = canonicalizeText(content);
   if (!canonical.trim()) throw new Error("Cannot seal empty document text");
-  if (!["automatic", "plaintext", "gzip"].includes(encodingStrategy)) throw new Error(`Unsupported encoding strategy: ${encodingStrategy}`);
+  if (!["automatic", "plaintext", "zlib", "gzip"].includes(encodingStrategy)) throw new Error(`Unsupported encoding strategy: ${encodingStrategy}`);
   const textBytes = utf8.encode(canonical);
   if (textBytes.length > MAX_SEAL_TEXT_BYTES) throw new Error("Seal text exceeds the 8 MiB limit");
   if (!attestation && !publicKey) publicKey = await deriveSigningPublicKey(privateKey);
@@ -79,16 +79,23 @@ export async function createQRedSeals({
     signature = await signEd25519(sealSignatureMessage(metadata, canonical), privateBytes);
   }
   const candidates = [], failures = [];
-  async function addCandidate(encoding, body) {
+  async function addCandidate(encoding) {
     try {
+      const body = encoding === "plaintext" ? textBytes : await compressText(canonical, encoding);
       const chunks = await splitRecord(encodeEnvelope(metadata, signature, body, encoding), metadata.version);
       candidates.push({ encoding, chunks, qr_count: chunks.length, payload_bytes: chunks.reduce((sum, chunk) => sum + chunk.length, 0) });
-    } catch (error) { failures.push({ encoding, error_message: error.message }); }
+      return true;
+    } catch (error) {
+      failures.push({ encoding, error_message: error.message });
+      return false;
+    }
   }
-  await addCandidate("plaintext", textBytes);
-  if (encodingStrategy !== "plaintext" && typeof CompressionStream === "function") {
-    await addCandidate("gzip", await gzipText(canonical));
-  } else if (encodingStrategy === "gzip") throw new Error("Gzip compression is not available in this browser");
+  await addCandidate("plaintext");
+  if (encodingStrategy === "automatic") {
+    // Prefer the smaller zlib wrapper. Gzip remains a fallback for browsers
+    // without deflate support and an explicit option for older verifiers.
+    if (typeof CompressionStream === "function" && !await addCandidate("zlib")) await addCandidate("gzip");
+  } else if (encodingStrategy !== "plaintext") await addCandidate(encodingStrategy);
   const selected = encodingStrategy === "automatic"
     ? [...candidates].sort((a, b) => a.qr_count - b.qr_count || a.payload_bytes - b.payload_bytes)[0]
     : candidates.find(item => item.encoding === encodingStrategy);

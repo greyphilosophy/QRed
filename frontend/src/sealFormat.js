@@ -75,10 +75,11 @@ export function encodeMetadata(metadata) {
 }
 
 export function encodeEnvelope(metadata, signature, body, encoding) {
-  if (!["plaintext", "gzip"].includes(encoding)) throw new Error("Unsupported seal encoding");
+  if (!["plaintext", "zlib", "gzip"].includes(encoding)) throw new Error("Unsupported seal encoding");
   if (signature.length !== 64 || !body.length || body.length > MAX_COMPRESSED_BYTES) throw new Error("Invalid seal record length");
   const header = encodeMetadata(metadata);
   if (encoding === "gzip") header[0] |= 1;
+  if (encoding === "zlib") header[0] |= 8;
   if (metadata.version === "4") {
     if (!(metadata.salt instanceof Uint8Array) || metadata.salt.length !== 32) throw new Error("Invalid commitment salt");
     return concatenate([ATTESTED_MAGIC, header, encodeIdentity(metadata.identity), metadata.salt, signature, body]);
@@ -94,7 +95,7 @@ export function decodeEnvelope(bytes) {
   const attested = hasMagic(bytes, ATTESTED_MAGIC);
   if ((!attested && !hasMagic(bytes, RECORD_MAGIC)) || bytes.length < 86 || bytes.length > MAX_ENVELOPE_BYTES) throw new Error("Invalid or truncated seal record");
   const flags = bytes[4];
-  if ((flags & ~7) || ((flags & 4) && !(flags & 2))) throw new Error("Unsupported seal flags");
+  if ((flags & ~15) || ((flags & 9) === 9) || ((flags & 4) && !(flags & 2))) throw new Error("Unsupported seal flags");
   const multiple = Boolean(flags & 4);
   let signatureOffset = multiple ? 57 : 21;
   let identity, salt;
@@ -113,9 +114,9 @@ export function decodeEnvelope(bytes) {
   const pageNumber = multiple ? view.getUint16(21) + 1 : 1;
   const pageCount = multiple ? view.getUint16(23) : 1;
   if ((multiple && pageCount < 2) || pageNumber > pageCount) throw new Error("Invalid PDF page position/count");
-  const encoding = flags & 1 ? "gzip" : "plaintext";
+  const encoding = flags & 8 ? "zlib" : flags & 1 ? "gzip" : "plaintext";
   const data = bytes.slice(bodyOffset);
-  if (data.length > (encoding === "gzip" ? MAX_COMPRESSED_BYTES : MAX_SEAL_TEXT_BYTES)) throw new Error("Seal text exceeds the 8 MiB limit");
+  if (data.length > (encoding === "plaintext" ? MAX_SEAL_TEXT_BYTES : MAX_COMPRESSED_BYTES)) throw new Error("Seal text exceeds the 8 MiB limit");
   return {
     version: attested ? "4" : "3", algorithm: "Ed25519", timestamp: new Date(Number(milliseconds)).toISOString(),
     key_id: bytesToHex(bytes.subarray(13, 21)), pdf,

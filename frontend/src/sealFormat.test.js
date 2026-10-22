@@ -22,7 +22,7 @@ it.each([0, 3, 4, 20, 21, 84, 85])("rejects a record truncated to %i bytes", len
   expect(() => decodeEnvelope(record.slice(0, length))).toThrow();
 });
 
-it.each([4, 8, 128, 255])("rejects unsupported or inconsistent flags %i", flags => {
+it.each([4, 9, 11, 12, 15, 16, 128, 255])("rejects unsupported or inconsistent flags %i", flags => {
   const record = encodeEnvelope(metadata, new Uint8Array(64), new Uint8Array([65]), "plaintext");
   record[4] = flags;
   expect(() => decodeEnvelope(record)).toThrow();

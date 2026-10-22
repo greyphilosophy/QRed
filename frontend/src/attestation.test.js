@@ -73,4 +73,18 @@ describe("compact document-specific attestations", () => {
     await expect(verifyQRedSeals(large.seals.toReversed(), "", trusted)).resolves.toMatchObject({ status: "VALID", content });
     await expect(verifyQRedSeals(large.seals.slice(1), "", trusted)).resolves.toMatchObject({ status: "INCOMPLETE" });
   });
+  it.each(["zlib", "gzip"])("verifies %s Google attestations offline in single and multiple QRs", async encodingStrategy => {
+    const smallContent = "Certified delivery information. ".repeat(20).trimEnd();
+    const small = await attested(smallContent, { encodingStrategy });
+    expect(small.seals).toHaveLength(1);
+    expect(decodeSeal(small.seals[0]).encoding).toBe(encodingStrategy);
+    await expect(verifyQRedSeals(small.seals, "", trusted)).resolves.toMatchObject({ status: "VALID", identity_authenticated: true, content: smallContent });
+    const content = Array.from({ length: 500 }, (_, i) => `${i}: ${Math.imul(i + 17, 2654435761) >>> 0} — 猫 café 🐈`).join("\n");
+    const large = await attested(content, { encodingStrategy });
+    expect(large.seals.length).toBeGreaterThan(1);
+    await expect(verifyQRedSeals(large.seals.toReversed(), "", trusted)).resolves.toMatchObject({
+      status: "VALID", content, encoding: encodingStrategy, identity_authenticated: true,
+      identity: metadata.identity, page_number: 2, page_count: 3,
+    });
+  });
 });
