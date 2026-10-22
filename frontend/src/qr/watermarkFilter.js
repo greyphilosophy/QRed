@@ -16,6 +16,7 @@ export function filterWatermark(data, width, height, radius = 3) {
   while (white > 0 && count < width * height * 0.02) count += histogram[white--];
   white++;
   const textThreshold = white * 0.7;
+  const textCoreThreshold = white * 0.3;
   let ink = Math.round(white * 0.88);
   for (let value = Math.ceil(white * 0.75); value < white * 0.965; value++) {
     if (histogram[value] > histogram[ink]) ink = value;
@@ -27,15 +28,16 @@ export function filterWatermark(data, width, height, radius = 3) {
     let knownRow = 0, grayRow = 0;
     for (let x = 0; x < width; x++) {
       const luminance = luminances[y * width + x];
-      // Include the antialiased fringe around a black stroke in its mask.
-      // Otherwise gray letter edges become spurious QR ink on white modules.
-      let text = false;
+      // Mask dark text itself, but grow the one-pixel fringe only from its
+      // black core. Growing from already antialiased edges discards nearby
+      // watermark pixels, with different damage for different PDF renderers.
+      let text = luminance < textThreshold;
       for (let dy = -1; dy <= 1 && !text; dy++) {
         const row = y + dy;
         if (row < 0 || row >= height) continue;
         for (let dx = -1; dx <= 1; dx++) {
           const column = x + dx;
-          if (column >= 0 && column < width && luminances[row * width + column] < textThreshold) { text = true; break; }
+          if (column >= 0 && column < width && luminances[row * width + column] < textCoreThreshold) { text = true; break; }
         }
       }
       if (!text) {
