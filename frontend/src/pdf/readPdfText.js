@@ -41,7 +41,7 @@ async function assertReadableFonts(page, pageNumber) {
   }
 }
 
-export async function extractPdfPageTexts(file) {
+export async function withPdfDocument(file, read) {
   const assetBase = await pdfAssetBase();
   const task = getDocument({
     data: new Uint8Array(await file.arrayBuffer()),
@@ -56,6 +56,35 @@ export async function extractPdfPageTexts(file) {
   try {
     const pdf = await task.promise;
     if (!pdf.numPages) throw new Error("The PDF has no pages");
+    return await read(pdf);
+  } finally {
+    await task.destroy();
+  }
+}
+
+// Render the visible crop with annotations, without changing the original PDF.
+// Rotation zero gives layout coordinates in the page's own coordinate system;
+// the saved page retains its original rotation and crop.
+export async function renderPdfPage(pdf, number, scale = 2) {
+  const page = await pdf.getPage(number);
+  const viewport = page.getViewport({ scale, rotation: 0 });
+  if (viewport.width * viewport.height > 12_000_000) throw new Error("This page is too large for experimental watermark sealing. Choose a footer layout.");
+  if (page.userUnit !== 1) throw new Error("Experimental watermarks do not support this PDF's custom page units. Choose a footer layout.");
+  const canvas = pdf.canvasFactory.create(Math.ceil(viewport.width), Math.ceil(viewport.height));
+  try {
+    await page.render({ canvasContext: canvas.context, viewport, annotationMode: AnnotationMode.ENABLE }).promise;
+    const image = canvas.context.getImageData(0, 0, canvas.canvas.width, canvas.canvas.height);
+    const [x, y, right, top] = page.view;
+    return { data: image.data, width: image.width, height: image.height, scale,
+      bounds: { x, y, width: right - x, height: top - y } };
+  } finally {
+    pdf.canvasFactory.destroy(canvas);
+    page.cleanup();
+  }
+}
+
+export async function extractPdfPageTexts(file) {
+  return withPdfDocument(file, async (pdf) => {
     const { info } = await pdf.getMetadata();
     if (info.IsAcroFormPresent || info.IsXFAPresent) throw new Error(formError);
     const pages = [];
@@ -75,7 +104,5 @@ export async function extractPdfPageTexts(file) {
       page.cleanup();
     }
     return pages;
-  } finally {
-    await task.destroy();
-  }
+  });
 }

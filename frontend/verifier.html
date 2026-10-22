@@ -401,6 +401,7 @@
 
   <script type="module">
     import { createQrFrameScanner } from "./src/qr/scanQrImage.js";
+    import { isQRedEntryLink } from "./src/qr/hiddenPayload.js";
     import { compareDocumentText, classifyOcrWords, decodeSeal as decodeQRedSeal, verifyQRedSeals, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./src/qredVerifier.js";
     import { captureDocumentFrameForOcr, drawArOverlay } from "./src/verifier/ocrAr.js";
     import { readSigningKeyFile } from "./src/signingKeys.js";
@@ -754,7 +755,7 @@
       if (!code || !code.data) return;
 
       var raw = qredPayloadFromPhotoScanResult(imageData, frameWidth, frameHeight, code);
-      if (raw === VISIBLE_QR_TEXT) return;
+      if (isQRedEntryLink(raw)) return;
       if (state.arItemsByRaw.has(raw)) {
         var existing = state.arItemsByRaw.get(raw);
         existing.bbox = getQrBounds(code.location, frameWidth || existing.frameWidth, frameHeight || existing.frameHeight) || existing.bbox;
@@ -840,8 +841,8 @@
             var code = scanQrFrame(imageData.data, canvas.width, canvas.height);
             if (code) {
               var payload = qredPayloadFromPhotoScanResult(imageData.data, canvas.width, canvas.height, code);
-              if (payload === VISIBLE_QR_TEXT) {
-                statusText.textContent = "QR found, but its hidden payload could not be read. Move closer and try again.";
+              if (isQRedEntryLink(payload)) {
+                statusText.textContent = "Point at the document seal or pale watermark. Include the whole square in view.";
               } else {
                 processScannedSeal(payload);
               }

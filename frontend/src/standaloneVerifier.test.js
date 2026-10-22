@@ -6,6 +6,7 @@ import { fireEvent, waitFor } from "@testing-library/react";
 import jsQR from "jsqr";
 import { PNG } from "pngjs";
 import { createQrFrameScanner } from "./qr/scanQrImage.js";
+import { isQRedEntryLink } from "./qr/hiddenPayload.js";
 import * as verifier from "./qredVerifier.js";
 import { createQRedSeals } from "./qredSealer.js";
 import { createQRedQrSymbol } from "./qredQr.js";
@@ -36,7 +37,7 @@ function loadStandalone(overrides = {}) {
   document.documentElement.innerHTML = readFileSync("verifier.html", "utf8");
   const source = document.querySelector('script[type="module"]').textContent.replace(/^\s*import .+;$/gm, "");
   const bindings = {
-    createQrFrameScanner, readSigningKeyFile, orderSealResults, sealCollectionProgress, ...verifier, decodeQRedSeal: verifier.decodeSeal,
+    createQrFrameScanner, isQRedEntryLink, readSigningKeyFile, orderSealResults, sealCollectionProgress, ...verifier, decodeQRedSeal: verifier.decodeSeal,
     captureDocumentFrameForOcr: vi.fn(), drawArOverlay: vi.fn(), ...overrides,
   };
   // Execute the shipped module with real QR/signature code. Camera tests

@@ -1,9 +1,12 @@
 import jsQR from "jsqr";
+import { hiddenPayloadFromScanResult, isQRedEntryLink } from "./hiddenPayload.js";
+import { filterWatermark } from "./watermarkFilter.js";
 
 // Keep each decode bounded, including large photo uploads. Retry only when the
 // original scale fails: dense printed codes can land badly on the pixel grid.
 const MAX_SCAN_PIXELS = 12_000_000;
 const RETRY_SCALES = [0.9, 1.25, 1.5];
+const MAX_WATERMARK_PIXELS = 2_500_000;
 
 function resizeRgba(data, width, height, targetWidth, targetHeight) {
   const pixels = new Uint8ClampedArray(targetWidth * targetHeight * 4);
@@ -62,10 +65,33 @@ function isValidImage(data, width, height) {
     && data?.length === width * height * 4;
 }
 
-function scanAtSize(data, width, height, [targetWidth, targetHeight]) {
+function scanAttempts(width, height, tryRescaling = true, tryWatermark = true) {
+  const attempts = scanSizes(width, height, tryRescaling);
+  if (tryWatermark) {
+    const scale = Math.min(1, Math.sqrt(MAX_WATERMARK_PIXELS / (width * height)));
+    const w = Math.max(1, Math.floor(width * scale)), h = Math.max(1, Math.floor(height * scale));
+    const radius = Math.max(1, Math.min(4, Math.round(Math.max(w, h) / 550)));
+    attempts.push([w, h, radius]);
+    attempts.push([w, h, radius + 1]);
+    if (radius > 1) attempts.push([w, h, radius - 1]);
+    for (const factor of [0.9, 1.25]) {
+      const rw = Math.max(1, Math.floor(w * factor)), rh = Math.max(1, Math.floor(h * factor));
+      if (rw * rh <= MAX_WATERMARK_PIXELS) attempts.push([rw, rh, Math.max(1, Math.round(radius * factor))]);
+    }
+  }
+  return attempts;
+}
+
+function usableResult(code) {
+  return Boolean(code?.data) && (!isQRedEntryLink(code.data) || Boolean(hiddenPayloadFromScanResult(code)));
+}
+
+function scanAtSize(data, width, height, [targetWidth, targetHeight, radius]) {
   const originalSize = targetWidth === width && targetHeight === height;
-  const pixels = originalSize ? data : resizeRgba(data, width, height, targetWidth, targetHeight);
+  let pixels = originalSize ? data : resizeRgba(data, width, height, targetWidth, targetHeight);
+  if (radius) pixels = filterWatermark(pixels, targetWidth, targetHeight, radius);
   const code = jsQR(pixels, targetWidth, targetHeight, { inversionAttempts: "attemptBoth" });
+  if (code && radius) code.watermark = true;
   if (!code || originalSize || !code.location) return code;
   return {
     ...code,
@@ -79,13 +105,15 @@ function scanAtSize(data, width, height, [targetWidth, targetHeight]) {
 /** Return QR geometry in the original image's coordinates, even after a retry.
  * Hidden-payload recovery and camera overlays must use the same coordinate frame.
  */
-export function scanQrImage(data, width, height, { tryRescaling = true } = {}) {
+export function scanQrImage(data, width, height, { tryRescaling = true, tryWatermark = true } = {}) {
   if (!isValidImage(data, width, height)) return null;
-  for (const size of scanSizes(width, height, tryRescaling)) {
+  let entryLink = null;
+  for (const size of scanAttempts(width, height, tryRescaling, tryWatermark)) {
     const code = scanAtSize(data, width, height, size);
-    if (code) return code;
+    if (usableResult(code)) return code;
+    if (code?.data) entryLink ??= code;
   }
-  return null;
+  return entryLink;
 }
 
 /** One decode per live frame. A miss advances the scale for the next frame,
@@ -102,12 +130,12 @@ export function createQrFrameScanner() {
     if (width !== previousWidth || height !== previousHeight) {
       previousWidth = width;
       previousHeight = height;
-      sizes = scanSizes(width, height);
+      sizes = scanAttempts(width, height);
       nextSize = 0;
     }
     if (!sizes.length) return null;
     const code = scanAtSize(data, width, height, sizes[nextSize]);
-    nextSize = code ? 0 : (nextSize + 1) % sizes.length;
+    nextSize = usableResult(code) ? 0 : (nextSize + 1) % sizes.length;
     return code;
   };
 }

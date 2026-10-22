@@ -357,7 +357,8 @@ describe("decodeCanvasFrame", () => {
       status: "feedback",
       message: "No QR code found in this photo. Keep the whole seal in view, hold steady, and avoid glare. Then try again.",
     });
-    expect(jsQR).toHaveBeenCalledTimes(4);
+    expect(jsQR.mock.calls.length).toBeGreaterThan(1);
+    expect(jsQR.mock.calls.length).toBeLessThanOrEqual(9);
   });
 
   it("runs only one decode per automatic frame while keeping manual capture independent", () => {
@@ -372,7 +373,8 @@ describe("decodeCanvasFrame", () => {
     vi.mocked(jsQR).mockClear();
     decodeCanvasFrame(video, canvas, { manual: true, scanQrFrame: liveScanner });
     expect(liveScanner).not.toHaveBeenCalled();
-    expect(jsQR).toHaveBeenCalledTimes(4);
+    expect(jsQR.mock.calls.length).toBeGreaterThan(1);
+    expect(jsQR.mock.calls.length).toBeLessThanOrEqual(9);
   });
 
   it("gives manual photo feedback when a bootstrap QR has no hidden QRed payload", () => {
@@ -383,5 +385,12 @@ describe("decodeCanvasFrame", () => {
       status: "feedback",
       message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again.",
     });
+  });
+
+  it("keeps looking for a watermark after seeing the small navigation code", () => {
+    const { canvas, video } = frame();
+    vi.mocked(jsQR).mockReturnValue({ data: "https://qred.org/" });
+    expect(decodeCanvasFrame(video, canvas)).toEqual({ status: "continue" });
+    expect(decodeCanvasFrame(video, canvas, { manual: true })).toMatchObject({ status: "feedback", message: expect.stringContaining("pale watermark") });
   });
 });
