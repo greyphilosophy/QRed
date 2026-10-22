@@ -122,7 +122,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     try {
       const key = encodeBase64Url(decodeSigningKey(publicKey, "public"));
       onUsePublicKey(key);
-      reportKeyStatus('Public key copied to "Verify collected seals" above. You can now check your stamped seals there.');
+      reportKeyStatus("Public key selected for verification on this device. You can now check your stamped seals above.");
     } catch (error) {
       reportKeyStatus(error.message, true);
     }

@@ -115,6 +115,7 @@ function VerifierApp() {
   }, []);
 
   const sealStrings = useMemo(() => parseSealStrings(sealText), [sealText]);
+  const hasLocalSeals = sealStrings.some(seal => decodeSeal(seal)?.version === "3");
   const collectionProgress = useMemo(() => sealCollectionProgress(sealStrings,
     checked?.seals === sealStrings && checked.publicKey === publicKey ? collectionResults : []),
   [sealStrings, publicKey, checked, collectionResults]);
@@ -233,6 +234,7 @@ function VerifierApp() {
       <header>
         <h1>QRed Verifier</h1>
         <p>Scan QR seals with your camera to verify a document.</p>
+        <p>Google seals automatically select a trusted authority key included in QRed.</p>
         <p>Camera frames and seal text are processed in this browser and are not sent to a server.</p>
         <details>
           <summary>Optional: use airplane mode</summary>
@@ -251,21 +253,12 @@ function VerifierApp() {
         />
 
         <section className="result-card" style={{ marginTop: "1.25rem" }}>
-          <label htmlFor="publicKeyInput" className="field-label">
-            Issuer public key
-          </label>
-          <input
-            id="publicKeyInput"
-            type="text"
-            value={publicKey}
-            onChange={(e) => { setPublicKey(e.target.value); setKeyFileStatus(""); }}
-            disabled={openingKey}
-            placeholder="Paste issuer public key for signature verification"
-            className="field-input"
-          />
-          <label htmlFor="publicKeyFileInput" className="field-label">Open issuer public key file</label>
-          <input id="publicKeyFileInput" type="file" accept=".txt,text/plain" className="field-input file-input" onChange={openPublicKeyFile} disabled={openingKey} />
-          <p role="status">{keyFileStatus}</p>
+          {hasLocalSeals && <div>
+            <p>This collection includes a seal made with a private key file. Obtain the issuer’s public key file through a trusted channel to verify it.</p>
+            <label htmlFor="publicKeyFileInput" className="field-label">Open issuer public key file</label>
+            <input id="publicKeyFileInput" type="file" accept=".txt,text/plain" className="field-input file-input" onChange={openPublicKeyFile} disabled={openingKey} />
+            <p role="status">{keyFileStatus}</p>
+          </div>}
 
           <label htmlFor="pageTextInput" className="field-label">
             Page text read by scanner or pasted for comparison

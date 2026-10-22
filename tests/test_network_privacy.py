@@ -135,8 +135,7 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline):
         expect(page.get_by_label("Private Key", exact=True)).to_have_value(private_key)
         expect(page.get_by_label("Public Key", exact=True)).to_have_count(0)
         page.wait_for_function("key => window.__qredPublicKeys === key", arg=public_key)
-        page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
-        expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(public_key)
+        expect(page.get_by_label("Issuer public key", exact=True)).to_have_count(0)
 
         text = "Private offline invoice NETWORK-1042. Approved total: $123.45."
         sealed_path = _stamp_and_save(page, tmp_path, "private-invoice.pdf", "\n".join([text] * 5))
@@ -148,6 +147,7 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline):
                         "-x", "0", "-y", "2200", "-W", "1700", "-H", "600",
                         "-png", str(sealed_path), str(footer)], check=True, capture_output=True)
         page.get_by_label("Choose QR image", exact=True).set_input_files(footer.with_suffix(".png"))
+        page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text(text)
 
@@ -155,12 +155,14 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline):
         # recovery from real stamped-PDF pixels while networking is blocked.
         page.get_by_role("button", name="Clear collected seals", exact=True).click()
         fixture_key = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="
-        page.get_by_label("Issuer public key", exact=True).fill(fixture_key)
         fixture = Path(__file__).parent / "fixtures" / "compact-qr" / "invoice-footer-300dpi.png"
         page.get_by_label("Choose QR image", exact=True).set_input_files(fixture)
+        page.get_by_label("Open issuer public key file", exact=True).set_input_files({
+            "name": "fixture-public-key.txt", "mimeType": "text/plain", "buffer": fixture_key.encode(),
+        })
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45")
-        page.get_by_label("Issuer public key", exact=True).fill(public_key)
+        page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
         expect(page.get_by_role("heading", name="INVALID", exact=True)).to_be_visible()
 
         # Flush pending request callbacks, including background SW fetches.

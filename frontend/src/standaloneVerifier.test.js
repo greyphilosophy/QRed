@@ -60,7 +60,10 @@ it("shows an authenticated Google identity and server time offline with safely e
   const { seals } = await createQRedSeals({ content,
     attestation: { ...metadata, salt, public_key: publicKey.replace(/=$/, ""), signature: encodeBase64Url(signature) } });
   loadStandalone({ verifyQRedSeals: (items, key) => verifier.verifyQRedSeals(items, key, { [metadata.key_id]: publicKey }) });
+  expect(document.getElementById("publicKeyInput")).toBeNull();
+  expect(document.getElementById("issuerKeyControls").hidden).toBe(true);
   await window.__qredTestVerify(seals, "");
+  expect(document.getElementById("issuerKeyControls").hidden).toBe(true);
   await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
   const details = document.getElementById("resultMeta");
   expect(details.textContent).toContain("alice@gmail.com");
@@ -76,16 +79,22 @@ it("opens a saved issuer key in the standalone verifier and rejects invalid file
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
   const { seals } = await createQRedSeals({ content: "Standalone imported key", privateKey, publicKey });
   loadStandalone();
+  expect(document.getElementById("issuerKeyControls").hidden).toBe(true);
+  await window.__qredTestVerify(seals);
+  expect(document.getElementById("resultStatus").textContent).toBe("UNVERIFIED");
+  expect(document.getElementById("issuerKeyControls").hidden).toBe(false);
   const picker = document.getElementById("publicKeyFileInput");
   fireEvent.change(picker, { target: { files: [{ name: "qred-ed25519-public-key.txt", size: 45, text: async () => publicKey + "\n" }] } });
-  await waitFor(() => expect(document.getElementById("publicKeyInput").value).toBe(publicKey.replace(/=$/, "")));
+  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
   fireEvent.change(picker, { target: { files: [{ name: "key.txt", size: 3, text: async () => "bad" }] } });
   await waitFor(() => expect(document.getElementById("publicKeyFileStatus").textContent).toContain("Key import failed"));
-  expect(document.getElementById("publicKeyInput").value).toBe(publicKey.replace(/=$/, ""));
-  await window.__qredTestVerify(seals, document.getElementById("publicKeyInput").value);
+  await window.__qredTestVerify(seals);
   await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
   expect(document.getElementById("resultContent").textContent).toBe("Standalone imported key");
   expect(fetch).not.toHaveBeenCalled();
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ clearRect() {} });
+  fireEvent.click(document.getElementById("btnNewScan"));
+  expect(document.getElementById("issuerKeyControls").hidden).toBe(true);
 });
 
 it("the standalone camera recovers hidden payload bytes before verifying and renders metadata safely", async () => {
@@ -105,7 +114,7 @@ it("the standalone camera recovers hidden payload bytes before verifying and ren
   Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: {
     getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop() {} }] }),
   } });
-  document.getElementById("publicKeyInput").value = publicKey;
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ public_key: publicKey, key_id: "da522162396ab2d0" }) }));
   fireEvent.click(document.getElementById("btnScan"));
   await waitFor(() => expect(typeof video.onloadedmetadata).toBe("function"));
   video.onloadedmetadata();
@@ -133,7 +142,6 @@ it("the standalone camera yields between retries and recovers a historical frame
   Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: {
     getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop() {} }] }),
   } });
-  document.getElementById("publicKeyInput").value = "Sz8MZnNyHPkt6J3hC_rcXEabv4rrQSgAH_krcitjlF8";
   fireEvent.click(document.getElementById("btnScan"));
   await waitFor(() => expect(typeof video.onloadedmetadata).toBe("function"));
   video.onloadedmetadata();
