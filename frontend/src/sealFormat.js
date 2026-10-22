@@ -1,14 +1,18 @@
-// QRed v3: a compact signed page record, optionally split across several QRs.
+import { decodeIdentity, encodeIdentity } from "./attestation.js";
+
+// QRed v3 local signatures and v4 Google attestations share compact transport.
 // URLs are a copy/paste representation only; the QR carries these raw bytes.
 export const DEFAULT_BOOTSTRAP_URL = "https://qred.org/";
 export const MAX_SEAL_TEXT_BYTES = 8 * 1024 * 1024;
 export const MAX_COMPRESSED_BYTES = MAX_SEAL_TEXT_BYTES + 65536;
-export const MAX_ENVELOPE_BYTES = MAX_COMPRESSED_BYTES + 121;
+export const MAX_ENVELOPE_BYTES = MAX_COMPRESSED_BYTES + 1024;
 export const MAX_QR_PAYLOAD_BYTES = 2945;
 export const CHUNK_HEADER_BYTES = 40;
 export const MAX_CHUNKS = 4096;
 const RECORD_MAGIC = new Uint8Array([81, 82, 83, 51]); // QRS3
 const CHUNK_MAGIC = new Uint8Array([81, 82, 67, 51]); // QRC3
+const ATTESTED_MAGIC = new Uint8Array([81, 82, 83, 52]); // QRS4
+const ATTESTED_CHUNK_MAGIC = new Uint8Array([81, 82, 67, 52]); // QRC4
 export const utf8 = new TextEncoder();
 export const strictUtf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
@@ -75,6 +79,10 @@ export function encodeEnvelope(metadata, signature, body, encoding) {
   if (signature.length !== 64 || !body.length || body.length > MAX_COMPRESSED_BYTES) throw new Error("Invalid seal record length");
   const header = encodeMetadata(metadata);
   if (encoding === "gzip") header[0] |= 1;
+  if (metadata.version === "4") {
+    if (!(metadata.salt instanceof Uint8Array) || metadata.salt.length !== 32) throw new Error("Invalid commitment salt");
+    return concatenate([ATTESTED_MAGIC, header, encodeIdentity(metadata.identity), metadata.salt, signature, body]);
+  }
   return concatenate([RECORD_MAGIC, header, signature, body]);
 }
 
@@ -83,11 +91,19 @@ function hasMagic(bytes, magic) {
 }
 
 export function decodeEnvelope(bytes) {
-  if (!hasMagic(bytes, RECORD_MAGIC) || bytes.length < 86 || bytes.length > MAX_ENVELOPE_BYTES) throw new Error("Invalid or truncated seal record");
+  const attested = hasMagic(bytes, ATTESTED_MAGIC);
+  if ((!attested && !hasMagic(bytes, RECORD_MAGIC)) || bytes.length < 86 || bytes.length > MAX_ENVELOPE_BYTES) throw new Error("Invalid or truncated seal record");
   const flags = bytes[4];
   if ((flags & ~7) || ((flags & 4) && !(flags & 2))) throw new Error("Unsupported seal flags");
   const multiple = Boolean(flags & 4);
-  const signatureOffset = multiple ? 57 : 21;
+  let signatureOffset = multiple ? 57 : 21;
+  let identity, salt;
+  if (attested) {
+    const decoded = decodeIdentity(bytes, signatureOffset);
+    identity = decoded.identity;
+    salt = bytes.slice(decoded.offset, decoded.offset + 32);
+    signatureOffset = decoded.offset + 32;
+  }
   const bodyOffset = signatureOffset + 64;
   if (bytes.length <= bodyOffset) throw new Error("Truncated seal record");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -101,18 +117,19 @@ export function decodeEnvelope(bytes) {
   const data = bytes.slice(bodyOffset);
   if (data.length > (encoding === "gzip" ? MAX_COMPRESSED_BYTES : MAX_SEAL_TEXT_BYTES)) throw new Error("Seal text exceeds the 8 MiB limit");
   return {
-    version: "3", algorithm: "Ed25519", timestamp: new Date(Number(milliseconds)).toISOString(),
+    version: attested ? "4" : "3", algorithm: "Ed25519", timestamp: new Date(Number(milliseconds)).toISOString(),
     key_id: bytesToHex(bytes.subarray(13, 21)), pdf,
     page_number: pdf ? pageNumber : null, page_count: pdf ? pageCount : null,
     document_root: multiple ? bytesToHex(bytes.subarray(25, 57)) : null,
     signature: bytes.slice(signatureOffset, bodyOffset), encoding, data,
+    ...(attested ? { identity, salt } : {}),
   };
 }
 
-export function encodeChunk(digest, index, count, data) {
+export function encodeChunk(digest, index, count, data, version = "3") {
   if (digest.length !== 32 || !Number.isInteger(index) || !Number.isInteger(count) || count < 2 || count > MAX_CHUNKS || index < 0 || index >= count || !data.length) throw new Error("Invalid chunk index/count");
   const header = new Uint8Array(CHUNK_HEADER_BYTES);
-  header.set(CHUNK_MAGIC);
+  header.set(version === "4" ? ATTESTED_CHUNK_MAGIC : CHUNK_MAGIC);
   header.set(digest, 4);
   const view = new DataView(header.buffer);
   view.setUint16(36, index);
@@ -122,36 +139,39 @@ export function encodeChunk(digest, index, count, data) {
 
 export function decodeTransport(bytes) {
   if (bytes.length > MAX_QR_PAYLOAD_BYTES) throw new Error("Seal exceeds QR capacity");
-  if (hasMagic(bytes, RECORD_MAGIC)) {
+  if (hasMagic(bytes, RECORD_MAGIC) || hasMagic(bytes, ATTESTED_MAGIC)) {
     const envelope = decodeEnvelope(bytes);
-    return { ...envelope, format_id: "QRED3", document_id: `S-${encodeBase64Url(envelope.signature)}`,
+    return { ...envelope, format_id: `QRED${envelope.version}`, document_id: `S-${encodeBase64Url(envelope.signature)}`,
       chunk_number: 0, total_chunks: 1, multipart: false, bytes };
   }
-  if (!hasMagic(bytes, CHUNK_MAGIC) || bytes.length <= CHUNK_HEADER_BYTES) throw new Error("Unknown or truncated seal format");
+  const attested = hasMagic(bytes, ATTESTED_CHUNK_MAGIC);
+  if ((!attested && !hasMagic(bytes, CHUNK_MAGIC)) || bytes.length <= CHUNK_HEADER_BYTES) throw new Error("Unknown or truncated seal format");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const index = view.getUint16(36), count = view.getUint16(38);
   if (count < 2 || count > MAX_CHUNKS || index >= count) throw new Error("Invalid chunk index/count");
   const digest = bytes.slice(4, 36);
-  return { format_id: "QRED3", version: "3", document_id: `C-${bytesToHex(digest)}`,
+  return { format_id: attested ? "QRED4" : "QRED3", version: attested ? "4" : "3", document_id: `C-${bytesToHex(digest)}`,
     chunk_number: index, total_chunks: count, multipart: true, digest, data: bytes.slice(CHUNK_HEADER_BYTES), bytes };
 }
 
 export function sealString(bytes, bootstrapUrl = DEFAULT_BOOTSTRAP_URL) {
-  return `${(bootstrapUrl || DEFAULT_BOOTSTRAP_URL).split("#")[0]}#QRED3:${encodeBase64Url(bytes)}`;
+  const version = hasMagic(bytes, ATTESTED_MAGIC) || hasMagic(bytes, ATTESTED_CHUNK_MAGIC) ? "4" : "3";
+  return `${(bootstrapUrl || DEFAULT_BOOTSTRAP_URL).split("#")[0]}#QRED${version}:${encodeBase64Url(bytes)}`;
 }
 
 export function qrPayloadBytes(value) {
   const fragment = value.includes("#") ? value.slice(value.indexOf("#") + 1) : value;
-  if (!fragment.startsWith("QRED3:")) return utf8.encode(value);
+  if (!/^QRED[34]:/.test(fragment)) return utf8.encode(value);
   const encoded = fragment.slice(6);
   if (!encoded || encoded.length > Math.ceil(MAX_QR_PAYLOAD_BYTES / 3) * 4 || !/^[A-Za-z0-9_-]+$/.test(encoded)) throw new Error("Invalid compact seal encoding");
   const bytes = decodeBase64Url(encoded);
   if (encodeBase64Url(bytes) !== encoded) throw new Error("Invalid compact seal encoding");
+  if (bytes[3] !== fragment.charCodeAt(4)) throw new Error("Seal version does not match its framing");
   return bytes;
 }
 
 export function qrPayloadText(bytes) {
-  if (hasMagic(bytes, RECORD_MAGIC) || hasMagic(bytes, CHUNK_MAGIC)) {
+  if (hasMagic(bytes, RECORD_MAGIC) || hasMagic(bytes, CHUNK_MAGIC) || hasMagic(bytes, ATTESTED_MAGIC) || hasMagic(bytes, ATTESTED_CHUNK_MAGIC)) {
     decodeTransport(bytes);
     return sealString(bytes);
   }

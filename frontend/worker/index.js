@@ -1,12 +1,14 @@
+import { handleGoogleAuth } from "./googleAuth.js";
+
 /**
  * QRed Cloudflare Pages Worker
  *
- * Serves the static frontend assets and exposes only the public signing key.
- * All PDF sealing happens client-side in the browser — no PDFs ever touch
- * the server, and no private keys are served.
+ * Serves the static frontend assets, public keys, and optional Google attestation.
+ * PDFs stay in the browser. Optional Google attestation signs randomized page
+ * commitments on the server. User private keys are never sent to the server.
  *
  * To configure a custom keypair, set QRED_DEFAULT_PUBLIC_KEY on the Worker.
- * The private key must remain secret and must never be set on the server.
+ * The separate QRed authority key is a Worker secret, never a frontend asset.
  */
 
 // ---------------------------------------------------------------------------
@@ -76,8 +78,20 @@ async function defaultPublicKey(env) {
 // ---------------------------------------------------------------------------
 
 export default {
+  async scheduled(_event, env) {
+    if (!env.QRED_AUTH_DB) return;
+    const now = Date.now();
+    await env.QRED_AUTH_DB.batch([
+      env.QRED_AUTH_DB.prepare("DELETE FROM auth_requests WHERE expires<?").bind(now),
+      env.QRED_AUTH_DB.prepare("DELETE FROM auth_rate WHERE window<?").bind(now - 2 * 86400000),
+    ]);
+  },
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    if (url.pathname.startsWith("/api/auth/") || url.pathname === "/api/attest/google") {
+      return handleGoogleAuth(request, env);
+    }
 
     // --- /api/keys/default — public key only (NO private key) -------------
     if (url.pathname === "/api/keys/default" || url.pathname === "/api/keys/demo") {

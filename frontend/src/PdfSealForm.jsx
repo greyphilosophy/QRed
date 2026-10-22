@@ -1,8 +1,9 @@
 /* eslint-disable no-unused-vars */
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { sealPdfInBrowser } from "./pdfClientSeal.js";
 import { decodeSigningKey, deriveSigningPublicKey, generateSigningKeyPair, readSigningKeyFile, validateSigningKeyPair } from "./signingKeys.js";
 import { encodeBase64Url } from "./sealSignature.js";
+import { attestPagesWithGoogle, googleSealingAvailable } from "./googleSealing.js";
 
 const BOOTSTRAP_URL = "https://qred.org/";
 
@@ -29,6 +30,26 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [pageScalingStrategy, setPageScalingStrategy] = useState("automatic");
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [method, setMethod] = useState("private-key");
+  const [fallbackName, setFallbackName] = useState("");
+  const [googleIdentity, setGoogleIdentity] = useState(null);
+  const activeRequest = useRef(null);
+  const derivedFor = useRef("");
+
+  useEffect(() => () => {
+    activeRequest.current?.controller.abort();
+    try { activeRequest.current?.popup?.close(); } catch { /* The provider may isolate the popup. */ }
+  }, []);
+
+  useEffect(() => {
+    let current = true;
+    if (derivedFor.current === privateKey) return;
+    derivedFor.current = "";
+    setPublicKey("");
+    if (privateKey.trim()) deriveSigningPublicKey(privateKey)
+      .then(key => { if (current) { derivedFor.current = privateKey; setPublicKey(key); } }).catch(() => {});
+    return () => { current = false; };
+  }, [privateKey]);
 
   // Keep legacy global for Python E2E harness compatibility
   useEffect(() => {
@@ -46,6 +67,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     reportKeyStatus("Generating an Ed25519 key pair in this browser...");
     try {
       const keys = await generateSigningKeyPair();
+      derivedFor.current = keys.privateKey;
       setPrivateKey(keys.privateKey);
       setPublicKey(keys.publicKey);
       setShowPrivateKey(false);
@@ -57,19 +79,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     }
   }
 
-  async function derivePublicKey() {
-    setLoadingKeys(true);
-    try {
-      setPublicKey(await deriveSigningPublicKey(privateKey));
-      reportKeyStatus("Matching public key derived from your private key.");
-    } catch (error) {
-      reportKeyStatus(error.message, true);
-    } finally {
-      setLoadingKeys(false);
-    }
-  }
-
-  async function openKeyFile(event, kind) {
+  async function openKeyFile(event) {
     const input = event.currentTarget;
     const selectedFile = input.files?.[0];
     input.value = ""; // Allow choosing the same file again after an error/cancel.
@@ -77,23 +87,18 @@ export function PdfSealForm({ onUsePublicKey }) {
     setLoadingKeys(true);
     reportKeyStatus("Reading key file on this device...");
     try {
-      const key = await readSigningKeyFile(selectedFile, kind);
-      if (kind === "private") {
-        const matchingPublicKey = await deriveSigningPublicKey(key);
-        const currentPrivateKey = privateKey.trim().replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-        if (currentPrivateKey && currentPrivateKey !== key && !window.confirm("Replace the current signing keys with this private key? Save your current private key first if you want to reuse it.")) {
-          reportKeyStatus("Key import cancelled. Current keys kept.");
-          return;
-        }
-        setPrivateKey(key);
-        setPublicKey(matchingPublicKey);
-        setShowPrivateKey(false);
-        reportKeyStatus("Private key opened. Matching public key derived. You can stamp a PDF now.");
-      } else {
-        if (privateKey.trim()) await validateSigningKeyPair({ privateKey, publicKey: key });
-        setPublicKey(key);
-        reportKeyStatus("Public key opened from your device.");
+      const key = await readSigningKeyFile(selectedFile, "private");
+      const matchingPublicKey = await deriveSigningPublicKey(key);
+      const currentPrivateKey = privateKey.trim().replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      if (currentPrivateKey && currentPrivateKey !== key && !window.confirm("Replace the current signing keys with this private key? Save your current private key first if you want to reuse it.")) {
+        reportKeyStatus("Key import cancelled. Current keys kept.");
+        return;
       }
+      derivedFor.current = key;
+      setPrivateKey(key);
+      setPublicKey(matchingPublicKey);
+      setShowPrivateKey(false);
+      reportKeyStatus("Private key opened. Matching public key derived. You can stamp a PDF now.");
     } catch (error) {
       reportKeyStatus(`Key import failed: ${error.message}`, true);
     } finally {
@@ -124,23 +129,32 @@ export function PdfSealForm({ onUsePublicKey }) {
   }
 
   async function sealPdf() {
-    if (!file || !privateKey.trim() || !publicKey.trim()) {
-      setMessage("Choose a PDF and generate, open, or paste your Ed25519 keys before sealing.");
+    if (!file || (method === "private-key" && !privateKey.trim())) {
+      setMessage("Choose a PDF and a sealing method. For local sealing, generate, open, or paste your private key.");
       return;
     }
+    const controller = new AbortController();
+    const popup = method === "google" ? window.open("about:blank", "_blank", "popup,width=520,height=680") : null;
+    activeRequest.current = { controller, popup };
     setLoading(true);
+    setGoogleIdentity(null);
     try {
+      if (method === "google" && !popup) throw new Error("Allow the Google sign-in window, then try again.");
       // Validate before parsing a PDF so key errors are immediate and actionable.
-      await validateSigningKeyPair({ privateKey, publicKey });
+      const matchingPublicKey = method === "private-key" ? await deriveSigningPublicKey(privateKey) : null;
+      if (matchingPublicKey) await validateSigningKeyPair({ privateKey, publicKey: matchingPublicKey });
       setMessage("Sealing in this browser...");
       const { blob, sealResult, flattenedFieldCount } = await sealPdfInBrowser({
         file,
-        privateKey,
-        publicKey,
+        ...(method === "private-key" ? { privateKey, publicKey: matchingPublicKey } : {
+          attestPages: pages => attestPagesWithGoogle(pages, { popup, name: fallbackName,
+            signal: controller.signal, onStatus: setMessage, onIdentity: setGoogleIdentity }),
+        }),
         bootstrapUrl: BOOTSTRAP_URL,
         encodingStrategy: "automatic",
         pageScalingStrategy,
       });
+      if (controller.signal.aborted) return;
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -164,8 +178,10 @@ export function PdfSealForm({ onUsePublicKey }) {
         ].join("\n")
       );
     } catch (error) {
-      setMessage(`PDF sealing failed: ${error.message}`);
+      setMessage(controller.signal.aborted ? "Google sealing cancelled." : `PDF sealing failed: ${error.message}`);
     } finally {
+      try { popup?.close(); } catch { /* The provider may isolate the popup. */ }
+      activeRequest.current = null;
       setLoading(false);
     }
   }
@@ -177,7 +193,24 @@ export function PdfSealForm({ onUsePublicKey }) {
         Open a PDF from your device, seal the readable text on every page, and save the stamped copy. Supported form fields are automatically flattened before their text is signed. Images, handwriting, checkbox marks, and page appearance are not authenticated. Scanned or blank pages require a checked text layer before sealing. Review the values in your saved copy.
       </p>
       <p>Your PDF stays on your device. Stamping happens in this browser, and the file is not sent to a server.</p>
-      <details>
+      <div className="demo-input">
+        <label htmlFor="sealing-method">Sealing method</label>
+        <select id="sealing-method" value={method} disabled={loading || loadingKeys}
+          onChange={event => { setMethod(event.target.value); setMessage(""); setGoogleIdentity(null); }}>
+          <option value="private-key">Private key file (offline)</option>
+          <option value="google" disabled={!googleSealingAvailable}>Sign in with Google{googleSealingAvailable ? "" : " (not enabled on this installation)"}</option>
+        </select>
+      </div>
+      {method === "google" && <div className="signing-key-help">
+        <p>Use a Gmail or Google Workspace account. After you choose a document, sign in to authorize QRed to attest its text, your email, name, and the server time. Google profile names are not independently verified identities.</p>
+        <p>This method needs a connection for each document. Only randomized page fingerprints and account details reach QRed; Google receives the sign-in request. Your PDF, text, and private keys stay on this device. The finished seals can be verified offline.</p>
+        <label htmlFor="google-fallback-name">Name (used only if Google does not provide one)</label>
+        <input id="google-fallback-name" value={fallbackName} maxLength={160} disabled={loading}
+          onChange={event => setFallbackName(event.target.value)} />
+        <small>A name entered here will be labeled self-declared. Your name and email will be readable by anyone who scans the seal.</small>
+        {googleIdentity && <p>Google account: {googleIdentity.email}. Name: {googleIdentity.name} ({googleIdentity.name_source === "google" ? "Google profile" : "self-declared"}).</p>}
+      </div>}
+      {method === "private-key" && <><details>
         <summary>Optional: use airplane mode</summary>
         <p>Load QRed, then enable airplane mode and turn Wi-Fi and Bluetooth off in your device settings to limit network access while you work. Keep this tab open.</p>
         <p>Try your workflow with a non-sensitive file before opening sensitive documents. Some PDF fonts and text-recognition resources may still need an internet connection.</p>
@@ -188,14 +221,15 @@ export function PdfSealForm({ onUsePublicKey }) {
         <button type="button" onClick={generateKeys} disabled={loadingKeys || loading}>
           {loadingKeys ? "Preparing keys..." : "Generate key pair"}
         </button>
-        <p>Save your private key to your device before closing this tool or reloading the page. QRed does not keep a copy. The saved file is unencrypted; keep it private. To reuse it, choose Open private key file; the matching public key is filled automatically. You can also paste a private key and choose Derive public key.</p>
+        <p>Save your private key to your device before closing this tool or reloading the page. QRed does not keep a copy. The saved file is unencrypted; keep it private. Open or paste a private key to reuse it; the matching public key is derived automatically.</p>
       </div>
+      </>}
       <div className="demo-grid">
         <div className="demo-input">
           <label htmlFor="pdf-to-stamp">Open PDF</label>
-          <input id="pdf-to-stamp" type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+          <input id="pdf-to-stamp" type="file" accept="application/pdf" disabled={loading} onChange={(e) => setFile(e.target.files?.[0] || null)} />
         </div>
-        <div className="demo-input">
+        {method === "private-key" && <div className="demo-input">
           <label htmlFor="signing-private-key">Private Key</label>
           <input
             id="signing-private-key"
@@ -212,33 +246,25 @@ export function PdfSealForm({ onUsePublicKey }) {
           />
           <small id="private-key-help" className="key-help">Keep secret. Raw 32-byte Ed25519 seed, encoded as Base64URL or Base64 (43 characters, optionally followed by =). PEM, SSH, and hex keys are not accepted.</small>
           <label htmlFor="signing-private-key-file">Open private key file</label>
-          <input id="signing-private-key-file" type="file" accept=".txt,text/plain" onChange={(event) => openKeyFile(event, "private")} disabled={loadingKeys || loading} />
+          <input id="signing-private-key-file" type="file" accept=".txt,text/plain" onChange={openKeyFile} disabled={loadingKeys || loading} />
           <div className="key-actions">
             <button type="button" onClick={() => setShowPrivateKey((v) => !v)}>
               {showPrivateKey ? "Hide private key" : "Show private key"}
             </button>
             <button type="button" onClick={() => saveKey("private")} disabled={!privateKey.trim() || loadingKeys || loading}>Save private key</button>
-            <button type="button" onClick={derivePublicKey} disabled={!privateKey.trim() || loadingKeys || loading}>Derive public key</button>
           </div>
-        </div>
-        <div className="demo-input">
-          <label htmlFor="signing-public-key">Public Key</label>
-          <input id="signing-public-key" aria-label="Public Key" aria-describedby="public-key-help" value={publicKey}
-            onChange={(e) => { setPublicKey(e.target.value); reportKeyStatus(""); }}
-            placeholder="Generated with your private key" autoComplete="off" autoCapitalize="none" spellCheck={false} disabled={loadingKeys || loading} />
-          <small id="public-key-help" className="key-help">Safe to share. Raw 32-byte Ed25519 public key in Base64URL or Base64. Give it to recipients through a trusted channel so they can verify your seals.</small>
-          <label htmlFor="signing-public-key-file">Open public key file</label>
-          <input id="signing-public-key-file" type="file" accept=".txt,text/plain" onChange={(event) => openKeyFile(event, "public")} disabled={loadingKeys || loading} />
+          <small className="key-help">The public key is derived automatically. Share it through a trusted channel so recipients can verify local signatures.</small>
           <div className="key-actions">
             <button type="button" onClick={() => saveKey("public")} disabled={!publicKey.trim() || loadingKeys || loading}>Save public key</button>
             {onUsePublicKey && <button type="button" onClick={usePublicKey} disabled={!publicKey.trim() || loadingKeys || loading}>Use public key to verify</button>}
           </div>
-        </div>
+        </div>}
         <div className="demo-input">
           <label>Page scaling</label>
           <select
             aria-label="Page scaling"
             value={pageScalingStrategy}
+            disabled={loading}
             onChange={(e) => setPageScalingStrategy(e.target.value)}
             title="Choose how the PDF should make room for QR seals before drawing the footer."
           >
@@ -253,8 +279,9 @@ export function PdfSealForm({ onUsePublicKey }) {
       </div>
       <p id="signing-key-status" role="status" style={{ marginTop: "1rem", color: keyError ? "#ef4444" : "#64748b" }}>{keyStatus}</p>
       <button onClick={sealPdf} disabled={loading || loadingKeys} style={{ marginTop: "1rem" }}>
-        {loading ? "Sealing..." : "Stamp and save PDF"}
+        {loading ? "Sealing..." : method === "google" ? "Sign in with Google and stamp PDF" : "Stamp and save PDF"}
       </button>
+      {loading && method === "google" && <button type="button" onClick={() => activeRequest.current?.controller.abort()}>Cancel sealing</button>}
       {message && (
         <p id="stamp-result" role="status" style={{ marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155", whiteSpace: "pre-wrap" }}>
           {message}

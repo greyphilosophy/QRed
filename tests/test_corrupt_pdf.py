@@ -220,7 +220,6 @@ def _upload_file_to_stamp_tool(
             except Exception:
                 pass
 
-        page.get_by_label("Public Key", exact=True).fill("eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=")
 
         # Click the Seal button — must exist after upload
         seal_btn = page.get_by_role("button", name="Stamp and save PDF", exact=True)

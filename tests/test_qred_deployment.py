@@ -256,7 +256,6 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
     except Exception as exc:
         raise AssertionError(f"Failed to fill private key or wait for seal button: {exc}") from exc
 
-    page.get_by_label("Public Key", exact=True).fill(public_key or DEMO_PUBLIC_KEY)
 
     expect_playwright(page.get_by_label("Encoding Strategy")).to_have_count(0)
 
@@ -589,7 +588,6 @@ class TestImageOnlyPdfs:
         expect(page.get_by_role("button", name="Generate key pair")).to_be_enabled()
         page.get_by_label("Open PDF", exact=True).set_input_files(image_only_pdf_path)
         page.get_by_label("Private Key", exact=True).fill(DEMO_PRIVATE_KEY)
-        page.get_by_label("Public Key", exact=True).fill(DEMO_PUBLIC_KEY)
         downloads = []
         page.on("download", lambda download: downloads.append(download))
         page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
@@ -661,7 +659,6 @@ class TestPdfExtractionIntegrity:
         expect(page.get_by_role("button", name="Generate key pair", exact=True)).to_be_enabled()
         page.get_by_label("Open PDF", exact=True).set_input_files(source)
         page.get_by_label("Private Key", exact=True).fill(DEMO_PRIVATE_KEY)
-        page.get_by_label("Public Key", exact=True).fill(DEMO_PUBLIC_KEY)
         downloads = []
         page.on("download", lambda download: downloads.append(download))
         page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
@@ -685,7 +682,7 @@ class TestKeyGenerationImportAndSignatureVerification:
         private_input = page.get_by_label("Private Key", exact=True)
         public_input = page.get_by_label("Public Key", exact=True)
         expect(private_input).to_have_value("")
-        expect(public_input).to_have_value("")
+        expect(public_input).to_have_count(0)
 
         # No request should be needed for generation or key downloads.
         requests = []
@@ -693,7 +690,8 @@ class TestKeyGenerationImportAndSignatureVerification:
         page.get_by_role("button", name="Generate key pair", exact=True).click()
         expect(page.locator("#signing-key-status")).to_contain_text("Key pair generated.")
         generated_private = private_input.input_value()
-        generated_public = public_input.input_value()
+        page.wait_for_function("window.__qredPublicKeys && window.__qredPublicKeys.length === 43")
+        generated_public = page.evaluate("window.__qredPublicKeys")
         assert re.fullmatch(r"[A-Za-z0-9_-]{43}", generated_private)
         assert re.fullmatch(r"[A-Za-z0-9_-]{43}", generated_public)
         expect(private_input).to_have_attribute("type", "password")
@@ -714,14 +712,12 @@ class TestKeyGenerationImportAndSignatureVerification:
         page.get_by_role("button", name="Close", exact=True).click()
         page.get_by_role("button", name="Open PDF stamping tool").click()
         expect(private_input).to_have_value("")
-        expect(public_input).to_have_value("")
+        expect(public_input).to_have_count(0)
         page.get_by_label("Open private key file", exact=True).set_input_files(tmp_path / "qred-ed25519-private-key.txt")
         expect(page.locator("#signing-key-status")).to_contain_text("Private key opened. Matching public key derived.")
         expect(private_input).to_have_value(generated_private)
         expect(private_input).to_have_attribute("type", "password")
-        expect(public_input).to_have_value(generated_public)
-        page.get_by_label("Open public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
-        expect(page.locator("#signing-key-status")).to_contain_text("Public key opened from your device.")
+        page.wait_for_function("key => window.__qredPublicKeys === key", arg=generated_public)
         page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
         expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(generated_public)
 

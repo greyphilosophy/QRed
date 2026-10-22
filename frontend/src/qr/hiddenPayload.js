@@ -62,7 +62,7 @@ export function hiddenPayloadFromScanResult(scanResult) {
 
 export function isQRedVisibleText(text) {
   if (!text) return false;
-  return text === VISIBLE_QR_TEXT || text.includes("QRED3:") || text.includes("qred.org");
+  return text === VISIBLE_QR_TEXT || /QRED[34]:/.test(text) || text.includes("qred.org");
 }
 
 export { HIDDEN_PAYLOAD_LENGTH_BYTES };

@@ -41,7 +41,7 @@ async function documentMerkleRoot(pageTexts) {
   return level[0];
 }
 
-async function createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy }) {
+async function createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages }) {
   const pageTexts = await extractPdfPageTexts(file);
   const unreadablePages = pageTexts.flatMap((text, index) => text.trim() ? [] : [index + 1]);
   if (unreadablePages.length) {
@@ -49,9 +49,15 @@ async function createPageSealResults({ file, privateKey, publicKey, bootstrapUrl
   }
   const merkleRoot = await documentMerkleRoot(pageTexts);
   const timestamp = new Date().toISOString();
+  const contexts = pageTexts.map((_, index) => ({ pageNumber: index + 1, pageCount: pageTexts.length, documentRoot: merkleRoot }));
+  const attestations = attestPages ? await attestPages(pageTexts.map((text, index) => ({
+    content: canonicalizeText(text), metadata: { pdf: true, page_number: index + 1,
+      page_count: pageTexts.length, document_root: pageTexts.length > 1 ? merkleRoot : null },
+  }))) : null;
+  if (attestations && attestations.length !== pageTexts.length) throw new Error("Missing page attestations");
   return Promise.all(pageTexts.map(async (pageText, pageIndex) => {
     return createQRedSeals({ content: pageText, privateKey, publicKey, bootstrapUrl, encodingStrategy, timestamp,
-      pageContext: { pageNumber: pageIndex + 1, pageCount: pageTexts.length, documentRoot: merkleRoot } });
+      pageContext: contexts[pageIndex], attestation: attestations?.[pageIndex] });
   }));
 }
 
@@ -62,10 +68,10 @@ export async function qrPngBytes(value) {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
-export async function sealPdfInBrowser({ file, privateKey, publicKey, bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic", pageScalingStrategy = "automatic" }) {
+export async function sealPdfInBrowser({ file, privateKey, publicKey, attestPages, bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic", pageScalingStrategy = "automatic" }) {
   const prepared = await flattenPdfForSealing(file);
   file = prepared.file;
-  const pageSealResults = await createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy });
+  const pageSealResults = await createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages });
   const pdf = await PDFDocument.load(await file.arrayBuffer());
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const pages = pdf.getPages();
