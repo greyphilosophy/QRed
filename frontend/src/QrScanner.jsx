@@ -19,8 +19,8 @@ export function QrScanner({ onOpenPdfStampTool, onSealDetected, returnPayload = 
   const [scannedText, setScannedText] = useState(null);
   const [captureRequest, setCaptureRequest] = useState(0);
   const [torchEnabled, setTorchEnabled] = useState(false);
-  const handleScan = useCallback((text) => {
-    onSealDetected?.(text);
+  const handleScan = useCallback((text, frame) => {
+    onSealDetected?.(text, frame);
     setScannedText(text);
     const keepScanning = collectSeals && Boolean(decodeSeal(text));
     if (!keepScanning) setMode("result");
@@ -94,7 +94,7 @@ export function QrScanner({ onOpenPdfStampTool, onSealDetected, returnPayload = 
       React.createElement("div", { className: "ar-copy" },
         React.createElement("p", { className: "eyebrow" }, "QRed AR verifier"),
         React.createElement("h1", null, "Point at a QRed seal"),
-        React.createElement("p", null, "Scan a QR seal or a pale page watermark. For watermarks, include the whole square in view.")
+        React.createElement("p", null, "Scan a QR seal or a pale page watermark. Include the whole page when possible: the scan image is also kept for text comparison.")
       )
     ),
     controls
@@ -231,9 +231,8 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
     canvas.height = vHeight;
   }
 
-  // Scan every native camera pixel. A center crop can cut off QR finder
-  // patterns that are visible in the object-fit: cover preview; the reticle
-  // is an aiming guide, not a boundary. Keep recovery in this same frame.
+  // Use the whole native frame for decoding and its saved page image.
+  // The reticle is only an aiming guide. Keep recovery in this same frame.
   ctx.drawImage(video, 0, 0, vWidth, vHeight);
   const imageData = ctx.getImageData(0, 0, vWidth, vHeight);
   const code = !manual && options.scanQrFrame
@@ -316,7 +315,7 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
           navigator.vibrate(80);
         }
         setFeedback(null);
-        if (onScan(scanAction.text)) return false;
+        if (onScan(scanAction.text, canvasRef.current)) return false;
         stop();
         return true;
       }

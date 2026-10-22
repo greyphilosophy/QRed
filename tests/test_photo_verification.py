@@ -114,6 +114,9 @@ def test_photo_comparison_reads_real_pixels_offline(browser, sealed_text, path, 
         verify_fixture(page, path, sealed_text)
 
         picker = page.get_by_label("Choose page photo", exact=True)
+        # An uploaded seal now also supplies a scan image; let that automatic
+        # comparison finish before replacing it with the full-page fixture.
+        expect(picker).to_be_enabled(timeout=60000)
         picker.set_input_files(page_image(TEXT))
         expect(page.locator(".photo-summary")).to_have_text("Recognized text matches the signed text", timeout=60000)
         expect(page.locator(".photo-word.matched")).to_have_count(10)
@@ -141,6 +144,87 @@ def test_photo_comparison_reads_real_pixels_offline(browser, sealed_text, path, 
         expect(page.locator(".photo-stage img")).to_have_count(0)
         page.wait_for_load_state("networkidle")
         assert attempts == [], "Network requests during photo comparison: " + repr(attempts)
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("path", ["/", "/verify.htm"])
+@pytest.mark.parametrize("preload", [True, False], ids=["ready-offline", "load-after-scan"])
+def test_watermark_scan_captures_original_page_and_compares_automatically(browser, sealed_text, path, preload, tmp_path):
+    context = browser.new_context(service_workers="block", viewport={"width": 430, "height": 932})
+    try:
+        context.route("**/api/keys/default", lambda route: route.fulfill(json={
+            "public_key": PUBLIC_KEY, "key_id": "da522162396ab2d0",
+        }))
+        base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
+        page = context.new_page()
+        page.goto(base_url + path, wait_until="networkidle")
+        if path == "/verify.htm":
+            # Preload the issuer key locally before entering airplane mode.
+            page.locator("#publicKeyFileInput").set_input_files({
+                "name": "issuer-public.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode(),
+            })
+            expect(page.locator("#publicKeyFileStatus")).to_contain_text("Public key opened")
+        if preload:
+            page.get_by_role("button", name="Load text recognition", exact=True).click()
+            expect(page.get_by_role("button", name="Text recognition ready", exact=True)).to_be_visible(timeout=60000)
+            context.set_offline(True)
+
+        # The original camera view includes readable black text and a pale QR.
+        # Altering the paper does not alter the authentic reference in the seal.
+        paper = Image.open(io.BytesIO(page_image(TEXT.replace("123456", "123457"))["buffer"]))
+        qr = Image.open(io.BytesIO(base64.b64decode(sealed_text["qr"]))).convert("L")
+        qr = qr.point(lambda value: 224 if value < 128 else 255).resize((900, 900), Image.Resampling.NEAREST)
+        paper.paste(qr.convert("RGB"), (150, 620))
+        image = io.BytesIO()
+        paper.save(image, format="PNG")
+        url = "data:image/png;base64," + base64.b64encode(image.getvalue()).decode()
+        awaitable_source = """async url => {
+            const image = new Image(); image.src = url; await image.decode();
+            const frame = document.createElement('canvas'); frame.width = image.width; frame.height = image.height;
+            frame.getContext('2d').drawImage(image, 0, 0);
+            const stream = frame.captureStream(15);
+            navigator.mediaDevices.getUserMedia = async () => stream;
+            navigator.mediaDevices.enumerateDevices = async () => [];
+            window.__syntheticCameraFrame = frame;
+        }"""
+        page.evaluate(awaitable_source, url)
+        requests = []
+        context.on("request", lambda request: requests.append(request.url) if request.url.startswith("http") else None)
+        page.get_by_role("button", name="Start scanning" if path == "/" else "Scan QR Code", exact=True).click()
+        expect(page.locator(".verification-result h3" if path == "/" else "#resultStatus")).to_have_text("VALID", timeout=30000)
+        expect(page.locator(".photo-stage img")).to_be_visible(timeout=30000)
+        expect(page.get_by_label("Captured scan image")).to_have_value("1")
+        # The saved photo must not reference the scanner's mutable canvas.
+        page.evaluate("""() => {
+            const canvas = window.__syntheticCameraFrame, ctx = canvas.getContext('2d');
+            ctx.fillStyle = 'red'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }""")
+        if not preload:
+            expect(page.locator(".photo-summary")).to_have_count(0)
+            page.get_by_role("button", name="Load text recognition", exact=True).click()
+        expect(page.locator(".photo-summary")).to_contain_text("Differences found", timeout=60000)
+        expect(page.get_by_role("button", name="Different or extra text: 123457", exact=True)).to_be_visible()
+        expect(page.locator(".photo-differences")).to_contain_text("123456")
+        colours = page.locator(".photo-stage img").evaluate("""image => {
+            const canvas = document.createElement('canvas'); canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+            const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+            const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            let black = false, pale = false;
+            for (let i = 0; i < pixels.length; i += 4) {
+                black ||= pixels[i] === 0 && pixels[i + 1] === 0 && pixels[i + 2] === 0;
+                pale ||= pixels[i] === 224 && pixels[i + 1] === 224 && pixels[i + 2] === 224;
+            }
+            return { black, pale, corner: Array.from(pixels.slice(0, 3)) };
+        }""")
+        assert colours == {"black": True, "pale": True, "corner": [255, 255, 255]}
+        if preload:
+            assert requests == [], "Unexpected network activity during offline capture: " + repr(requests)
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.screenshot(path=str(tmp_path / "scan-photo.png"), full_page=True)
+        page.get_by_role("button", name="Clear collected seals" if path == "/" else "New Scan", exact=True).click()
+        expect(page.locator(".photo-stage img")).to_have_count(0)
+        expect(page.get_by_label("Captured scan image")).to_have_count(0)
     finally:
         context.close()
 

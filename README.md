@@ -116,9 +116,17 @@ The configured/default public key is for verification only. The stamping tool do
 ## Compare a printed page photo
 
 After verifying a page's seals, use **Compare a page photo** on the homepage or
-`verify.htm`. Load text recognition while connected, then take or choose a clear,
-upright photo of the entire page. For a multi-page collection, select the signed
-page being photographed. Existing seals work without adding any payload bytes.
+`verify.htm`. A successful seal scan also retains its original image, including
+when reading a pale watermark. Once the seals are verified and collection has
+finished, the selected page's image is compared automatically if text recognition
+is loaded. You can load the reader after scanning too; the image waits in this tab.
+For multi-seal pages, **Captured scan image** lets you choose among the images.
+Pages and images are associated by seal identifiers, even when scanned out of order.
+
+Include the entire page upright and in good light. Reading a QR does not establish
+that the rest of the page is in focus or even in frame. You can always take or
+choose a clearer page photo. For a multi-page collection, select the signed page
+to review. Existing seals work without adding any payload bytes.
 
 QRed reads printed English text locally and highlights the same still image:
 green for matching words, red for different/extra readings, amber for uncertain
@@ -140,6 +148,10 @@ The English model, WebAssembly engine, and worker are served by QRed itself and
 cached as versioned assets. **Text recognition ready** means the reader is loaded
 in the current tab and can process photos offline. Photos and recognized text
 are kept only in memory, not uploaded or written to browser storage. Reloading
+or clearing the seal collection releases the captured scan images. Capture is
+deduplicated per seal and bounded to 16 images / 32 MiB of encoded images, with
+at most four encodings in flight. Older images are released with a notice if the
+limit is reached; retained images are capped at six megapixels. Reloading
 or clearing browser caches may require loading resources again. The first release
 is covered by synthetic-image browser tests; physical print/phone-camera accuracy
 still needs testing.

@@ -61,7 +61,7 @@
     .viewfinder video {
       width: 100%;
       height: 100%;
-      object-fit: cover;
+      object-fit: contain;
       display: block;
     }
 
@@ -315,7 +315,7 @@
 <body>
   <header>
     <h1>QRed Verifier</h1>
-    <p>Scan QR seals to verify a document</p>
+    <p>Scan QR seals to verify a document. Include the whole page when possible; the scan image is kept for text comparison.</p>
     <p>Camera frames and seal text are processed in this browser and are not sent to a server.</p>
     <details>
       <summary>Optional: use airplane mode</summary>
@@ -328,7 +328,7 @@
     <div id="scanMode">
       <div class="viewfinder" id="viewfinder">
         <video id="cameraVideo" playsinline autoplay></video>
-        <canvas id="scanCanvas"></canvas>
+        <canvas id="scanCanvas" hidden></canvas>
         <div class="scan-line" id="scanLine"></div>
         <div class="placeholder" id="placeholder">
           <div class="icon">&#9679;</div>
@@ -385,6 +385,7 @@
     import { isQRedEntryLink } from "./src/qr/hiddenPayload.js";
     import { decodeSeal as decodeQRedSeal, verifyQRedSeals, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./src/qredVerifier.js";
     import { mountPhotoTextVerification } from "./src/verifier/mountPhotoTextVerification.jsx";
+    import { createScanPhotoCollection } from "./src/verifier/scanPhotos.js";
     import { readSigningKeyFile } from "./src/signingKeys.js";
     import { orderSealResults, sealCollectionProgress } from "./src/sealCollection.js";
 
@@ -413,6 +414,7 @@
       seenSeals: new Set(),
       verificationResults: Object.create(null),
       scanSession: 0,
+      scanImages: { photos: [], notice: "" },
       isScanning: false,
       stream: null,
       animFrameId: null,
@@ -422,7 +424,16 @@
     };
 
     var photoComparison = mountPhotoTextVerification(document.getElementById("photoTextComparison"));
-    photoComparison.update([], state.scanSession);
+    var scanPhotos = createScanPhotoCollection(function(images) {
+      state.scanImages = images;
+      updatePhotoComparison();
+    });
+    function updatePhotoComparison(results) {
+      results = results || orderSealResults(Object.values(state.verificationResults));
+      var progress = sealCollectionProgress(state.scannedSeals, results);
+      photoComparison.update(results, state.scanSession, state.scanImages, Boolean(progress && !progress.finished));
+    }
+    updatePhotoComparison([]);
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(function() {});
 
     // Camera handling
@@ -455,7 +466,7 @@
       state.scannedSeals = [];
       issuerKeyControls.hidden = true;
       publicKeyFileStatus.textContent = "";
-      photoComparison.update([], state.scanSession);
+      scanPhotos.clear();
       state.seenSeals = new Set();
       sealList.innerHTML = "";
       sealList.classList.remove("visible");
@@ -478,7 +489,8 @@
       publicKeyFileStatus.textContent = "Reading public key on this device...";
       try {
         state.publicKey = await readSigningKeyFile(file, "public");
-        photoComparison.update([], ++state.scanSession);
+        state.scanSession += 1;
+        updatePhotoComparison([]);
         publicKeyFileStatus.textContent = "Public key opened. Collected seals are checked with this key.";
         await Promise.all(Object.keys(state.sealsByDocument).map(function(docId) {
           var doc = state.sealsByDocument[docId];
@@ -559,7 +571,7 @@
       state.sealsByDocument[docId].chunks[decoded.chunkNumber] = decoded.data;
       state.sealsByDocument[docId].revision = (state.sealsByDocument[docId].revision || 0) + 1;
       delete state.verificationResults[docId];
-      photoComparison.update(orderSealResults(Object.values(state.verificationResults)), state.scanSession);
+      updatePhotoComparison();
       updateSealList();
       return state.sealsByDocument[docId];
     }
@@ -605,7 +617,7 @@
               if (isQRedEntryLink(payload)) {
                 statusText.textContent = "Point at the document seal or pale watermark. Include the whole square in view.";
               } else {
-                processScannedSeal(payload);
+                processScannedSeal(payload, canvas);
               }
             }
             lastScanAt = performance.now();
@@ -633,7 +645,7 @@
       statusBar.classList.remove("visible");
     }
 
-    function processScannedSeal(sealStr) {
+    function processScannedSeal(sealStr, frame) {
       if (state.seenSeals.has(sealStr)) return;
       state.seenSeals.add(sealStr);
 
@@ -646,6 +658,7 @@
       }
 
       registerSealInSession(sealStr, decoded);
+      scanPhotos.capture(sealStr, frame);
 
       var docId = decoded.documentId;
       var docData = state.sealsByDocument[docId];
@@ -732,7 +745,7 @@
       options = options || {};
       document.getElementById("scanMode").style.display = options.keepScanView ? "block" : "none";
       var results = options.results || [payload];
-      photoComparison.update(results, state.scanSession);
+      updatePhotoComparison(results);
       var rv = document.getElementById("resultView");
       rv.classList.add("visible");
 

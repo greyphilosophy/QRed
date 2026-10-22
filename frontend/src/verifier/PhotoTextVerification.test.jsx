@@ -82,3 +82,89 @@ it("reports a failed engine load without a matching result and permits retry", a
   await screen.findByRole("button", { name: "Text recognition ready" });
   expect(screen.queryByRole("alert")).toBeNull();
 });
+
+const capture = (id, documentId = page.document_id, chunkNumber = 0) => ({
+  id, documentId, chunkNumber, file: new File([`scan ${id}`], `scan-${id}.png`, { type: "image/png" }),
+});
+
+it("keeps a scan image before OCR loads and compares it automatically after loading", async () => {
+  const image = capture(1);
+  render(<PhotoTextVerification results={[page]} scanPhotos={[image]} />);
+  await screen.findByRole("img");
+  expect(ocr.open).toHaveBeenCalledWith(image.file);
+  expect(ocr.read).not.toHaveBeenCalled();
+  expect(screen.getByText(/The image is ready/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Load text recognition" }));
+  await screen.findByText(/Differences found/);
+  expect(ocr.read).toHaveBeenCalledTimes(1);
+});
+
+it("waits for seal collection before automatic OCR and accepts a late scan image", async () => {
+  const view = render(<PhotoTextVerification results={[page]} collecting />);
+  fireEvent.click(screen.getByRole("button", { name: "Load text recognition" }));
+  await screen.findByRole("button", { name: "Text recognition ready" });
+  const images = [capture(1)];
+  view.rerender(<PhotoTextVerification results={[page]} collecting scanPhotos={images} />);
+  await screen.findByRole("img");
+  expect(ocr.read).not.toHaveBeenCalled();
+  view.rerender(<PhotoTextVerification results={[page]} scanPhotos={images} />);
+  await screen.findByText(/Differences found/);
+  expect(ocr.read).toHaveBeenCalledTimes(1);
+});
+
+it("uses the right image for out-of-order pages and never opens unverified captures", async () => {
+  const first = capture(1), second = capture(2, other.document_id);
+  const images = [second, first];
+  const view = render(<PhotoTextVerification results={[{ ...page, status: "UNVERIFIED" }]} scanPhotos={images} />);
+  expect(ocr.open).not.toHaveBeenCalled();
+  view.rerender(<PhotoTextVerification results={[page, other]} scanPhotos={images} />);
+  await screen.findByRole("img");
+  expect(ocr.open).toHaveBeenLastCalledWith(first.file);
+  fireEvent.change(screen.getByLabelText("Signed page to compare"), { target: { value: other.document_id } });
+  await waitFor(() => expect(ocr.open).toHaveBeenLastCalledWith(second.file));
+  await screen.findByRole("img");
+  view.rerender(<PhotoTextVerification results={[]} session={1} scanPhotos={[]} />);
+  expect(screen.queryByRole("img")).toBeNull();
+});
+
+it("keeps the reviewed image when another seal arrives and can select another capture after clearing", async () => {
+  const first = capture(1), second = capture(2, page.document_id, 1);
+  const view = render(<PhotoTextVerification results={[page]} scanPhotos={[first]} />);
+  await screen.findByRole("img");
+  view.rerender(<PhotoTextVerification results={[page]} scanPhotos={[first, second]} />);
+  expect(ocr.open).toHaveBeenCalledTimes(1);
+  expect(screen.getByLabelText("Captured scan image").value).toBe("1");
+  fireEvent.click(screen.getByRole("button", { name: "Clear photo" }));
+  expect(screen.queryByRole("img")).toBeNull();
+  expect(ocr.open).toHaveBeenCalledTimes(1);
+  fireEvent.change(screen.getByLabelText("Captured scan image"), { target: { value: "2" } });
+  await screen.findByRole("img");
+  expect(ocr.open).toHaveBeenLastCalledWith(second.file);
+});
+
+it("does not let a slow image load replace the newly selected page", async () => {
+  let resolveOld;
+  ocr.open.mockReturnValueOnce(new Promise(done => { resolveOld = done; }));
+  render(<PhotoTextVerification results={[page, other]} scanPhotos={[capture(1), capture(2, other.document_id)]} />);
+  await waitFor(() => expect(ocr.open).toHaveBeenCalledTimes(1));
+  fireEvent.change(screen.getByLabelText("Signed page to compare"), { target: { value: other.document_id } });
+  await screen.findByRole("img");
+  expect(screen.getByLabelText("Captured scan image").value).toBe("2");
+  await act(async () => resolveOld({ width: 300, height: 200 }));
+  expect(screen.getByLabelText("Captured scan image").value).toBe("2");
+});
+
+it("finishes preloading when a verified seal and its image arrive during loading", async () => {
+  let prepared;
+  ocr.prepare.mockReturnValueOnce(new Promise(done => { prepared = done; }));
+  const view = render(<PhotoTextVerification />);
+  fireEvent.click(screen.getByRole("button", { name: "Load text recognition" }));
+  const disposals = ocr.dispose.mock.calls.length;
+  view.rerender(<PhotoTextVerification results={[page]} scanPhotos={[capture(1)]} />);
+  expect(ocr.dispose).toHaveBeenCalledTimes(disposals);
+  expect(ocr.open).not.toHaveBeenCalled();
+  await act(async () => prepared({}));
+  await screen.findByText(/Differences found/);
+  expect(ocr.prepare).toHaveBeenCalledTimes(1);
+  expect(ocr.read).toHaveBeenCalledTimes(1);
+});
