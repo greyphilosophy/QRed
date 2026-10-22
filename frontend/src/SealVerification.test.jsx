@@ -2,14 +2,25 @@
 import { webcrypto } from "node:crypto";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { signAsync } from "@noble/ed25519";
+import { attestationMessage, pageCommitment } from "./attestation.js";
+import { decodeBase64Url, encodeBase64Url } from "./sealFormat.js";
 import { createQRedSeals } from "./qredSealer.js";
 import App from "./App.jsx";
+
+vi.mock("./trustedAuthorities.json", () => ({ default: { da522162396ab2d0: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q" } }));
 
 const scanner = vi.hoisted(() => ({ props: null }));
 vi.mock("./QrScanner.jsx", () => ({ QrScanner: (props) => { scanner.props = props; return null; } }));
 vi.mock("./PdfSealForm.jsx", () => ({ PdfSealForm: () => null }));
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
+
+function selectKey(text, name = "issuer.txt") {
+  fireEvent.change(screen.getByLabelText("Open issuer public key file"), {
+    target: { files: [{ name, size: text.length, text: async () => text }] },
+  });
+}
 
 beforeEach(() => {
   vi.stubGlobal("crypto", webcrypto);
@@ -24,19 +35,19 @@ it("connects homepage scans to real signature verification and waits for every c
   render(<App />);
   expect(scanner.props.returnPayload).toBe(true);
   expect(scanner.props.collectSeals).toBe(true);
-  fireEvent.change(screen.getByLabelText("Issuer public key"), { target: { value: publicKey } });
+  expect(screen.queryByLabelText("Issuer public key")).toBeNull();
+  expect(screen.queryByLabelText("Open issuer public key file")).toBeNull();
   await act(async () => scanner.props.onSealDetected(seals[0]));
   expect(await screen.findByRole("heading", { name: "INCOMPLETE" })).toBeTruthy();
   expect(scanner.props.collectionProgress).toMatchObject({ collected: 1, total: seals.length, finished: false });
+  selectKey(publicKey);
+  await screen.findByText(/Public key opened/);
   await act(async () => seals.slice(1).forEach(scanner.props.onSealDetected));
   expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
   await waitFor(() => expect(scanner.props.collectionProgress.complete).toBe(true));
   expect(document.querySelector(".verification-result pre").textContent).toBe(content);
 
-  fireEvent.change(screen.getByLabelText("Issuer public key"), { target: { value: "" } });
-  expect(await screen.findByRole("heading", { name: "UNVERIFIED" })).toBeTruthy();
-  expect(screen.queryByRole("heading", { name: "VALID" })).toBeNull();
-  fireEvent.change(screen.getByLabelText("Issuer public key"), { target: { value: "bad-key" } });
+  selectKey("Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=");
   expect(await screen.findByRole("heading", { name: "INVALID" })).toBeTruthy();
 });
 
@@ -44,13 +55,14 @@ it("displays the signed timestamp of scanned seals and clears previous results",
   const timestamp = "2026-10-20T17:55:14.123Z";
   const { seals } = await createQRedSeals({ content: "Scanned document", timestamp, privateKey, publicKey });
   const { container } = render(<App />);
-  fireEvent.change(screen.getByLabelText("Issuer public key"), { target: { value: publicKey } });
   await act(async () => seals.forEach(scanner.props.onSealDetected));
+  selectKey(publicKey);
   expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
   expect(container.querySelector("time").textContent).toBe(timestamp);
   expect(container.textContent).not.toContain("Claimed issuer");
   fireEvent.click(screen.getByRole("button", { name: "Clear collected seals" }));
   await waitFor(() => expect(screen.queryByRole("heading", { name: "VALID" })).toBeNull());
+  expect(screen.queryByLabelText("Open issuer public key file")).toBeNull();
 });
 
 it("keeps a normal QR visible without treating it as a verified document", async () => {
@@ -67,9 +79,9 @@ it("displays recovered PDF pages in page order when scanned in reverse", async (
     pageContext: { pageNumber, pageCount: 2, documentRoot: "a1".repeat(32) },
   })));
   render(<App />);
-  fireEvent.change(screen.getByLabelText("Issuer public key"), { target: { value: publicKey } });
   await act(async () => pages[0].seals.forEach(scanner.props.onSealDetected));
   expect(await screen.findByText("Page 2 of 2")).toBeTruthy();
+  selectKey(publicKey);
   await act(async () => pages[1].seals.forEach(scanner.props.onSealDetected));
   await waitFor(() => expect(screen.getAllByRole("heading", { name: "VALID" })).toHaveLength(2));
   expect([...document.querySelectorAll(".verification-result pre")].map(item => item.textContent))
@@ -82,19 +94,35 @@ it("opens an issuer key locally and rechecks collected seals, preserving the key
   await act(async () => scanner.props.onSealDetected(seals[0]));
   expect(await screen.findByRole("heading", { name: "UNVERIFIED" })).toBeTruthy();
   const requestsBefore = fetch.mock.calls.length;
-  const select = (text, name = "issuer.txt") => fireEvent.change(screen.getByLabelText("Open issuer public key file"), {
-    target: { files: [{ name, size: text.length, text: async () => text }] },
-  });
-  select(publicKey);
+
+  selectKey(publicKey);
   expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
-  const imported = screen.getByLabelText("Issuer public key").value;
-  select(privateKey, "qred-ed25519-private-key.txt");
+  selectKey(privateKey, "qred-ed25519-private-key.txt");
   await screen.findByText(/Choose a public key file instead/);
-  expect(screen.getByLabelText("Issuer public key").value).toBe(imported);
   expect(screen.getByRole("heading", { name: "VALID" })).toBeTruthy();
-  select("Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=");
+  selectKey("Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=");
   expect(await screen.findByRole("heading", { name: "INVALID" })).toBeTruthy();
-  select(publicKey);
+  selectKey(publicKey);
   expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
   expect(fetch.mock.calls.length).toBe(requestsBefore);
+});
+
+it("verifies Google seals offline without asking for an issuer key, including multipart scans", async () => {
+  const content = "Synthetic Google document. ".repeat(180).trimEnd();
+  const metadata = { pdf: false, key_id: "da522162396ab2d0", timestamp: "2026-10-20T12:00:00Z",
+    identity: { provider: "google", email: "alice@gmail.com", subject: "123", name: "Alice", name_source: "google" } };
+  const salt = crypto.getRandomValues(new Uint8Array(32));
+  const signature = await signAsync(attestationMessage(metadata, await pageCommitment(metadata, content, salt)), decodeBase64Url(privateKey));
+  const { seals } = await createQRedSeals({ content, encodingStrategy: "plaintext",
+    attestation: { ...metadata, salt, public_key: publicKey.replace(/=$/, ""), signature: encodeBase64Url(signature) } });
+  expect(seals.length).toBeGreaterThan(1);
+  render(<App />);
+  await act(async () => scanner.props.onSealDetected(seals.at(-1)));
+  expect(await screen.findByRole("heading", { name: "INCOMPLETE" })).toBeTruthy();
+  expect(screen.queryByLabelText("Open issuer public key file")).toBeNull();
+  await act(async () => seals.slice(0, -1).forEach(scanner.props.onSealDetected));
+  expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
+  expect(screen.getByText(/Account authenticated through Google: alice@gmail.com/)).toBeTruthy();
+  expect(screen.queryByLabelText("Issuer public key")).toBeNull();
+  expect(screen.queryByLabelText("Open issuer public key file")).toBeNull();
 });

@@ -96,7 +96,8 @@ describe("App PDF signing keys", () => {
   });
 
   it("stamps with the generated pair and verifies its real signature using the selected public key", async () => {
-    openStampTool();
+    const selectPublicKey = vi.fn();
+    render(<PdfSealForm onUsePublicKey={selectPublicKey} />);
     const keys = await generateKeys();
     const pdf = new File(["%PDF-1.4"], "source.pdf", { type: "application/pdf" });
     fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [pdf] } });
@@ -104,9 +105,9 @@ describe("App PDF signing keys", () => {
     await screen.findByText(/Sealed source\.pdf in this browser\./);
     expect(sealPdfInBrowser).toHaveBeenCalledWith(expect.objectContaining({ file: pdf, ...keys }));
     fireEvent.click(screen.getByRole("button", { name: "Use public key to verify" }));
-    expect(screen.getByLabelText("Issuer public key").value).toBe(keys.publicKey);
+    expect(selectPublicKey).toHaveBeenCalledWith(keys.publicKey);
     const { seals } = await createQRedSeals({ content: "Generated key test", ...keys });
-    await expect(verifyQRedSeals(seals, screen.getByLabelText("Issuer public key").value))
+    await expect(verifyQRedSeals(seals, selectPublicKey.mock.calls[0][0]))
       .resolves.toMatchObject({ status: "VALID", content: "Generated key test" });
   });
 

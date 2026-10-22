@@ -61,6 +61,13 @@ except ImportError:
     pass
 
 
+def _open_verification_key(page: Page, key: str):
+    """Local seals reveal a file import after scanning; there is no key text field."""
+    page.get_by_label("Open issuer public key file", exact=True).set_input_files({
+        "name": "issuer-public-key.txt", "mimeType": "text/plain", "buffer": key.encode(),
+    })
+
+
 def make_simple_pdf(path: str) -> bytes:
     """Create a minimal test PDF with text content."""
     if not REPORTLAB_AVAILABLE:
@@ -544,7 +551,7 @@ class TestPdfTextSealing:
         subprocess.run(["pdftoppm", "-f", "1", "-singlefile", "-r", "200",
                         "-x", "0", "-y", "2200", "-W", "1700", "-H", "600",
                         "-png", stamped, str(footer)], check=True, capture_output=True)
-        page.get_by_label("Issuer public key", exact=True).fill(DEMO_PUBLIC_KEY)
+        page.get_by_role("button", name="Use public key to verify", exact=True).click()
         page.get_by_label("Choose QR image", exact=True).set_input_files(footer.with_suffix(".png"))
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("Item 45: Received and inspected")
@@ -563,7 +570,7 @@ class TestPdfTextSealing:
         pdf.save()
         stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY)
         assert result["full_result"]["total_seals"] == 2
-        page.get_by_label("Issuer public key", exact=True).fill(DEMO_PUBLIC_KEY)
+        page.get_by_role("button", name="Use public key to verify", exact=True).click()
         # Scan the second code first, using pixels from the saved PDF. Each
         # crop is the unchanged 2.75-inch square (550 pixels at 200 dpi).
         for index in [1, 0]:
@@ -718,8 +725,7 @@ class TestKeyGenerationImportAndSignatureVerification:
         expect(private_input).to_have_value(generated_private)
         expect(private_input).to_have_attribute("type", "password")
         page.wait_for_function("key => window.__qredPublicKeys === key", arg=generated_public)
-        page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
-        expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(generated_public)
+        expect(page.get_by_label("Issuer public key", exact=True)).to_have_count(0)
 
         page.get_by_label("Open PDF", exact=True).set_input_files(simple_pdf_path)
         with page.expect_download(timeout=60_000) as download_info:
@@ -734,6 +740,7 @@ class TestKeyGenerationImportAndSignatureVerification:
                         "-x", "0", "-y", "2200", "-W", "1700", "-H", "600",
                         "-png", str(sealed_path), str(footer)], check=True, capture_output=True)
         page.get_by_label("Choose QR image", exact=True).set_input_files(footer.with_suffix(".png"))
+        page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("Testing client-side sealing")
         for request in requests:
@@ -742,11 +749,11 @@ class TestKeyGenerationImportAndSignatureVerification:
 
         # The standalone verifier accepts the same public-key file from an issuer.
         page.goto(f"{base_url}/verifier.html", wait_until="networkidle")
+        expect(page.get_by_label("Issuer public key", exact=True)).to_have_count(0)
+        expect(page.get_by_label("Open issuer public key file", exact=True)).to_be_hidden()
+        page.evaluate("seals => window.__qredTestVerify(seals)", seal_result["seal_strings"])
+        expect(page.locator("#resultStatus")).to_have_text("UNVERIFIED")
         page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
-        expect(page.get_by_label("Issuer public key", exact=True)).to_have_value(generated_public)
-        page.evaluate("""seals => window.__qredTestVerify(
-            seals, document.getElementById('publicKeyInput').value
-        )""", seal_result["seal_strings"])
         expect(page.locator("#resultStatus")).to_have_text("VALID")
         expect(page.locator("#resultContent")).to_contain_text("Testing client-side sealing")
 
@@ -826,20 +833,21 @@ class TestRenderedQrImageUploads:
     ])
     def test_verifies_previously_unreadable_rendered_image(self, page: Page, image_name):
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
-        page.get_by_label("Issuer public key", exact=True).fill(self.PUBLIC_KEY)
+        expect(page.get_by_label("Open issuer public key file", exact=True)).to_have_count(0)
         page.get_by_label("Choose QR image", exact=True).set_input_files(str(self.FIXTURES / image_name))
+        _open_verification_key(page, self.PUBLIC_KEY)
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45" if "invoice" in image_name else "Inventory dispatch QA-1042")
-        page.get_by_label("Issuer public key", exact=True).fill("Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=")
+        _open_verification_key(page, "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=")
         expect(page.get_by_role("heading", name="INVALID", exact=True)).to_be_visible()
 
     def test_mobile_image_upload_waits_for_both_distinct_seals(self, page: Page):
         page.set_viewport_size({"width": 390, "height": 844})
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
-        page.get_by_label("Issuer public key", exact=True).fill(self.PUBLIC_KEY)
         upload = page.get_by_label("Choose QR image", exact=True)
         upload.set_input_files(str(self.FIXTURES / "manifest-seal-1-300dpi.png"))
         expect(page.get_by_role("heading", name="INCOMPLETE", exact=True)).to_be_visible(timeout=20000)
+        _open_verification_key(page, self.PUBLIC_KEY)
         upload.set_input_files(str(self.FIXTURES / "manifest-seal-1-300dpi.png"))
         expect(page.get_by_role("heading", name="INCOMPLETE", exact=True)).to_be_visible()
         upload.set_input_files(str(self.FIXTURES / "manifest-seal-2-300dpi.png"))
@@ -848,13 +856,13 @@ class TestRenderedQrImageUploads:
 
     def test_verifies_image_with_damaged_hidden_length(self, page: Page):
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
-        page.get_by_label("Issuer public key", exact=True).fill(self.PUBLIC_KEY)
         page.get_by_label("Choose QR image", exact=True).set_input_files({
             "name": "damaged-invoice.png", "mimeType": "image/png", "buffer": _invoice_camera_pixels(damaged=True),
         })
+        _open_verification_key(page, self.PUBLIC_KEY)
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45")
-        page.get_by_label("Issuer public key", exact=True).fill("Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=")
+        _open_verification_key(page, "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=")
         expect(page.get_by_role("heading", name="INVALID", exact=True)).to_be_visible()
 
 
@@ -907,7 +915,6 @@ class TestCameraFrameScanning:
         })();
         """.replace("CAMERA_FIXTURE", json.dumps(camera)))
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
-        page.get_by_label("Issuer public key", exact=True).fill(TestRenderedQrImageUploads.PUBLIC_KEY)
         page.get_by_role("button", name="Start scanning", exact=True).click()
         page.wait_for_function("""() => {
             const video = document.querySelector('.ar-camera video');
@@ -927,6 +934,7 @@ class TestCameraFrameScanning:
             }""", timeout=5000)
             page.get_by_role("button", name="Scan photo", exact=True).click()
         expect(page.get_by_role("heading", name="QR captured", exact=True)).to_be_visible(timeout=10000)
+        _open_verification_key(page, TestRenderedQrImageUploads.PUBLIC_KEY)
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible()
         expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45")
 
@@ -982,12 +990,12 @@ class TestContinuousSealScanning:
         """.replace("FRAMES", json.dumps(frames)))
         base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
         page.goto(base_url + route, wait_until="networkidle")
-        page.get_by_label("Issuer public key", exact=True).fill(DEMO_PUBLIC_KEY)
         page.get_by_role("button", name="Start scanning" if route == "/" else "Scan QR Code", exact=True).click()
         page.wait_for_function("document.querySelector('video')?.readyState >= 2")
         page.locator("video").first.scroll_into_view_if_needed()
         progress = page.locator(".ar-collection-progress" if route == "/" else "#statusText")
         page.evaluate("window.showSealFrame(0)")
+        _open_verification_key(page, DEMO_PUBLIC_KEY)
         expect(progress).to_contain_text("1 of 2 pages collected", timeout=20000)
         # Repeated camera frames must not add duplicate pieces or stop the stream.
         page.wait_for_timeout(400)
