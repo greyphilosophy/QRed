@@ -137,7 +137,7 @@ def make_delivery_records_pdf(path):
 
 
 def draw_dense_records_page(pdf):
-    """Enough varied text to require two seals even with automatic gzip."""
+    """Enough varied text to require two seals even with automatic zlib."""
     rng = random.Random(1042)
     pdf.setFont("Helvetica", 8)
     for i in range(45):
@@ -206,7 +206,7 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
     - seal_type: always "QRED"
     - encoding: the encoding strategy used
     - document_id: the seal's document ID
-    - encoding: the selected format (plaintext or gzip)
+    - encoding: the selected format (plaintext, zlib, or gzip)
     - seal_count: number of seals created
     """
     from playwright.sync_api import expect as expect_playwright
@@ -536,18 +536,18 @@ class TestPdfTextSealing:
         assert seal_result["full_result"]["encoding_strategy"] == "automatic"
         _verify_seal_with_seal_strings(page, seal_result, public_key=DEMO_PUBLIC_KEY)
 
-    def test_gzip_reduces_a_page_to_one_seal_and_verifies_printed_pixels(self, page: Page, tmp_path):
+    def test_zlib_reduces_a_page_to_one_seal_and_verifies_printed_pixels(self, page: Page, tmp_path):
         source = tmp_path / "delivery-records.pdf"
         make_delivery_records_pdf(source)
         stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY)
         details = result["full_result"]
-        assert details["encoding"] == "gzip"
+        assert details["encoding"] == "zlib"
         assert details["total_seals"] == 1
         assert next(c for c in details["candidate_reports"] if c["encoding"] == "plaintext")["qr_count"] == 2
         assert details["compression_savings_pct"] > 50
 
         # Rasterize the saved PDF independently, then use the real image scanner.
-        footer = tmp_path / "gzip-footer"
+        footer = tmp_path / "zlib-footer"
         subprocess.run(["pdftoppm", "-f", "1", "-singlefile", "-r", "200",
                         "-x", "0", "-y", "2200", "-W", "1700", "-H", "600",
                         "-png", stamped, str(footer)], check=True, capture_output=True)

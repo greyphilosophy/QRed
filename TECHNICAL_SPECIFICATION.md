@@ -46,18 +46,19 @@ Ordinary QR scanners see only:
 
 Ordinary camera apps pass only that visible URL to the browser. QRed-aware readers recover the signed payload bytes only by scanning the QR image itself.
 
-### Plaintext and gzip
+### Plaintext, zlib, and gzip
 
-The browser supports uncompressed canonical text and gzip-compressed UTF-8 text.
-Both restore exactly the signed canonical text before verification.
+The browser supports uncompressed canonical text and zlib/gzip-compressed UTF-8 text.
+All restore exactly the signed canonical text before verification.
 
 ## 5. Encoding Strategy
 
 Automatic mode minimizes QR count, then total encoded payload bytes, with
-plaintext winning an exact tie. An explicit selection can force plaintext or
-gzip. Reported savings measure payload bytes, not the number of QR codes.
+plaintext winning an exact tie. It compares plaintext with zlib, falling back to
+gzip if zlib is unavailable. An explicit API selection can force plaintext, zlib,
+or gzip. Reported savings measure payload bytes, not the number of QR codes.
 
-## 6. Gzip Transport
+## 6. Compressed Transport
 
 Compress canonical page text once. Store the signed millisecond timestamp,
 8-byte key ID, full signature, and conditional multipage context in a compact
@@ -78,7 +79,7 @@ when doing so reduces the largest grid without increasing their count.
 
 ## 8. Verification
 
-Verification reconstructs the payload, decompresses gzip when selected, restores
+Verification reconstructs the payload, decompresses zlib/gzip when selected, restores
 canonical text, verifies the signature, and reports one of:
 
 -   VALID
@@ -89,7 +90,7 @@ canonical text, verifies the signature, and reports one of:
 
 ## 9. Scanner
 
-The scanner recognizes arbitrary QR codes, scanner-safe QRed payloads with hidden signed data, gzip payloads, and malformed QRed payloads. Hidden signed data is not supplied by a normal camera URL handoff; the QRed scanner must read the QR image.
+The scanner recognizes arbitrary QR codes, scanner-safe QRed payloads with hidden signed data, compressed payloads, and malformed QRed payloads. Hidden signed data is not supplied by a normal camera URL handoff; the QRed scanner must read the QR image.
 
 Unknown QR codes remain viewable.
 

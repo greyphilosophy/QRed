@@ -8,7 +8,7 @@ import Utils from "qrcode/lib/core/utils.js";
 import ECCode from "qrcode/lib/core/error-correction-code.js";
 import ECLevel from "qrcode/lib/core/error-correction-level.js";
 import { verifyAsync as verifyEd25519 } from "@noble/ed25519";
-import { gunzipChunks, MAX_SEAL_TEXT_BYTES } from "./sealCompression.js";
+import { decompressChunks, MAX_SEAL_TEXT_BYTES } from "./sealCompression.js";
 import { computeKeyId, decodeBase64Url, sealSignatureMessage } from "./sealSignature.js";
 import { bytesEqual, bytesToHex, concatenate, decodeEnvelope, decodeTransport, MAX_ENVELOPE_BYTES,
   qrPayloadBytes, sha256, strictUtf8, utf8 } from "./sealFormat.js";
@@ -179,7 +179,7 @@ export async function verifyQRedSeals(seals, publicKey, authorities = trustedAut
       metadata = decodeEnvelope(record);
       if (metadata.version !== first.version) throw new Error("Seal version does not match its chunks");
     }
-    content = metadata.encoding === "gzip" ? await gunzipChunks([metadata.data]) : strictUtf8.decode(metadata.data);
+    content = metadata.encoding === "plaintext" ? strictUtf8.decode(metadata.data) : await decompressChunks([metadata.data], metadata.encoding);
     if (utf8.encode(content).length > MAX_SEAL_TEXT_BYTES) throw new Error("Seal text exceeds the 8 MiB limit");
   } catch (error) { return { status: "ERROR", error_message: `Seal decoding failed: ${error.message}` }; }
   const pageHash = metadata.pdf ? bytesToHex(await sha256(utf8.encode(content))) : null;

@@ -144,7 +144,7 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, la
         sealed_path = _stamp_and_save(page, tmp_path, "private-invoice.pdf", "\n".join([text] * 5))
         # Check that compression was chosen automatically, then verify actual
         # saved-PDF pixels through the normal image-selection UI.
-        assert page.evaluate("window.__lastSealResult.encoding") == "gzip"
+        assert page.evaluate("window.__lastSealResult.encoding") == "zlib"
         footer = tmp_path / "private-invoice-footer"
         area = [] if layout == "watermark" else ["-x", "0", "-y", "2200", "-W", "1700", "-H", "600"]
         subprocess.run(["pdftoppm", "-f", "1", "-singlefile", "-r", "200", *area,

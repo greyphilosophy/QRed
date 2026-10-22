@@ -18,14 +18,14 @@ The hidden payload is a binary record. Integers are unsigned, big endian.
 | Field | Bytes | Meaning |
 | --- | ---: | --- |
 | Magic/version | 4 | ASCII `QRS3`; signature algorithm is Ed25519 |
-| Flags | 1 | Bit 0: gzip; bit 1: PDF; bit 2: multipage PDF; other bits rejected |
+| Flags | 1 | Bit 0: gzip; bit 1: PDF; bit 2: multipage PDF; bit 3: zlib; other bits rejected; gzip and zlib are mutually exclusive |
 | Timestamp | 8 | Unix milliseconds; must be representable as a JavaScript date |
 | Key ID | 8 | First eight bytes of SHA-256 of the raw 32-byte public key |
 | Page index, if multipage | 2 | Zero based |
 | Page count, if multipage | 2 | 2–65,535; index must be below count |
 | Document root, if multipage | 32 | Full SHA-256 Merkle root |
 | Signature | 64 | Raw Ed25519 bytes |
-| Content | Remaining | UTF-8 text or one complete gzip stream |
+| Content | Remaining | UTF-8 text or one complete zlib/gzip stream |
 
 A text-only or single-page PDF record has **85 bytes** before its content.
 Multipage context adds **36 bytes**, for 121 bytes per page record. Single-page
@@ -46,7 +46,7 @@ multipage document or establish a Merkle inclusion proof.
 Ed25519 signs this unambiguous byte sequence:
 
 1. UTF-8 `QRed signed document v3` followed by one zero byte.
-2. The record's flags **with bit 0 cleared**, timestamp, key ID, and conditional
+2. The record's flags **with bits 0 and 3 cleared**, timestamp, key ID, and conditional
    multipage fields, in exactly the layout above (17 or 53 bytes).
 3. The complete canonical UTF-8 text, before compression.
 
@@ -106,28 +106,33 @@ the canonical default link; its binary payload is identical. Bare
 
 Canonical text is limited to 8 MiB per page. Compressed input is limited to that
 size plus 64 KiB. Enforce decompression output bounds while streaming, validate
-the gzip checksum/length, and reject malformed UTF-8, framing, flags, or indices.
+the zlib Adler-32 or gzip CRC32/length, and reject malformed UTF-8, framing, flags, or indices.
 The largest full record is the compressed limit plus its 121-byte header.
-Automatic encoding compares plaintext and gzip by QR count, then actual hidden
-payload bytes; plaintext wins a tie. Gzip adds 18 container bytes once per page.
-If compression is unavailable, automatic encoding uses plaintext; explicitly
-requesting gzip fails clearly. Processing remains local and makes no network
-requests.
+Automatic encoding compares plaintext and zlib by QR count, then actual hidden
+payload bytes; plaintext wins a tie. Zlib adds 6 container bytes once per page,
+12 fewer than gzip's 18 bytes. The native browser compressor chooses the level.
+If zlib compression fails, automatic encoding tries gzip; if neither is available,
+it uses plaintext. Explicit compression requests fail clearly when unavailable.
+Processing remains local and makes no network requests.
 
-For the sample invoice, compressed text is 318 bytes, giving a 403-byte hidden
+For the original gzip sample invoice, compressed text is 318 bytes, giving a 403-byte hidden
 record (85 + 318). With QRed framing, non-text overhead is 113 bytes: 85 record
 bytes + 18 gzip bytes + 10 QRed framing bytes. It fits QR version 13 at the same
 2.75-inch printed footprint. The prior format used 418 non-text bytes and
-version 18 for this fixture.
+version 18 for this fixture. With the same DEFLATE body, zlib reduces the hidden
+record to 391 bytes and non-text overhead to 101 bytes. A 12-byte saving does not
+necessarily reduce the QR version. Stored gzip image fixtures remain readable.
 
-Deploy the stamper and every verifier route together. Older QRED1/QRG1 seals
+Deploy the stamper and every verifier route together. Current verifiers still
+accept gzip/plaintext v3 and v4 records; older verifier builds reject the zlib
+flag and must be refreshed, including saved offline copies. Older QRED1/QRG1 seals
 are intentionally unsupported and must be re-sealed; no legacy verification
 path remains. Unknown QR content can still be displayed without being verified.
 
 ## Verification coverage
 
 Tests include independent Node Ed25519 verification, timestamp/key/context/text
-tampering, replacement gzip streams, malformed headers, Unicode/BOM recovery,
+tampering, replacement zlib/gzip streams, malformed headers, Unicode/BOM recovery,
 missing/duplicate/mixed chunks, forged grouping digests, identical PDF pages,
 capacity boundaries, saved-PDF recovery at 200/300 dpi, camera damage correction,
 all verifier routes, and workflows with network access blocked.

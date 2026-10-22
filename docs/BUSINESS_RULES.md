@@ -22,11 +22,11 @@ This document summarizes the current business rules for QRed as implemented and 
    - strips leading and trailing empty lines.
 5. The canonical text is signed by the issuing authority using Ed25519.
 6. The signed payload is encoded into one or more machine-readable payload seals.
-7. Automatic mode evaluates plaintext and gzip candidates carried as scanner-safe hidden payloads.
+7. Automatic mode evaluates plaintext and zlib candidates carried as scanner-safe hidden payloads, using gzip as a fallback when zlib is unavailable.
 8. Only reversible candidates are selectable.
 9. Automatic mode chooses the candidate that requires the fewest QR codes.
 10. QR-count ties prefer fewer encoded payload bytes, then plaintext.
-11. Explicit strategies may request plaintext or gzip.
+11. Explicit strategies may request plaintext, zlib, or gzip.
 12. Payloads that exceed a single seal's capacity are divided into numbered chunks.
 13. Printed payload QR codes expose the shortest production verifier origin currently required for scanning: `https://qred.org/`.
 14. Payload QR codes present the bootstrap URL (`https://qred.org/`) to ordinary scanners and store signed payload bytes in hidden QR codewords. Ordinary camera apps deliver only the visible URL; payload data does not appear as a URL marker, path, or fragment and is recoverable only by a QRed-aware scanner reading the QR image.

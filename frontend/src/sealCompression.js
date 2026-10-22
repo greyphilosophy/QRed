@@ -1,7 +1,13 @@
 import { concatenate, decodeBase64Url, encodeBase64Url, MAX_COMPRESSED_BYTES, MAX_SEAL_TEXT_BYTES, strictUtf8 as textDecoder, utf8 as textEncoder } from "./sealFormat.js";
 export { MAX_SEAL_TEXT_BYTES, qrPayloadBytes, qrPayloadText } from "./sealFormat.js";
 
-async function transform(bytes, Stream, limit, inputChunkSize) {
+function streamFormat(encoding) {
+  if (encoding === "zlib") return "deflate";
+  if (encoding === "gzip") return "gzip";
+  throw new Error("Unsupported compression encoding");
+}
+
+async function transform(bytes, stream, limit, inputChunkSize) {
   let offset = 0;
   const input = new ReadableStream({
     pull(controller) {
@@ -11,7 +17,7 @@ async function transform(bytes, Stream, limit, inputChunkSize) {
       offset = end;
     },
   });
-  const reader = input.pipeThrough(new Stream("gzip")).getReader();
+  const reader = input.pipeThrough(stream).getReader();
   const parts = [];
   let length = 0;
   try {
@@ -31,34 +37,39 @@ async function transform(bytes, Stream, limit, inputChunkSize) {
   return concatenate(parts);
 }
 
-export async function gzipText(text) {
+export async function compressText(text, encoding) {
+  const format = streamFormat(encoding);
   const bytes = textEncoder.encode(text);
   if (bytes.length > MAX_SEAL_TEXT_BYTES) throw new Error("Seal text exceeds the 8 MiB limit");
-  if (typeof CompressionStream !== "function") throw new Error("Gzip compression is not available in this browser");
-  return transform(bytes, CompressionStream, MAX_COMPRESSED_BYTES, 65536);
+  if (typeof CompressionStream !== "function") throw new Error(`${encoding} compression is not available in this browser`);
+  // Native "deflate" uses the zlib wrapper (6 bytes), not raw DEFLATE.
+  // The browser chooses the compression level for both zlib and gzip.
+  return transform(bytes, new CompressionStream(format), MAX_COMPRESSED_BYTES, 65536);
 }
 
-export function decodeGzipChunk(value) {
-  if (!value || !/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("Invalid gzip chunk encoding");
+function decodeCompressedChunk(value) {
+  if (!value || !/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("Invalid compressed chunk encoding");
   const bytes = decodeBase64Url(value);
-  if (encodeBase64Url(bytes) !== value) throw new Error("Invalid gzip chunk encoding");
+  if (encodeBase64Url(bytes) !== value) throw new Error("Invalid compressed chunk encoding");
   return bytes;
 }
 
-export async function gunzipChunks(chunks) {
-  if (typeof DecompressionStream !== "function") throw new Error("Gzip decompression is not available in this browser");
+export async function decompressChunks(chunks, encoding) {
+  const format = streamFormat(encoding);
+  if (typeof DecompressionStream !== "function") throw new Error(`${encoding} decompression is not available in this browser`);
   const parts = [];
   let length = 0;
   for (const chunk of chunks) {
     if (chunk.length > (chunk instanceof Uint8Array ? MAX_COMPRESSED_BYTES - length : Math.ceil((MAX_COMPRESSED_BYTES - length) / 3) * 4)) throw new Error("Compressed seal exceeds the size limit");
-    const part = chunk instanceof Uint8Array ? chunk : decodeGzipChunk(chunk);
+    const part = chunk instanceof Uint8Array ? chunk : decodeCompressedChunk(chunk);
     length += part.length;
     if (length > MAX_COMPRESSED_BYTES) throw new Error("Compressed seal exceeds the size limit");
     parts.push(part);
   }
-  // The native gzip decoder validates the stream, CRC32, and original length.
+  // Native decoders validate framing and checksums (Adler-32 for zlib;
+  // CRC32 and original length for gzip). Signatures authenticate the text.
   // Feed small input blocks so output limits can stop an expanding stream
   // before the native decoder processes the entire compressed input.
-  const bytes = await transform(concatenate(parts), DecompressionStream, MAX_SEAL_TEXT_BYTES, 1024);
+  const bytes = await transform(concatenate(parts), new DecompressionStream(format), MAX_SEAL_TEXT_BYTES, 1024);
   return textDecoder.decode(bytes);
 }

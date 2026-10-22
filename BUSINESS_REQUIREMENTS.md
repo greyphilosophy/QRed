@@ -55,15 +55,15 @@
 ## 6. Payload Formats
 
 1.  QRed shall support scanner-safe hidden payloads that visibly scan as the bootstrap URL in ordinary camera apps, while requiring a QRed-aware QR-image scan to recover hidden signed data.
-2.  QRed shall support plaintext and lossless gzip compression.
+2.  QRed shall support plaintext and lossless zlib/gzip compression.
 3.  QRed does not need compressed legacy payload compatibility until users create a compatibility requirement.
 4.  Payloads shall contain sufficient information to reconstruct and
     verify certified contents.
 
 ## 7. Encoding Selection
 
-1.  Plaintext and gzip shall both use scanner-safe hidden payloads behind the bootstrap URL.
-2.  Automatic mode shall evaluate plaintext and gzip candidates.
+1.  Plaintext, zlib, and gzip shall all use scanner-safe hidden payloads behind the bootstrap URL.
+2.  Automatic mode shall evaluate plaintext and zlib candidates, with gzip as a fallback when zlib is unavailable.
 3.  Automatic mode may add encodings freely until compatibility requirements exist.
 4.  Only reversible encodings may be selected.
 5.  Selection shall prioritize:

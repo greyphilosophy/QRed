@@ -79,7 +79,7 @@ Request bodies are limited to 16 KiB, each document to 100 pages, and each signi
 
 ## Compact v4 format
 
-Local signatures keep the existing v3 format. Google attestations use `QRS4`, multipart `QRC4`, and copyable `QRED4:` strings. Ordinary camera apps still see `QRED.ORG`. QR balancing, automatic gzip/plaintext selection and fixed print dimensions are unchanged.
+Local signatures keep the existing v3 format. Google attestations use `QRS4`, multipart `QRC4`, and copyable `QRED4:` strings. Ordinary camera apps still see `QRED.ORG`. QR balancing, automatic zlib/plaintext selection (with gzip fallback), and fixed print dimensions use the same rules as local seals.
 
 The v4 record contains the existing timestamp/key-ID/page-context header, followed by:
 
@@ -90,7 +90,7 @@ The v4 record contains the existing timestamp/key-ID/page-context header, follow
 | Email, name, Google subject | Each is a two-byte big-endian UTF-8 byte length followed by its bytes; maximum 254/160/255 bytes respectively |
 | Per-page salt | 32 random bytes, only in the seal/client |
 | QRed signature | 64 Ed25519 bytes |
-| Text | Plain UTF-8 or one bounded gzip stream |
+| Text | Plain UTF-8 or one bounded zlib/gzip stream; compression flags match v3 |
 
 The page commitment is SHA-256 of `QRed private page commitment v1` plus a zero byte, salt, the v3 PDF/context flag byte with compression cleared, conditional page-index/count/root bytes, and canonical UTF-8 text. Timestamp/key ID are omitted from this commitment because the server supplies them later. Page positions/counts and the unsalted full-document root are thus committed without exposing that root to the service.
 

@@ -14,6 +14,7 @@ const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 const content = "Camera recovery regression: invoice QA-1042. Approved total: $123.45.";
 let seal;
 let gzipSeal;
+let zlibSeal;
 
 beforeAll(async () => {
   const result = await createQRedSeals({ content, privateKey, publicKey,
@@ -21,6 +22,8 @@ beforeAll(async () => {
   [seal] = result.seals;
   [gzipSeal] = (await createQRedSeals({ content, privateKey, publicKey,
     encodingStrategy: "gzip" })).seals;
+  [zlibSeal] = (await createQRedSeals({ content, privateKey, publicKey,
+    encodingStrategy: "zlib" })).seals;
 });
 
 function damageCodewords(qr, indexes) {
@@ -97,8 +100,8 @@ describe("error-corrected hidden QR data", () => {
     }
   });
 
-  it.each(["plaintext", "gzip"].flatMap(encoding => ["L", "M", "Q", "H"].map(level => [encoding, level])))("recovers %s data after damage to its length field (%s)", async (encoding, level) => {
-    const original = encoding === "gzip" ? gzipSeal : seal;
+  it.each(["plaintext", "zlib", "gzip"].flatMap(encoding => ["L", "M", "Q", "H"].map(level => [encoding, level])))("recovers %s data after damage to its length field (%s)", async (encoding, level) => {
+    const original = { plaintext: seal, zlib: zlibSeal, gzip: gzipSeal }[encoding];
     const qr = createQRedQrSymbol(original, { errorCorrectionLevel: level });
     damageHiddenLength(qr);
     const { code, payload } = recover(render(qr));
