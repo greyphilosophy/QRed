@@ -16,7 +16,7 @@
     "QRED_DEFAULT_KEY_ID": "",
     "QRED_ORIGIN": "https://qred.org",
     "QRED_GOOGLE_CLIENT_ID": "21775093456-tqmg3efc48kspnau7k9rj2vm4ksvq6pn.apps.googleusercontent.com",
-    "QRED_ATTESTATION_KEY_ID": ""
+    "QRED_ATTESTATION_KEY_ID": "477eb945edeca1a8"
   },
   "triggers": {
     "crons": []
