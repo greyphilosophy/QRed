@@ -260,20 +260,23 @@ export function PdfSealForm({ onUsePublicKey }) {
           </div>
         </div>}
         <div className="demo-input">
-          <label>Page scaling</label>
+          <label>Page layout</label>
           <select
-            aria-label="Page scaling"
+            aria-label="Page layout"
             value={pageScalingStrategy}
             disabled={loading}
             onChange={(e) => setPageScalingStrategy(e.target.value)}
-            title="Choose how the PDF should make room for QR seals before drawing the footer."
+            title="Choose where to place the document seals."
           >
             <option value="automatic">Automatic (legal for letter, shrink otherwise)</option>
+            <option value="watermark">Pale watermark (experimental, original page size)</option>
             <option value="legal-footer">Expand letter pages to legal size (bottom 3-inch footer)</option>
             <option value="shrink-footer">Shrink the document to create a footer</option>
           </select>
           <small style={{ color: "#64748b", display: "block", marginTop: "0.5rem" }}>
-            Automatic expands letter pages to legal size and keeps seals in the bottom 3 inches; other page sizes shrink to create room for the seals.
+            {pageScalingStrategy === "watermark"
+              ? "Keeps paper and text sizes unchanged. Places pale seals over each page and a small qred.org code in a clear area on the first page. Use QRed's scanner for the watermarks. Try a printed copy before sharing; dense text, pictures, photocopying, and printer settings can make them unreadable."
+              : "Automatic expands letter pages to legal size and keeps seals in the bottom 3 inches; other page sizes shrink to create room for the seals."}
           </small>
         </div>
       </div>

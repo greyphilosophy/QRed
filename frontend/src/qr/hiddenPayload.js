@@ -3,6 +3,11 @@
 import { qrPayloadText } from "../sealFormat.js";
 
 export const VISIBLE_QR_TEXT = "QRED.ORG";
+// A navigation code is not a document seal. Match only the bare site address,
+// never a payload fragment or a lookalike hostname.
+export function isQRedEntryLink(text) {
+  return typeof text === "string" && /^(?:https?:\/\/)?qred\.org\/?$/i.test(text);
+}
 const HIDDEN_PAYLOAD_LENGTH_BYTES = 2;
 
 function bytesFrom(value) {

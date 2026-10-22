@@ -58,6 +58,25 @@ size and uses the added three-inch footer for QR seals. One or two seals are
 print margin. Larger sets use the grid that allows the largest codes within
 that same footer. The caption sits beside the codes where space permits.
 
+**Pale watermark (experimental)** in **Page layout** keeps the original paper
+dimensions, text size, rotation, and crop. A half-inch conventional QR opens
+`https://qred.org/` from a clear area on the first page; pale QR watermarks carry
+each page's signed data. Use QRed's camera or image picker to read the watermarks.
+The navigation code contains no document data and is ignored during verification.
+Placement checks rendered pixels, including graphics, before using a blank area.
+Sealing stops if no clear area exists, the seal grids would be too dense, or
+QRed cannot recover every watermark from the rendered output. Choose a footer
+layout for those documents. Nothing is automatically resized or covered to
+force a watermark layout to fit.
+
+Watermark recovery masks black text and its antialiased edges, then reconstructs
+the pale pattern from nearby pixels. Recovered data still requires the same
+cryptographic signature verification. Digital rendering tests cover opaque white
+backgrounds, text overlap, multiple pages/chunks, and both PDF.js and Poppler.
+They do not establish print-camera reliability. Test a printed copy before
+sharing: pictures, bold text, lighting, grayscale printing, and photocopying can
+destroy information in a pale watermark. Footer layouts remain the default.
+
 Each seal uses the smallest QR grid that fits its actual payload, then the
 strongest error correction that fits that grid. Smaller payloads therefore
 produce fewer, larger modules within the same printed square. This favors

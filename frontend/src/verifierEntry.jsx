@@ -234,7 +234,6 @@ function VerifierApp() {
       <header>
         <h1>QRed Verifier</h1>
         <p>Scan QR seals with your camera to verify a document.</p>
-        <p>Google seals automatically select a trusted authority key included in QRed.</p>
         <p>Camera frames and seal text are processed in this browser and are not sent to a server.</p>
         <details>
           <summary>Optional: use airplane mode</summary>

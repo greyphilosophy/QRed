@@ -79,8 +79,12 @@ export async function sealPdfInBrowser({ file, privateKey, publicKey, attestPage
 
   const PANEL_MARGIN = 18;
   const PANEL_PADDING = 10;
+  let watermarkLayout = null;
 
-  for (let pageIndex = pageSealResults.length - 1; pageIndex >= 0; pageIndex -= 1) {
+  if (pageScalingStrategy === "watermark") {
+    const { stampWatermarks } = await import("./pdf/watermark.js");
+    watermarkLayout = await stampWatermarks(pdf, file, pageSealResults);
+  } else for (let pageIndex = pageSealResults.length - 1; pageIndex >= 0; pageIndex -= 1) {
     let page = pdf.getPage(pageIndex);
     const qrValues = pageSealResults[pageIndex].seals;
     const qrImages = await Promise.all(qrValues.map(async (value) => pdf.embedPng(await qrPngBytes(value))));
@@ -120,6 +124,10 @@ export async function sealPdfInBrowser({ file, privateKey, publicKey, attestPage
   }
 
   const sealedBytes = await pdf.save();
+  if (watermarkLayout) {
+    const { checkWatermarks } = await import("./pdf/watermark.js");
+    await checkWatermarks(sealedBytes, watermarkLayout, pageSealResults);
+  }
   const pageSealStrings = pageSealResults.map((result) => result.seals);
   const firstResult = pageSealResults[0] ?? null;
   return {
@@ -129,5 +137,6 @@ export async function sealPdfInBrowser({ file, privateKey, publicKey, attestPage
     pageSealResults,
     pageSealStrings,
     flattenedFieldCount: prepared.flattenedFieldCount,
+    watermarkLayout,
   };
 }

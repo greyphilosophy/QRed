@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createQrFrameScanner, scanQrImage } from "./qr/scanQrImage.js";
 import { decodeSeal, VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult, qredTextFromScanResult } from "./qredVerifier.js";
+import { isQRedEntryLink } from "./qr/hiddenPayload.js";
 import "./qrScanner.css";
 
 /**
@@ -93,7 +94,7 @@ export function QrScanner({ onOpenPdfStampTool, onSealDetected, returnPayload = 
       React.createElement("div", { className: "ar-copy" },
         React.createElement("p", { className: "eyebrow" }, "QRed AR verifier"),
         React.createElement("h1", null, "Point at a QRed seal"),
-        React.createElement("p", null, "Use your camera to scan and verify QR document seals.")
+        React.createElement("p", null, "Scan a QR seal or a pale page watermark. For watermarks, include the whole square in view.")
       )
     ),
     controls
@@ -122,7 +123,7 @@ export function qrScanAction(imageData, width, height, code, { returnPayload = f
     ? qredPayloadFromPhotoScanResult(imageData, width, height, code)
     : qredTextFromPhotoScanResult(imageData, width, height, code);
 
-  if (text && text !== VISIBLE_QR_TEXT) return { status: "found", text };
+  if (text && !isQRedEntryLink(text)) return { status: "found", text };
   return { status: "continue" };
 }
 
@@ -246,7 +247,10 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
     const text = returnPayload
       ? qredPayloadFromPhotoScanResult(imageData.data, vWidth, vHeight, code)
       : qredTextFromPhotoScanResult(imageData.data, vWidth, vHeight, code);
-    if (text && text !== VISIBLE_QR_TEXT) return { status: "found", text };
+    if (text && !isQRedEntryLink(text)) return { status: "found", text };
+    if (isQRedEntryLink(text) && code.data !== VISIBLE_QR_TEXT) {
+      return { status: "feedback", message: "That code opens qred.org. Point at the pale watermark and include the whole square in view." };
+    }
     if (code.data === VISIBLE_QR_TEXT) {
       return { status: "feedback", message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again." };
     }

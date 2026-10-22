@@ -101,9 +101,10 @@ describe("App PDF signing keys", () => {
     const keys = await generateKeys();
     const pdf = new File(["%PDF-1.4"], "source.pdf", { type: "application/pdf" });
     fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [pdf] } });
+    fireEvent.change(screen.getByLabelText("Page layout"), { target: { value: "watermark" } });
     fireEvent.click(screen.getByRole("button", { name: "Stamp and save PDF" }));
     await screen.findByText(/Sealed source\.pdf in this browser\./);
-    expect(sealPdfInBrowser).toHaveBeenCalledWith(expect.objectContaining({ file: pdf, ...keys }));
+    expect(sealPdfInBrowser).toHaveBeenCalledWith(expect.objectContaining({ file: pdf, ...keys, pageScalingStrategy: "watermark" }));
     fireEvent.click(screen.getByRole("button", { name: "Use public key to verify" }));
     expect(selectPublicKey).toHaveBeenCalledWith(keys.publicKey);
     const { seals } = await createQRedSeals({ content: "Generated key test", ...keys });
