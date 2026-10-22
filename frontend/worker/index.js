@@ -78,14 +78,6 @@ async function defaultPublicKey(env) {
 // ---------------------------------------------------------------------------
 
 export default {
-  async scheduled(_event, env) {
-    if (!env.QRED_AUTH_DB) return;
-    const now = Date.now();
-    await env.QRED_AUTH_DB.batch([
-      env.QRED_AUTH_DB.prepare("DELETE FROM auth_requests WHERE expires<?").bind(now),
-      env.QRED_AUTH_DB.prepare("DELETE FROM auth_rate WHERE window<?").bind(now - 2 * 86400000),
-    ]);
-  },
   async fetch(request, env) {
     const url = new URL(request.url);
 

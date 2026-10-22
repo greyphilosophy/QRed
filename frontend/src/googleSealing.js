@@ -36,11 +36,11 @@ export async function attestPagesWithGoogle(pages, { popup, name = "", signal, o
     popup.location.href = authorization.href;
     const credentials = { id: session.id, secret: session.secret };
     const deadline = Date.now() + 10 * 60 * 1000;
-    let identity;
+    let identity, timestamp;
     while (Date.now() < deadline) {
       if (signal?.aborted) throw new Error("Google sealing cancelled");
       const status = await post("/api/auth/google/status", credentials);
-      if (status.status === "ready") { identity = status.identity; break; }
+      if (status.status === "ready") { identity = status.identity; timestamp = status.timestamp; break; }
       if (status.status === "failed") throw new Error(status.error || "Google sign-in failed");
       // Browser opener isolation can make a live Google window appear closed.
       // Completion comes from the server; the form's Cancel button aborts polling.
@@ -50,20 +50,20 @@ export async function attestPagesWithGoogle(pages, { popup, name = "", signal, o
     onIdentity(identity);
     onStatus("Google sign-in completed. Obtaining document attestations…");
     const receipts = [];
-    // One native signature per request keeps work bounded on the Workers Free tier.
+    // One page per request keeps signing work bounded on the Workers Free tier.
     for (let index = 0; index < pages.length; index += 1) {
-      const receipt = await post("/api/attest/google", { ...credentials, index });
+      const receipt = await post("/api/attest/google", { ...credentials, commitments, index });
       if (!trusted[receipt.key_id]) throw new Error("This QRed authority key is not trusted by this copy of the app. Reload QRed and try again.");
       if (JSON.stringify(receipt.identity) !== JSON.stringify(identity) ||
-          (index && receipt.timestamp !== receipts[0].timestamp)) throw new Error("Inconsistent document attestation");
+          receipt.timestamp !== timestamp) throw new Error("Inconsistent document attestation");
       receipts.push({ ...receipt, public_key: trusted[receipt.key_id], salt: salts[index] });
     }
     return receipts;
   } finally {
     try { popup.close(); } catch { /* The provider may isolate the popup. */ }
     if (session?.id && session?.secret) {
-      // Remove transient identity records even when a later step fails. No tokens
-      // are written to localStorage/sessionStorage or placed in navigation URLs.
+      // Clear the encrypted HttpOnly cookies even when a later step fails.
+      // No credentials are written to localStorage/sessionStorage or navigation URLs.
       await fetchImpl("/api/auth/google/finish", { method: "POST", credentials: "same-origin", keepalive: true,
         signal: AbortSignal.timeout(5000), headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: session.id, secret: session.secret }) }).catch(() => {});
