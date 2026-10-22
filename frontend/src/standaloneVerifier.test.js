@@ -39,6 +39,7 @@ function loadStandalone(overrides = {}) {
   const bindings = {
     createQrFrameScanner, isQRedEntryLink, readSigningKeyFile, orderSealResults, sealCollectionProgress, ...verifier, decodeQRedSeal: verifier.decodeSeal,
     captureDocumentFrameForOcr: vi.fn(), drawArOverlay: vi.fn(), ...overrides,
+    mountPhotoTextVerification: () => ({ update: vi.fn() }),
   };
   // Execute the shipped module with real QR/signature code. Camera tests
   // supply image pixels; direct verification tests use the existing test API.

@@ -4,6 +4,7 @@ import { decodeSeal, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./q
 import { isQRedEntryLink } from "./qr/hiddenPayload.js";
 import { readSigningKeyFile } from "./signingKeys.js";
 import { sealCollectionProgress, verifySealCollection } from "./sealCollection.js";
+import { PhotoTextVerification } from "./verifier/PhotoTextVerification.jsx";
 
 export function useSealVerification() {
   const [seals, setSeals] = useState([]);
@@ -113,7 +114,7 @@ export function SealVerification({ verification }) {
 
   return <section className="verification-card" aria-label="Seal verification">
     <h2>Verify collected seals</h2>
-    <p>Scan each QR seal for a page. Compare the recovered text with the document.</p>
+    <p>Scan each QR seal for a page, then compare a page photo with its signed text.</p>
     <p className="verification-note">QR images and camera frames are processed in this browser and are not sent to a server.</p>
     <details>
       <summary>Optional: use airplane mode</summary>
@@ -147,5 +148,6 @@ export function SealVerification({ verification }) {
         {result.content && <pre>{result.content}</pre>}
       </article>)}
     </div>
+    <PhotoTextVerification results={results} session={verification.session} />
   </section>;
 }

@@ -5,9 +5,9 @@
   "description": "QRed Verifier - Web-based QR document verification",
   "scripts": {
     "postinstall": "patch-package --error-on-fail",
-    "prestart": "patch-package --error-on-fail && node scripts/preparePdfAssets.mjs",
+    "prestart": "patch-package --error-on-fail && node scripts/preparePdfAssets.mjs && node scripts/prepareOcrAssets.mjs",
     "start": "vite",
-    "prebuild": "patch-package --error-on-fail && node scripts/preparePdfAssets.mjs",
+    "prebuild": "patch-package --error-on-fail && node scripts/preparePdfAssets.mjs && node scripts/prepareOcrAssets.mjs",
     "build": "vite build && cp build/verifier.html build/verify.htm",
     "test": "vitest run",
     "lint": "eslint src/ --ext .jsx,.tsx",
@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@noble/ed25519": "^3.1.0",
+    "@tesseract.js-data/eng": "1.0.0",
     "jose": "^6.2.13",
     "jsqr": "1.4.0",
     "pdf-lib": "^1.17.1",
@@ -24,7 +25,7 @@
     "qrcode": "^1.5.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "tesseract.js": "^5.1.1"
+    "tesseract.js": "6.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

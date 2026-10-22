@@ -21,3 +21,14 @@ review and regenerate the patch, then run the damaged-seal regressions in
 
 Upstream: <https://github.com/cozmo/jsQR> (Apache-2.0; its license is retained
 in the installed package). Patch workflow: <https://github.com/ds300/patch-package>.
+
+# Tesseract initialization failures
+
+`tesseract.js+6.0.1.patch` rejects `createWorker()` and terminates its worker
+when language loading or engine initialization fails. Upstream swallows that
+failure after rejecting an internal job, leaving the caller's startup promise
+pending. This matters when a user goes offline before language data is cached.
+The browser regression `test_missing_ocr_language_resource_fails_and_retries`
+returns a real 404 for the model and checks that the reader reports an error
+and can subsequently load successfully. Recheck this behavior when upgrading
+Tesseract; its Apache-2.0 license is included with the deployed OCR resources.
