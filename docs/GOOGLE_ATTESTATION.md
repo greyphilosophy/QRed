@@ -16,7 +16,15 @@ Keep Workers on the Free plan. No paid plan, email provider, SMS account, or ide
    node scripts/createAttestationKey.mjs /secure/path/qred-authority.private-key.txt
    ```
 
-   Choose an existing secure directory. The script writes a new private seed file with owner-only permissions and refuses to overwrite a file. It prints only the file path and public key ID. It also adds the public key to `src/trustedAuthorities.json`. Back up the private file securely. Commit the **public JSON file only**, so every verifier build carries the same trust anchor. The private filename is ignored by Git. Never use the demo/test key as the authority.
+   Choose an existing secure directory. The script writes a new private seed file and refuses to overwrite a file. It prints the file path, public key and public key ID, never the private seed. It also adds the public key to `src/trustedAuthorities.json`. Back up the private file securely. Commit the **public JSON file only**, so every verifier build carries the same trust anchor. The private filename is ignored by Git. Never use the demo/test key as the authority.
+
+   For a public key beginning with the exact characters `QRed`, add `--prefix QRed`:
+
+   ```sh
+   node scripts/createAttestationKey.mjs /secure/path/qred-authority.private-key.txt --prefix QRed
+   ```
+
+   Prefixes are case-sensitive and may contain 1–4 Base64URL characters. The generator repeatedly creates fresh random Ed25519 key pairs and keeps the first matching public key, together with its matching private seed. Four specified characters take approximately `64^4 = 16,777,216` attempts on average; completion time is random. Progress shows attempts and speed, and Ctrl+C cancels. The script uses only Node's built-in modules, needs no npm installation or network access, and prints the resulting **public** key. Run the production search on the device where you will keep the private key. This changes the key's appearance, not how QRed authenticates it; anyone can generate a different key with the same prefix.
 
 3. Set these non-secret Worker variables in the configuration actually used to deploy. Keep the repository-root and `frontend/wrangler.jsonc` configurations consistent:
 
