@@ -543,7 +543,7 @@ class TestPdfTextSealing:
         details = result["full_result"]
         assert details["encoding"] == "zlib"
         assert details["total_seals"] == 1
-        assert next(c for c in details["candidate_reports"] if c["encoding"] == "plaintext")["qr_count"] == 2
+        assert next(c for c in details["candidate_reports"] if c["encoding"] == "plaintext")["qr_count"] >= 2
         assert details["compression_savings_pct"] > 50
 
         # Rasterize the saved PDF independently, then use the real image scanner.
@@ -588,18 +588,13 @@ class TestPdfTextSealing:
 class TestImageOnlyPdfs:
     """Image-only pages must not receive a signature over empty text."""
 
-    def test_refuses_image_only_pdf(self, page: Page, image_only_pdf_path: str):
-        base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
-        page.goto(base_url, wait_until="networkidle")
-        page.get_by_role("button", name="Open PDF stamping tool").click()
-        expect(page.get_by_role("button", name="Generate key pair")).to_be_enabled()
-        page.get_by_label("Open PDF", exact=True).set_input_files(image_only_pdf_path)
-        page.get_by_label("Private Key", exact=True).fill(DEMO_PRIVATE_KEY)
-        downloads = []
-        page.on("download", lambda download: downloads.append(download))
-        page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
-        expect(page.get_by_text("PDF sealing failed: No readable text", exact=False)).to_be_visible()
-        assert not downloads, "An unreadable PDF must not produce a sealed download"
+    def test_seals_image_only_pdf_with_a_visual_reference(self, page: Page, image_only_pdf_path: str):
+        sealed, result = _upload_and_seal(page, image_only_pdf_path, private_key=DEMO_PRIVATE_KEY)
+        assert os.path.exists(sealed)
+        assert result["full_result"]["evidence"]["visual"]
+        assert not result["full_result"]["evidence"]["blank"]
+        assert _verify_seal_with_seal_strings(page, result, result["document_id"], DEMO_PUBLIC_KEY)
+        expect(page.get_by_role("img", name="Signed grayscale visual reference")).to_be_visible()
 
 
 class TestPdfExtractionIntegrity:

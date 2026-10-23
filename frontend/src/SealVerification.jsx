@@ -127,7 +127,7 @@ export function SealVerification({ verification }) {
 
   return <section className="verification-card" aria-label="Seal verification">
     <h2>Verify collected seals</h2>
-    <p>Scan each QR seal for a page. Its scan image is kept for comparison with the signed text; you can also take a clearer page photo.</p>
+    <p>Scan each QR seal for a page. Its scan image is kept for comparison with the signed page contents; you can also take a clearer page photo.</p>
     <p className="verification-note">QR images and camera frames are processed in this browser and are not sent to a server.</p>
     <details>
       <summary>Optional: use airplane mode</summary>

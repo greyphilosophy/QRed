@@ -16,6 +16,16 @@ const ATTESTED_CHUNK_MAGIC = new Uint8Array([81, 82, 67, 52]); // QRC4
 export const utf8 = new TextEncoder();
 export const strictUtf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
+// Native encoders/workers can return byte views from another JS realm.
+// instanceof Uint8Array is not reliable across those boundaries.
+export function signedContentBytes(content) {
+  if (typeof content === "string") return utf8.encode(content);
+  if (ArrayBuffer.isView(content) && content.BYTES_PER_ELEMENT === 1) {
+    return new Uint8Array(content.buffer, content.byteOffset, content.byteLength);
+  }
+  throw new Error("Invalid signed content");
+}
+
 export function concatenate(parts) {
   const bytes = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
   let offset = 0;
@@ -63,7 +73,8 @@ export function encodeMetadata(metadata) {
   const multiple = pdf && pageCount > 1;
   const bytes = new Uint8Array(multiple ? 53 : 17);
   const view = new DataView(bytes.buffer);
-  bytes[0] = (pdf ? 2 : 0) | (multiple ? 4 : 0);
+  if (metadata.page_evidence && !pdf) throw new Error("Page evidence requires PDF page context");
+  bytes[0] = (pdf ? 2 : 0) | (multiple ? 4 : 0) | (metadata.page_evidence ? 16 : 0);
   view.setBigUint64(1, BigInt(milliseconds));
   bytes.set(hexToBytes(keyId, 8), 9);
   if (multiple) {
@@ -95,7 +106,7 @@ export function decodeEnvelope(bytes) {
   const attested = hasMagic(bytes, ATTESTED_MAGIC);
   if ((!attested && !hasMagic(bytes, RECORD_MAGIC)) || bytes.length < 86 || bytes.length > MAX_ENVELOPE_BYTES) throw new Error("Invalid or truncated seal record");
   const flags = bytes[4];
-  if ((flags & ~15) || ((flags & 9) === 9) || ((flags & 4) && !(flags & 2))) throw new Error("Unsupported seal flags");
+  if ((flags & ~31) || ((flags & 9) === 9) || ((flags & 20) && !(flags & 2))) throw new Error("Unsupported seal flags");
   const multiple = Boolean(flags & 4);
   let signatureOffset = multiple ? 57 : 21;
   let identity, salt;
@@ -124,6 +135,7 @@ export function decodeEnvelope(bytes) {
     document_root: multiple ? bytesToHex(bytes.subarray(25, 57)) : null,
     signature: bytes.slice(signatureOffset, bodyOffset), encoding, data,
     ...(attested ? { identity, salt } : {}),
+    ...(flags & 16 ? { page_evidence: true } : {}),
   };
 }
 

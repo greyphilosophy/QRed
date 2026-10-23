@@ -113,20 +113,23 @@ describe("experimental PDF watermarks", () => {
     await expect(verifyQRedSeals(payloads.reverse(), publicKey)).resolves.toMatchObject({ status: "VALID" });
   }, 30000);
 
-  it("rejects the same dense text on letter paper when its smaller watermarks are unreadable", async () => {
-    const file = await makeDocument({ multipart: true });
-    await expect(sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" })).rejects.toThrow(/could not be read|too dense/);
+  it.each([
+    ["dense text", { multipart: true }],
+    ["no entry-code space", { crowded: true }],
+    ["an opaque graphic", { black: true }],
+  ])("uses a readable footer for %s when a watermark cannot work", async (_label, options) => {
+    const file = await makeDocument(options);
+    const { blob, footerPages, pageSealStrings } = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" });
+    expect(footerPages).toEqual([1]);
+    expect((await PDFDocument.load(await blob.arrayBuffer())).getPage(0).getHeight()).toBe(1008);
+    expect(pageSealStrings[0].length).toBeLessThanOrEqual(2);
+    expect((await verifyQRedSeals(pageSealStrings[0], publicKey)).status).toBe("VALID");
+    const printed = render(await blob.arrayBuffer());
+    const part = crop(printed, { x: 0, y: 0, width: pageSealStrings[0].length === 1 ? 612 : 306, height: 216 });
+    const payload = hiddenPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
+    expect(pageSealStrings[0]).toContain(payload);
   }, 30000);
 
-  it("refuses to cover page content when there is no clear entry-code location", async () => {
-    const file = await makeDocument({ crowded: true });
-    await expect(sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" })).rejects.toThrow(/No clear space on the first page/);
-  });
-
-  it("refuses a watermark hidden by an opaque graphic", async () => {
-    const file = await makeDocument({ black: true });
-    await expect(sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" })).rejects.toThrow(/watermark on page 1 could not be read/);
-  }, 30000);
 });
 
 it("recognizes only entry links, not seal fragments or lookalike hosts", () => {

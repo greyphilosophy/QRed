@@ -220,7 +220,10 @@ def test_watermark_scan_captures_original_page_and_compares_automatically(browse
         assert colours == {"black": True, "pale": True, "corner": [255, 255, 255]}
         if preload:
             assert requests == [], "Unexpected network activity during offline capture: " + repr(requests)
-        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), page.evaluate("""() =>
+            [...document.querySelectorAll('body *')].filter(el => el.getBoundingClientRect().right > innerWidth)
+              .map(el => ({tag: el.tagName, id: el.id, classes: el.className, width: el.getBoundingClientRect().width})).slice(0, 15)
+        """)
         page.screenshot(path=str(tmp_path / "scan-photo.png"), full_page=True)
         page.get_by_role("button", name="Clear collected seals" if path == "/" else "New Scan", exact=True).click()
         expect(page.locator(".photo-stage img")).to_have_count(0)

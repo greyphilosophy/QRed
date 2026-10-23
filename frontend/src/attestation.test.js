@@ -67,7 +67,7 @@ describe("compact document-specific attestations", () => {
     const scanned = scanQrImage(pixels, png.width, png.height);
     const recovered = qredPayloadFromPhotoScanResult(pixels, png.width, png.height, scanned);
     await expect(verifyQRedSeals([recovered], "", trusted)).resolves.toMatchObject({ status: "VALID", content: "Synthetic Google attestation QR test." });
-    const content = "Long page with literal payload. ".repeat(220).trimEnd();
+    const content = "Long page with literal payload. ".repeat(150).trimEnd();
     const large = await attested(content, { encodingStrategy: "plaintext" });
     expect(large.seals.length).toBeGreaterThan(1);
     await expect(verifyQRedSeals(large.seals.toReversed(), "", trusted)).resolves.toMatchObject({ status: "VALID", content });

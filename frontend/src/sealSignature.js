@@ -1,11 +1,11 @@
-import { bytesToHex, concatenate, decodeBase64Url, encodeMetadata, sha256, utf8 } from "./sealFormat.js";
+import { bytesToHex, concatenate, decodeBase64Url, encodeMetadata, sha256, signedContentBytes, utf8 } from "./sealFormat.js";
 
 export { encodeBase64Url, decodeBase64Url } from "./sealFormat.js";
 
 // Version and Ed25519 are fixed by the domain. Compression and chunk boundaries
-// are transport details; timestamp, key ID, page context, and text are signed.
+// are transport details; timestamp, key ID, page context, and the complete uncompressed page body are signed.
 export function sealSignatureMessage(metadata, content) {
-  return concatenate([utf8.encode("QRed signed document v3\0"), encodeMetadata(metadata), utf8.encode(content)]);
+  return concatenate([utf8.encode("QRed signed document v3\0"), encodeMetadata(metadata), signedContentBytes(content)]);
 }
 
 export async function computeKeyId(publicKey) {

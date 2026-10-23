@@ -143,6 +143,8 @@ export function createTestAnalyzerController({ uploadZone, fileInput: _fileInput
       const result = await verifyQRedSeals([payload], "");
       recoveredText = result.content
         ? `Recovered text (signature not verified):\n${result.content}`
+        : result.evidence
+          ? `Recovered ${result.evidence.blank ? "blank-page marker" : "visual page reference"} (signature not verified). Open the verifier to authenticate and compare this page.`
         : result.status === "INCOMPLETE"
           ? `Seal ${decoded.chunk_number + 1} of ${decoded.total_chunks}. Collect all seals in the verifier to restore the text.`
           : `Cannot restore seal text: ${result.error_message}`;

@@ -1,6 +1,7 @@
+import { decodePageEvidence } from "./pageEvidence.js";
 import { signAsync as signEd25519 } from "@noble/ed25519";
 import { qredPayloadCapacity } from "./qredQr.js";
-import { compressText } from "./sealCompression.js";
+import { compressBytes } from "./sealCompression.js";
 import { computeKeyId, sealSignatureMessage } from "./sealSignature.js";
 import { deriveSigningPublicKey, validateSigningKeyPair } from "./signingKeys.js";
 import { attestationMessage, pageCommitment, decodeFixedBase64 } from "./attestation.js";
@@ -49,18 +50,21 @@ export function canonicalizeText(text) {
 }
 
 export async function createQRedSeals({
-  content, privateKey, publicKey, pageContext = null, attestation = null,
+  content, privateKey, publicKey, pageContext = null, pageEvidence = null, attestation = null,
   timestamp = new Date().toISOString(), bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic",
 }) {
   const canonical = canonicalizeText(content);
-  if (!canonical.trim()) throw new Error("Cannot seal empty document text");
+  const evidence = pageEvidence ? decodePageEvidence(pageEvidence) : null;
+  if (evidence && (evidence.text !== canonical || !pageContext)) throw new Error("Page evidence does not match the page text");
+  if (!canonical.trim() && !evidence) throw new Error("Cannot seal empty document text");
   if (!["automatic", "plaintext", "zlib", "gzip"].includes(encodingStrategy)) throw new Error(`Unsupported encoding strategy: ${encodingStrategy}`);
-  const textBytes = utf8.encode(canonical);
+  const textBytes = pageEvidence || utf8.encode(canonical);
   if (textBytes.length > MAX_SEAL_TEXT_BYTES) throw new Error("Seal text exceeds the 8 MiB limit");
   if (!attestation && !publicKey) publicKey = await deriveSigningPublicKey(privateKey);
   const metadata = {
     version: attestation ? "4" : "3", algorithm: "Ed25519", timestamp: attestation?.timestamp || timestamp,
     key_id: attestation?.key_id || await computeKeyId(publicKey),
+    ...(evidence ? { page_evidence: true } : {}),
     pdf: Boolean(pageContext), page_number: pageContext?.pageNumber ?? null,
     page_count: pageContext?.pageCount ?? null,
     document_root: pageContext?.pageCount > 1 ? pageContext.documentRoot : null,
@@ -69,19 +73,19 @@ export async function createQRedSeals({
   if (attestation) {
     Object.assign(metadata, { identity: attestation.identity, salt: attestation.salt });
     signature = decodeFixedBase64(attestation.signature, 64);
-    const commitment = await pageCommitment(metadata, canonical, metadata.salt);
+    const commitment = await pageCommitment(metadata, textBytes, metadata.salt);
     if (await computeKeyId(attestation.public_key) !== metadata.key_id ||
         !await verifyAsync(signature, attestationMessage(metadata, commitment), decodeFixedBase64(attestation.public_key, 32))) {
       throw new Error("QRed attestation does not match this page");
     }
   } else {
     const { privateBytes } = await validateSigningKeyPair({ privateKey, publicKey });
-    signature = await signEd25519(sealSignatureMessage(metadata, canonical), privateBytes);
+    signature = await signEd25519(sealSignatureMessage(metadata, textBytes), privateBytes);
   }
   const candidates = [], failures = [];
   async function addCandidate(encoding) {
     try {
-      const body = encoding === "plaintext" ? textBytes : await compressText(canonical, encoding);
+      const body = encoding === "plaintext" ? textBytes : await compressBytes(textBytes, encoding);
       const chunks = await splitRecord(encodeEnvelope(metadata, signature, body, encoding), metadata.version);
       candidates.push({ encoding, chunks, qr_count: chunks.length, payload_bytes: chunks.reduce((sum, chunk) => sum + chunk.length, 0) });
       return true;
@@ -100,9 +104,10 @@ export async function createQRedSeals({
     ? [...candidates].sort((a, b) => a.qr_count - b.qr_count || a.payload_bytes - b.payload_bytes)[0]
     : candidates.find(item => item.encoding === encodingStrategy);
   if (!selected) throw new Error(failures.find(item => item.encoding === encodingStrategy)?.error_message || failures[0]?.error_message || "No supported seal encoding is available");
+  if (pageContext && selected.qr_count > 2) throw new Error(`PDF page ${pageContext.pageNumber} exceeds the two-QR limit. Shorten the page or split its content across pages.`);
   const plaintext = candidates.find(item => item.encoding === "plaintext");
   return {
-    ...metadata, bootstrap_url: (bootstrapUrl || DEFAULT_BOOTSTRAP_URL).split("#")[0],
+    ...metadata, ...(evidence ? { evidence } : {}), bootstrap_url: (bootstrapUrl || DEFAULT_BOOTSTRAP_URL).split("#")[0],
     document_id: decodeTransport(selected.chunks[0]).document_id,
     payload_json: JSON.stringify({ ...metadata, signature: encodeBase64Url(signature), content: canonical }),
     seals: selected.chunks.map(chunk => sealString(chunk, bootstrapUrl)),

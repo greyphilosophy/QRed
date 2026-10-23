@@ -70,8 +70,10 @@ def test_stateless_google_cookie_handoff_and_offline_verification(browser, playw
         popup.get_by_role("button", name="Continue").click()
         expect(page.locator("output")).to_have_attribute("data-status", "valid", timeout=15000)
         results = json.loads(page.locator("output").text_content())
-        assert [result["page_number"] for result in results] == [1, 2]
-        assert results[0]["timestamp"] == results[1]["timestamp"]
+        assert [result["page_number"] for result in results] == [1, 2, 3]
+        assert len({result["timestamp"] for result in results}) == 1
+        assert results[1]["evidence"]["visual"]["codebook"] == 1
+        assert results[2]["evidence"]["blank"] is True
         assert all(result["identity_authenticated"] for result in results)
         assert not [cookie for cookie in context.cookies() if cookie["name"].startswith("__Host-qred-")]
         wire = json.dumps(requests)

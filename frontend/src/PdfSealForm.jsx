@@ -144,7 +144,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       const matchingPublicKey = method === "private-key" ? await deriveSigningPublicKey(privateKey) : null;
       if (matchingPublicKey) await validateSigningKeyPair({ privateKey, publicKey: matchingPublicKey });
       setMessage("Sealing in this browser...");
-      const { blob, sealResult, flattenedFieldCount } = await sealPdfInBrowser({
+      const { blob, sealResult, flattenedFieldCount, footerPages = [] } = await sealPdfInBrowser({
         file,
         ...(method === "private-key" ? { privateKey, publicKey: matchingPublicKey } : {
           attestPages: pages => attestPagesWithGoogle(pages, { popup, name: fallbackName,
@@ -168,6 +168,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       setMessage(
         [
           `Sealed ${file.name} in this browser.`,
+          ...(footerPages.length ? [`Used clear footers on page(s) ${footerPages.join(", ")} to keep seals readable.`] : []),
           ...(flattenedFieldCount ? [`Flattened ${flattenedFieldCount} form field(s) before sealing.`] : []),
           `Selected encoding: ${sealResult.encoding}`,
           `Selected page scaling: ${pageScalingStrategy}`,
@@ -190,7 +191,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     <div className="card">
       <h2>Stamp a PDF</h2>
       <p style={{ color: "#64748b", marginBottom: "1rem" }}>
-        Open a PDF from your device, seal the readable text on every page, and save the stamped copy. Supported form fields are automatically flattened before their text is signed. Images, handwriting, checkbox marks, and page appearance are not authenticated. Scanned or blank pages require a checked text layer before sealing. Review the values in your saved copy.
+        Seal a PDF’s extracted text and use spare QR capacity for line locations and a small grayscale visual reference. Image-only pages receive a visual reference; blank pages receive a signed blank-page marker. Visual references are approximate and can lose small details, including digits and faces. Supported form fields are flattened before sealing. Review the values in your saved copy.
       </p>
       <p>Your PDF stays on your device. Stamping happens in this browser, and the file is not sent to a server.</p>
       <div className="demo-input">
@@ -202,7 +203,7 @@ export function PdfSealForm({ onUsePublicKey }) {
         </select>
       </div>
       {method === "google" && <div className="signing-key-help">
-        <p>Use a Gmail or Google Workspace account. After you choose a document, sign in to authorize QRed to attest its text, your email, name, and the server time. Google profile names are not independently verified identities.</p>
+        <p>Use a Gmail or Google Workspace account. After you choose a document, sign in to authorize QRed to attest its page contents, your email, name, and the server time. Google profile names are not independently verified identities.</p>
         <p>This method needs a connection for each document. Only randomized page fingerprints and account details reach QRed; Google receives the sign-in request. Your PDF, text, and private keys stay on this device. The finished seals can be verified offline.</p>
         <label htmlFor="google-fallback-name">Name (used only if Google does not provide one)</label>
         <input id="google-fallback-name" value={fallbackName} maxLength={160} disabled={loading}
@@ -269,13 +270,13 @@ export function PdfSealForm({ onUsePublicKey }) {
             title="Choose where to place the document seals."
           >
             <option value="automatic">Automatic (legal for letter, shrink otherwise)</option>
-            <option value="watermark">Pale watermark (experimental, original page size)</option>
+            <option value="watermark">Pale watermark (experimental, footer fallback)</option>
             <option value="legal-footer">Expand letter pages to legal size (bottom 3-inch footer)</option>
             <option value="shrink-footer">Shrink the document to create a footer</option>
           </select>
           <small style={{ color: "#64748b", display: "block", marginTop: "0.5rem" }}>
             {pageScalingStrategy === "watermark"
-              ? "Keeps paper and text sizes unchanged. Places pale seals over each page and a small qred.org code in a clear area on the first page. Use QRed's scanner for the watermarks. Try a printed copy before sharing; dense text, pictures, photocopying, and printer settings can make them unreadable."
+              ? "Keeps the original page size where pale seals can be read. Image pages, blank pages, and unreadable watermarks automatically use a clear footer (legal size for letter pages; shrink otherwise). Use QRed's scanner and try a printed copy before sharing."
               : "Automatic expands letter pages to legal size and keeps seals in the bottom 3 inches; other page sizes shrink to create room for the seals."}
           </small>
         </div>
