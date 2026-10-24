@@ -1,0 +1,17 @@
+diff --git a/node_modules/tesseract.js/src/createWorker.js b/node_modules/tesseract.js/src/createWorker.js
+index 89b53b8..ccf1f44 100644
+--- a/node_modules/tesseract.js/src/createWorker.js
++++ b/node_modules/tesseract.js/src/createWorker.js
+@@ -240,7 +240,11 @@ module.exports = async (langs = 'eng', oem = OEM.LSTM_ONLY, _options = {}, confi
+     .then(() => loadLanguageInternal(langs))
+     .then(() => initializeInternal(langs, oem, config))
+     .then(() => workerResResolve(resolveObj))
+-    .catch(() => {});
++    .catch((error) => {
++      terminateWorker(worker);
++      worker = null;
++      workerResReject(error);
++    });
+ 
+   return workerRes;
+ };

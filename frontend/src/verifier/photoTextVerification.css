@@ -1,0 +1,34 @@
+.photo-check { margin: 1.5rem auto; padding: 1.25rem; border: 1px solid #cbd5e1; border-radius: 12px; background: #fff; color: #172033; max-width: 780px; text-align: left; white-space: normal; }
+.photo-check h2 { font-size: 1.25rem; margin: 0 0 .75rem; }
+.photo-check h3 { margin: 1rem 0 .5rem; }
+.photo-check p { line-height: 1.5; margin: .7rem 0; }
+.photo-check label { display: block; margin: .7rem 0 .3rem; font-weight: 600; }
+.photo-check select, .photo-check input[type=file] { box-sizing: border-box; width: 100%; padding: .5rem; border: 1px solid #94a3b8; border-radius: 5px; background: #fff; color: #172033; font: inherit; }
+.photo-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; margin: .75rem 0; }
+.photo-check .photo-actions button { margin: 0; font-size: .9rem; }
+.photo-check button { margin: 0; padding: .6rem .8rem; background: #334155; color: #fff; border: 0; border-radius: 6px; font: inherit; cursor: pointer; }
+.photo-check button:disabled { opacity: .5; cursor: default; }
+.photo-check .photo-inline { display: inline-flex; align-items: center; gap: .4rem; margin: 0; font-size: .9rem; }
+.photo-check .photo-inline input { width: auto; }
+.photo-check .photo-inline select { width: auto; }
+.photo-note { color: #475569; font-size: .9rem; }
+.photo-inputs { display: grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap: .75rem; }
+.photo-summary { font-weight: 700; border-left: 5px solid #b45309; padding: .6rem; background: #fef3c7; }
+.photo-summary.matches { border-color: #15803d; background: #dcfce7; }
+.photo-legend { display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; padding: 0; list-style: none; font-size: .9rem; }
+.photo-legend li { padding-left: .5rem; border-left: 6px solid; }
+.photo-legend .matched { border-color: #15803d; }
+.photo-legend .different { border-color: #dc2626; }
+.photo-legend .uncertain { border-color: #d97706; }
+.photo-scroll { overflow: auto; max-height: 80vh; border: 1px solid #94a3b8; background: #e2e8f0; }
+.photo-stage { position: relative; }
+.photo-stage img { display: block; width: 100%; height: auto; }
+.photo-stage svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.photo-word { stroke-width: 1.5px; vector-effect: non-scaling-stroke; pointer-events: all; cursor: pointer; }
+.photo-word.matched { fill: #16a34a25; stroke: #15803d; }
+.photo-word.different { fill: #ef444435; stroke: #dc2626; }
+.photo-word.uncertain { fill: #f59e0b40; stroke: #b45309; stroke-dasharray: 3 2; }
+.photo-word:focus { stroke: #172033; stroke-width: 3px; outline: none; }
+.photo-selected { padding: .75rem; background: #f1f5f9; overflow-wrap: anywhere; }
+.photo-differences ol { padding-left: 1.5rem; max-height: 24rem; overflow: auto; }
+.photo-differences li { margin: .5rem 0; padding: .5rem; background: #fff1f2; overflow-wrap: anywhere; }

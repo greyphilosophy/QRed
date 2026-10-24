@@ -61,7 +61,7 @@
     .viewfinder video {
       width: 100%;
       height: 100%;
-      object-fit: cover;
+      object-fit: contain;
       display: block;
     }
 
@@ -315,7 +315,7 @@
 <body>
   <header>
     <h1>QRed Verifier</h1>
-    <p>Scan QR seals to verify a document</p>
+    <p>Scan QR seals to verify a document. Include the whole page when possible; the scan image is kept for text comparison.</p>
     <p>Camera frames and seal text are processed in this browser and are not sent to a server.</p>
     <details>
       <summary>Optional: use airplane mode</summary>
@@ -328,7 +328,7 @@
     <div id="scanMode">
       <div class="viewfinder" id="viewfinder">
         <video id="cameraVideo" playsinline autoplay></video>
-        <canvas id="scanCanvas"></canvas>
+        <canvas id="scanCanvas" hidden></canvas>
         <div class="scan-line" id="scanLine"></div>
         <div class="placeholder" id="placeholder">
           <div class="icon">&#9679;</div>
@@ -338,11 +338,6 @@
 
       <div class="controls">
         <button class="btn btn-primary" id="btnScan">Scan QR Code</button>
-      </div>
-
-      <div class="result-card" style="margin-bottom: 1rem;">
-        <label for="pageTextInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Page text read by scanner or pasted for comparison</label>
-        <textarea id="pageTextInput" rows="4" placeholder="Scan QR Code to OCR the page, or paste document text here" style="width:100%; padding:0.75rem; border-radius:8px; border:1px solid var(--surface-2); background:var(--surface-2); color:var(--text); margin-bottom:0.75rem;"></textarea>
       </div>
 
       <div class="status-bar" id="statusBar">
@@ -366,30 +361,17 @@
     </section>
 
     <div class="result-view" id="resultView">
-      <div class="result-card" id="arCard" style="display:none;">
-        <div class="ar-hint">Point the camera at the document page. Highlights are drawn in the same camera-plane orientation as the visible page text.</div>
-        <div class="viewfinder">
-          <video id="arVideo" playsinline autoplay></video>
-          <canvas id="arCanvas"></canvas>
-          <div class="ar-qr-layer" id="arQrLayer"></div>
-        </div>
-        <div class="ar-legend">
-          <span><i class="ar-swatch match"></i>QR text found on page</span>
-          <span><i class="ar-swatch extra"></i>Page text not in QR</span>
-          <span><i class="ar-swatch missing"></i>QR text missing from page</span>
-        </div>
-        <div class="ar-selected" id="arSelected">Tap a QR box to see its data.</div>
-      </div>
       <div class="result-card">
         <div class="result-status" id="resultStatus"></div>
         <div class="result-meta" id="resultMeta"></div>
         <div class="result-content" id="resultContent"></div>
       </div>
       <div class="controls">
-        <button class="btn btn-primary" id="btnStartAr" style="display:none;">Start AR Overlay</button>
         <button class="btn btn-secondary" id="btnNewScan">New Scan</button>
       </div>
     </div>
+
+    <div id="photoTextComparison"></div>
 
     <div id="errorMsg" style="color: var(--error); font-size: 0.85rem; padding: 0.5rem; display: none;"></div>
   </main>
@@ -401,8 +383,9 @@
   <script type="module">
     import { createQrFrameScanner } from "./src/qr/scanQrImage.js";
     import { isQRedEntryLink } from "./src/qr/hiddenPayload.js";
-    import { compareDocumentText, classifyOcrWords, decodeSeal as decodeQRedSeal, verifyQRedSeals, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./src/qredVerifier.js";
-    import { captureDocumentFrameForOcr, drawArOverlay } from "./src/verifier/ocrAr.js";
+    import { decodeSeal as decodeQRedSeal, verifyQRedSeals, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./src/qredVerifier.js";
+    import { mountPhotoTextVerification } from "./src/verifier/mountPhotoTextVerification.jsx";
+    import { createScanPhotoCollection } from "./src/verifier/scanPhotos.js";
     import { readSigningKeyFile } from "./src/signingKeys.js";
     import { orderSealResults, sealCollectionProgress } from "./src/sealCollection.js";
 
@@ -431,34 +414,31 @@
       seenSeals: new Set(),
       verificationResults: Object.create(null),
       scanSession: 0,
-      arItems: [],
-      arItemsByRaw: new Map(),
-      arSelectedRaw: "",
+      scanImages: { photos: [], notice: "" },
       isScanning: false,
       stream: null,
       animFrameId: null,
-      pageText: "",
-      ocrPromise: null,
-      verifiedContent: "",
-      arStream: null,
-      arTimerId: null,
-      arQrFrameId: null,
-      arQrBusy: false,
-      arQrLastScanAt: 0,
-      arQrScanner: null,
-      arBusy: false,
-      arErrorShown: false,
       defaultKeysPromise: null,
       defaultKeyLookupMessage: "",
       publicKey: "",
     };
 
+    var photoComparison = mountPhotoTextVerification(document.getElementById("photoTextComparison"));
+    var scanPhotos = createScanPhotoCollection(function(images) {
+      state.scanImages = images;
+      updatePhotoComparison();
+    });
+    function updatePhotoComparison(results) {
+      results = results || orderSealResults(Object.values(state.verificationResults));
+      var progress = sealCollectionProgress(state.scannedSeals, results);
+      photoComparison.update(results, state.scanSession, state.scanImages, Boolean(progress && !progress.finished));
+    }
+    updatePhotoComparison([]);
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(function() {});
+
     // Camera handling
     var btnScan = document.getElementById("btnScan");
     var btnNewScan = document.getElementById("btnNewScan");
-    var btnStartAr = document.getElementById("btnStartAr");
-    var arSelected = document.getElementById("arSelected");
-    var arQrLayer = document.getElementById("arQrLayer");
     var statusBar = document.getElementById("statusBar");
     var statusText = document.getElementById("statusText");
     var sealList = document.getElementById("sealList");
@@ -467,7 +447,6 @@
     var issuerKeyControls = document.getElementById("issuerKeyControls");
     var publicKeyFileInput = document.getElementById("publicKeyFileInput");
     var publicKeyFileStatus = document.getElementById("publicKeyFileStatus");
-    var pageTextInput = document.getElementById("pageTextInput");
 
     btnScan.onclick = function() {
       if (state.isScanning) {
@@ -487,13 +466,8 @@
       state.scannedSeals = [];
       issuerKeyControls.hidden = true;
       publicKeyFileStatus.textContent = "";
-      stopArOverlay();
+      scanPhotos.clear();
       state.seenSeals = new Set();
-      state.arItems = [];
-      state.arItemsByRaw = new Map();
-      state.arSelectedRaw = "";
-      if (arSelected) arSelected.textContent = "Tap a QR box to see its data.";
-      renderArQrLayer();
       sealList.innerHTML = "";
       sealList.classList.remove("visible");
       progressContainer.style.display = "none";
@@ -505,18 +479,6 @@
       document.getElementById("scanCanvas").style.display = "none";
       document.getElementById("scanLine").style.display = "none";
       statusBar.classList.remove("visible");
-      state.pageText = "";
-      state.ocrPromise = null;
-      pageTextInput.value = "";
-      state.verifiedContent = "";
-    };
-
-    btnStartAr.onclick = function() {
-      if (state.arStream) {
-        stopArOverlay();
-      } else {
-        startArOverlay();
-      }
     };
 
     publicKeyFileInput.onchange = async function(event) {
@@ -527,16 +489,15 @@
       publicKeyFileStatus.textContent = "Reading public key on this device...";
       try {
         state.publicKey = await readSigningKeyFile(file, "public");
+        state.scanSession += 1;
+        updatePhotoComparison([]);
         publicKeyFileStatus.textContent = "Public key opened. Collected seals are checked with this key.";
         await Promise.all(Object.keys(state.sealsByDocument).map(function(docId) {
           var doc = state.sealsByDocument[docId];
           // Discard verification already in flight with the previous key.
           doc.revision += 1;
           delete state.verificationResults[docId];
-          return Promise.all([
-            Object.keys(doc.chunks).length === doc.total ? reconstructAndShow(docId) : Promise.resolve(),
-            refreshArSealStatus(docId),
-          ]);
+          return Object.keys(doc.chunks).length === doc.total ? reconstructAndShow(docId) : Promise.resolve();
         }));
       } catch (error) {
         publicKeyFileStatus.textContent = "Key import failed: " + error.message;
@@ -600,100 +561,6 @@
       el.style.display = "block";
     }
 
-    function getQrBounds(location, frameWidth, frameHeight) {
-      if (!location || !frameWidth || !frameHeight) return null;
-      var corners = [
-        location.topLeftCorner,
-        location.topRightCorner,
-        location.bottomLeftCorner,
-        location.bottomRightCorner,
-      ].filter(Boolean);
-      if (corners.length === 0) return null;
-      var xs = corners.map(function(point) { return point.x; });
-      var ys = corners.map(function(point) { return point.y; });
-      var minX = Math.max(0, Math.min.apply(Math, xs));
-      var minY = Math.max(0, Math.min.apply(Math, ys));
-      var maxX = Math.min(frameWidth, Math.max.apply(Math, xs));
-      var maxY = Math.min(frameHeight, Math.max.apply(Math, ys));
-      return {
-        left: (minX / frameWidth) * 100,
-        top: (minY / frameHeight) * 100,
-        width: Math.max(1, ((maxX - minX) / frameWidth) * 100),
-        height: Math.max(1, ((maxY - minY) / frameHeight) * 100),
-      };
-    }
-
-    function arItemTitle(item) {
-      if (item.kind === "seal") {
-        return "Seal " + item.documentId + " · chunk " + (item.chunkNumber + 1) + "/" + item.totalChunks;
-      }
-      return "QR info";
-    }
-
-    function arItemIcon(status) {
-      if (status === "valid") return "✓";
-      if (status === "invalid") return "✕";
-      return "i";
-    }
-
-    function arItemStatusLabel(item) {
-      if (item.kind === "seal") {
-        if (item.status === "valid") return "Valid seal";
-        if (item.status === "invalid") return "Invalid seal";
-        return "Seal detected";
-      }
-      return "QR content";
-    }
-
-    function arItemDetails(item) {
-      var lines = [];
-      lines.push(arItemStatusLabel(item));
-      if (item.kind === "seal") {
-        lines.push("Document ID: " + item.documentId);
-        lines.push("Chunk: " + (item.chunkNumber + 1) + " / " + item.totalChunks);
-        if (item.verificationStatus) {
-          lines.push("Verification: " + item.verificationStatus);
-        }
-        if (item.verificationMessage) {
-          lines.push("Note: " + item.verificationMessage);
-        }
-      } else {
-        lines.push("Non-QRed QR code");
-      }
-      lines.push("");
-      lines.push("Data:");
-      lines.push(item.raw);
-      return lines.join("\n");
-    }
-
-    function renderArSelectedItem(item) {
-      if (!arSelected) return;
-      state.arSelectedRaw = item ? item.raw : "";
-      arSelected.textContent = item ? arItemDetails(item) : "Tap a QR box to see its data.";
-      renderArQrLayer();
-    }
-
-    function renderArQrLayer() {
-      if (!arQrLayer) return;
-      arQrLayer.innerHTML = "";
-      state.arItems.forEach(function(item) {
-        if (!item.bbox) return;
-        var button = document.createElement("button");
-        button.type = "button";
-        button.className = "ar-qr-box " + item.status + (item.raw === state.arSelectedRaw ? " selected" : "");
-        button.style.left = item.bbox.left + "%";
-        button.style.top = item.bbox.top + "%";
-        button.style.width = item.bbox.width + "%";
-        button.style.height = item.bbox.height + "%";
-        button.title = arItemDetails(item);
-        button.innerHTML = "<span class='ar-qr-icon'>" + arItemIcon(item.status) + "</span><span>" + escapeHtml(arItemTitle(item)) + "</span>";
-        button.onclick = function() {
-          renderArSelectedItem(item);
-        };
-        arQrLayer.appendChild(button);
-      });
-    }
-
     function registerSealInSession(sealStr, decoded) {
       state.scannedSeals.push(sealStr);
       if (decodeQRedSeal(sealStr)?.version === "3") issuerKeyControls.hidden = false;
@@ -704,102 +571,9 @@
       state.sealsByDocument[docId].chunks[decoded.chunkNumber] = decoded.data;
       state.sealsByDocument[docId].revision = (state.sealsByDocument[docId].revision || 0) + 1;
       delete state.verificationResults[docId];
+      updatePhotoComparison();
       updateSealList();
       return state.sealsByDocument[docId];
-    }
-
-    async function refreshArSealStatus(docId) {
-      var session = state.scanSession;
-      var revision = state.sealsByDocument[docId]?.revision;
-      var seals = state.arItems.filter(function(item) {
-        return item.kind === "seal" && item.documentId === docId;
-      }).map(function(item) { return item.raw; });
-      if (seals.length === 0) return;
-
-      try {
-        var publicKey = await loadMatchingDefaultPublicKey(seals);
-        var result = await verifyQRedSeals(seals, publicKey);
-        if (state.scanSession !== session || state.sealsByDocument[docId]?.revision !== revision) return;
-        var status = result.status === "VALID" ? "valid" : result.status === "INVALID" ? "invalid" : "info";
-        var message = result.error_message || (result.status === "VALID" ? "Verified successfully." : result.status === "INCOMPLETE" ? "Waiting for the remaining chunks." : "");
-
-        state.arItems.forEach(function(item) {
-          if (item.kind === "seal" && item.documentId === docId) {
-            item.status = status;
-            item.verificationStatus = result.status || "INFO";
-            item.verificationMessage = message;
-          }
-        });
-
-        if (state.arSelectedRaw) {
-          var selected = state.arItemsByRaw.get(state.arSelectedRaw);
-          if (selected) renderArSelectedItem(selected);
-        } else {
-          renderArQrLayer();
-        }
-      } catch (error) {
-        if (state.scanSession !== session || state.sealsByDocument[docId]?.revision !== revision) return;
-        state.arItems.forEach(function(item) {
-          if (item.kind === "seal" && item.documentId === docId) {
-            item.status = "info";
-            item.verificationStatus = "ERROR";
-            item.verificationMessage = error.message;
-          }
-        });
-        renderArQrLayer();
-      }
-    }
-
-    function processArQrDetection(code, frameWidth, frameHeight, imageData) {
-      if (!code || !code.data) return;
-
-      var raw = qredPayloadFromPhotoScanResult(imageData, frameWidth, frameHeight, code);
-      if (isQRedEntryLink(raw)) return;
-      if (state.arItemsByRaw.has(raw)) {
-        var existing = state.arItemsByRaw.get(raw);
-        existing.bbox = getQrBounds(code.location, frameWidth || existing.frameWidth, frameHeight || existing.frameHeight) || existing.bbox;
-        existing.lastSeen = Date.now();
-        renderArQrLayer();
-        return;
-      }
-
-      var bounds = getQrBounds(code.location, frameWidth, frameHeight);
-      var decoded = decodeSeal(raw);
-      if (!decoded) {
-        var infoItem = {
-          raw: raw,
-          kind: "info",
-          status: "info",
-          bbox: bounds,
-          frameWidth: frameWidth,
-          frameHeight: frameHeight,
-          lastSeen: Date.now(),
-        };
-        state.arItems.push(infoItem);
-        state.arItemsByRaw.set(raw, infoItem);
-        renderArQrLayer();
-        return;
-      }
-
-      var sealItem = {
-        raw: raw,
-        kind: "seal",
-        status: "info",
-        bbox: bounds,
-        frameWidth: frameWidth,
-        frameHeight: frameHeight,
-        documentId: decoded.documentId,
-        chunkNumber: decoded.chunkNumber,
-        totalChunks: decoded.totalChunks,
-        verificationStatus: "INCOMPLETE",
-        verificationMessage: "Waiting for verification.",
-        lastSeen: Date.now(),
-      };
-      state.arItems.push(sealItem);
-      state.arItemsByRaw.set(raw, sealItem);
-      registerSealInSession(raw, decoded);
-      renderArSelectedItem(sealItem);
-      refreshArSealStatus(decoded.documentId);
     }
 
     function startScanning() {
@@ -843,7 +617,7 @@
               if (isQRedEntryLink(payload)) {
                 statusText.textContent = "Point at the document seal or pale watermark. Include the whole square in view.";
               } else {
-                processScannedSeal(payload);
+                processScannedSeal(payload, canvas);
               }
             }
             lastScanAt = performance.now();
@@ -871,7 +645,7 @@
       statusBar.classList.remove("visible");
     }
 
-    function processScannedSeal(sealStr) {
+    function processScannedSeal(sealStr, frame) {
       if (state.seenSeals.has(sealStr)) return;
       state.seenSeals.add(sealStr);
 
@@ -884,6 +658,7 @@
       }
 
       registerSealInSession(sealStr, decoded);
+      scanPhotos.capture(sealStr, frame);
 
       var docId = decoded.documentId;
       var docData = state.sealsByDocument[docId];
@@ -891,7 +666,7 @@
       refreshCollectionProgress();
 
       if (collected >= docData.total) {
-        reconstructAndShow(docId, { capturePageText: false });
+        reconstructAndShow(docId);
       }
     }
 
@@ -933,37 +708,7 @@
     }
 
     // Reconstruct & Verify
-    async function readPageTextFromScanner() {
-      if (pageTextInput.value.trim()) return pageTextInput.value.trim();
-      if (state.pageText) return state.pageText;
-      if (state.ocrPromise) return state.ocrPromise;
-      if (!window.confirm("Point the camera at the full document page, then tap OK to capture page text for OCR.")) return "";
-
-      statusBar.classList.add("visible");
-      statusText.textContent = "Capturing page text...";
-      state.ocrPromise = captureDocumentFrameForOcr().then(function(canvas) {
-        statusText.textContent = "Reading page text...";
-        return import("tesseract.js").then(function(module) {
-          var workerApi = module.default || module;
-          return workerApi.recognize(canvas, "eng");
-        });
-      }).then(function(result) {
-        state.pageText = (result && result.data && result.data.text ? result.data.text : "").trim();
-        pageTextInput.value = state.pageText;
-        return state.pageText;
-      }).catch(function(err) {
-        showError("Page OCR failed; paste page text to compare: " + err.message);
-        return "";
-      }).finally(function() {
-        statusBar.classList.remove("visible");
-        state.ocrPromise = null;
-      });
-      return state.ocrPromise;
-    }
-
-
-    async function reconstructAndShow(docId, options) {
-      options = options || {};
+    async function reconstructAndShow(docId) {
       var docData = state.sealsByDocument[docId];
       var session = state.scanSession;
       var revision = docData.revision;
@@ -986,7 +731,6 @@
         if (!publicKey && state.defaultKeyLookupMessage) {
           result.error_message = state.defaultKeyLookupMessage + (result.error_message ? " " + result.error_message : "");
         }
-        result.page_text = options.capturePageText ? await readPageTextFromScanner() : (pageTextInput.value.trim() || state.pageText || "");
         if (state.scanSession !== session || docData.revision !== revision) return;
         state.verificationResults[docId] = { ...result, document_id: docId };
         refreshCollectionProgress();
@@ -1001,8 +745,7 @@
       options = options || {};
       document.getElementById("scanMode").style.display = options.keepScanView ? "block" : "none";
       var results = options.results || [payload];
-      state.verifiedContent = payload.content || "";
-      btnStartAr.style.display = results.length === 1 && status === "VALID" && state.verifiedContent ? "block" : "none";
+      updatePhotoComparison(results);
       var rv = document.getElementById("resultView");
       rv.classList.add("visible");
 
@@ -1043,19 +786,6 @@
         var content = document.createElement("div");
         renderResultContent(content, result);
         article.appendChild(content);
-        if (result.status === "VALID" && result.content) {
-          var arButton = document.createElement("button");
-          arButton.type = "button";
-          arButton.className = "btn btn-secondary";
-          arButton.textContent = "Compare this page in AR";
-          arButton.onclick = function() {
-            stopArOverlay();
-            state.verifiedContent = result.content;
-            btnStartAr.style.display = "block";
-            startArOverlay();
-          };
-          article.appendChild(arButton);
-        }
         rc.appendChild(article);
       });
     }
@@ -1087,151 +817,9 @@
     }
 
     function renderResultContent(rc, payload) {
-      if (payload.content && payload.page_text) {
-        var comparison = compareDocumentText(payload.content, payload.page_text);
-        var summary = document.createElement("div");
-        summary.className = "diff-summary";
-        summary.textContent = comparison.matchedWords + " matched words, " + comparison.missingWords + " QR words missing from the page, " + comparison.extraWords + " page words not found in the QR code.";
-        rc.appendChild(summary);
-        var diff = document.createElement("div");
-        diff.className = "diff-view";
-        diff.appendChild(renderDiffSection("Page text", comparison.pageTokens, { matched: "diff-token-matched", extra: "diff-token-extra" }));
-        diff.appendChild(renderDiffSection("QR text", comparison.qrTokens, { matched: "diff-token-matched", missing: "diff-token-missing" }));
-        rc.appendChild(diff);
-      } else {
-        rc.textContent = payload.content || "(empty)";
-      }
+      rc.textContent = payload.content || "(empty)";
     }
 
-
-    function startArOverlay() {
-      if (!state.verifiedContent) return;
-      var arCard = document.getElementById("arCard");
-      var video = document.getElementById("arVideo");
-      var canvas = document.getElementById("arCanvas");
-      arCard.style.display = "block";
-      btnStartAr.textContent = "Stop AR Overlay";
-      navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1600 }, height: { ideal: 1200 } }
-      }).then(function(mediaStream) {
-        state.arStream = mediaStream;
-        state.arErrorShown = false;
-        state.arQrLastScanAt = 0;
-        state.arQrScanner = createQrFrameScanner();
-        video.srcObject = mediaStream;
-        return video.play();
-      }).then(function() {
-        canvas.width = video.videoWidth || 1600;
-        canvas.height = video.videoHeight || 1200;
-        runArQrFrame();
-        runArOcrFrame();
-        state.arTimerId = window.setInterval(runArOcrFrame, 3500);
-      }).catch(function(err) {
-        showError("Could not start AR overlay camera: " + err.message);
-        stopArOverlay();
-      });
-    }
-
-    function stopArOverlay() {
-      if (state.arTimerId) {
-        window.clearInterval(state.arTimerId);
-        state.arTimerId = null;
-      }
-      if (state.arQrFrameId) {
-        cancelAnimationFrame(state.arQrFrameId);
-        state.arQrFrameId = null;
-      }
-      if (state.arStream) {
-        state.arStream.getTracks().forEach(function(track) { track.stop(); });
-        state.arStream = null;
-      }
-      state.arBusy = false;
-      state.arQrBusy = false;
-      state.arQrScanner = null;
-      btnStartAr.textContent = "Start AR Overlay";
-      var arCard = document.getElementById("arCard");
-      if (arCard) arCard.style.display = "none";
-      var arCanvas = document.getElementById("arCanvas");
-      if (arCanvas) arCanvas.getContext("2d").clearRect(0, 0, arCanvas.width, arCanvas.height);
-      if (arQrLayer) arQrLayer.innerHTML = "";
-    }
-
-    function runArQrFrame() {
-      if (state.arQrBusy || !state.arStream) return;
-      var video = document.getElementById("arVideo");
-      if (!video.videoWidth || !video.videoHeight) {
-        state.arQrFrameId = requestAnimationFrame(runArQrFrame);
-        return;
-      }
-      if (Date.now() - state.arQrLastScanAt < 250) {
-        state.arQrFrameId = requestAnimationFrame(runArQrFrame);
-        return;
-      }
-      state.arQrBusy = true;
-      var capture = document.createElement("canvas");
-      capture.width = video.videoWidth;
-      capture.height = video.videoHeight;
-      capture.getContext("2d").drawImage(video, 0, 0, capture.width, capture.height);
-      var imageData = capture.getContext("2d").getImageData(0, 0, capture.width, capture.height);
-      var code = state.arQrScanner(imageData.data, capture.width, capture.height);
-      if (code && code.data) {
-        processArQrDetection(code, capture.width, capture.height, imageData.data);
-      }
-      state.arQrLastScanAt = Date.now();
-      state.arQrBusy = false;
-      if (state.arStream) {
-        state.arQrFrameId = requestAnimationFrame(runArQrFrame);
-      }
-    }
-
-    function runArOcrFrame() {
-      if (state.arBusy || !state.arStream) return;
-      var video = document.getElementById("arVideo");
-      var canvas = document.getElementById("arCanvas");
-      if (!video.videoWidth || !video.videoHeight) return;
-      state.arBusy = true;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      var capture = document.createElement("canvas");
-      capture.width = video.videoWidth;
-      capture.height = video.videoHeight;
-      capture.getContext("2d").drawImage(video, 0, 0, capture.width, capture.height);
-      // The separate QR loop handles detection; OCR must not duplicate its work.
-      import("tesseract.js").then(function(module) {
-        var workerApi = module.default || module;
-        return workerApi.recognize(capture, "eng");
-      }).then(function(result) {
-        var words = result && result.data && result.data.words ? result.data.words : [];
-        drawArOverlay(canvas, classifyOcrWords(state.verifiedContent, words));
-      }).catch(function(err) {
-        if (!state.arErrorShown) {
-          state.arErrorShown = true;
-          showError("AR OCR failed; stopping overlay so it does not repeat errors: " + err.message);
-        }
-        stopArOverlay();
-      }).finally(function() {
-        state.arBusy = false;
-      });
-    }
-
-
-    function renderDiffSection(label, tokens, classes) {
-      var container = document.createElement("div");
-      var heading = document.createElement("div");
-      heading.className = "diff-label";
-      heading.textContent = label;
-      container.appendChild(heading);
-      var body = document.createElement("div");
-      tokens.forEach(function(item) {
-        var span = document.createElement("span");
-        span.textContent = item.token;
-        if (classes[item.status]) span.className = classes[item.status];
-        body.appendChild(span);
-      });
-      if (tokens.length === 0) body.textContent = "No differences found.";
-      container.appendChild(body);
-      return container;
-    }
     // ── Test API: exposed on window so page.evaluate() can call module-scoped code ──
     // NOTE: CI E2E tests call this hook with either:
     //  - raw seal strings (preferred)

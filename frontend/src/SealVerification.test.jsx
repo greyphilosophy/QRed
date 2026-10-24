@@ -1,12 +1,14 @@
 /* @vitest-environment jsdom */
 import { webcrypto } from "node:crypto";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { signAsync } from "@noble/ed25519";
 import { attestationMessage, pageCommitment } from "./attestation.js";
 import { decodeBase64Url, encodeBase64Url } from "./sealFormat.js";
 import { createQRedSeals } from "./qredSealer.js";
 import App from "./App.jsx";
+import { useSealVerification } from "./SealVerification.jsx";
+import { decodeSeal } from "./qredVerifier.js";
 
 vi.mock("./trustedAuthorities.json", () => ({ default: { da522162396ab2d0: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q" } }));
 
@@ -26,7 +28,7 @@ beforeEach(() => {
   vi.stubGlobal("crypto", webcrypto);
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it("connects homepage scans to real signature verification and waits for every chunk", async () => {
   const content = Array.from({ length: 700 }, (_, i) => `Record ${i}: ${Math.imul(i + 17, 2654435761) >>> 0}.`).join("\n");
@@ -125,4 +127,41 @@ it("verifies Google seals offline without asking for an issuer key, including mu
   expect(screen.getByText(/Account authenticated through Google: alice@gmail.com/)).toBeTruthy();
   expect(screen.queryByLabelText("Issuer public key")).toBeNull();
   expect(screen.queryByLabelText("Open issuer public key file")).toBeNull();
+});
+
+it("retains scan frames by their signed page IDs and clears them with the collection", async () => {
+  const pages = await Promise.all([2, 1].map(pageNumber => createQRedSeals({
+    content: `Photo page ${pageNumber}`, privateKey, publicKey, timestamp: "2026-10-22T12:00:00Z",
+    pageContext: { pageNumber, pageCount: 2, documentRoot: "b2".repeat(32) },
+  })));
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ fillRect() {}, drawImage() {} });
+  vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(callback => callback(new Blob(["frame"], { type: "image/png" })));
+  const canvas = document.createElement("canvas"); canvas.width = 400; canvas.height = 600;
+  const { result } = renderHook(useSealVerification);
+  await act(async () => {
+    result.current.setPublicKey(publicKey);
+    pages.forEach(page => result.current.addSeal(page.seals[0], canvas));
+  });
+  await waitFor(() => expect(result.current.progress.complete).toBe(true));
+  expect(result.current.scanImages.photos.map(image => image.documentId)).toEqual(pages.map(page => decodeSeal(page.seals[0]).document_id));
+  expect(result.current.results.map(page => page.page_number)).toEqual([1, 2]);
+  act(() => result.current.clear());
+  expect(result.current.scanImages.photos).toEqual([]);
+});
+
+it("does not collect an uploaded image that finishes opening after the user clears scans", async () => {
+  let opened;
+  vi.stubGlobal("Image", class { decode() { return new Promise(resolve => { opened = resolve; }); } });
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL() { return "blob:pending-qr-image"; }
+    static revokeObjectURL() {}
+  });
+  render(<App />);
+  fireEvent.change(screen.getByLabelText("Choose QR image"), {
+    target: { files: [new File(["synthetic"], "qr.png", { type: "image/png" })] },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Clear collected seals" }));
+  await act(async () => opened());
+  expect(screen.queryByText(/No QR code found/)).toBeNull();
+  expect(scanner.props.collectionProgress).toBeNull();
 });

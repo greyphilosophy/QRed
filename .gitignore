@@ -18,6 +18,7 @@ node_modules/
 frontend/build/
 frontend/dist/
 frontend/public/pdfjs/
+frontend/public/ocr/
 .npm/
 
 # IDE

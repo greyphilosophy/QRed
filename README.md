@@ -113,6 +113,49 @@ Key files contain one raw key as Base64URL or standard Base64, with or without p
 
 The configured/default public key is for verification only. The stamping tool does not preload it because an unrelated private key cannot sign for it. A generated key proves control of that signing key, not an independently verified issuer identity.
 
+## Compare a printed page photo
+
+After verifying a page's seals, use **Compare a page photo** on the homepage or
+`verify.htm`. A successful seal scan also retains its original image, including
+when reading a pale watermark. Once the seals are verified and collection has
+finished, the selected page's image is compared automatically if text recognition
+is loaded. You can load the reader after scanning too; the image waits in this tab.
+For multi-seal pages, **Captured scan image** lets you choose among the images.
+Pages and images are associated by seal identifiers, even when scanned out of order.
+
+Include the entire page upright and in good light. Reading a QR does not establish
+that the rest of the page is in focus or even in frame. You can always take or
+choose a clearer page photo. For a multi-page collection, select the signed page
+to review. Existing seals work without adding any payload bytes.
+
+QRed reads printed English text locally and highlights the same still image:
+green for matching words, red for different/extra readings, amber for uncertain
+readings. Tap a highlight to see what was read; zoom or rotate the photo as needed.
+Missing signed text appears in a separate review list because seals contain no
+word coordinates. Choosing another page, clearing the collection, or invalidating
+the signature discards the previous photo comparison.
+
+This is an OCR-assisted text comparison, not authentication of every pixel,
+handwriting, images, or layout. OCR can miss or misread text, even confidently.
+Check important numbers and unmarked areas. Blur, skew, columns, watermark seals,
+and QRed's added seal captions can produce differences. Case, punctuation,
+numbers, signs, and repeated words are preserved; only whitespace and canonical
+Unicode composition are ignored. The reader never receives the expected text as
+a recognition hint. Its confidence threshold is a review heuristic, not an
+authenticity probability.
+
+The English model, WebAssembly engine, and worker are served by QRed itself and
+cached as versioned assets. **Text recognition ready** means the reader is loaded
+in the current tab and can process photos offline. Photos and recognized text
+are kept only in memory, not uploaded or written to browser storage. Reloading
+or clearing the seal collection releases the captured scan images. Capture is
+deduplicated per seal and bounded to 16 images / 32 MiB of encoded images, with
+at most four encodings in flight. Older images are released with a notice if the
+limit is reached; retained images are capped at six megapixels. Reloading
+or clearing browser caches may require loading resources again. The first release
+is covered by synthetic-image browser tests; physical print/phone-camera accuracy
+still needs testing.
+
 ## Run tests
 
 ```bash
@@ -130,8 +173,12 @@ HTTP or WebSocket attempts while generating/opening/saving keys, stamping
 and saving a PDF, and verifying seal text and QR image pixels. Loading permits
 only same-origin GETs for known build files and the default public key. Probe
 requests verify that the guard catches page and service-worker traffic.
+`tests/test_photo_verification.py` additionally loads the real English OCR engine,
+then compares matching, altered, incomplete, and blank synthetic page images on
+both verifier routes with networking blocked or offline. It checks highlighted
+image coordinates and rejects missing model resources with a recoverable error.
 This covers the tested workflows after their resources load; first-use assets,
-OCR resources, page reloads, and device-wide traffic are outside that assertion.
+page reloads, and device-wide traffic are outside that assertion.
 
 ## Deploy to Cloudflare
 

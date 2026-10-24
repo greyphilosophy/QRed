@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { scanQrImage } from "./qr/scanQrImage.js";
 import { decodeSeal, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./qredVerifier.js";
 import { isQRedEntryLink } from "./qr/hiddenPayload.js";
 import { readSigningKeyFile } from "./signingKeys.js";
 import { sealCollectionProgress, verifySealCollection } from "./sealCollection.js";
+import { PhotoTextVerification } from "./verifier/PhotoTextVerification.jsx";
+import { createScanPhotoCollection } from "./verifier/scanPhotos.js";
 
 export function useSealVerification() {
   const [seals, setSeals] = useState([]);
@@ -13,6 +15,9 @@ export function useSealVerification() {
   const [busy, setBusy] = useState(false);
   const [checked, setChecked] = useState(null);
   const [session, setSession] = useState(0);
+  const [scanImages, setScanImages] = useState({ photos: [], notice: "" });
+  const [photoCollection] = useState(() => createScanPhotoCollection(setScanImages));
+  useEffect(() => () => photoCollection.clear(), [photoCollection]);
 
   useEffect(() => {
     let cancelled = false;
@@ -29,7 +34,7 @@ export function useSealVerification() {
     return () => { cancelled = true; controller.abort(); clearTimeout(timer); };
   }, []);
 
-  const addSeal = useCallback((text) => {
+  const addSeal = useCallback((text, frame) => {
     if (isQRedEntryLink(text) && text !== VISIBLE_QR_TEXT) {
       setNotice("That code opens qred.org. Scan the pale watermark to read the document seal.");
       return;
@@ -43,8 +48,9 @@ export function useSealVerification() {
       return;
     }
     setNotice("");
+    photoCollection.capture(text, frame);
     setSeals((previous) => previous.includes(text) ? previous : [...previous, text]);
-  }, []);
+  }, [photoCollection]);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,13 +65,18 @@ export function useSealVerification() {
 
   const progress = useMemo(() => sealCollectionProgress(seals,
     checked?.seals === seals && checked.publicKey === publicKey ? results : []), [seals, publicKey, checked, results]);
-  return { seals, publicKey, setPublicKey, results, notice, setNotice, busy, addSeal, progress, session,
-    clear: () => { setSeals([]); setResults([]); setNotice(""); setSession(value => value + 1); } };
+  return { seals, publicKey, setPublicKey, results, notice, setNotice, busy, addSeal, progress, session, scanImages,
+    clear: () => { photoCollection.clear(); setSeals([]); setResults([]); setNotice(""); setSession(value => value + 1); } };
 }
 
 export function SealVerification({ verification }) {
   const [openingKey, setOpeningKey] = useState(false);
   const [keyFileStatus, setKeyFileStatus] = useState("");
+  const imageRead = useRef(0);
+  useEffect(() => {
+    imageRead.current += 1;
+    return () => { imageRead.current += 1; };
+  }, [verification.session]);
   const { seals, setPublicKey, results, notice, setNotice, busy, addSeal } = verification;
   const hasLocalSeals = seals.some(seal => decodeSeal(seal)?.version === "3");
 
@@ -87,13 +98,16 @@ export function SealVerification({ verification }) {
   }
 
   async function readImage(event) {
-    const file = event.target.files?.[0];
+    const input = event.target;
+    const file = input.files?.[0];
     if (!file) return;
+    const request = ++imageRead.current;
     const url = URL.createObjectURL(file);
     try {
       const image = new Image();
       image.src = url;
       await image.decode();
+      if (request !== imageRead.current) return;
       const canvas = document.createElement("canvas");
       canvas.width = image.naturalWidth;
       canvas.height = image.naturalHeight;
@@ -102,18 +116,18 @@ export function SealVerification({ verification }) {
       const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
       const code = scanQrImage(pixels.data, pixels.width, pixels.height);
       if (!code) throw new Error("No QR code found. Choose a clear image of one seal.");
-      addSeal(qredPayloadFromPhotoScanResult(pixels.data, pixels.width, pixels.height, code));
+      addSeal(qredPayloadFromPhotoScanResult(pixels.data, pixels.width, pixels.height, code), canvas);
     } catch (error) {
-      setNotice(error.message);
+      if (request === imageRead.current) setNotice(error.message);
     } finally {
       URL.revokeObjectURL(url);
-      event.target.value = "";
+      input.value = "";
     }
   }
 
   return <section className="verification-card" aria-label="Seal verification">
     <h2>Verify collected seals</h2>
-    <p>Scan each QR seal for a page. Compare the recovered text with the document.</p>
+    <p>Scan each QR seal for a page. Its scan image is kept for comparison with the signed text; you can also take a clearer page photo.</p>
     <p className="verification-note">QR images and camera frames are processed in this browser and are not sent to a server.</p>
     <details>
       <summary>Optional: use airplane mode</summary>
@@ -147,5 +161,8 @@ export function SealVerification({ verification }) {
         {result.content && <pre>{result.content}</pre>}
       </article>)}
     </div>
+    <PhotoTextVerification results={results} session={verification.session}
+      scanPhotos={verification.scanImages?.photos} captureNotice={verification.scanImages?.notice}
+      collecting={Boolean(verification.progress && !verification.progress.finished)} />
   </section>;
 }

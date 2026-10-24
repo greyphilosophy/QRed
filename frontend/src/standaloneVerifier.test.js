@@ -12,6 +12,7 @@ import { createQRedSeals } from "./qredSealer.js";
 import { createQRedQrSymbol } from "./qredQr.js";
 import { readSigningKeyFile } from "./signingKeys.js";
 import { orderSealResults, sealCollectionProgress } from "./sealCollection.js";
+import { createScanPhotoCollection } from "./verifier/scanPhotos.js";
 import { signAsync } from "@noble/ed25519";
 import { attestationMessage, pageCommitment } from "./attestation.js";
 import { decodeBase64Url, encodeBase64Url } from "./sealFormat.js";
@@ -38,7 +39,9 @@ function loadStandalone(overrides = {}) {
   const source = document.querySelector('script[type="module"]').textContent.replace(/^\s*import .+;$/gm, "");
   const bindings = {
     createQrFrameScanner, isQRedEntryLink, readSigningKeyFile, orderSealResults, sealCollectionProgress, ...verifier, decodeQRedSeal: verifier.decodeSeal,
-    captureDocumentFrameForOcr: vi.fn(), drawArOverlay: vi.fn(), ...overrides,
+    createScanPhotoCollection: callback => createScanPhotoCollection(callback, async () => new Blob(["frame"], { type: "image/png" })),
+    mountPhotoTextVerification: () => ({ update: vi.fn() }),
+    ...overrides,
   };
   // Execute the shipped module with real QR/signature code. Camera tests
   // supply image pixels; direct verification tests use the existing test API.
