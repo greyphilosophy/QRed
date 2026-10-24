@@ -151,17 +151,13 @@ export async function readPdfPagesWithEvidence(file, consume) {
       }
       finishLine();
       text = canonicalizeText(text.trim());
-      const operations = await page.getOperatorList({ annotationMode: AnnotationMode.ENABLE });
-      const hasImages = operations.fnArray.some(op => [OPS.paintImageXObject, OPS.paintInlineImageXObject,
-        OPS.paintImageMaskXObject, OPS.paintImageMaskXObjectGroup, OPS.paintImageXObjectRepeat,
-        OPS.paintImageMaskXObjectRepeat, OPS.paintInlineImageXObjectGroup].includes(op));
       const scale = Math.min(1.5, 1200 / Math.max(width, height));
       const image = await renderPdfPage(pdf, number, scale, { reference: true });
       // An explicit blank marker requires every rendered pixel to be white.
       // A very pale/tiny mark may disappear in VQ but is never called blank here.
       const blank = !text && image.data.every((value, index) => index % 4 === 3 || value === 255);
       const validLines = lines.length === text.split("\n").filter(line => line.trim()).length ? lines : [];
-      result.push(await consume({ text, width, height, lines: validLines, image, blank, hasImages,
+      result.push(await consume({ text, width, height, lines: validLines, image, blank,
         pageNumber: number, pageCount: pdf.numPages }));
       page.cleanup();
     }

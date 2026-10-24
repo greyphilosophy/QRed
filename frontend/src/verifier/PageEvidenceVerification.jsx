@@ -21,6 +21,7 @@ function EvidencePage({ page, captures }) {
   }, [evidence.visual]);
   useEffect(() => {
     if (firstCapture) loadPhoto(firstCapture.file, firstCapture.id);
+    else { setPhoto(null); setCaptureId(""); }
     return () => {
       generation.current++;
       if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
@@ -28,7 +29,7 @@ function EvidencePage({ page, captures }) {
   }, [firstCapture?.id]);
   async function loadPhoto(file, selectedCapture = "") {
     const token = ++generation.current;
-    setError(""); setCaptureId(selectedCapture);
+    setError(""); setCaptureId(selectedCapture); setPhoto(null);
     try {
       const image = await openPagePhoto(file), url = await photoPreviewUrl(image);
       if (token !== generation.current) { URL.revokeObjectURL(url); return; }

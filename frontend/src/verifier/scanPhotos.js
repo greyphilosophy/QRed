@@ -34,21 +34,27 @@ export function createScanPhotoCollection(onChange, snapshot = snapshotScanPhoto
   const pending = new Map();
   const publish = () => onChange({ photos, notice });
   return {
-    async capture(seal, source) {
+    async capture(seal, source, { replace = false } = {}) {
       const decoded = decodeSeal(seal);
       if (!decoded || !source?.width || !source?.height) return;
       const key = `${decoded.document_id}:${decoded.chunk_number}`;
-      if (pending.has(key) || photos.some(photo => photo.key === key)) return;
-      if (pending.size >= MAX_PENDING_PHOTOS) {
+      if (!replace && (pending.has(key) || photos.some(photo => photo.key === key))) return;
+      if (!pending.has(key) && pending.size >= MAX_PENDING_PHOTOS) {
         notice = "Some scan images could not be kept. You can take or choose a page photo below.";
         publish();
         return;
       }
       const epoch = generation, id = ++sequence;
       pending.set(key, id);
+      if (replace) {
+        // A newly opened PDF may reuse the same seal on a changed page. Never
+        // leave its earlier scan image available as if it came from this file.
+        photos = photos.filter(photo => photo.key !== key);
+        publish();
+      }
       try {
         const file = await snapshot(source);
-        if (epoch !== generation) return;
+        if (epoch !== generation || pending.get(key) !== id) return;
         if (!file?.size || file.size > MAX_SCAN_PHOTO_BYTES) throw new Error("Image too large.");
         photos = [...photos, { id, key, documentId: decoded.document_id, chunkNumber: decoded.chunk_number, file }]
           .sort((a, b) => a.id - b.id);
@@ -60,7 +66,7 @@ export function createScanPhotoCollection(onChange, snapshot = snapshotScanPhoto
         }
         publish();
       } catch {
-        if (epoch !== generation) return;
+        if (epoch !== generation || pending.get(key) !== id) return;
         notice = "A scan image could not be kept. The seal is still collected; take or choose a page photo below.";
         publish();
       } finally {

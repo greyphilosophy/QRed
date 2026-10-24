@@ -4,13 +4,16 @@ import { createQRedQrSymbol } from "../qredQr.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
 import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
 import { renderPdfPage, withPdfDocument } from "./readPdfText.js";
+import { planWatermarks } from "./watermarkPlacement.js";
+
+export { planWatermarks } from "./watermarkPlacement.js";
 
 export const ENTRY_URL = "https://qred.org/";
 export const ENTRY_QR_SIZE = 36;
-export const WATERMARK_GRAY = 0.88;
+// Six-percent black keeps the seal faint while retaining recoverable contrast.
+export const WATERMARK_GRAY = 0.94;
 const MARGIN = 18;
-const MIN_MODULE_SIZE = 1.5;
-const ENTRY_WIDTH = 44, ENTRY_HEIGHT = 52;
+const ENTRY_WIDTH = 70, ENTRY_HEIGHT = 52;
 
 // Count every visible nonwhite pixel, including graphics and annotations.
 // Never infer empty space from extracted text alone.
@@ -43,40 +46,7 @@ export function findEntryPlacement(image) {
       }
     }
   }
-  throw new Error("No clear space on the first page for the small qred.org code. Choose a footer layout or provide a PDF with a blank area at least 0.7 by 0.8 inches.");
-}
-
-function intersects(a, b) {
-  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
-}
-
-export function planWatermarks(bounds, symbols, entry = null) {
-  const area = { x: bounds.x + MARGIN, y: bounds.y + MARGIN,
-    width: bounds.width - 2 * MARGIN, height: bounds.height - 2 * MARGIN };
-  const areas = [area];
-  if (entry) {
-    const gap = 8;
-    areas.push(
-      { ...area, height: entry.y - gap - area.y },
-      { ...area, y: entry.y + entry.height + gap, height: area.y + area.height - entry.y - entry.height - gap },
-      { ...area, width: entry.x - gap - area.x },
-      { ...area, x: entry.x + entry.width + gap, width: area.x + area.width - entry.x - entry.width - gap },
-    );
-  }
-  let best = null;
-  for (const space of areas) for (let columns = 1; columns <= symbols.length; columns++) {
-    const rows = Math.ceil(symbols.length / columns), gap = 12;
-    const size = Math.min((space.width - gap * (columns - 1)) / columns, (space.height - gap * (rows - 1)) / rows);
-    if (!(size > 0) || symbols.some(symbol => size / (symbol.modules.size + 8) < MIN_MODULE_SIZE)) continue;
-    const x0 = space.x + (space.width - columns * size - (columns - 1) * gap) / 2;
-    const y0 = space.y + (space.height - rows * size - (rows - 1) * gap) / 2;
-    const boxes = symbols.map((_, i) => ({ x: x0 + (i % columns) * (size + gap),
-      y: y0 + (rows - 1 - Math.floor(i / columns)) * (size + gap), width: size, height: size }));
-    if (entry && boxes.some(box => intersects(box, entry))) continue;
-    if (!best || size > best[0].width) best = boxes;
-  }
-  if (!best) throw new Error("This page's seal data is too dense for readable experimental watermarks. Choose a footer layout.");
-  return best;
+  throw new Error("No clear space on the first page for the small qred.org code. Choose a footer layout or provide a PDF with a blank area at least 1.1 by 0.8 inches.");
 }
 
 function drawSymbol(page, symbol, box, gray, multiply = false) {
@@ -98,42 +68,54 @@ function drawSymbol(page, symbol, box, gray, multiply = false) {
     scale: unit, color: rgb(gray, gray, gray), blendMode: multiply ? BlendMode.Multiply : BlendMode.Normal });
 }
 
-export async function stampWatermarks(pdf, file, pageSealResults, pageIndices = pageSealResults.map((_, index) => index)) {
+export async function planPdfWatermarks(file, pageSealResults, pageIndices = pageSealResults.map((_, index) => index)) {
   const layouts = new Array(pageSealResults.length).fill(null);
   await withPdfDocument(file, async (source) => {
-    let entry = null, firstNeedsFooter = false;
-    if (pageIndices.includes(0)) {
-      const image = await renderPdfPage(source, 1);
-      try { entry = findEntryPlacement(image); } catch { firstNeedsFooter = true; }
-    }
+    let entry = null;
     for (const index of pageIndices) {
-      if (index === 0 && firstNeedsFooter) continue;
       const seals = pageSealResults[index].seals;
       if (seals.length > 4) throw new Error(`Page ${index + 1} needs too many watermarks. Choose a footer layout.`);
       const sourcePage = await source.getPage(index + 1);
-      const [x, y, right, top] = sourcePage.view;
       if (sourcePage.userUnit !== 1) { sourcePage.cleanup(); continue; }
+      const viewport = sourcePage.getViewport({ scale: 2, rotation: 0 });
+      if (viewport.width * viewport.height > 12_000_000) { sourcePage.cleanup(); continue; }
+      const image = await renderPdfPage(source, index + 1);
+      if (index === 0) {
+        try { entry = findEntryPlacement(image); } catch { sourcePage.cleanup(); continue; }
+      }
       const symbols = seals.map(value => createQRedQrSymbol(value));
       let boxes;
-      try { boxes = planWatermarks({ x, y, width: right - x, height: top - y }, symbols, index === 0 ? entry : null); }
+      try { boxes = planWatermarks(image, symbols, index === 0 ? entry : null); }
       catch { sourcePage.cleanup(); continue; }
-      const page = pdf.getPage(index);
-      symbols.forEach((symbol, i) => drawSymbol(page, symbol, boxes[i], WATERMARK_GRAY, true));
       layouts[index] = { boxes, ...(index === 0 ? { entry } : {}) };
       sourcePage.cleanup();
     }
-    if (!entry || !layouts[0]) return;
+  });
+  return layouts;
+}
+
+// Apply the already-selected geometry. If another page needs a footer, the
+// document can be rebuilt without analyzing or selecting placements again.
+export async function stampWatermarks(pdf, layouts, pageSealResults) {
+  for (let index = 0; index < layouts.length; index++) {
+    if (!layouts[index]) continue;
+    pageSealResults[index].seals.forEach((value, part) => {
+      drawSymbol(pdf.getPage(index), createQRedQrSymbol(value), layouts[index].boxes[part], WATERMARK_GRAY, true);
+    });
+  }
+  const entry = layouts[0]?.entry;
+  if (entry) {
     const page = pdf.getPage(0);
     // The box was checked before any watermark was drawn, and the watermark
     // layout excludes it. Its white quiet zone never covers source content.
     page.drawRectangle({ ...entry, color: rgb(1, 1, 1) });
     drawSymbol(page, QRCode.create(ENTRY_URL, { errorCorrectionLevel: "M" }),
-      { x: entry.x + 4, y: entry.y + 12, width: ENTRY_QR_SIZE, height: ENTRY_QR_SIZE }, 0);
+      { x: entry.x + (entry.width - ENTRY_QR_SIZE) / 2, y: entry.y + 12, width: ENTRY_QR_SIZE, height: ENTRY_QR_SIZE }, 0);
     const font = await pdf.embedFont(StandardFonts.Helvetica);
-    page.drawText("qred.org", { x: entry.x + (entry.width - font.widthOfTextAtSize("qred.org", 7)) / 2,
+    const caption = "Verify at qred.org";
+    page.drawText(caption, { x: entry.x + (entry.width - font.widthOfTextAtSize(caption, 7)) / 2,
       y: entry.y + 3, size: 7, font, color: rgb(0, 0, 0) });
-  });
-  return layouts;
+  }
 }
 
 function crop(image, box) {

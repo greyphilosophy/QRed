@@ -276,7 +276,7 @@ export function PdfSealForm({ onUsePublicKey }) {
           </select>
           <small style={{ color: "#64748b", display: "block", marginTop: "0.5rem" }}>
             {pageScalingStrategy === "watermark"
-              ? "Keeps the original page size where pale seals can be read. Image pages, blank pages, and unreadable watermarks automatically use a clear footer (legal size for letter pages; shrink otherwise). Use QRed's scanner and try a printed copy before sharing."
+              ? "Analyzes the page to place pale seals around obstructing logos or pictures while keeping the original page size. Image-only pages, blank pages, and unreadable watermarks automatically use a clear footer (legal size for letter pages; shrink otherwise). Use QRed's scanner and try a printed copy before sharing."
               : "Automatic expands letter pages to legal size and keeps seals in the bottom 3 inches; other page sizes shrink to create room for the seals."}
           </small>
         </div>

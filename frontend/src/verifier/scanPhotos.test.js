@@ -44,6 +44,20 @@ it("drops late encodings after clearing without blocking a new scan of the same 
   expect(changed.mock.lastCall[0].photos[0].file.size).toBe(2);
 });
 
+it("uses the latest opened PDF image for an existing seal and discards an older pending capture", async () => {
+  const resolve = [], changed = vi.fn();
+  const collection = createScanPhotoCollection(changed, () => new Promise(done => resolve.push(done)));
+  const first = collection.capture(seals[0], frame);
+  resolve[0]({ size: 1 }); await first;
+  const stale = collection.capture(seals[0], frame, { replace: true });
+  expect(changed.mock.lastCall[0].photos).toEqual([]);
+  const latest = collection.capture(seals[0], frame, { replace: true });
+  resolve[2]({ size: 3 }); await latest;
+  resolve[1]({ size: 2 }); await stale;
+  expect(changed.mock.lastCall[0].photos).toHaveLength(1);
+  expect(changed.mock.lastCall[0].photos[0].file.size).toBe(3);
+});
+
 it("reports failed image capture without rejecting the seal or preventing retry", async () => {
   const changed = vi.fn(), snapshot = vi.fn().mockRejectedValueOnce(new Error("No canvas"))
     .mockResolvedValue({ size: 100 });

@@ -41,6 +41,7 @@ function loadStandalone(overrides = {}) {
     createQrFrameScanner, isQRedEntryLink, readSigningKeyFile, orderSealResults, sealCollectionProgress, ...verifier, decodeQRedSeal: verifier.decodeSeal,
     createScanPhotoCollection: callback => createScanPhotoCollection(callback, async () => new Blob(["frame"], { type: "image/png" })),
     mountPhotoTextVerification: () => ({ update: vi.fn() }),
+    mountPdfSealInput: () => ({ update: vi.fn() }),
     ...overrides,
   };
   // Execute the shipped module with real QR/signature code. Camera tests
