@@ -7,7 +7,7 @@ import { PDFDocument, degrees, rgb } from "pdf-lib";
 import { PNG } from "pngjs";
 import jsQR from "jsqr";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { extractPdfText, sealPdfInBrowser } from "./pdfClientSeal.js";
+import { extractPdfText, planQrStampLayoutForFooterBand, sealPdfInBrowser } from "./pdfClientSeal.js";
 import { scanQrImage, createQrFrameScanner } from "./qr/scanQrImage.js";
 import { hiddenPayloadFromScanResult, isQRedEntryLink } from "./qr/hiddenPayload.js";
 import { verifyQRedSeals } from "./qredVerifier.js";
@@ -113,20 +113,32 @@ describe("experimental PDF watermarks", () => {
     await expect(verifyQRedSeals(payloads.reverse(), publicKey)).resolves.toMatchObject({ status: "VALID" });
   }, 30000);
 
-  it("rejects the same dense text on letter paper when its smaller watermarks are unreadable", async () => {
-    const file = await makeDocument({ multipart: true });
-    await expect(sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" })).rejects.toThrow(/could not be read|too dense/);
+  it.each([
+    ["dense text", { multipart: true }],
+    ["no entry-code space", { crowded: true }],
+    ["an opaque graphic", { black: true }],
+  ])("uses a readable footer for %s when a watermark cannot work", async (_label, options) => {
+    const file = await makeDocument(options);
+    const { blob, footerPages, pageSealStrings } = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" });
+    expect(footerPages).toEqual([1]);
+    expect((await PDFDocument.load(await blob.arrayBuffer())).getPage(0).getHeight()).toBe(1008);
+    expect(pageSealStrings[0].length).toBeLessThanOrEqual(2);
+    expect((await verifyQRedSeals(pageSealStrings[0], publicKey)).status).toBe("VALID");
+    const printed = render(await blob.arrayBuffer());
+    const layout = planQrStampLayoutForFooterBand(612, pageSealStrings[0].length);
+    const scanned = pageSealStrings[0].map((_, index) => {
+      // A half-page crop includes a truncated neighboring QR when there are
+      // two seals. Scan each complete code and its included quiet zone instead.
+      const part = crop(printed, {
+        x: layout.qrOffsetX + index * (layout.qrSize + layout.gap), y: layout.qrOffsetY,
+        width: layout.qrSize, height: layout.qrSize,
+      });
+      return hiddenPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
+    });
+    expect(scanned).toEqual(pageSealStrings[0]);
+    await expect(verifyQRedSeals(scanned, publicKey)).resolves.toMatchObject({ status: "VALID" });
   }, 30000);
 
-  it("refuses to cover page content when there is no clear entry-code location", async () => {
-    const file = await makeDocument({ crowded: true });
-    await expect(sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" })).rejects.toThrow(/No clear space on the first page/);
-  });
-
-  it("refuses a watermark hidden by an opaque graphic", async () => {
-    const file = await makeDocument({ black: true });
-    await expect(sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" })).rejects.toThrow(/watermark on page 1 could not be read/);
-  }, 30000);
 });
 
 it("recognizes only entry links, not seal fragments or lookalike hosts", () => {

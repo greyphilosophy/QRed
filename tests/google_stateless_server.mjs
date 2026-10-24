@@ -35,10 +35,14 @@ async function exchange(_url, options) {
 const client = await compile({ platform: "browser", external: ["qrcode/lib/renderer/png"], stdin: { resolveDir: frontend, loader: "js", contents: `
   import { attestPagesWithGoogle } from "./src/googleSealing.js";
   import { createQRedSeals } from "./src/qredSealer.js";
+  import { encodePageEvidence } from "./src/pageEvidence.js";
   import { verifyQRedSeals } from "./src/qredVerifier.js";
   const trusted = ${JSON.stringify(trusted)};
-  const pages = ["Synthetic private page one", "Synthetic private page two"].map((content, i) => ({
-    content, metadata: { pdf: true, page_number: i + 1, page_count: 2, document_root: "d4".repeat(32) }
+  const contents = ["Synthetic private page one",
+    encodePageEvidence({ width: 612, height: 792, visual: { codebook: 1, columns: 2, rows: 2, indices: new Uint8Array([0, 15, 7, 8]) } }),
+    encodePageEvidence({ width: 612, height: 792, blank: true })];
+  const pages = contents.map((content, i) => ({
+    content, metadata: { pdf: true, ...(i ? { page_evidence: true } : {}), page_number: i + 1, page_count: 3, document_root: "d4".repeat(32) }
   }));
   let seals;
   window.verifyOffline = () => Promise.all(seals.map(seal => verifyQRedSeals(seal.seals, "", trusted)));
@@ -46,8 +50,8 @@ const client = await compile({ platform: "browser", external: ["qrcode/lib/rende
     const output = document.querySelector("output");
     try {
       const receipts = await attestPagesWithGoogle(pages, { popup: window.open("about:blank", "qred-google"), trusted });
-      seals = await Promise.all(pages.map((page, index) => createQRedSeals({ content: page.content, attestation: receipts[index],
-        pageContext: { pageNumber: index + 1, pageCount: 2, documentRoot: page.metadata.document_root } })));
+      seals = await Promise.all(pages.map((page, index) => createQRedSeals({ content: index ? "" : page.content, pageEvidence: index ? page.content : null, attestation: receipts[index],
+        pageContext: { pageNumber: index + 1, pageCount: 3, documentRoot: page.metadata.document_root } })));
       const results = await window.verifyOffline();
       output.textContent = JSON.stringify(results);
       output.dataset.status = results.every(result => result.status === "VALID") ? "valid" : "invalid";

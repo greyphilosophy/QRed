@@ -119,7 +119,7 @@ describe("browser PDF sealing", () => {
     expect(await extractPdfText(file)).toContain("Dear verifier,");
   });
 
-  it.each(["blank", "image-only", "mixed"])("refuses %s pages instead of signing empty text", async (kind) => {
+  it.each(["blank", "image-only", "mixed"])("seals %s pages with signed visual evidence or a blank marker", async (kind) => {
     const pdf = await PDFDocument.create();
     if (kind === "mixed") pdf.addPage([612, 792]).drawText("Readable first page");
     const page = pdf.addPage([612, 792]);
@@ -128,7 +128,18 @@ describe("browser PDF sealing", () => {
       page.drawImage(image, { x: 72, y: 400, width: 200, height: 200 });
     }
     const file = new File([await pdf.save()], "unreadable.pdf", { type: "application/pdf" });
-    await expect(sealPdfInBrowser({ file, privateKey, publicKey })).rejects.toThrow(/No readable text on PDF page\(s\)/);
+    const { pageSealStrings, footerPages, blob } = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" });
+    expect(footerPages).toContain(kind === "mixed" ? 2 : 1);
+    expect((await PDFDocument.load(await blob.arrayBuffer())).getPage(kind === "mixed" ? 1 : 0).getHeight()).toBe(1008);
+    for (const seals of pageSealStrings) {
+      expect(seals.length).toBeLessThanOrEqual(2);
+      const result = await verifyQRedSeals(seals, publicKey);
+      expect(result.status).toBe("VALID");
+      if (!result.content) {
+        expect(result.evidence.blank).toBe(kind === "blank");
+        if (kind !== "blank") expect(result.evidence.visual.indices.length).toBeGreaterThan(0);
+      }
+    }
   });
 
   it("propagates invalid PDF errors instead of returning an empty extraction", async () => {
@@ -277,37 +288,10 @@ describe("browser PDF sealing", () => {
     });
   });
 
-  it("stamps huge letter PDFs into legal pages without spilling past the footer band", async () => {
+  it("refuses text that needs more than two QR codes instead of making a crowded footer", async () => {
     const file = await makeHugeLetterPdfFile();
-
-    const { blob, stampedQrValues } = await sealPdfInBrowser({
-      file,
-      privateKey,
-      publicKey,
-      encodingStrategy: "plaintext",
-      pageScalingStrategy: "legal-footer",
-    });
-
-    const printedPdf = await PDFDocument.load(await blob.arrayBuffer());
-    const [printedPage] = printedPdf.getPages();
-    expect(Math.round(printedPage.getWidth())).toBe(612);
-    expect(Math.round(printedPage.getHeight())).toBe(1008);
-    expect(stampedQrValues.length).toBeGreaterThan(0);
-
-    const png = renderPdfFirstPageToPng(await blob.arrayBuffer());
-    const bottomStart = Math.floor(png.height * 0.75);
-    let darkBottomPixels = 0;
-    for (let y = bottomStart; y < png.height; y += 1) {
-      for (let x = 0; x < png.width; x += 1) {
-        const index = (png.width * y + x) * 4;
-        const r = png.data[index];
-        const g = png.data[index + 1];
-        const b = png.data[index + 2];
-        if (r < 220 || g < 220 || b < 220) darkBottomPixels += 1;
-      }
-    }
-
-    expect(darkBottomPixels).toBeGreaterThan(12000);
+    await expect(sealPdfInBrowser({ file, privateKey, publicKey, encodingStrategy: "plaintext", pageScalingStrategy: "legal-footer" }))
+      .rejects.toThrow("two-QR limit");
   });
 
   it("shrinks page content without changing the source page size when asked", async () => {

@@ -437,14 +437,13 @@ def test_t8_reupload_sealed_pdf(page: Page):
 
 
 def test_t9_image_only_pdf(page: Page):
-    """Refuse image-only PDFs rather than signing empty page text."""
+    """Accept image-only PDFs now that seals carry a visual reference."""
     data = make_image_only_pdf()
     _open_stamp_tool(page)
     _upload_file_to_stamp_tool(page, data, file_name="image_only.pdf")
     result = _check_results(page)
-    assert not result["success"], "Image-only PDF must not produce an empty-content seal"
-    assert result["has_error"], f"Expected extraction error, got {result!r}"
-    assert "No readable text" in page.locator("body").inner_text()
+    assert result["success"], f"Image-only PDF should produce a visual seal, got {result!r}"
+    assert not result["has_error"]
 
 
 def test_t10_non_pdf_binary(page: Page):

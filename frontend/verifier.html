@@ -283,7 +283,7 @@
       border-bottom: 1px solid var(--surface-2);
     }
 
-    .result-meta .meta-item { font-size: 0.85rem; color: var(--text-dim); }
+    .result-meta .meta-item { font-size: 0.85rem; color: var(--text-dim); min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
     .result-meta .meta-item strong { color: var(--text); }
 
     .result-content {
@@ -315,7 +315,7 @@
 <body>
   <header>
     <h1>QRed Verifier</h1>
-    <p>Scan QR seals to verify a document. Include the whole page when possible; the scan image is kept for text comparison.</p>
+    <p>Scan QR seals to verify a document. Include the whole page when possible; the scan image is kept for page comparison.</p>
     <p>Camera frames and seal text are processed in this browser and are not sent to a server.</p>
     <details>
       <summary>Optional: use airplane mode</summary>

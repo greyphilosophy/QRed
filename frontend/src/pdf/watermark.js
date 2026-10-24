@@ -98,24 +98,31 @@ function drawSymbol(page, symbol, box, gray, multiply = false) {
     scale: unit, color: rgb(gray, gray, gray), blendMode: multiply ? BlendMode.Multiply : BlendMode.Normal });
 }
 
-export async function stampWatermarks(pdf, file, pageSealResults) {
-  const layouts = [];
+export async function stampWatermarks(pdf, file, pageSealResults, pageIndices = pageSealResults.map((_, index) => index)) {
+  const layouts = new Array(pageSealResults.length).fill(null);
   await withPdfDocument(file, async (source) => {
-    const firstImage = await renderPdfPage(source, 1);
-    const entry = findEntryPlacement(firstImage);
-    for (let index = 0; index < pageSealResults.length; index++) {
+    let entry = null, firstNeedsFooter = false;
+    if (pageIndices.includes(0)) {
+      const image = await renderPdfPage(source, 1);
+      try { entry = findEntryPlacement(image); } catch { firstNeedsFooter = true; }
+    }
+    for (const index of pageIndices) {
+      if (index === 0 && firstNeedsFooter) continue;
       const seals = pageSealResults[index].seals;
       if (seals.length > 4) throw new Error(`Page ${index + 1} needs too many watermarks. Choose a footer layout.`);
       const sourcePage = await source.getPage(index + 1);
       const [x, y, right, top] = sourcePage.view;
-      if (sourcePage.userUnit !== 1) throw new Error("Experimental watermarks do not support this PDF's custom page units. Choose a footer layout.");
+      if (sourcePage.userUnit !== 1) { sourcePage.cleanup(); continue; }
       const symbols = seals.map(value => createQRedQrSymbol(value));
-      const boxes = planWatermarks({ x, y, width: right - x, height: top - y }, symbols, index === 0 ? entry : null);
+      let boxes;
+      try { boxes = planWatermarks({ x, y, width: right - x, height: top - y }, symbols, index === 0 ? entry : null); }
+      catch { sourcePage.cleanup(); continue; }
       const page = pdf.getPage(index);
       symbols.forEach((symbol, i) => drawSymbol(page, symbol, boxes[i], WATERMARK_GRAY, true));
-      layouts.push({ boxes, ...(index === 0 ? { entry } : {}) });
+      layouts[index] = { boxes, ...(index === 0 ? { entry } : {}) };
       sourcePage.cleanup();
     }
+    if (!entry || !layouts[0]) return;
     const page = pdf.getPage(0);
     // The box was checked before any watermark was drawn, and the watermark
     // layout excludes it. Its white quiet zone never covers source content.
@@ -142,26 +149,28 @@ function crop(image, box) {
   return { data, width, height };
 }
 
-// Reject digital layouts that our own scanner cannot read. This protects the
-// opt-in experiment from opaque graphics and dense text; it does not claim
-// that a printer/camera round trip will also succeed.
+// Identify unreadable watermarks so the caller can rebuild those pages with
+// clear footers. Passing this check is not a printer/camera guarantee.
 export async function checkWatermarks(bytes, layouts, pageSealResults) {
+  const failed = new Set();
   await withPdfDocument(new Blob([bytes], { type: "application/pdf" }), async (pdf) => {
     for (let index = 0; index < layouts.length; index++) {
+      if (!layouts[index]) continue;
       const image = await renderPdfPage(pdf, index + 1);
       for (let part = 0; part < layouts[index].boxes.length; part++) {
         const qr = crop(image, layouts[index].boxes[part]);
         const code = scanQrImage(qr.data, qr.width, qr.height);
         if (hiddenPayloadFromScanResult(code) !== pageSealResults[index].seals[part]) {
-          throw new Error(`The watermark on page ${index + 1} could not be read over this page's content. Choose a footer layout.`);
+          failed.add(index);
         }
       }
       if (layouts[index].entry) {
         const qr = crop(image, layouts[index].entry);
         if (scanQrImage(qr.data, qr.width, qr.height, { tryWatermark: false })?.data !== ENTRY_URL) {
-          throw new Error("The small qred.org code could not be read. Choose a footer layout.");
+          failed.add(index);
         }
       }
     }
   });
+  return [...failed];
 }

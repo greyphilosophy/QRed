@@ -8,8 +8,10 @@ No app installation is required.
 
 Local seals use compact v3 binary records with signed text, timestamp, key ID,
 and page context. Issuer names are omitted. Older seals must be re-sealed.
-PDFs must contain readable text on every page; scanned, image-only, or blank
-pages are rejected rather than signed as empty content. See
+Image-only pages carry a signed grayscale visual reference; blank pages carry an
+explicit signed blank-page marker. Text pages use spare capacity for line positions
+and an approximate visual reference, without adding QR codes. PDF pages are limited
+to two QR codes. See [page references](docs/PAGE_REFERENCES.md) and
 [Compact seals v3](docs/COMPACT_SEALS_V3.md) for scope, compatibility, and tests.
 Supported PDF forms are automatically flattened before text extraction and
 signing. Text fields and dropdowns are checked against their saved appearances;
@@ -58,16 +60,17 @@ size and uses the added three-inch footer for QR seals. One or two seals are
 print margin. Larger sets use the grid that allows the largest codes within
 that same footer. The caption sits beside the codes where space permits.
 
-**Pale watermark (experimental)** in **Page layout** keeps the original paper
-dimensions, text size, rotation, and crop. A half-inch conventional QR opens
+**Pale watermark (experimental)** in **Page layout** preserves the original paper
+dimensions, text size, rotation, and crop on pages where watermarks are readable. A half-inch conventional QR opens
 `https://qred.org/` from a clear area on the first page; pale QR watermarks carry
 each page's signed data. Use QRed's camera or image picker to read the watermarks.
 The navigation code contains no document data and is ignored during verification.
 Placement checks rendered pixels, including graphics, before using a blank area.
-Sealing stops if no clear area exists, the seal grids would be too dense, or
-QRed cannot recover every watermark from the rendered output. Choose a footer
-layout for those documents. Nothing is automatically resized or covered to
-force a watermark layout to fit.
+Image and blank pages automatically use a clear footer. A page also falls back
+to a footer if there is no clear entry-code space, its watermark is too dense, or
+QRed cannot recover it from the rendered output. Other pages retain their watermark
+layout. Footer fallback expands letter pages to legal size and shrinks other page
+contents to make room; the completion message lists the affected pages.
 
 Watermark recovery masks black text and its antialiased edges, then reconstructs
 the pale pattern from nearby pixels. Recovered data still requires the same
@@ -114,6 +117,14 @@ Key files contain one raw key as Base64URL or standard Base64, with or without p
 The configured/default public key is for verification only. The stamping tool does not preload it because an unrelated private key cannot sign for it. A generated key proves control of that signing key, not an independently verified issuer identity.
 
 ## Compare a printed page photo
+
+**Signed page reference** reconstructs the optional grayscale thumbnail from the
+seal, offline, beside a captured or uploaded page photo. **Locate signed text**
+highlights the recorded line location when present. Image-only pages need no OCR
+model download; blank pages display the signed blank-page marker. These views
+support manual comparison, not an automatic image-match verdict. Lossy references
+can miss small changes, colors, digits, handwriting, and face substitutions.
+
 
 After verifying a page's seals, use **Compare a page photo** on the homepage or
 `verify.htm`. A successful seal scan also retains its original image, including
@@ -353,7 +364,9 @@ The default demo keypair is provided solely for testing. In production, issuers 
 Changing signed text or v2 identity metadata invalidates the signature. A
 recipient must also compare that recovered text with the visible document;
 changing the paper while leaving its QR unchanged does not alter the QR's
-signature. Images, handwriting, and page appearance are not authenticated.
+signature. Optional visual references and line coordinates are authenticated as
+stored, but they are lossy evidence, not a guarantee of exact page appearance.
+Critical image details and photo substitutions may not be distinguishable.
 
 # Status
 

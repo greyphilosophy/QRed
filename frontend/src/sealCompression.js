@@ -38,8 +38,11 @@ async function transform(bytes, stream, limit, inputChunkSize) {
 }
 
 export async function compressText(text, encoding) {
+  return compressBytes(textEncoder.encode(text), encoding);
+}
+
+export async function compressBytes(bytes, encoding) {
   const format = streamFormat(encoding);
-  const bytes = textEncoder.encode(text);
   if (bytes.length > MAX_SEAL_TEXT_BYTES) throw new Error("Seal text exceeds the 8 MiB limit");
   if (typeof CompressionStream !== "function") throw new Error(`${encoding} compression is not available in this browser`);
   // Native "deflate" uses the zlib wrapper (6 bytes), not raw DEFLATE.
@@ -55,6 +58,10 @@ function decodeCompressedChunk(value) {
 }
 
 export async function decompressChunks(chunks, encoding) {
+  return textDecoder.decode(await decompressBytes(chunks, encoding));
+}
+
+export async function decompressBytes(chunks, encoding) {
   const format = streamFormat(encoding);
   if (typeof DecompressionStream !== "function") throw new Error(`${encoding} decompression is not available in this browser`);
   const parts = [];
@@ -71,5 +78,5 @@ export async function decompressChunks(chunks, encoding) {
   // Feed small input blocks so output limits can stop an expanding stream
   // before the native decoder processes the entire compressed input.
   const bytes = await transform(concatenate(parts), new DecompressionStream(format), MAX_SEAL_TEXT_BYTES, 1024);
-  return textDecoder.decode(bytes);
+  return bytes;
 }

@@ -1,6 +1,8 @@
-import { concatenate, decodeBase64Url, encodeBase64Url, encodeMetadata, hexToBytes, sha256, strictUtf8, utf8 } from "./sealFormat.js";
+import { concatenate, decodeBase64Url, encodeBase64Url, encodeMetadata, hexToBytes, sha256, signedContentBytes, strictUtf8, utf8 } from "./sealFormat.js";
 
 export const MAX_ATTESTATION_PAGES = 100;
+const IDENTITY_LIMITS = { email: 254, name: 160, subject: 255 };
+export const MAX_ENCODED_IDENTITY_BYTES = 8 + Object.values(IDENTITY_LIMITS).reduce((sum, size) => sum + size, 0);
 const COMMITMENT_DOMAIN = new TextEncoder().encode("QRed private page commitment v1\0");
 const SIGNATURE_DOMAIN = new TextEncoder().encode("QRed Google document attestation v1\0");
 
@@ -17,7 +19,7 @@ function field(value, maximum) {
 export function encodeIdentity(identity) {
   if (identity?.provider !== "google" || !["google", "self"].includes(identity.name_source) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(identity.email)) throw new Error("Invalid attestation identity");
   return concatenate([new Uint8Array([1, identity.name_source === "google" ? 1 : 0]),
-    field(identity.email, 254), field(identity.name, 160), field(identity.subject, 255)]);
+    field(identity.email, IDENTITY_LIMITS.email), field(identity.name, IDENTITY_LIMITS.name), field(identity.subject, IDENTITY_LIMITS.subject)]);
 }
 
 export function decodeIdentity(bytes, offset = 0) {
@@ -40,10 +42,10 @@ export function decodeIdentity(bytes, offset = 0) {
 
 export async function pageCommitment(metadata, content, salt) {
   if (!(salt instanceof Uint8Array) || salt.length !== 32) throw new Error("Invalid commitment salt");
-  // The server never receives the salt, page text, or unsalted document root.
+  // The server never receives the salt, text/visual page body, or unsalted root.
   // Page position/count and the complete-document root are inside this hash.
   const context = encodeMetadata({ ...metadata, timestamp: "1970-01-01T00:00:00.000Z", key_id: "0000000000000000" });
-  return sha256(concatenate([COMMITMENT_DOMAIN, salt, context.subarray(0, 1), context.subarray(17), utf8.encode(content)]));
+  return sha256(concatenate([COMMITMENT_DOMAIN, salt, context.subarray(0, 1), context.subarray(17), signedContentBytes(content)]));
 }
 
 export function attestationMessage({ timestamp, key_id, identity }, commitment) {

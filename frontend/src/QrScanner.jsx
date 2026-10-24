@@ -94,7 +94,7 @@ export function QrScanner({ onOpenPdfStampTool, onSealDetected, returnPayload = 
       React.createElement("div", { className: "ar-copy" },
         React.createElement("p", { className: "eyebrow" }, "QRed AR verifier"),
         React.createElement("h1", null, "Point at a QRed seal"),
-        React.createElement("p", null, "Scan a QR seal or a pale page watermark. Include the whole page when possible: the scan image is also kept for text comparison.")
+        React.createElement("p", null, "Scan a QR seal or a pale page watermark. Include the whole page when possible: the scan image is also kept for page comparison.")
       )
     ),
     controls

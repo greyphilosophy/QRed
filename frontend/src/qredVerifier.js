@@ -4,14 +4,15 @@
  * Refactored: low-level QR sampling, framing, and text diff now live in src/qr/*
  * This file keeps only seal parsing, signature verification, and the public API facade.
  */
+import { decodePageEvidence } from "./pageEvidence.js";
 import Utils from "qrcode/lib/core/utils.js";
 import ECCode from "qrcode/lib/core/error-correction-code.js";
 import ECLevel from "qrcode/lib/core/error-correction-level.js";
 import { verifyAsync as verifyEd25519 } from "@noble/ed25519";
-import { decompressChunks, MAX_SEAL_TEXT_BYTES } from "./sealCompression.js";
+import { decompressBytes, MAX_SEAL_TEXT_BYTES } from "./sealCompression.js";
 import { computeKeyId, decodeBase64Url, sealSignatureMessage } from "./sealSignature.js";
 import { bytesEqual, bytesToHex, concatenate, decodeEnvelope, decodeTransport, MAX_ENVELOPE_BYTES,
-  qrPayloadBytes, sha256, strictUtf8, utf8 } from "./sealFormat.js";
+  qrPayloadBytes, sha256, strictUtf8 } from "./sealFormat.js";
 import { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset, hiddenPayloadFromScanResult } from "./qr/hiddenPayload.js";
 import { codewordsFromMatrix, deinterleaveDataCodewordsWithQrLib } from "./qr/qrLowLevel.js";
 import { sampleQrMatrix } from "./qr/qrImageRecovery.js";
@@ -57,7 +58,7 @@ export function qredTextFromScanResult(scanResult) {
 export function qredDisplayTextFromScannedPayload(payload) {
   const decoded = decodeSeal(payload);
   if (decoded?.encoding === "plaintext" && !decoded.multipart) {
-    try { return strictUtf8.decode(decoded.data); } catch { return payload || ""; }
+    try { return decoded.page_evidence ? decodePageEvidence(decoded.data).text : strictUtf8.decode(decoded.data); } catch { return payload || ""; }
   }
   return payload || "";
 }
@@ -171,7 +172,7 @@ export async function verifyQRedSeals(seals, publicKey, authorities = trustedAut
   for (let index = 0; index < first.total_chunks; index += 1) if (!chunks.has(index)) missing.push(index);
   if (missing.length) return { status: "INCOMPLETE", document_id: first.document_id,
     collected_chunks: chunks.size, total_chunks: first.total_chunks, error_message: `Missing chunks: [${missing.join(", ")}]` };
-  let metadata = first, content;
+  let metadata = first, content, body, evidence;
   try {
     if (first.multipart) {
       const record = concatenate(Array.from({ length: first.total_chunks }, (_, index) => chunks.get(index).data));
@@ -179,11 +180,14 @@ export async function verifyQRedSeals(seals, publicKey, authorities = trustedAut
       metadata = decodeEnvelope(record);
       if (metadata.version !== first.version) throw new Error("Seal version does not match its chunks");
     }
-    content = metadata.encoding === "plaintext" ? strictUtf8.decode(metadata.data) : await decompressChunks([metadata.data], metadata.encoding);
-    if (utf8.encode(content).length > MAX_SEAL_TEXT_BYTES) throw new Error("Seal text exceeds the 8 MiB limit");
+    body = metadata.encoding === "plaintext" ? metadata.data : await decompressBytes([metadata.data], metadata.encoding);
+    evidence = metadata.page_evidence ? decodePageEvidence(body) : null;
+    content = evidence ? evidence.text : strictUtf8.decode(body);
+    if (body.length > MAX_SEAL_TEXT_BYTES) throw new Error("Seal text exceeds the 8 MiB limit");
   } catch (error) { return { status: "ERROR", error_message: `Seal decoding failed: ${error.message}` }; }
-  const pageHash = metadata.pdf ? bytesToHex(await sha256(utf8.encode(content))) : null;
+  const pageHash = metadata.pdf ? bytesToHex(await sha256(body)) : null;
   const result = {
+    ...(evidence ? { evidence } : {}),
     document_id: first.document_id, timestamp: metadata.timestamp, content, encoding: metadata.encoding,
     key_id: metadata.key_id, version: metadata.version, pdf: metadata.pdf,
     page_number: metadata.page_number, page_count: metadata.page_count, page_hash: pageHash,
@@ -196,8 +200,8 @@ export async function verifyQRedSeals(seals, publicKey, authorities = trustedAut
   let isValid = false;
   try {
     const message = metadata.version === "4"
-      ? attestationMessage(metadata, await pageCommitment(metadata, content, metadata.salt))
-      : sealSignatureMessage(metadata, content);
+      ? attestationMessage(metadata, await pageCommitment(metadata, body, metadata.salt))
+      : sealSignatureMessage(metadata, body);
     isValid = await computeKeyId(publicKey) === metadata.key_id &&
       await verifyEd25519(metadata.signature, message, decodeBase64Url(publicKey));
   } catch { /* malformed keys or signatures are invalid */ }

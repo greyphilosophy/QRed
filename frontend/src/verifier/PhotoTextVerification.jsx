@@ -1,5 +1,6 @@
 /* eslint-disable no-unused-vars */
 import React, { useEffect, useId, useRef, useState } from "react";
+import { PageEvidenceVerification } from "./PageEvidenceVerification.jsx";
 import { comparePhotoText } from "./photoTextComparison.js";
 import { createPhotoOcrReader, openPagePhoto, photoPreviewUrl } from "./photoOcr.js";
 import "./photoTextVerification.css";
@@ -12,7 +13,13 @@ const messages = {
 };
 const wordLabels = { matched: "Matching text", different: "Different or extra text", uncertain: "Uncertain reading" };
 
-export function PhotoTextVerification({ results = [], session = 0, scanPhotos = [], captureNotice = "", collecting = false }) {
+export function PhotoTextVerification(props) {
+  const verified = (props.results || []).filter(result => result.status === "VALID" && result.signature_valid === true);
+  const imageOnly = verified.length > 0 && verified.every(result => result.evidence && !result.content?.trim());
+  return <><PageEvidenceVerification {...props} />{!imageOnly && <PhotoTextCheck {...props} />}</>;
+}
+
+function PhotoTextCheck({ results = [], session = 0, scanPhotos = [], captureNotice = "", collecting = false }) {
   const id = useId();
   const [reader] = useState(() => createPhotoOcrReader());
   const [selectedId, setSelectedId] = useState("");
@@ -168,7 +175,7 @@ export function PhotoTextVerification({ results = [], session = 0, scanPhotos = 
   return <section className="photo-check" aria-label="Compare a page photo">
     <h2>Compare a page photo</h2>
     <p>Read the printed text and mark differences against a verified seal. Photos are processed on this device and are not sent to a server.</p>
-    <p className="photo-note">For printed English text. Photograph the entire page upright, in good light. Photos, handwriting, and the original page layout are not authenticated by this check.</p>
+    <p className="photo-note">For printed English text. Photograph the entire page upright, in good light. This text check does not compare photographs or handwriting. Where available, compare the signed visual reference separately.</p>
     {captureNotice && <p className="photo-note" role="status">{captureNotice}</p>}
     <div className="photo-actions">
       <button type="button" onClick={prepare} disabled={busy || ready}>{ready ? "Text recognition ready" : "Load text recognition"}</button>
@@ -238,7 +245,7 @@ export function PhotoTextVerification({ results = [], session = 0, scanPhotos = 
         <p className="photo-note">Highlights describe what OCR read, not a guarantee that every mark on the page was read correctly. Check important numbers and unmarked areas. Reading order, blur, and seal captions can cause differences.</p>
         {comparison.differences.length > 0 && <div className="photo-differences">
           <h3>Text to review</h3>
-          <p>Missing text has no reliable photo location because seals do not store word positions.</p>
+          <p>Missing text has no reliable photo location until the photo is aligned. Where available, signed line locations in the visual reference can help you find the area to inspect.</p>
           <ol>{comparison.differences.map((difference, index) => <li key={index}>
             <div><strong>Signed text not matched:</strong> {difference.expected || "(none — additional text was read)"}</div>
             <div><strong>Photo reading nearby:</strong> {difference.observed || "(not read in the photo)"}</div>
