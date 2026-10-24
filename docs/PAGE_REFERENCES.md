@@ -73,6 +73,14 @@ preserved visually. Fallback changes placement only, so it does not need another
 Google receipt. No QR-placement geometry or automatic photo alignment is encoded
 in this format.
 
+An intact seal can be moved into a blank area on the original page without
+re-signing. Stored positions describe the original page content, not the QR's
+printed location. A rendered-PDF regression test moves the stamped code to two
+different blank areas on text, image-only, and blank pages, checks that no content
+pixels changed, and rescans the whole page to recover the same signed reference.
+This does not detect covered content: a valid signature alone cannot establish
+that the seal, or any other obstruction, leaves every part of the page visible.
+
 After signature validation, both verifier screens show the decoded reference
 beside a captured or uploaded photo. A line selector highlights recorded locations.
 Unverified/invalid records never appear as authenticated visual references. This

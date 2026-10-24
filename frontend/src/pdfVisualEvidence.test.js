@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PDFDocument, degrees, rgb } from "pdf-lib";
 import { signAsync } from "@noble/ed25519";
-import { sealPdfInBrowser } from "./pdfClientSeal.js";
+import { planQrStampLayoutForFooterBand, sealPdfInBrowser } from "./pdfClientSeal.js";
 import { verifyQRedSeals } from "./qredVerifier.js";
 import { verifySealCollection } from "./sealCollection.js";
 import { computeKeyId } from "./qredSealer.js";
@@ -9,6 +9,8 @@ import { attestationMessage, pageCommitment } from "./attestation.js";
 import { decodeBase64Url, encodeBase64Url } from "./sealFormat.js";
 import { renderPdfPage, withPdfDocument } from "./pdf/readPdfText.js";
 import { visiblePageGeometry } from "./pdf/pageScaling.js";
+import { scanQrImage } from "./qr/scanQrImage.js";
+import { hiddenPayloadFromScanResult } from "./qr/hiddenPayload.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
@@ -26,6 +28,56 @@ async function mixedDocument() {
 }
 
 describe("PDF visual references", () => {
+  it.each(["text", "image", "blank"])("verifies a %s page after moving its printed seal into a blank area", async kind => {
+    const source = await PDFDocument.create(), page = source.addPage([612, 792]);
+    if (kind === "text") page.drawText("Account 123456\nAmount 50.00", { x: 40, y: 410, size: 14, lineHeight: 18 });
+    if (kind === "image") page.drawCircle({ x: 180, y: 390, size: 70, color: rgb(0.1, 0.5, 0.8) });
+    const file = await asFile(source);
+    const original = await withPdfDocument(file, pdf => renderPdfPage(pdf, 1));
+    const { blob, pageSealStrings } = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "legal-footer" });
+    expect(pageSealStrings[0]).toHaveLength(1);
+    const expected = await verifyQRedSeals(pageSealStrings[0], publicKey);
+    expect(expected).toMatchObject({ status: "VALID", signature_valid: true });
+    if (kind === "text") expect(expected.evidence.layout.lines).toHaveLength(2);
+    if (kind === "image") expect(expected.evidence.visual).toBeTruthy();
+    if (kind === "blank") expect(expected.evidence.blank).toBe(true);
+
+    // Copy the actual stamped QR, including its quiet zone, off the footer.
+    // Do not regenerate or re-sign it at either of its new page positions.
+    const stamped = await PDFDocument.load(await blob.arrayBuffer());
+    const { qrOffsetX, qrOffsetY, qrSize } = planQrStampLayoutForFooterBand(612, 1);
+    for (const position of [{ x: 360, y: 550 }, { x: 36, y: 36 }]) {
+      const relocated = await PDFDocument.load(await file.arrayBuffer());
+      const qr = await relocated.embedPage(stamped.getPage(0), {
+        left: qrOffsetX, bottom: qrOffsetY, right: qrOffsetX + qrSize, top: qrOffsetY + qrSize,
+      });
+      relocated.getPage(0).drawPage(qr, { ...position, width: qrSize, height: qrSize });
+      const printed = await withPdfDocument(await asFile(relocated), pdf => renderPdfPage(pdf, 1));
+      expect([printed.width, printed.height]).toEqual([original.width, original.height]);
+      const left = position.x * 2, top = (792 - position.y - qrSize) * 2, size = qrSize * 2;
+      let coveredContent = 0, changedOutsideSeal = 0, changedInsideSeal = 0;
+      for (let y = 0; y < original.height; y++) for (let x = 0; x < original.width; x++) {
+        const offset = (y * original.width + x) * 4;
+        const inside = x >= left && x < left + size && y >= top && y < top + size;
+        for (let channel = 0; channel < 3; channel++) {
+          if (inside && original.data[offset + channel] !== 255) coveredContent++;
+          if (printed.data[offset + channel] !== original.data[offset + channel]) {
+            if (inside) changedInsideSeal++; else changedOutsideSeal++;
+          }
+        }
+      }
+      expect(coveredContent).toBe(0);
+      expect(changedOutsideSeal).toBe(0);
+      expect(changedInsideSeal).toBeGreaterThan(1000);
+      // Scan the whole page, with no hint about where the QR has moved.
+      const payload = hiddenPayloadFromScanResult(scanQrImage(printed.data, printed.width, printed.height));
+      expect(payload).toBe(pageSealStrings[0][0]);
+      const verified = await verifyQRedSeals([payload], publicKey);
+      expect(verified).toEqual(expected); // Includes page hash, text, line positions and visual reference.
+    }
+    // This tests scan/signature stability, not automatic obstruction detection
+    // or an automatic match between the photographed page and its reference.
+  }, 30000);
   it("distinguishes two graphic pages and a blank page, then sorts reversed scans", async () => {
     const { pageSealStrings, footerPages } = await sealPdfInBrowser({ file: await mixedDocument(), privateKey, publicKey, pageScalingStrategy: "watermark" });
     expect(footerPages).toEqual([2, 3, 4]);

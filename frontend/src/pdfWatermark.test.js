@@ -7,7 +7,7 @@ import { PDFDocument, degrees, rgb } from "pdf-lib";
 import { PNG } from "pngjs";
 import jsQR from "jsqr";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { extractPdfText, sealPdfInBrowser } from "./pdfClientSeal.js";
+import { extractPdfText, planQrStampLayoutForFooterBand, sealPdfInBrowser } from "./pdfClientSeal.js";
 import { scanQrImage, createQrFrameScanner } from "./qr/scanQrImage.js";
 import { hiddenPayloadFromScanResult, isQRedEntryLink } from "./qr/hiddenPayload.js";
 import { verifyQRedSeals } from "./qredVerifier.js";
@@ -125,9 +125,18 @@ describe("experimental PDF watermarks", () => {
     expect(pageSealStrings[0].length).toBeLessThanOrEqual(2);
     expect((await verifyQRedSeals(pageSealStrings[0], publicKey)).status).toBe("VALID");
     const printed = render(await blob.arrayBuffer());
-    const part = crop(printed, { x: 0, y: 0, width: pageSealStrings[0].length === 1 ? 612 : 306, height: 216 });
-    const payload = hiddenPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
-    expect(pageSealStrings[0]).toContain(payload);
+    const layout = planQrStampLayoutForFooterBand(612, pageSealStrings[0].length);
+    const scanned = pageSealStrings[0].map((_, index) => {
+      // A half-page crop includes a truncated neighboring QR when there are
+      // two seals. Scan each complete code and its included quiet zone instead.
+      const part = crop(printed, {
+        x: layout.qrOffsetX + index * (layout.qrSize + layout.gap), y: layout.qrOffsetY,
+        width: layout.qrSize, height: layout.qrSize,
+      });
+      return hiddenPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
+    });
+    expect(scanned).toEqual(pageSealStrings[0]);
+    await expect(verifyQRedSeals(scanned, publicKey)).resolves.toMatchObject({ status: "VALID" });
   }, 30000);
 
 });
