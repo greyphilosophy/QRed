@@ -7,13 +7,15 @@ import io
 import os
 import re
 import subprocess
-from pathlib import Path
 
 import pytest
 from PIL import Image, ImageDraw
 from playwright.sync_api import expect
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
+
+# Observe real service-worker fetches on older supported Playwright releases.
+os.environ["PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS"] = "1"
 
 PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="
 PRIVATE_KEY = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes="
@@ -40,21 +42,40 @@ def seal(page, pdf_bytes, destination):
     page.get_by_label("Open PDF", exact=True).set_input_files({
         "name": "synthetic-page.pdf", "mimeType": "application/pdf", "buffer": pdf_bytes,
     })
+    page.evaluate("window.__lastSealResult = null")
     with page.expect_download(timeout=60000) as downloaded:
         page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
+        page.wait_for_function("""() => window.__lastSealResult ||
+            document.querySelector('#stamp-result')?.textContent.includes('PDF sealing failed:')""", timeout=60000)
+        expect(page.locator("#stamp-result")).not_to_contain_text("PDF sealing failed:")
     downloaded.value.save_as(destination)
+    assert destination.read_bytes().startswith(b"%PDF-")
     return page.evaluate("window.__lastSealResult")
 
 
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
 @pytest.mark.parametrize("blank", [False, True], ids=["image", "blank"])
 def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, path, blank):
-    context = browser.new_context(service_workers="block", viewport={"width": 430, "height": 932})
+    context = browser.new_context(service_workers="allow", viewport={"width": 430, "height": 932})
     try:
+        guarded = False
+        attempts = []
+
+        def guard_network(route):
+            if guarded:
+                attempts.append(f"{route.request.method} {route.request.url}")
+                route.abort("blockedbyclient")
+            else:
+                route.continue_()
+
+        # Routing also disables the browser's ordinary HTTP cache. Offline
+        # sealing must use QRed's real service-worker cache, as it does in use.
+        context.route(re.compile(r"^https?://"), guard_network)
         page = context.new_page()
         page.add_init_script("window.__qredTestMode = true")
         base = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
         page.goto(base + "/", wait_until="networkidle")
+        page.wait_for_function("navigator.serviceWorker.controller?.state === 'activated'", timeout=10000)
         page.get_by_role("button", name="Open PDF stamping tool").click()
         page.get_by_label("Private Key", exact=True).fill(PRIVATE_KEY)
         page.get_by_label("Page layout", exact=True).select_option("watermark")
@@ -64,16 +85,19 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
         assert result["evidence"]["blank"] == blank
         assert result["evidence"]["text"] == ""
         expect(page.get_by_text("Used clear footers on page(s) 1", exact=False)).to_be_visible()
-        # Reuse already loaded rendering resources with all network access off.
+        # Each sealing run creates a fresh PDF worker. Wait for the real
+        # offline cache to contain it; an earlier download alone isn't enough.
+        page.wait_for_function(r"""async () => {
+            const entries = await Promise.all((await caches.keys()).map(async key =>
+                (await (await caches.open(key)).keys()).map(request => request.url)));
+            return entries.flat().some(url => /\/assets\/pdf\.worker\.min-[\w-]+\.mjs$/.test(url));
+        }""", timeout=10000)
+        guarded = True
         context.set_offline(True)
-        requests = []
-        context.on("request", lambda request: requests.append((request.method, request.url, request.post_data)) if request.url.startswith("http") else None)
         again = seal(page, synthetic_page(blank), tmp_path / "offline-sealed.pdf")
         assert again["evidence"] == result["evidence"]
-        # Chromium may emit a request event for its cached PDF worker. With
-        # networking disabled this is still a local cache load, with no payload.
-        assert all(method == "GET" and not body and re.search(r"/assets/pdf\.worker\.min-[\w-]+\.mjs$", url)
-                   for method, url, body in requests)
+        assert attempts == [], "Network attempted during offline sealing: " + repr(attempts)
+        guarded = False
         context.set_offline(False)
         subprocess.run(["pdftoppm", "-png", "-r", "144", "-singlefile", str(stamped), str(tmp_path / "printed")], check=True, capture_output=True)
         printed = Image.open(tmp_path / "printed.png")
@@ -81,8 +105,8 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
         footer = printed.crop((0, 1584, 1224, 2016))
         footer.save(tmp_path / "seal.png")
         page.goto(base + path, wait_until="networkidle")
+        guarded = True
         context.set_offline(True)
-        requests.clear()
         if path == "/":
             page.get_by_label("Choose QR image", exact=True).set_input_files(tmp_path / "seal.png")
             page.get_by_label("Open issuer public key file", exact=True).set_input_files({
@@ -118,7 +142,7 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
         reference.get_by_label("Choose visual comparison photo", exact=True).set_input_files(tmp_path / "printed.png")
         expect(reference.get_by_role("img", name="Page photo beside the signed visual reference")).to_be_visible()
         expect(reference.get_by_role("img", name="Page photo beside the signed visual reference")).to_have_js_property("naturalHeight", 2016)
-        assert requests == []
+        assert attempts == [], "Network attempted during offline verification: " + repr(attempts)
         if not blank and path == "/":
             page.screenshot(path=str(tmp_path / "visual-reference-mobile.png"), full_page=True)
     finally:
