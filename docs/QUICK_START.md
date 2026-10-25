@@ -1,81 +1,69 @@
-# QRed — Tamper-Evident Document Sealing & Verification
+# QRed development quick start
 
-## Quick Start
+QRed seals PDFs and verifies their contents in the browser. Google account
+attestations use the Cloudflare Worker in `frontend/worker/`. The private-key
+workflow can run from the static frontend alone.
 
-### Backend
-The local API runs on port `8190`.
+## Run the frontend
 
-```bash
-# From the repository root
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn backend.app:create_app --factory --reload --port 8190
-```
+Use Node.js 24, matching CI:
 
-### Frontend
 ```bash
 cd frontend
-npm install
+npm ci
 npm start
 ```
 
-### Running BDD Tests
+Open the Vite URL, choose **Stamp PDF**, generate or open a signing key, and
+choose a PDF. **Stamp and save PDF** downloads the sealed document. Both the
+homepage and `/verify.htm` can read seals from PDFs, QR images, or the camera.
+Private-key seals need the issuer's public key file to verify the signature.
+
+## Run tests
+
+Install Python 3.12 and Poppler (`pdftoppm` and `pdftotext`) for the rendered-PDF
+regressions. From the repository root:
+
 ```bash
-PYTHONPATH=. pytest tests/ -v
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m playwright install chromium
+npm run lint --prefix frontend
+npm test --prefix frontend
+npm run build --prefix frontend
 ```
 
-## Project Structure
-```
-QRed/
-├── backend/
-│   ├── app.py          # FastAPI app factory
-│   ├── models.py       # QRed data models
-│   ├── routes/
-│   │   ├── seal.py     # Seal generation API
-│   │   └── verify.py   # Verification API
-│   └── services/
-│       ├── sealer.py   # Document sealing logic
-│       └── verifier.py # Verification logic
-├── frontend/
-│   ├── index.html      # SPA entry point
-│   ├── package.json
-│   ├── vite.config.js
-│   └── src/
-│       ├── index.js    # React entry
-│       └── App.jsx     # React SPA
-├── tests/
-│   └── test_qred.py    # BDD test suite
-└── .github/workflows/ci.yml
-```
+Serve the production build in one terminal:
 
-## API Endpoints
-
-Use `http://localhost:8190` for local API requests. Generated QRed payload QR codes show `https://qred.org/` as the visible production bootstrap URL by default. Normal camera apps pass only that URL to the browser; hidden signed payload bytes require the QRed verifier to scan the QR image itself.
-
-### POST /api/seals
-Generate QRed seals for a document.
-
-### POST /api/verify
-Verify QRed seals and return verification result.
-
-## Windows 11 Anaconda Demo
-
-From **Anaconda Prompt** or **PowerShell** at the repository root:
-
-```powershell
-conda create -n qred-demo python=3.12 -y
-conda activate qred-demo
-python -m pip install -r requirements.txt
-uvicorn backend.app:create_app --factory --reload --port 8190
-```
-
-In a second terminal:
-
-```powershell
+```bash
 cd frontend
-npm install
-npm start -- --host 127.0.0.1
+npm exec vite preview -- --host 127.0.0.1 --port 3000
 ```
 
-The Vite dev server proxies `/api` to `http://localhost:8190` by default. Open the Vite URL shown in the terminal, use **Use Demo Keys**, choose a PDF, and click **Upload PDF and Stamp QR Seals**. The downloaded PDF contains QRed payload QR codes for the verifier workflow. Backend PDF sealing signs each page with integrity metadata that includes a page content hash and a shared document Merkle root, and uses the root, page hash, and a per-seal occurrence number in the public QR `doc` grouping value instead of a generated document ID. Scanned page seals from the same PDF can be compared for swap detection.
+In another terminal, activate the Python environment and run from the repository
+root:
+
+```bash
+QRED_BASE_URL=http://localhost:3000 pytest -v
+```
+
+The browser tests exercise the production service worker and offline caches.
+They share download, cache-readiness, and network-observation helpers in
+`tests/browser_helpers.py`.
+
+## Code map
+
+| Location | Responsibility |
+| --- | --- |
+| `frontend/src/pdfClientSeal.js` | Prepare and sign each page |
+| `frontend/src/pdf/renderSealedPdf.js` | Place seals and check watermark recovery |
+| `frontend/src/sealBudget.js` | QR capacity and optional-evidence budgets |
+| `frontend/src/sealCompression.js` | Shared compression selection |
+| `frontend/src/verifier/verificationSession.js` | Collected seals, verification lifetime, and progress |
+| `frontend/src/qr/cameraSession.js` | Camera stream and decode-loop lifetime |
+| `frontend/worker/` | Stateless Google identity attestations |
+| `tests/` | Production browser regression tests |
+
+See the [README](../README.md) for the seal format, privacy model, and Cloudflare
+Pages deployment instructions.

@@ -1,7 +1,8 @@
+import { MAX_PDF_SEALS, recordQrCount } from "./sealBudget.js";
 import { decodePageEvidence } from "./pageEvidence.js";
 import { signAsync as signEd25519 } from "@noble/ed25519";
 import { qredPayloadCapacity } from "./qredQr.js";
-import { compressBytes } from "./sealCompression.js";
+import { encodedBodyCandidates, selectBodyEncoding } from "./sealCompression.js";
 import { computeKeyId, sealSignatureMessage } from "./sealSignature.js";
 import { deriveSigningPublicKey, validateSigningKeyPair } from "./signingKeys.js";
 import { attestationMessage, pageCommitment, decodeFixedBase64 } from "./attestation.js";
@@ -15,7 +16,7 @@ export { DEFAULT_BOOTSTRAP_URL } from "./sealFormat.js";
 async function splitRecord(record, version) {
   if (record.length <= qredPayloadCapacity()) return [record];
   const maximumBody = qredPayloadCapacity() - CHUNK_HEADER_BYTES;
-  const count = Math.ceil(record.length / maximumBody);
+  const count = recordQrCount(record.length);
   if (count > MAX_CHUNKS) throw new Error("Document exceeds the 4096-seal limit");
   const balancedBody = Math.ceil(record.length / count);
   // Keep the minimum code count. Balance only if every grid can be smaller
@@ -82,29 +83,12 @@ export async function createQRedSeals({
     const { privateBytes } = await validateSigningKeyPair({ privateKey, publicKey });
     signature = await signEd25519(sealSignatureMessage(metadata, textBytes), privateBytes);
   }
-  const candidates = [], failures = [];
-  async function addCandidate(encoding) {
-    try {
-      const body = encoding === "plaintext" ? textBytes : await compressBytes(textBytes, encoding);
-      const chunks = await splitRecord(encodeEnvelope(metadata, signature, body, encoding), metadata.version);
-      candidates.push({ encoding, chunks, qr_count: chunks.length, payload_bytes: chunks.reduce((sum, chunk) => sum + chunk.length, 0) });
-      return true;
-    } catch (error) {
-      failures.push({ encoding, error_message: error.message });
-      return false;
-    }
-  }
-  await addCandidate("plaintext");
-  if (encodingStrategy === "automatic") {
-    // Prefer the smaller zlib wrapper. Gzip remains a fallback for browsers
-    // without deflate support and an explicit option for older verifiers.
-    if (typeof CompressionStream === "function" && !await addCandidate("zlib")) await addCandidate("gzip");
-  } else if (encodingStrategy !== "plaintext") await addCandidate(encodingStrategy);
-  const selected = encodingStrategy === "automatic"
-    ? [...candidates].sort((a, b) => a.qr_count - b.qr_count || a.payload_bytes - b.payload_bytes)[0]
-    : candidates.find(item => item.encoding === encodingStrategy);
-  if (!selected) throw new Error(failures.find(item => item.encoding === encodingStrategy)?.error_message || failures[0]?.error_message || "No supported seal encoding is available");
-  if (pageContext && selected.qr_count > 2) throw new Error(`PDF page ${pageContext.pageNumber} exceeds the two-QR limit. Shorten the page or split its content across pages.`);
+  const { candidates, failures } = await encodedBodyCandidates(textBytes, encodingStrategy, async (body, encoding) => {
+    const chunks = await splitRecord(encodeEnvelope(metadata, signature, body, encoding), metadata.version);
+    return { chunks, qr_count: chunks.length, payload_bytes: chunks.reduce((sum, chunk) => sum + chunk.length, 0) };
+  });
+  const selected = selectBodyEncoding({ candidates, failures }, encodingStrategy);
+  if (pageContext && selected.qr_count > MAX_PDF_SEALS) throw new Error(`PDF page ${pageContext.pageNumber} exceeds the two-QR limit. Shorten the page or split its content across pages.`);
   const plaintext = candidates.find(item => item.encoding === "plaintext");
   return {
     ...metadata, ...(evidence ? { evidence } : {}), bootstrap_url: (bootstrapUrl || DEFAULT_BOOTSTRAP_URL).split("#")[0],

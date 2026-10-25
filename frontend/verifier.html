@@ -383,14 +383,15 @@
   </div>
 
   <script type="module">
+    import { startCameraSession } from "./src/qr/cameraSession.js";
     import { createQrFrameScanner } from "./src/qr/scanQrImage.js";
     import { isQRedEntryLink } from "./src/qr/hiddenPayload.js";
-    import { decodeSeal as decodeQRedSeal, verifyQRedSeals, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./src/qredVerifier.js";
+    import { decodeSeal as decodeQRedSeal, verifyQRedSeals, qredPayloadFromPhotoScanResult } from "./src/qredVerifier.js";
     import { mountPhotoTextVerification } from "./src/verifier/mountPhotoTextVerification.jsx";
     import { createScanPhotoCollection } from "./src/verifier/scanPhotos.js";
     import { mountPdfSealInput } from "./src/verifier/mountPdfSealInput.jsx";
     import { readSigningKeyFile } from "./src/signingKeys.js";
-    import { orderSealResults, sealCollectionProgress } from "./src/sealCollection.js";
+    import { createVerificationSession } from "./src/verifier/verificationSession.js";
 
     // QRed Protocol - decode QRed seal strings for scanner UI state.
     function decodeSeal(str) {
@@ -400,7 +401,6 @@
         documentId: decoded.document_id,
         chunkNumber: decoded.chunk_number,
         totalChunks: decoded.total_chunks,
-        data: decoded.data,
       };
     }
 
@@ -412,29 +412,22 @@
 
     // State
     var state = {
-      sealsByDocument: Object.create(null),
-      scannedSeals: [],
-      seenSeals: new Set(),
-      verificationResults: Object.create(null),
-      scanSession: 0,
       scanImages: { photos: [], notice: "" },
       isScanning: false,
-      stream: null,
-      animFrameId: null,
+      camera: null,
       defaultKeysPromise: null,
-      defaultKeyLookupMessage: "",
       publicKey: "",
     };
 
+    var collection = createVerificationSession();
     var photoComparison = mountPhotoTextVerification(document.getElementById("photoTextComparison"));
     var scanPhotos = createScanPhotoCollection(function(images) {
       state.scanImages = images;
       updatePhotoComparison();
     });
     function updatePhotoComparison(results) {
-      results = results || orderSealResults(Object.values(state.verificationResults));
-      var progress = sealCollectionProgress(state.scannedSeals, results);
-      photoComparison.update(results, state.scanSession, state.scanImages, Boolean(progress && !progress.finished));
+      var snapshot = collection.getSnapshot();
+      photoComparison.update(results || snapshot.results, snapshot.session, state.scanImages, Boolean(snapshot.progress && !snapshot.progress.finished));
     }
     updatePhotoComparison([]);
     var pdfInput = mountPdfSealInput(document.getElementById("pdfSealInput"), processScannedSeal);
@@ -464,15 +457,11 @@
 
     btnNewScan.onclick = function() {
       stopScanning();
-      state.scanSession += 1;
-      pdfInput.update(state.scanSession);
-      state.verificationResults = Object.create(null);
-      state.sealsByDocument = Object.create(null);
-      state.scannedSeals = [];
+      collection.clear();
+      pdfInput.update(collection.getSnapshot().session);
       issuerKeyControls.hidden = true;
       publicKeyFileStatus.textContent = "";
       scanPhotos.clear();
-      state.seenSeals = new Set();
       sealList.innerHTML = "";
       sealList.classList.remove("visible");
       progressContainer.style.display = "none";
@@ -494,16 +483,8 @@
       publicKeyFileStatus.textContent = "Reading public key on this device...";
       try {
         state.publicKey = await readSigningKeyFile(file, "public");
-        state.scanSession += 1;
-        updatePhotoComparison([]);
         publicKeyFileStatus.textContent = "Public key opened. Collected seals are checked with this key.";
-        await Promise.all(Object.keys(state.sealsByDocument).map(function(docId) {
-          var doc = state.sealsByDocument[docId];
-          // Discard verification already in flight with the previous key.
-          doc.revision += 1;
-          delete state.verificationResults[docId];
-          return Object.keys(doc.chunks).length === doc.total ? reconstructAndShow(docId) : Promise.resolve();
-        }));
+        await collection.verify(state.publicKey, verifyWithDefaultKey);
       } catch (error) {
         publicKeyFileStatus.textContent = "Key import failed: " + error.message;
       } finally {
@@ -525,61 +506,33 @@
       return state.defaultKeysPromise;
     }
 
-    async function loadMatchingDefaultPublicKey(seals) {
-      state.defaultKeyLookupMessage = "";
-      if (seals.some(function(seal) { return decodeQRedSeal(seal)?.version === "4"; })) return "";
-      if (state.publicKey.trim()) return state.publicKey.trim();
-      var keyIds = seals.map(function(seal) {
-        var decoded = decodeQRedSeal(seal);
-        return decoded && decoded.key_id ? decoded.key_id : "";
-      }).filter(Boolean);
-      if (keyIds.length === 0) {
-        // Multipart wrappers carry only a grouping digest. Reconstruct the
-        // record to discover its key ID before looking up the default key.
-        var reconstructed = await verifyQRedSeals(seals, "");
-        if (reconstructed.key_id) keyIds.push(reconstructed.key_id);
+    async function verifyWithDefaultKey(seals, publicKey) {
+      var result = await verifyQRedSeals(seals, publicKey);
+      if (publicKey || result.status !== "UNVERIFIED" || seals.some(function(seal) {
+        return decodeQRedSeal(seal)?.version === "4";
+      })) return result;
+      // A multipart wrapper has no key ID until reconstruction. Only look up
+      // the public demo key once a complete local record is available.
+      var keys = result.key_id ? await fetchDefaultKeys() : null;
+      if (keys?.public_key && keys.key_id === result.key_id) {
+        return verifyQRedSeals(seals, keys.public_key);
       }
-      if (keyIds.length === 0) {
-        state.defaultKeyLookupMessage = "No default trusted key could be selected because the seal does not include a key ID.";
-        return "";
-      }
-
-      var keys = await fetchDefaultKeys();
-      // Keep a key opened while the default lookup was in flight.
-      if (state.publicKey.trim()) return state.publicKey.trim();
-      if (!keys || !keys.public_key || !keys.key_id) {
-        state.defaultKeyLookupMessage = "No default trusted key found; showing unverified QR text.";
-        return "";
-      }
-      if (keyIds.indexOf(keys.key_id) === -1) {
-        state.defaultKeyLookupMessage = "Default trusted key did not match this seal's key ID; showing unverified QR text.";
-        return "";
-      }
-      state.publicKey = keys.public_key;
-      return keys.public_key;
+      var message = !result.key_id
+        ? "No default trusted key could be selected because the seal does not include a key ID."
+        : keys?.key_id ? "Default trusted key did not match this seal's key ID; showing unverified QR text."
+        : "No default trusted key found; showing unverified QR text.";
+      return { ...result, error_message: message + (result.error_message ? " " + result.error_message : "") };
     }
 
 
-    function showError(message) {
-      var el = document.getElementById("errorMsg");
-      el.textContent = message;
-      el.style.display = "block";
-    }
-
-    function registerSealInSession(sealStr, decoded) {
-      state.scannedSeals.push(sealStr);
-      if (decodeQRedSeal(sealStr)?.version === "3") issuerKeyControls.hidden = false;
-      var docId = decoded.documentId;
-      if (!state.sealsByDocument[docId]) {
-        state.sealsByDocument[docId] = { chunks: {}, total: decoded.totalChunks };
-      }
-      state.sealsByDocument[docId].chunks[decoded.chunkNumber] = decoded.data;
-      state.sealsByDocument[docId].revision = (state.sealsByDocument[docId].revision || 0) + 1;
-      delete state.verificationResults[docId];
+    collection.subscribe(function() {
+      issuerKeyControls.hidden = !collection.getSnapshot().seals.some(function(seal) {
+        return decodeQRedSeal(seal)?.version === "3";
+      });
       updatePhotoComparison();
       updateSealList();
-      return state.sealsByDocument[docId];
-    }
+      refreshCollectionProgress();
+    });
 
     function startScanning() {
       var video = document.getElementById("cameraVideo");
@@ -591,96 +544,66 @@
       scanLine.style.display = "block";
       video.style.display = "block";
 
-      navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 960 } }
-      }).then(function(mediaStream) {
-        state.stream = mediaStream;
-        video.srcObject = mediaStream;
-        video.play();
-
-        video.onloadedmetadata = function() {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          state.isScanning = true;
+      var scanQrFrame = createQrFrameScanner();
+      state.isScanning = true;
+      state.camera = startCameraSession({
+        video: video,
+        waitForMetadata: true,
+        requestStream: function() {
+          return navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 960 } }
+          });
+        },
+        onFrame: function() {
+          if (!video.videoWidth || !video.videoHeight) return;
           statusBar.classList.add("visible");
-
+          if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
+          if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
           var ctx = canvas.getContext("2d");
-          var scanQrFrame = createQrFrameScanner();
-          var lastScanAt = -Infinity;
-
-          function scanFrame() {
-            if (!state.isScanning) return;
-            if (performance.now() - lastScanAt < 125) {
-              state.animFrameId = requestAnimationFrame(scanFrame);
-              return;
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          var code = scanQrFrame(imageData.data, canvas.width, canvas.height);
+          if (code) {
+            var payload = qredPayloadFromPhotoScanResult(imageData.data, canvas.width, canvas.height, code);
+            if (isQRedEntryLink(payload)) {
+              statusText.textContent = "Point at the document seal or pale watermark. Include the whole square in view.";
+            } else {
+              processScannedSeal(payload, canvas);
             }
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            var code = scanQrFrame(imageData.data, canvas.width, canvas.height);
-            if (code) {
-              var payload = qredPayloadFromPhotoScanResult(imageData.data, canvas.width, canvas.height, code);
-              if (isQRedEntryLink(payload)) {
-                statusText.textContent = "Point at the document seal or pale watermark. Include the whole square in view.";
-              } else {
-                processScannedSeal(payload, canvas);
-              }
-            }
-            lastScanAt = performance.now();
-            if (state.isScanning) state.animFrameId = requestAnimationFrame(scanFrame);
           }
-          scanFrame();
-        };
-      }).catch(function(err) {
-        statusText.textContent = "Camera error: " + err.message;
-        placeholder.style.display = "flex";
-        placeholder.innerHTML = "<div class='icon'>&#128247;</div><div>" + escapeHtml(err.message) + "</div>";
+        },
+        onError: function(err) {
+          stopScanning();
+          btnScan.textContent = "Scan QR Code";
+          statusText.textContent = "Camera error: " + err.message;
+          placeholder.style.display = "flex";
+          placeholder.innerHTML = "<div class='icon'>&#128247;</div><div>" + escapeHtml(err.message) + "</div>";
+        },
       });
     }
 
     function stopScanning() {
       state.isScanning = false;
-      if (state.animFrameId) {
-        cancelAnimationFrame(state.animFrameId);
-        state.animFrameId = null;
-      }
-      if (state.stream) {
-        state.stream.getTracks().forEach(function(t) { t.stop(); });
-        state.stream = null;
-      }
+      state.camera?.stop();
+      state.camera = null;
       statusBar.classList.remove("visible");
     }
 
     function processScannedSeal(sealStr, frame, options = {}) {
-      if (state.seenSeals.has(sealStr)) {
-        if (options.replaceImage) return scanPhotos.capture(sealStr, frame, { replace: true });
-        return;
-      }
-      state.seenSeals.add(sealStr);
-
-      var decoded = decodeSeal(sealStr);
-      if (!decoded) {
+      if (!decodeSeal(sealStr)) {
         stopScanning();
         btnScan.textContent = "Scan QR Code";
         showResult("QR_CONTENT", { content: sealStr });
         return;
       }
-
-      registerSealInSession(sealStr, decoded);
       var captured = scanPhotos.capture(sealStr, frame, { replace: options.replaceImage });
-
-      var docId = decoded.documentId;
-      var docData = state.sealsByDocument[docId];
-      var collected = Object.keys(docData.chunks).length;
-      refreshCollectionProgress();
-
-      if (collected >= docData.total) {
-        return Promise.all([captured, reconstructAndShow(docId)]);
-      }
-      return captured;
+      if (!collection.add(sealStr)) return captured;
+      return Promise.all([captured, collection.verify(state.publicKey, verifyWithDefaultKey)]);
     }
 
     function refreshCollectionProgress() {
-      var progress = sealCollectionProgress(state.scannedSeals, Object.values(state.verificationResults));
+      var snapshot = collection.getSnapshot();
+      var progress = snapshot.progress;
       if (!progress) return;
       statusText.textContent = progress.message;
       var collected = progress.pagesCollected || progress.collected;
@@ -688,24 +611,23 @@
       progressFill.style.width = Math.min(100, collected / total * 100) + "%";
       progressContainer.style.display = "block";
       var active = decodeSeal(progress.activeSeal);
-      var result = state.verificationResults[active.documentId];
+      var result = snapshot.results.find(function(result) { return result.document_id === active.documentId; });
       if (progress.finished) {
         stopScanning();
         btnScan.textContent = "Scan QR Code";
       }
       if (result && result.status !== "INCOMPLETE") {
-        var results = orderSealResults(Object.keys(state.sealsByDocument)
-          .map(function(id) { return state.verificationResults[id]; }).filter(Boolean));
-        showResult(result.status, result, { keepScanView: !progress.finished, progress: progress, results: results });
+        showResult(result.status, result, { keepScanView: !progress.finished, progress: progress, results: snapshot.results });
       }
     }
 
     function updateSealList() {
-      if (state.scannedSeals.length > 0) {
+      var scannedSeals = collection.getSnapshot().seals;
+      if (scannedSeals.length > 0) {
         sealList.classList.add("visible");
         sealList.innerHTML = "";
-        for (var i = 0; i < state.scannedSeals.length; i++) {
-          var decoded = decodeSeal(state.scannedSeals[i]);
+        for (var i = 0; i < scannedSeals.length; i++) {
+          var decoded = decodeSeal(scannedSeals[i]);
           if (decoded) {
             var div = document.createElement("div");
             div.className = "seal-item";
@@ -713,40 +635,6 @@
             sealList.appendChild(div);
           }
         }
-      }
-    }
-
-    // Reconstruct & Verify
-    async function reconstructAndShow(docId) {
-      var docData = state.sealsByDocument[docId];
-      var session = state.scanSession;
-      var revision = docData.revision;
-      var total = docData.total;
-      var seals = [];
-      for (var i = 0; i < total; i++) {
-        if (!(i in docData.chunks)) {
-          showResult("INCOMPLETE", { error_message: "Missing chunk " + i });
-          return;
-        }
-      }
-      seals = state.scannedSeals.filter(function(seal) {
-        var decoded = decodeSeal(seal);
-        return decoded && decoded.documentId === docId;
-      });
-
-      try {
-        var publicKey = await loadMatchingDefaultPublicKey(seals);
-        var result = await verifyQRedSeals(seals, publicKey);
-        if (!publicKey && state.defaultKeyLookupMessage) {
-          result.error_message = state.defaultKeyLookupMessage + (result.error_message ? " " + result.error_message : "");
-        }
-        if (state.scanSession !== session || docData.revision !== revision) return;
-        state.verificationResults[docId] = { ...result, document_id: docId };
-        refreshCollectionProgress();
-      } catch (e) {
-        if (state.scanSession !== session || docData.revision !== revision) return;
-        state.verificationResults[docId] = { status: "ERROR", document_id: docId, error_message: e.message };
-        refreshCollectionProgress();
       }
     }
 
@@ -841,16 +729,12 @@
 
         var seals = raw.map(function(s) { return String(s || "").trim(); }).filter(Boolean);
         if (publicKey !== undefined) state.publicKey = publicKey || "";
-        seals.forEach(function(seal) {
-          var decoded = decodeSeal(seal);
-          if (decoded && !state.seenSeals.has(seal)) {
-            state.seenSeals.add(seal);
-            registerSealInSession(seal, decoded);
-          }
-        });
-        var result = await verifyQRedSeals(seals, state.publicKey);
-
-        showResult(result.status, result);
+        collection.add(seals);
+        var results = await collection.verify(state.publicKey, verifyQRedSeals);
+        var id = decodeSeal(seals[0])?.documentId;
+        var result = results?.find(function(item) { return item.document_id === id; });
+        if (!result) result = await verifyQRedSeals(seals, state.publicKey);
+        if (result.status === "INCOMPLETE" || !id) showResult(result.status, result);
 
         return result;
       } catch (e) {

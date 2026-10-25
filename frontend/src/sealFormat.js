@@ -9,6 +9,15 @@ export const MAX_ENVELOPE_BYTES = MAX_COMPRESSED_BYTES + 1024;
 export const MAX_QR_PAYLOAD_BYTES = 2945;
 export const CHUNK_HEADER_BYTES = 40;
 export const MAX_CHUNKS = 4096;
+export const SIGNATURE_BYTES = 64;
+export const COMMITMENT_SALT_BYTES = 32;
+const metadataByteLength = multiple => 17 + (multiple ? 36 : 0);
+
+// Shared by the wire encoder and the optional-evidence budget planner.
+export function sealEnvelopeOverhead({ google = false, multiple = false, identityBytes = 0 } = {}) {
+  return RECORD_MAGIC.length + metadataByteLength(multiple) + SIGNATURE_BYTES
+    + (google ? COMMITMENT_SALT_BYTES + identityBytes : 0);
+}
 const RECORD_MAGIC = new Uint8Array([81, 82, 83, 51]); // QRS3
 const CHUNK_MAGIC = new Uint8Array([81, 82, 67, 51]); // QRC3
 const ATTESTED_MAGIC = new Uint8Array([81, 82, 83, 52]); // QRS4
@@ -71,7 +80,7 @@ export function encodeMetadata(metadata) {
   if (pdf && (!Number.isInteger(pageCount) || pageCount < 1 || pageCount > 65535 ||
     !Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > pageCount)) throw new Error("Invalid PDF page position/count");
   const multiple = pdf && pageCount > 1;
-  const bytes = new Uint8Array(multiple ? 53 : 17);
+  const bytes = new Uint8Array(metadataByteLength(multiple));
   const view = new DataView(bytes.buffer);
   if (metadata.page_evidence && !pdf) throw new Error("Page evidence requires PDF page context");
   bytes[0] = (pdf ? 2 : 0) | (multiple ? 4 : 0) | (metadata.page_evidence ? 16 : 0);
@@ -87,12 +96,12 @@ export function encodeMetadata(metadata) {
 
 export function encodeEnvelope(metadata, signature, body, encoding) {
   if (!["plaintext", "zlib", "gzip"].includes(encoding)) throw new Error("Unsupported seal encoding");
-  if (signature.length !== 64 || !body.length || body.length > MAX_COMPRESSED_BYTES) throw new Error("Invalid seal record length");
+  if (signature.length !== SIGNATURE_BYTES || !body.length || body.length > MAX_COMPRESSED_BYTES) throw new Error("Invalid seal record length");
   const header = encodeMetadata(metadata);
   if (encoding === "gzip") header[0] |= 1;
   if (encoding === "zlib") header[0] |= 8;
   if (metadata.version === "4") {
-    if (!(metadata.salt instanceof Uint8Array) || metadata.salt.length !== 32) throw new Error("Invalid commitment salt");
+    if (!(metadata.salt instanceof Uint8Array) || metadata.salt.length !== COMMITMENT_SALT_BYTES) throw new Error("Invalid commitment salt");
     return concatenate([ATTESTED_MAGIC, header, encodeIdentity(metadata.identity), metadata.salt, signature, body]);
   }
   return concatenate([RECORD_MAGIC, header, signature, body]);
@@ -104,19 +113,19 @@ function hasMagic(bytes, magic) {
 
 export function decodeEnvelope(bytes) {
   const attested = hasMagic(bytes, ATTESTED_MAGIC);
-  if ((!attested && !hasMagic(bytes, RECORD_MAGIC)) || bytes.length < 86 || bytes.length > MAX_ENVELOPE_BYTES) throw new Error("Invalid or truncated seal record");
+  if ((!attested && !hasMagic(bytes, RECORD_MAGIC)) || bytes.length <= sealEnvelopeOverhead() || bytes.length > MAX_ENVELOPE_BYTES) throw new Error("Invalid or truncated seal record");
   const flags = bytes[4];
   if ((flags & ~31) || ((flags & 9) === 9) || ((flags & 20) && !(flags & 2))) throw new Error("Unsupported seal flags");
   const multiple = Boolean(flags & 4);
-  let signatureOffset = multiple ? 57 : 21;
+  let signatureOffset = RECORD_MAGIC.length + metadataByteLength(multiple);
   let identity, salt;
   if (attested) {
     const decoded = decodeIdentity(bytes, signatureOffset);
     identity = decoded.identity;
-    salt = bytes.slice(decoded.offset, decoded.offset + 32);
-    signatureOffset = decoded.offset + 32;
+    salt = bytes.slice(decoded.offset, decoded.offset + COMMITMENT_SALT_BYTES);
+    signatureOffset = decoded.offset + COMMITMENT_SALT_BYTES;
   }
-  const bodyOffset = signatureOffset + 64;
+  const bodyOffset = signatureOffset + SIGNATURE_BYTES;
   if (bytes.length <= bodyOffset) throw new Error("Truncated seal record");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const milliseconds = view.getBigUint64(5);

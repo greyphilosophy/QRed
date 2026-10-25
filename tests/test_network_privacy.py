@@ -7,20 +7,14 @@ are blocked; local blob URLs and service-worker cache reads remain available.
 
 import io
 import os
-import re
 import subprocess
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import pytest
 from playwright.sync_api import expect
+from browser_helpers import OfflineNetworkGuard, stamp_and_save, wait_for_offline_resources
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
-
-
-# Enable worker network observation during collection, before pytest-playwright
-# starts its session driver (required by older supported Playwright releases).
-os.environ["PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS"] = "1"
 
 
 def _pdf_bytes(text):
@@ -33,15 +27,9 @@ def _pdf_bytes(text):
 
 
 def _stamp_and_save(page, directory, name, text):
-    page.get_by_label("Open PDF", exact=True).set_input_files({
+    path, _ = stamp_and_save(page, {
         "name": name, "mimeType": "application/pdf", "buffer": _pdf_bytes(text),
-    })
-    with page.expect_download(timeout=60000) as saved:
-        page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
-    path = directory / saved.value.suggested_filename
-    saved.value.save_as(path)
-    assert path.read_bytes().startswith(b"%PDF-")
-    expect(page.locator("#stamp-result")).to_contain_text(f"Sealed {name} in this browser.")
+    }, directory / name.replace(".pdf", ".qred-sealed.pdf"))
     return path
 
 
@@ -50,37 +38,12 @@ def _stamp_and_save(page, directory, name, text):
 def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, layout):
     context = browser.new_context(service_workers="allow", accept_downloads=True)
     try:
-        attempts = []
-        preparing = True
         base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
-        origin = urlsplit(base_url)
-        build = Path(__file__).resolve().parents[1] / "frontend" / "build"
-        assert (build / "index.html").is_file(), "Build the production frontend before this test"
-        public_paths = {"/" + path.relative_to(build).as_posix() for path in build.rglob("*") if path.is_file()}
-        public_paths.update({"/", "/api/keys/default"})
-
-        def block_http(route):
-            request = route.request
-            target = urlsplit(request.url)
-            if (preparing and request.method == "GET" and request.post_data is None
-                    and (target.scheme, target.netloc) == (origin.scheme, origin.netloc)
-                    and target.path in public_paths and not target.query):
-                route.continue_()
-                return
-            attempts.append(f"{request.method} {request.url}")
-            route.abort("blockedbyclient")
-
-        def block_socket(socket):
-            attempts.append(f"WebSocket {socket.url}")
-            # A routed socket stays local unless connect_to_server() is called.
-
-        # WebSocket interception must be installed before page scripts run.
-        context.route(re.compile(r"^https?://"), block_http)
-        context.route_web_socket(re.compile(r"^wss?://"), block_socket)
+        guard = OfflineNetworkGuard(context, base_url)
         page = context.new_page()
         page.add_init_script("window.__qredTestMode = true;")
         page.goto(base_url, wait_until="networkidle")
-        page.wait_for_function("navigator.serviceWorker.controller?.state === 'activated'", timeout=10000)
+        wait_for_offline_resources(page)
 
         # Explicit online warm-up, using disposable data, loads the lazy
         # PDF module, worker and fonts through the actual stamping UI.
@@ -91,29 +54,9 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, la
         _stamp_and_save(page, tmp_path, "public-warmup.pdf", "Non-sensitive resource warm-up")
         page.get_by_role("button", name="Close", exact=True).click()
         page.wait_for_load_state("networkidle")
-        assert page.evaluate("""async () => {
-            const entries = await Promise.all((await caches.keys()).map(async key =>
-                (await (await caches.open(key)).keys()).map(request => request.url)));
-            return entries.flat().some(url => url.includes('/assets/pdf.worker.'));
-        }"""), "Warm-up must cache the real PDF worker"
-
-        assert attempts == [], "Unexpected traffic during resource loading: " + repr(attempts)
-        preparing = False
-
-        # Positive controls prevent a green test caused by missing worker
-        # instrumentation. These requests are aborted before reaching a server.
-        page.evaluate("() => fetch('/__privacy_page_probe__', {method: 'POST'}).catch(() => {})")
-        context.service_workers[0].evaluate("() => fetch('/__privacy_worker_probe__').catch(() => {})")
-        page.evaluate("() => { new WebSocket(location.origin.replace(/^http/, 'ws') + '/__privacy_socket_probe__'); }")
-        for _ in range(50):
-            if any("__privacy_socket_probe__" in request for request in attempts):
-                break
-            page.wait_for_timeout(100)
-        assert any("__privacy_page_probe__" in request for request in attempts)
-        assert any("__privacy_worker_probe__" in request for request in attempts)
-        assert any("__privacy_socket_probe__" in request for request in attempts)
-        attempts.clear()
-        context.set_offline(offline)
+        wait_for_offline_resources(page, pdf=True)
+        guard.check_instrumentation(page)
+        guard.block(offline=offline)
         assert page.evaluate("navigator.onLine") is (not offline)
 
         # Sensitive test data and fresh signing keys are introduced only
@@ -170,6 +113,6 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, la
 
         # Flush pending request callbacks, including background SW fetches.
         page.wait_for_load_state("networkidle")
-        assert attempts == [], "Network traffic attempted during local processing: " + repr(attempts)
+        guard.assert_quiet()
     finally:
         context.close()

@@ -1,37 +1,41 @@
-import { existsSync, readFileSync } from "node:fs";
-import { extname, resolve } from "node:path";
-import process from "node:process";
+import { readFileSync } from "node:fs";
 import jpeg from "jpeg-js";
-import jsQR from "jsqr";
 import { PNG } from "pngjs";
 import { describe, expect, it } from "vitest";
 import { qrScanAction } from "./QrScanner.jsx";
+import { scanQrImage } from "./qr/scanQrImage.js";
+import { verifyQRedSeals, VISIBLE_QR_TEXT } from "./qredVerifier.js";
 
-const DEFAULT_PHOTO_FIXTURE = "src/__fixtures__/qred-scanner-photo.jpg";
-const photoFixturePath = resolve(process.cwd(), process.env.QRED_SCANNER_PHOTO || DEFAULT_PHOTO_FIXTURE);
-const runWithPhotoFixture = existsSync(photoFixturePath) ? it : it.skip;
+const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
+const wrongPublicKey = "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=";
 
-function decodePhoto(path) {
-  const bytes = readFileSync(path);
-  const extension = extname(path).toLowerCase();
-  if (extension === ".png") {
-    const png = PNG.sync.read(bytes);
-    return { data: new Uint8ClampedArray(png.data), width: png.width, height: png.height };
-  }
-  if ([".jpg", ".jpeg"].includes(extension)) {
-    const jpg = jpeg.decode(bytes, { useTArray: true });
-    return { data: new Uint8ClampedArray(jpg.data), width: jpg.width, height: jpg.height };
-  }
-  throw new Error(`Unsupported scanner photo fixture extension: ${extension}`);
+function scanJpeg(bytes) {
+  const image = jpeg.decode(bytes, { useTArray: true });
+  const pixels = new Uint8ClampedArray(image.data);
+  const code = scanQrImage(pixels, image.width, image.height);
+  expect(code?.data).toBe(VISIBLE_QR_TEXT);
+  const action = qrScanAction(pixels, image.width, image.height, code, { returnPayload: true });
+  expect(action.status).toBe("found");
+  return action.text;
 }
 
-describe("QrScanner real photo fixture", () => {
-  runWithPhotoFixture("runs a real photographed QRed seal through the same jsQR and QRed scan decision path", () => {
-    const image = decodePhoto(photoFixturePath);
-    const code = jsQR(image.data, image.width, image.height, { inversionAttempts: "attemptBoth" });
-    const scanAction = qrScanAction(image.data, image.width, image.height, code);
+describe("QrScanner JPEG regressions", () => {
+  it("recovers the known payload from the committed blurred JPEG", () => {
+    // The historical fixture contains only IMG. Its physical-camera provenance
+    // is undocumented; this checks its pixels without claiming field coverage.
+    const bytes = readFileSync(new URL("../../tests/qred_hidden_payload_photo.jpg", import.meta.url));
+    expect(scanJpeg(bytes)).toBe("IMG");
+  });
 
-    expect(code, `jsQR did not detect a QR code in ${photoFixturePath}`).toBeTruthy();
-    expect(scanAction, `QRed scanner did not recover a hidden payload from ${photoFixturePath}`).toMatchObject({ status: "found" });
+  it.each([85, 50])("verifies a signed PDF seal after JPEG compression at quality %i", async quality => {
+    // A fixed synthetic PDF render supplies independent signed fixture bytes.
+    // JPEG re-encoding is simulated compression, not a print/camera capture.
+    const png = PNG.sync.read(readFileSync(new URL("../../tests/fixtures/compact-qr/invoice-footer-300dpi.png", import.meta.url)));
+    const payload = scanJpeg(jpeg.encode(png, quality).data);
+    expect(await verifyQRedSeals([payload], publicKey)).toMatchObject({
+      status: "VALID", signature_valid: true, metadata_authenticated: true,
+      content: expect.stringContaining("Approved total: $123.45"),
+    });
+    expect(await verifyQRedSeals([payload], wrongPublicKey)).toMatchObject({ status: "INVALID" });
   });
 });

@@ -1,21 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { scanQrImage } from "./qr/scanQrImage.js";
 import { decodeSeal, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./qredVerifier.js";
 import { isQRedEntryLink } from "./qr/hiddenPayload.js";
 import { readSigningKeyFile } from "./signingKeys.js";
-import { sealCollectionProgress, verifySealCollection } from "./sealCollection.js";
+import { createVerificationSession } from "./verifier/verificationSession.js";
 import { PhotoTextVerification } from "./verifier/PhotoTextVerification.jsx";
 import { createScanPhotoCollection } from "./verifier/scanPhotos.js";
 import { PdfSealInput } from "./verifier/PdfSealInput.jsx";
 
 export function useSealVerification() {
-  const [seals, setSeals] = useState([]);
+  const [collection] = useState(createVerificationSession);
+  const snapshot = useSyncExternalStore(collection.subscribe, collection.getSnapshot);
+  const { seals } = snapshot;
   const [publicKey, setPublicKey] = useState("");
-  const [results, setResults] = useState([]);
   const [notice, setNotice] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [checked, setChecked] = useState(null);
-  const [session, setSession] = useState(0);
   const [scanImages, setScanImages] = useState({ photos: [], notice: "" });
   const [photoCollection] = useState(() => createScanPhotoCollection(setScanImages));
   useEffect(() => () => photoCollection.clear(), [photoCollection]);
@@ -50,25 +48,17 @@ export function useSealVerification() {
     }
     setNotice("");
     const captured = photoCollection.capture(text, frame, { replace: replaceImage });
-    setSeals((previous) => previous.includes(text) ? previous : [...previous, text]);
+    collection.add(text);
     return captured;
-  }, [photoCollection]);
+  }, [photoCollection, collection]);
 
   useEffect(() => {
-    let cancelled = false;
-    setBusy(seals.length > 0);
-    setResults([]);
-    verifySealCollection(seals, publicKey)
-      .then((next) => { if (!cancelled) { setResults(next); setChecked({ seals, publicKey }); } })
-      .catch((error) => { if (!cancelled) setNotice(`Verification failed: ${error.message}`); })
-      .finally(() => { if (!cancelled) setBusy(false); });
-    return () => { cancelled = true; };
-  }, [seals, publicKey]);
+    collection.verify(publicKey);
+    return () => collection.cancel();
+  }, [collection, seals, publicKey]);
 
-  const progress = useMemo(() => sealCollectionProgress(seals,
-    checked?.seals === seals && checked.publicKey === publicKey ? results : []), [seals, publicKey, checked, results]);
-  return { seals, publicKey, setPublicKey, results, notice, setNotice, busy, addSeal, progress, session, scanImages,
-    clear: () => { photoCollection.clear(); setSeals([]); setResults([]); setNotice(""); setSession(value => value + 1); } };
+  return { ...snapshot, publicKey, setPublicKey, notice, setNotice, addSeal, scanImages,
+    clear: () => { photoCollection.clear(); collection.clear(); setNotice(""); } };
 }
 
 export function SealVerification({ verification }) {

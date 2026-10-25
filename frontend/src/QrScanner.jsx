@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createQrFrameScanner, scanQrImage } from "./qr/scanQrImage.js";
 import { decodeSeal, VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult, qredTextFromScanResult } from "./qredVerifier.js";
 import { isQRedEntryLink } from "./qr/hiddenPayload.js";
+import { startCameraSession } from "./qr/cameraSession.js";
 import "./qrScanner.css";
 
 /**
@@ -271,8 +272,6 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
   const [error, setError] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const [cameraReady, setCameraReady] = useState(false);
-  // Adaptive scan rate tracking
-  const lastScanTimeRef = useRef(0);
 
   function markCameraReady(ready) {
     if (cameraReadyRef.current === ready) return;
@@ -281,30 +280,9 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
   }
 
   useEffect(() => {
-    let animId = null;
-    let stream = null;
-    let stopped = false;
-    let throttleTimer = null;
     const seen = new Set();
     const scanQrFrame = createQrFrameScanner();
-
-    function stop() {
-      stopped = true;
-      clearTimeout(throttleTimer);
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-        stream = null;
-        streamRef.current = null;
-      }
-      const video = videoRef.current;
-      if (video && video.srcObject) {
-        video.srcObject = null;
-      }
-      if (animId !== null) {
-        cancelAnimationFrame(animId);
-        animId = null;
-      }
-    }
+    let camera;
 
     handleScanActionRef.current = (scanAction) => {
       if (scanAction.status === "found") {
@@ -316,7 +294,7 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
         }
         setFeedback(null);
         if (onScan(scanAction.text, canvasRef.current)) return false;
-        stop();
+        camera.stop();
         return true;
       }
       if (scanAction.status === "feedback") {
@@ -332,17 +310,6 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
     };
 
     function scanFrame() {
-      if (stopped) return;
-
-      // Throttle: gate at the top so we don't decode more than ~8fps
-      const now = performance.now();
-      const MIN_FRAME_INTERVAL_MS = 125;
-      const nextFrameTime = lastScanTimeRef.current + MIN_FRAME_INTERVAL_MS;
-      if (now < nextFrameTime) {
-        throttleTimer = setTimeout(scanFrame, nextFrameTime - now);
-        return;
-      }
-
       const video = videoRef.current;
       const canvas = canvasRef.current;
       const frameReady = isCameraFrameReady(video, canvas);
@@ -358,45 +325,25 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
         pendingManualCaptureRef.current = false;
         pendingManualCaptureStartedAtRef.current = null;
       }
-      if (handleScanActionRef.current(scanAction)) return;
-
-      // Leave time for rendering and input even when a decode is slow.
-      lastScanTimeRef.current = performance.now();
-      animId = requestAnimationFrame(scanFrame);
+      handleScanActionRef.current(scanAction);
     }
 
-    getPreferredCameraStream()
-      .then(async (s) => {
-        if (stopped) {
-          s.getTracks().forEach((track) => track.stop());
-          return;
-        }
-        stream = s;
-        streamRef.current = s;
-        await applyCameraQualityControls(stream, { enableTorch: torchEnabledRef.current });
-        if (stopped) return;
-        const video = videoRef.current;
-        video.srcObject = s;
-        const playResult = video.play();
-        if (playResult && typeof playResult.catch === "function") {
-          playResult.catch((e) => {
-            if (!stopped) setError("Camera preview could not start: " + (e.message || "tap Start scanning again"));
-          });
-        }
-        scanFrame();
-      })
-      .catch((e) => {
-        if (!stopped) {
-          setError("Camera access needed: " + (e.message || "environment camera"));
-        }
-      });
+    camera = startCameraSession({
+      video: videoRef.current,
+      requestStream: getPreferredCameraStream,
+      prepareStream: stream => applyCameraQualityControls(stream, { enableTorch: torchEnabledRef.current }),
+      onStream: stream => { streamRef.current = stream; },
+      onFrame: scanFrame,
+      onError: (error, stage) => setError((stage === "play" ? "Camera preview could not start: " : "Camera access needed: ")
+        + (error.message || "environment camera")),
+    });
 
     return () => {
       pendingManualCaptureRef.current = false;
       pendingManualCaptureStartedAtRef.current = null;
       cameraReadyRef.current = false;
       handleScanActionRef.current = () => false;
-      stop();
+      camera.stop();
     };
   }, [onScan, returnPayload]);
 

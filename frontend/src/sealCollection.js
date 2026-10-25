@@ -15,7 +15,7 @@ export function orderSealResults(results) {
   return [...documents.values()].flatMap(pages => [...pages].sort((a, b) => a.page_number - b.page_number));
 }
 
-export async function verifySealCollection(seals, publicKey) {
+export async function verifySealCollection(seals, publicKey, verify = verifyQRedSeals) {
   const groups = new Map();
   for (const seal of seals) {
     const id = decodeSeal(seal)?.document_id || "";
@@ -23,8 +23,12 @@ export async function verifySealCollection(seals, publicKey) {
     groups.get(id).push(seal);
   }
   return orderSealResults(await Promise.all([...groups].map(async ([id, group]) => {
-    const result = await verifyQRedSeals(group, publicKey);
-    return { ...result, document_id: result.document_id || id };
+    try {
+      const result = await verify(group, publicKey);
+      return { ...result, document_id: result.document_id || id };
+    } catch (error) {
+      return { status: "ERROR", document_id: id, error_message: error.message || String(error) };
+    }
   })));
 }
 

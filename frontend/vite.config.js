@@ -4,6 +4,8 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  // Rendered PDF/QR tests are CPU-heavy; avoid oversubscribing small CI runners.
+  test: { minWorkers: 1, maxWorkers: 2 },
   server: {
     port: 3000,
   },

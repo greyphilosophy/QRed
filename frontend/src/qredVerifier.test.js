@@ -13,7 +13,7 @@ const wrongPublicKey = "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=";
 
 const noisyFixturePath = resolve(process.cwd(), "../tests/qred_hidden_payload_photo.jpg");
 
-function decodePhotograph(path) {
+function decodeJpegFixture(path) {
   const bytes = readFileSync(path);
   const decoded = jpeg.decode(bytes, { useTArray: true });
   return { data: new Uint8ClampedArray(decoded.data), width: decoded.width, height: decoded.height };
@@ -178,9 +178,9 @@ describe("qredVerifier", () => {
     })).toBe(payload);
   });
 
-  it("recovers hidden payloads from a photographed QRed image that still decodes the visible QR", () => {
+  it("recovers hidden payloads from the committed blurred JPEG that still decodes the visible QR", () => {
     const payload = "IMG";
-    const image = decodePhotograph(noisyFixturePath);
+    const image = decodeJpegFixture(noisyFixturePath);
     const code = jsQR(image.data, image.width, image.height, { inversionAttempts: "attemptBoth" });
 
     expect(code, `jsQR did not detect a QR code in ${noisyFixturePath}`).toBeTruthy();
