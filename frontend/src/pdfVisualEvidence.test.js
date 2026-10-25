@@ -78,9 +78,11 @@ describe("PDF visual references", () => {
     // This tests scan/signature stability, not automatic obstruction detection
     // or an automatic match between the photographed page and its reference.
   }, 30000);
-  it("distinguishes two graphic pages and a blank page, then sorts reversed scans", async () => {
-    const { pageSealStrings, footerPages } = await sealPdfInBrowser({ file: await mixedDocument(), privateKey, publicKey, pageScalingStrategy: "watermark" });
+  it("defaults to a watermark on text and footers on graphic and blank pages, then sorts reversed scans", async () => {
+    const { blob, pageSealStrings, footerPages, watermarkLayout } = await sealPdfInBrowser({ file: await mixedDocument(), privateKey, publicKey });
     expect(footerPages).toEqual([2, 3, 4]);
+    expect(watermarkLayout.map(Boolean)).toEqual([true, false, false, false]);
+    expect((await PDFDocument.load(await blob.arrayBuffer())).getPages().map(page => page.getHeight())).toEqual([792, 1008, 1008, 1008]);
     expect(pageSealStrings.every(seals => seals.length === 1)).toBe(true);
     const results = await verifySealCollection(pageSealStrings.flat().reverse(), publicKey);
     expect(results.map(result => result.page_number)).toEqual([1, 2, 3, 4]);

@@ -65,6 +65,9 @@ The uncompressed body shares the existing 8 MiB bound.
 
 ## Placement and verification
 
+The default Automatic layout tries watermarks on each text page first, with a
+per-page footer fallback. Explicit watermark mode uses the same behavior;
+explicit footer modes skip watermark placement.
 Text pages with embedded logos or pictures can use watermarks if the rendered
 seals are recoverable. The original visible crop is rendered once for placement
 analysis. A bounded obstruction map distinguishes broad dark regions and gray
@@ -83,7 +86,7 @@ cannot promise to find every usable placement. Only the chosen layout is drawn
 and checked for exact payload recovery. Its geometry is retained if other pages
 need to be rebuilt with footers; fallback never starts another placement search.
 
-Image-only/blank pages use a clear footer when watermark mode is requested. A
+Image-only/blank pages use a clear footer in Automatic and watermark modes. A
 failed watermark placement or rendered scan falls back on that page too. The PDF
 is rebuilt from the original, so failed watermark ink is not retained. Letter pages
 expand to legal size; other pages shrink to leave room. Crops and rotations are

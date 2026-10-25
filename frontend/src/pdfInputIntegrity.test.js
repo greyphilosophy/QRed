@@ -166,7 +166,7 @@ it("preserves text, dropdowns, and checkbox/radio appearances in the printed out
   radio.addOptionToPage("no", page, { x: 120, y: 530, width: 20, height: 20 });
   radio.select("no");
   const source = await pdf.save();
-  const { blob, sealResult, flattenedFieldCount } = await sealPdfInBrowser({ ...options, file: asFile(source) });
+  const { blob, sealResult, flattenedFieldCount } = await sealPdfInBrowser({ ...options, file: asFile(source), pageScalingStrategy: "legal-footer" });
   expect(flattenedFieldCount).toBe(5);
   const verified = await verifyQRedSeals(sealResult.seals, publicKey);
   expect(verified.status).toBe("VALID");

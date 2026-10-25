@@ -91,7 +91,7 @@ describe("browser PDF sealing", () => {
   it("recovers the actual text from an ASCII85/Flate PDF's rendered stamped QR", async () => {
     const file = new File([readFileSync("../tests/fixtures/ascii85-text.pdf")], "ascii85.pdf", { type: "application/pdf" });
     expect(await extractPdfText(file)).toContain("The approved total is 123.45 dollars.");
-    const { blob } = await sealPdfInBrowser({ file, privateKey, publicKey });
+    const { blob } = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "legal-footer" });
     // Read the actual printed footer at normal print resolution, not the seal
     // string held in memory by the stamper (which missed the original bug).
     const page = renderPdfFirstPageToPng(await blob.arrayBuffer(), 300);
@@ -185,7 +185,7 @@ describe("browser PDF sealing", () => {
     expect(results[0].document_root).toBe(results[1].document_root);
     expect(results[0].page_hash).not.toBe(results[1].page_hash);
     expect(results[0].content).not.toContain("QRed PDF page integrity");
-  });
+  }, 30000);
 
   it("uses 2.75-inch QR seals for one or two seals in the legal footer", () => {
     for (const count of [1, 2]) {
@@ -211,7 +211,7 @@ describe("browser PDF sealing", () => {
   it("preserves the original letter pixels and verifies its larger footer at 300 dpi", async () => {
     const source = readFileSync("../tests/fixtures/live-qa-invoice.pdf");
     const { blob, stampedQrValues } = await sealPdfInBrowser({
-      file: new File([source], "invoice.pdf", { type: "application/pdf" }), privateKey, publicKey,
+      file: new File([source], "invoice.pdf", { type: "application/pdf" }), privateKey, publicKey, pageScalingStrategy: "legal-footer",
     });
     const original = renderPdfFirstPageToPng(source, 300);
     const stamped = renderPdfFirstPageToPng(await blob.arrayBuffer(), 300);
@@ -263,7 +263,7 @@ describe("browser PDF sealing", () => {
         { x: 40, y: 740 - i * 14, size: 9 });
     }
     const { blob, stampedQrValues } = await sealPdfInBrowser({
-      file: new File([await source.save()], "delivery-records.pdf", { type: "application/pdf" }), privateKey, publicKey, encodingStrategy: "plaintext",
+      file: new File([await source.save()], "delivery-records.pdf", { type: "application/pdf" }), privateKey, publicKey, encodingStrategy: "plaintext", pageScalingStrategy: "legal-footer",
     });
     expect(stampedQrValues).toHaveLength(2);
     const printed = renderPdfFirstPageToPng(await blob.arrayBuffer(), 200);

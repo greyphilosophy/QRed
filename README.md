@@ -60,7 +60,11 @@ size and uses the added three-inch footer for QR seals. One or two seals are
 print margin. Larger sets use the grid that allows the largest codes within
 that same footer. The caption sits beside the codes where space permits.
 
-**Pale watermark (experimental)** in **Page layout** preserves the original paper
+**Automatic**, the default **Page layout**, tries pale watermarks first on each
+text page and falls back to a clear footer only on pages where they cannot be
+placed or recovered. The explicit **Pale watermark (experimental)** option uses
+the same behavior; footer layouts can also be selected directly.
+Watermarks preserve the original paper
 dimensions, text size, rotation, and crop on pages where watermarks are readable. A half-inch conventional QR opens
 `https://qred.org/` from a clear area on the first page; pale QR watermarks carry
 each page's signed data. The watermark uses 6% black with multiply blending to
@@ -90,7 +94,7 @@ cryptographic signature verification. Digital rendering tests cover opaque white
 backgrounds, text overlap, multiple pages/chunks, and both PDF.js and Poppler.
 They do not establish print-camera reliability. Test a printed copy before
 sharing: pictures, bold text, lighting, grayscale printing, and photocopying can
-destroy information in a pale watermark. Footer layouts remain the default.
+destroy information in a pale watermark.
 
 Each seal uses the smallest QR grid that fits its actual payload, then the
 strongest error correction that fits that grid. Smaller payloads therefore

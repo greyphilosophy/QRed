@@ -7,7 +7,7 @@ import { PDFDocument, degrees, rgb } from "pdf-lib";
 import { PNG } from "pngjs";
 import jsQR from "jsqr";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { extractPdfText, planQrStampLayoutForFooterBand, sealPdfInBrowser } from "./pdfClientSeal.js";
+import { extractPdfText, planQrStampLayout, planQrStampLayoutForFooterBand, sealPdfInBrowser } from "./pdfClientSeal.js";
 import { scanQrImage, createQrFrameScanner } from "./qr/scanQrImage.js";
 import { hiddenPayloadFromScanResult, isQRedEntryLink } from "./qr/hiddenPayload.js";
 import { verifyQRedSeals } from "./qredVerifier.js";
@@ -78,18 +78,18 @@ async function makeInvoice() {
   return new File([await pdf.save()], "synthetic-invoice.pdf", { type: "application/pdf" });
 }
 
-function render(bytes, page = 1) {
+function render(bytes, page = 1, dpi = 144) {
   const dir = mkdtempSync(join(tmpdir(), "qred-watermark-"));
   try {
     writeFileSync(join(dir, "sealed.pdf"), Buffer.from(bytes));
-    execFileSync("pdftoppm", ["-png", "-r", "144", "-f", String(page), "-singlefile", join(dir, "sealed.pdf"), join(dir, "page")]);
+    execFileSync("pdftoppm", ["-png", "-r", String(dpi), "-f", String(page), "-singlefile", join(dir, "sealed.pdf"), join(dir, "page")]);
     return PNG.sync.read(readFileSync(join(dir, "page.png")));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
-function crop(image, box) {
-  const out = new PNG({ width: Math.ceil(box.width * 2), height: Math.ceil(box.height * 2) });
-  PNG.bitblt(image, out, Math.floor(box.x * 2), Math.floor(image.height - (box.y + box.height) * 2), out.width, out.height, 0, 0);
+function crop(image, box, scale = 2) {
+  const out = new PNG({ width: Math.ceil(box.width * scale), height: Math.ceil(box.height * scale) });
+  PNG.bitblt(image, out, Math.floor(box.x * scale), Math.floor(image.height - (box.y + box.height) * scale), out.width, out.height, 0, 0);
   return out;
 }
 
@@ -127,9 +127,9 @@ describe("experimental PDF watermarks", () => {
     }
   }, 120000);
 
-  it("watermarks both invoice pages with raster logos and recovers their exact signed text", async () => {
+  it("defaults to watermarks on both invoice pages with raster logos and recovers their exact signed text", async () => {
     const file = await makeInvoice();
-    const result = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" });
+    const result = await sealPdfInBrowser({ file, privateKey, publicKey });
     expect(result.footerPages).toEqual([]);
     expect(result.watermarkLayout.every(Boolean)).toBe(true);
     expect(result.pageSealStrings.map(seals => seals.length)).toEqual([1, 1]);
@@ -223,22 +223,29 @@ describe("experimental PDF watermarks", () => {
     ["no entry-code space", { crowded: true }],
     ["an opaque graphic", { black: true }],
     ["a large embedded image on a text page", { raster: true }],
-  ])("uses a readable footer for %s when a watermark cannot work", async (_label, options) => {
+    ["an A4 page with no entry-code space", { crowded: true, size: [595, 842] }],
+  ])("Automatic uses a readable footer for %s when a watermark cannot work", async (_label, options) => {
     const file = await makeDocument(options);
-    const { blob, footerPages, pageSealStrings } = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" });
+    const { blob, footerPages, watermarkLayout, pageSealStrings } = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "automatic" });
     expect(footerPages).toEqual([1]);
-    expect((await PDFDocument.load(await blob.arrayBuffer())).getPage(0).getHeight()).toBe(1008);
+    expect(watermarkLayout).toEqual([null]);
+    const [width, height] = options.size ?? [612, 792];
+    const legal = width === 612 && height === 792;
+    expect((await PDFDocument.load(await blob.arrayBuffer())).getPage(0).getSize()).toEqual({ width, height: legal ? 1008 : height });
     expect(pageSealStrings[0].length).toBeLessThanOrEqual(2);
     expect((await verifyQRedSeals(pageSealStrings[0], publicKey)).status).toBe("VALID");
-    const printed = render(await blob.arrayBuffer());
-    const layout = planQrStampLayoutForFooterBand(612, pageSealStrings[0].length);
+    // The smaller shrink-footer codes need print resolution for dense payloads.
+    const scale = legal ? 2 : 300 / 72;
+    const printed = render(await blob.arrayBuffer(), 1, scale * 72);
+    const layout = legal ? planQrStampLayoutForFooterBand(width, pageSealStrings[0].length) : planQrStampLayout(width, pageSealStrings[0].length);
+    const margin = legal ? 0 : 18;
     const scanned = pageSealStrings[0].map((_, index) => {
       // A half-page crop includes a truncated neighboring QR when there are
       // two seals. Scan each complete code and its included quiet zone instead.
       const part = crop(printed, {
-        x: layout.qrOffsetX + index * (layout.qrSize + layout.gap), y: layout.qrOffsetY,
+        x: margin + (layout.qrOffsetX ?? 10) + index * (layout.qrSize + layout.gap), y: margin + (layout.qrOffsetY ?? 10),
         width: layout.qrSize, height: layout.qrSize,
-      });
+      }, scale);
       return hiddenPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
     });
     expect(scanned).toEqual(pageSealStrings[0]);
