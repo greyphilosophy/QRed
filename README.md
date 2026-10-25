@@ -222,6 +222,13 @@ image coordinates and rejects missing model resources with a recoverable error.
 This covers the tested workflows after their resources load; first-use assets,
 page reloads, and device-wide traffic are outside that assertion.
 
+All committed regression cases run by default. Required files and dependencies
+must be present; there are no optional temporary-path tests. The
+[fixture guide](tests/fixtures/README.md) maps the former skipped cases to their
+active replacements and records JPEG provenance. Real print/camera validation
+still needs a documented physical capture; simulated JPEG compression is tested
+separately.
+
 ## Shared workflow modules
 
 - `sealFormat.js` defines binary envelope sizes; `sealBudget.js` owns QR capacity

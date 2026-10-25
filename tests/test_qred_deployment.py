@@ -25,18 +25,19 @@ import sys
 import tempfile
 import random
 import string
+import io as pillow_io
 from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, expect
 from browser_helpers import stamp_and_save, BASE_URL
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas as rl_canvas
+from PIL import Image
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-REPORTLAB_AVAILABLE = False
-PIL_AVAILABLE = False
 
 # The demo key pair used throughout the tests.
 # This matches the public demo verification key in the worker.
@@ -44,23 +45,6 @@ DEMO_PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="
 
 # The demo private key used for sealing in tests.
 DEMO_PRIVATE_KEY = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes="
-
-try:
-    from reportlab.lib.pagesizes import letter
-    from reportlab.pdfgen import canvas as rl_canvas
-
-    REPORTLAB_AVAILABLE = True
-except ImportError:
-    pass
-
-try:
-    from PIL import Image
-    import io as pillow_io
-
-    PIL_AVAILABLE = True
-except ImportError:
-    pass
-
 
 def _open_verification_key(page: Page, key: str):
     """Local seals reveal a file import after scanning; there is no key text field."""
@@ -71,8 +55,6 @@ def _open_verification_key(page: Page, key: str):
 
 def make_simple_pdf(path: str) -> bytes:
     """Create a minimal test PDF with text content."""
-    if not REPORTLAB_AVAILABLE:
-        pytest.skip("reportlab not installed")
     buf = pillow_io.BytesIO()
     c = rl_canvas.Canvas(buf, pagesize=letter)
     c.drawString(100, 700, "QRed Parity Test Document")
@@ -86,11 +68,6 @@ def make_simple_pdf(path: str) -> bytes:
 
 def make_image_only_pdf(path: str) -> bytes:
     """Create a PDF with a raster image (no text)."""
-    if not PIL_AVAILABLE:
-        pytest.skip("Pillow not installed")
-    if not REPORTLAB_AVAILABLE:
-        pytest.skip("reportlab not installed")
-
     img_buf = pillow_io.BytesIO()
     img = Image.new("RGB", (200, 200), color=(100, 150, 200))
     img.save(img_buf, format="PNG")
@@ -114,8 +91,6 @@ def make_image_only_pdf(path: str) -> bytes:
 
 def make_multi_page_pdf(path: str, num_pages: int = 3) -> bytes:
     """Create a multi-page PDF for multi-QR document testing."""
-    if not REPORTLAB_AVAILABLE:
-        pytest.skip("reportlab not installed")
     buf = pillow_io.BytesIO()
     c = rl_canvas.Canvas(buf, pagesize=letter)
     c.drawString(100, 700, "QRed Multi-Page Test Document")
@@ -642,8 +617,6 @@ def _invoice_camera_pixels(damaged=False):
     pixels = fixture.read_bytes()
     if not damaged:
         return pixels
-    if not PIL_AVAILABLE:
-        pytest.skip("Pillow not installed")
     with Image.open(pillow_io.BytesIO(pixels)) as image:
         image = image.convert("RGBA")
         damage = json.loads((fixture.parent / "invoice-damage.json").read_text())

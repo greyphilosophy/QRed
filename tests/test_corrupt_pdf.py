@@ -15,7 +15,6 @@ import io
 import os
 import re
 import tempfile
-from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, expect, sync_playwright
@@ -103,14 +102,6 @@ def make_image_only_pdf(page_size: tuple = letter) -> bytes:
             os.unlink(png_path)
         except OSError:
             pass
-
-
-def make_qred_sealed_pdf(source_pdf_path: str | None = None):
-    """T8: A real QRed-sealed PDF (skipped unless one exists)."""
-    sealed_path = Path("/tmp/qred_sealed_test_sample.pdf")
-    if sealed_path.exists():
-        return sealed_path.read_bytes()
-    return None
 
 
 def make_zip_for_type_test() -> bytes:
@@ -410,25 +401,6 @@ def test_t7_mismatched_sizes_pdf(page: Page):
     print(f"T7 mismatched: success={result['success']} err={result['has_error']} "
           f"completed={result['completed']} "
           f"msg='{result['message_contains']}'")
-    assert result["completed"], (
-        "No terminal success or error result appeared in the UI"
-    )
-    assert result["success"] or result["has_error"], (
-        "Operation produced output but not a recognisable success or error"
-    )
-
-
-def test_t8_reupload_sealed_pdf(page: Page):
-    """A previously QRed-sealed PDF uploaded again should either work or
-    error gracefully — the key requirement is an observable result."""
-    data = make_qred_sealed_pdf()
-    if data is None or len(data) == 0:  # type: ignore[arg-type]
-        pytest.skip("No pre-existing QRed-sealed PDF available for T8 re-upload test")
-    _open_stamp_tool(page)
-    _upload_file_to_stamp_tool(page, data, file_name="already_sealed.qred-sealed.pdf")  # type: ignore[arg-type]
-    result = _check_results(page)
-    print(f"T8 re-seal: success={result['success']} err={result['has_error']} "
-          f"completed={result['completed']}")
     assert result["completed"], (
         "No terminal success or error result appeared in the UI"
     )
