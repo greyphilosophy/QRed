@@ -3,8 +3,9 @@ import React, { useEffect, useRef, useState } from "react";
 import { sealPdfInBrowser } from "./pdfClientSeal.js";
 import { decodeSigningKey, deriveSigningPublicKey, generateSigningKeyPair, readSigningKeyFile, validateSigningKeyPair } from "./signingKeys.js";
 import { encodeBase64Url } from "./sealSignature.js";
-import { attestPagesWithGoogle, googleSealingAvailable } from "./googleSealing.js";
-import googleSignInButton from "./assets/google-sign-in-light.png";
+import { attestPagesWithAccount, accountSealingAvailable } from "./accountSealing.js";
+import { AUTH_PROVIDERS, authProvider } from "./authProviders.js";
+import { ProviderSignInButton } from "./ProviderSignInButton.jsx";
 
 const BOOTSTRAP_URL = "https://qred.org/";
 
@@ -32,9 +33,34 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [method, setMethod] = useState("private-key");
-  const [googleIdentity, setGoogleIdentity] = useState(null);
+  const [signingIdentity, setSigningIdentity] = useState(null);
+  const [availability, setAvailability] = useState(null);
+  const [configError, setConfigError] = useState("");
+  const [configAttempt, setConfigAttempt] = useState(0);
+  const provider = authProvider(method);
+  const usesAccount = Boolean(provider);
   const activeRequest = useRef(null);
   const derivedFor = useRef("");
+
+  useEffect(() => {
+    // Offline/private-key sealing must not depend on an authentication request.
+    if (!usesAccount) return;
+    let current = true;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    setConfigError("");
+    setAvailability(null);
+    fetch("/api/auth/config", { signal: controller.signal, credentials: "same-origin" })
+      .then(async response => {
+        if (!response.ok) throw new Error("Unavailable");
+        const config = await response.json();
+        if (!config || typeof config !== "object") throw new Error("Invalid configuration");
+        if (!controller.signal.aborted) setAvailability(config);
+      })
+      .catch(() => { if (current) setConfigError("Could not check sign-in availability. Check your connection and retry, or use a private key file."); })
+      .finally(() => clearTimeout(timer));
+    return () => { current = false; clearTimeout(timer); controller.abort(); };
+  }, [usesAccount, configAttempt]);
 
   useEffect(() => () => {
     activeRequest.current?.controller.abort();
@@ -133,13 +159,14 @@ export function PdfSealForm({ onUsePublicKey }) {
       setMessage("Choose a PDF and a sealing method. For local sealing, generate, open, or paste your private key.");
       return;
     }
+    if (usesAccount && (!accountSealingAvailable || availability?.[method] !== true)) return;
     const controller = new AbortController();
-    const popup = method === "google" ? window.open("about:blank", "_blank", "popup,width=520,height=680") : null;
+    const popup = usesAccount ? window.open("about:blank", "_blank", "popup,width=520,height=680") : null;
     activeRequest.current = { controller, popup };
     setLoading(true);
-    setGoogleIdentity(null);
+    setSigningIdentity(null);
     try {
-      if (method === "google" && !popup) throw new Error("Allow the Google sign-in window, then try again.");
+      if (usesAccount && !popup) throw new Error(`Allow the ${provider.label} sign-in window, then try again.`);
       // Validate before parsing a PDF so key errors are immediate and actionable.
       const matchingPublicKey = method === "private-key" ? await deriveSigningPublicKey(privateKey) : null;
       if (matchingPublicKey) await validateSigningKeyPair({ privateKey, publicKey: matchingPublicKey });
@@ -147,8 +174,8 @@ export function PdfSealForm({ onUsePublicKey }) {
       const { blob, sealResult, flattenedFieldCount, footerPages = [] } = await sealPdfInBrowser({
         file,
         ...(method === "private-key" ? { privateKey, publicKey: matchingPublicKey } : {
-          attestPages: pages => attestPagesWithGoogle(pages, { popup,
-            signal: controller.signal, onStatus: setMessage, onIdentity: setGoogleIdentity }),
+          attestPages: pages => attestPagesWithAccount(method, pages, { popup,
+            signal: controller.signal, onStatus: setMessage, onIdentity: setSigningIdentity }),
         }),
         bootstrapUrl: BOOTSTRAP_URL,
         encodingStrategy: "automatic",
@@ -179,7 +206,7 @@ export function PdfSealForm({ onUsePublicKey }) {
         ].join("\n")
       );
     } catch (error) {
-      setMessage(controller.signal.aborted ? "Google sealing cancelled." : `PDF sealing failed: ${error.message}`);
+      setMessage(controller.signal.aborted ? "Account sealing cancelled." : `PDF sealing failed: ${error.message}`);
     } finally {
       try { popup?.close(); } catch { /* The provider may isolate the popup. */ }
       activeRequest.current = null;
@@ -197,16 +224,24 @@ export function PdfSealForm({ onUsePublicKey }) {
       <div className="demo-input">
         <label htmlFor="sealing-method">Sealing method</label>
         <select id="sealing-method" value={method} disabled={loading || loadingKeys}
-          onChange={event => { setMethod(event.target.value); setMessage(""); setGoogleIdentity(null); }}>
+          onChange={event => { setMethod(event.target.value); setMessage(""); setSigningIdentity(null); }}>
           <option value="private-key">Private key file (offline)</option>
-          <option value="google" disabled={!googleSealingAvailable}>Sign in with Google{googleSealingAvailable ? "" : " (not enabled on this installation)"}</option>
+          {Object.entries(AUTH_PROVIDERS).map(([id, account]) => <option key={id} value={id}
+            disabled={!accountSealingAvailable || availability?.[id] === false}>
+            {account.button}{!accountSealingAvailable || availability?.[id] === false ? " (not enabled)" : ""}
+          </option>)}
         </select>
       </div>
-      {method === "google" && <div className="signing-key-help">
-        <p>Use a Gmail or Google Workspace account. After you choose a document, sign in to authorize QRed to attest its page contents, your email, name, and the server time. Google profile names are not independently verified identities.</p>
-        <p>This method needs a connection for each document. Only randomized page fingerprints and account details reach QRed; Google receives the sign-in request. Your PDF, text, and private keys stay on this device. The finished seals can be verified offline.</p>
-        <small>Your Google profile name and email will be readable by anyone who scans the seal.</small>
-        {googleIdentity && <p>Google account: {googleIdentity.email}. Name: {googleIdentity.name} (Google profile).</p>}
+      {usesAccount && <div className="signing-key-help">
+        <p>{method === "google" ? "Use a Gmail or Google Workspace account. " : method === "microsoft" ? "Use a personal, work, or school Microsoft account. " : `Use your ${provider.label} account. `}
+          After you choose a document, sign in to authorize QRed to attest its page contents, your account details, and the server time. Profile names are not independently verified identities.</p>
+        {method !== "google" && <p>Your email is reported by {provider.label}; QRed does not separately verify control of that mailbox.</p>}
+        <p>This method needs a connection for each document. Only randomized page fingerprints and account details reach QRed; {provider.label} receives the sign-in request. Your PDF, text, and private keys stay on this device. The finished seals can be verified offline.</p>
+        <small>Your {provider.label} profile name and email will be readable by anyone who scans the seal.</small>
+        {signingIdentity && <p>{provider.label} account: {signingIdentity.email}. Name: {signingIdentity.name} ({provider.label} profile).</p>}
+        {configError ? <p role="status">{configError} <button type="button" onClick={() => setConfigAttempt(value => value + 1)}>Retry sign-in availability</button></p>
+          : !availability ? <p role="status">Checking sign-in availability…</p>
+            : availability[method] !== true && <p role="status">{provider.label} sealing is not enabled on this installation. Choose another sealing method.</p>}
       </div>}
       {method === "private-key" && <><details>
         <summary>Optional: use airplane mode</summary>
@@ -281,14 +316,14 @@ export function PdfSealForm({ onUsePublicKey }) {
         </div>
       </div>
       <p id="signing-key-status" role="status" style={{ marginTop: "1rem", color: keyError ? "#ef4444" : "#64748b" }}>{keyStatus}</p>
-      <button type="button" onClick={sealPdf} disabled={loading || loadingKeys} aria-busy={loading}
-        className={method === "google" ? "google-signin-button" : undefined}
-        aria-describedby={method === "google" ? "google-sealing-action" : undefined} style={{ marginTop: "1rem" }}>
-        {method === "google" ? <img src={googleSignInButton} width="180" height="40" alt="Sign in with Google" />
-          : loading ? "Sealing..." : "Stamp and save PDF"}
-      </button>
-      {method === "google" && <p id="google-sealing-action" className="key-help">Sign in to stamp and save this PDF.</p>}
-      {loading && method === "google" && <button type="button" onClick={() => activeRequest.current?.controller.abort()}>Cancel sealing</button>}
+      {usesAccount ? <ProviderSignInButton provider={method} onClick={sealPdf}
+        disabled={loading || loadingKeys || !accountSealingAvailable || availability?.[method] !== true}
+        aria-busy={loading} aria-describedby="account-sealing-action" style={{ marginTop: "1rem" }} />
+        : <button type="button" onClick={sealPdf} disabled={loading || loadingKeys} aria-busy={loading} style={{ marginTop: "1rem" }}>
+          {loading ? "Sealing..." : "Stamp and save PDF"}
+        </button>}
+      {usesAccount && <p id="account-sealing-action" className="key-help">Sign in to stamp and save this PDF.</p>}
+      {loading && usesAccount && <button type="button" onClick={() => activeRequest.current?.controller.abort()}>Cancel sealing</button>}
       {message && (
         <p id="stamp-result" role="status" style={{ marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155", whiteSpace: "pre-wrap" }}>
           {message}

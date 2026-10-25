@@ -1,10 +1,10 @@
-import { handleGoogleAuth } from "./googleAuth.js";
+import { handleAccountAuth } from "./accountAuth.js";
 
 /**
  * QRed Cloudflare Pages Worker
  *
- * Serves the static frontend assets, public keys, and optional Google attestation.
- * PDFs stay in the browser. Optional Google attestation signs randomized page
+ * Serves the static frontend assets, public keys, and optional account attestation.
+ * PDFs stay in the browser. Optional account attestation signs randomized page
  * commitments on the server. User private keys are never sent to the server.
  *
  * To configure a custom keypair, set QRED_DEFAULT_PUBLIC_KEY on the Worker.
@@ -81,8 +81,8 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    if (url.pathname.startsWith("/api/auth/") || url.pathname === "/api/attest/google") {
-      return handleGoogleAuth(request, env);
+    if (url.pathname.startsWith("/api/auth/") || url.pathname.startsWith("/api/attest/")) {
+      return handleAccountAuth(request, env);
     }
 
     // --- /api/keys/default — public key only (NO private key) -------------

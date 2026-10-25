@@ -15,6 +15,7 @@ import { readSigningKeyFile } from "./signingKeys.js";
 import { createVerificationSession } from "./verifier/verificationSession.js";
 import { createScanPhotoCollection } from "./verifier/scanPhotos.js";
 import { signAsync } from "@noble/ed25519";
+import { AUTH_PROVIDERS, authProvider } from "./authProviders.js";
 import { attestationMessage, pageCommitment } from "./attestation.js";
 import { decodeBase64Url, encodeBase64Url } from "./sealFormat.js";
 
@@ -39,7 +40,7 @@ function loadStandalone(overrides = {}) {
   document.documentElement.innerHTML = readFileSync("verifier.html", "utf8");
   const source = document.querySelector('script[type="module"]').textContent.replace(/^\s*import .+;$/gm, "");
   const bindings = {
-    startCameraSession, createQrFrameScanner, isQRedEntryLink, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
+    authProvider, startCameraSession, createQrFrameScanner, isQRedEntryLink, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
     createScanPhotoCollection: callback => createScanPhotoCollection(callback, async () => new Blob(["frame"], { type: "image/png" })),
     mountPhotoTextVerification: () => ({ update: vi.fn() }),
     mountPdfSealInput: () => ({ update: vi.fn() }),
@@ -55,11 +56,11 @@ afterEach(() => {
   delete navigator.mediaDevices;
 });
 
-it("shows an authenticated Google identity and server time offline with safely escaped names", async () => {
+it.each(Object.keys(AUTH_PROVIDERS))("shows an authenticated %s identity and server time offline with safely escaped names", async provider => {
   vi.stubGlobal("crypto", webcrypto);
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
   const metadata = { pdf: false, key_id: "da522162396ab2d0", timestamp: "2026-10-20T12:00:00Z",
-    identity: { provider: "google", email: "alice@gmail.com", subject: "123", name: "<img src=x onerror=alert(1)>", name_source: "google" } };
+    identity: { provider, email: "alice@gmail.com", subject: "123", name: "<img src=x onerror=alert(1)>", name_source: provider } };
   const salt = crypto.getRandomValues(new Uint8Array(32));
   const content = "Synthetic attested document";
   const signature = await signAsync(attestationMessage(metadata, await pageCommitment(metadata, content, salt)), decodeBase64Url(privateKey));
@@ -73,10 +74,11 @@ it("shows an authenticated Google identity and server time offline with safely e
   await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
   const details = document.getElementById("resultMeta");
   expect(details.textContent).toContain("alice@gmail.com");
-  expect(details.textContent).toContain("Account authenticated through Google");
+  expect(details.textContent).toContain("Account authenticated through " + authProvider(provider).label);
   expect(details.textContent).toContain("QRed server clock");
   expect(details.textContent).toContain(metadata.identity.name);
   expect(details.querySelector("img")).toBeNull();
+  expect(details.textContent.includes("QRed did not separately verify control of that mailbox")).toBe(provider !== "google");
   expect(fetch).not.toHaveBeenCalled();
 });
 

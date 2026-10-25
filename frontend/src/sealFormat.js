@@ -1,6 +1,6 @@
 import { decodeIdentity, encodeIdentity } from "./attestation.js";
 
-// QRed v3 local signatures and v4 Google attestations share compact transport.
+// QRed v3 local signatures and v4 account attestations share compact transport.
 // URLs are a copy/paste representation only; the QR carries these raw bytes.
 export const DEFAULT_BOOTSTRAP_URL = "https://qred.org/";
 export const MAX_SEAL_TEXT_BYTES = 8 * 1024 * 1024;
@@ -14,9 +14,9 @@ export const COMMITMENT_SALT_BYTES = 32;
 const metadataByteLength = multiple => 17 + (multiple ? 36 : 0);
 
 // Shared by the wire encoder and the optional-evidence budget planner.
-export function sealEnvelopeOverhead({ google = false, multiple = false, identityBytes = 0 } = {}) {
+export function sealEnvelopeOverhead({ attested = false, multiple = false, identityBytes = 0 } = {}) {
   return RECORD_MAGIC.length + metadataByteLength(multiple) + SIGNATURE_BYTES
-    + (google ? COMMITMENT_SALT_BYTES + identityBytes : 0);
+    + (attested ? COMMITMENT_SALT_BYTES + identityBytes : 0);
 }
 const RECORD_MAGIC = new Uint8Array([81, 82, 83, 51]); // QRS3
 const CHUNK_MAGIC = new Uint8Array([81, 82, 67, 51]); // QRC3

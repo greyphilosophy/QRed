@@ -1,5 +1,7 @@
 # Google document attestations
 
+For Microsoft, Facebook (Meta), and Amazon setup and the shared account protocol, see [account attestations](ACCOUNT_ATTESTATION.md). This guide retains Google-specific eligibility and compatibility details.
+
 QRed can attest documents after Google sign-in, with no email/SMS service or paid authentication subscription. Local private-key sealing remains available and works offline. Google is disabled until this installation has a trusted authority key and the server configuration below.
 
 The claim is deliberately limited: QRed authenticated a Google account associated with the recorded email, and attested the prepared document fingerprints at the recorded server time. The display name comes from the Google profile; QRed does not accept a manually entered name. If Google supplies no profile name, add one to that Google profile or use local private-key sealing. A Google profile name does not prove legal identity, organization authority, authorship, or the truth of the document. Exact extracted text remains the primary reference. Optional binary page evidence includes signed lossy grayscale thumbnails and line coordinates; it cannot authenticate every original pixel or guarantee detection of photo substitutions. See [page references](PAGE_REFERENCES.md).

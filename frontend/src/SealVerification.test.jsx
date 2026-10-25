@@ -3,6 +3,7 @@ import { webcrypto } from "node:crypto";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { signAsync } from "@noble/ed25519";
+import { AUTH_PROVIDERS, authProvider } from "./authProviders.js";
 import { attestationMessage, pageCommitment } from "./attestation.js";
 import { decodeBase64Url, encodeBase64Url } from "./sealFormat.js";
 import { createQRedSeals } from "./qredSealer.js";
@@ -109,10 +110,10 @@ it("opens an issuer key locally and rechecks collected seals, preserving the key
   expect(fetch.mock.calls.length).toBe(requestsBefore);
 });
 
-it("verifies Google seals offline without asking for an issuer key, including multipart scans", async () => {
+it.each(Object.keys(AUTH_PROVIDERS))("verifies %s seals offline without asking for an issuer key, including multipart scans", async provider => {
   const content = "Synthetic Google document. ".repeat(180).trimEnd();
   const metadata = { pdf: false, key_id: "da522162396ab2d0", timestamp: "2026-10-20T12:00:00Z",
-    identity: { provider: "google", email: "alice@gmail.com", subject: "123", name: "Alice", name_source: "google" } };
+    identity: { provider, email: "alice@gmail.com", subject: "123", name: "Alice", name_source: provider } };
   const salt = crypto.getRandomValues(new Uint8Array(32));
   const signature = await signAsync(attestationMessage(metadata, await pageCommitment(metadata, content, salt)), decodeBase64Url(privateKey));
   const { seals } = await createQRedSeals({ content, encodingStrategy: "plaintext",
@@ -124,7 +125,8 @@ it("verifies Google seals offline without asking for an issuer key, including mu
   expect(screen.queryByLabelText("Open issuer public key file")).toBeNull();
   await act(async () => seals.slice(0, -1).forEach(scanner.props.onSealDetected));
   expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
-  expect(screen.getByText(/Account authenticated through Google: alice@gmail.com/)).toBeTruthy();
+  expect(screen.getByText("Account authenticated through " + authProvider(provider).label + ": alice@gmail.com", { exact: false })).toBeTruthy();
+  expect(Boolean(screen.queryByText(/QRed did not separately verify control of that mailbox/))).toBe(provider !== "google");
   expect(screen.queryByLabelText("Issuer public key")).toBeNull();
   expect(screen.queryByLabelText("Open issuer public key file")).toBeNull();
 });

@@ -1,4 +1,4 @@
-// Local-only browser test bridge. All identities, codes and keys are synthetic.
+// Local-only browser test bridge. All providers, identities, codes and keys are synthetic.
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { pathToFileURL, fileURLToPath } from "node:url";
@@ -9,31 +9,48 @@ const require = createRequire(resolve(frontend, "package.json"));
 const { build } = require("esbuild");
 const { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } = await import(pathToFileURL(require.resolve("jose")));
 const compile = async options => (await build({ bundle: true, format: "esm", write: false, ...options })).outputFiles[0].text;
-const backend = await compile({ entryPoints: [resolve(frontend, "worker/googleAuth.js")], platform: "node" });
-const { createGoogleAuth, verifyGoogleIdToken } = await import("data:text/javascript;base64," + Buffer.from(backend).toString("base64"));
+const backend = await compile({ platform: "node", stdin: { resolveDir: frontend, loader: "js", contents:
+  'export { createAccountAuth } from "./worker/accountAuth.js"; export { verifyGoogleIdToken, verifyMicrosoftIdToken, verifyMetaIdToken } from "./worker/authProviders.js";' } });
+const { createAccountAuth, verifyGoogleIdToken, verifyMicrosoftIdToken, verifyMetaIdToken } = await import("data:text/javascript;base64," + Buffer.from(backend).toString("base64"));
 const origin = "https://qred.test";
+const provider = process.argv[2] || "google";
+const providerOrigins = { google: "https://accounts.google.com", microsoft: "https://login.microsoftonline.com", meta: "https://www.facebook.com", amazon: "https://www.amazon.com" };
+if (!Object.hasOwn(providerOrigins, provider)) throw new Error("Unknown synthetic provider");
+const tenant = "11111111-2222-3333-4444-555555555555";
+const issuer = provider === "microsoft" ? "https://login.microsoftonline.com/" + tenant + "/v2.0" : providerOrigins[provider];
 const seed = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
 const keyId = "da522162396ab2d0";
 const trusted = { [keyId]: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q" };
 const env = { QRED_ORIGIN: origin, QRED_GOOGLE_CLIENT_ID: "browser-test-client", QRED_GOOGLE_CLIENT_SECRET: "synthetic-secret",
+  QRED_MICROSOFT_CLIENT_ID: "browser-test-client", QRED_MICROSOFT_CLIENT_SECRET: "synthetic-secret",
+  QRED_META_APP_ID: "browser-test-client", QRED_META_APP_SECRET: "synthetic-secret",
+  QRED_AMAZON_CLIENT_ID: "browser-test-client", QRED_AMAZON_CLIENT_SECRET: "synthetic-secret",
   QRED_ATTESTATION_PRIVATE_KEY: seed, QRED_ATTESTATION_KEY_ID: keyId };
 const rsa = await generateKeyPair("RS256", { extractable: true });
-const keys = createLocalJWKSet({ keys: [{ ...await exportJWK(rsa.publicKey), kid: "synthetic-google-key", alg: "RS256" }] });
-const codes = new Map(); // This is the fake Google service's state, not QRed's.
-async function exchange(_url, options) {
-  const code = options.body.get("code"), grant = codes.get(code);
-  const challenge = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(options.body.get("code_verifier")))).toString("base64url");
-  if (!grant || grant.challenge !== challenge) return new Response("invalid_grant", { status: 400 });
+const keys = createLocalJWKSet({ keys: [{ ...await exportJWK(rsa.publicKey), kid: "synthetic-provider-key", alg: "RS256", issuer: "https://login.microsoftonline.com/{tenantid}/v2.0" }] });
+const codes = new Map(); // This is the fake provider's state, not QRed's.
+async function exchange(url, options) {
+  if (provider === "amazon" && url.startsWith("https://api.amazon.com/auth/o2/tokeninfo?")) return Response.json({
+    iss: "https://www.amazon.com", aud: "browser-test-client", user_id: "browser-test-user", exp: 3599 });
+  if (provider === "amazon" && url === "https://api.amazon.com/user/profile") return Response.json({
+    user_id: "browser-test-user", email: "browser.test@example.org", name: "Browser Test" });
+  const params = provider === "meta" ? new URL(url).searchParams : options.body;
+  const code = params.get("code"), grant = codes.get(code);
+  const challenge = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(params.get("code_verifier")))).toString("base64url");
+  if (!grant || grant.challenge !== challenge || params.get("client_id") !== "browser-test-client" ||
+      params.get("client_secret") !== "synthetic-secret" || params.get("redirect_uri") !== origin + "/api/auth/" + provider + "/callback") return new Response("invalid_grant", { status: 400 });
   codes.delete(code);
+  if (provider === "amazon") return Response.json({ access_token: "opaque-token", token_type: "bearer", expires_in: 3600 });
   const now = Math.floor(Date.now() / 1000);
   const token = await new SignJWT({ sub: "browser-test-user", email: "browser.test@gmail.com", email_verified: true,
-    name: "Browser Test", nonce: grant.nonce }).setProtectedHeader({ alg: "RS256", kid: "synthetic-google-key" })
-    .setIssuer("https://accounts.google.com").setAudience(env.QRED_GOOGLE_CLIENT_ID).setIssuedAt(now).setExpirationTime(now + 3600).sign(rsa.privateKey);
+    name: "Browser Test", nonce: grant.nonce, ...(provider === "microsoft" ? { tid: tenant, ver: "2.0" } : {}) })
+    .setProtectedHeader({ alg: "RS256", kid: "synthetic-provider-key" }).setIssuer(issuer)
+    .setAudience("browser-test-client").setIssuedAt(now).setExpirationTime(now + 3600).sign(rsa.privateKey);
   return Response.json({ id_token: token });
 }
 // The optional Node PNG renderer is not used by browser sealing/verification.
 const client = await compile({ platform: "browser", external: ["qrcode/lib/renderer/png"], stdin: { resolveDir: frontend, loader: "js", contents: `
-  import { attestPagesWithGoogle } from "./src/googleSealing.js";
+  import { attestPagesWithAccount } from "./src/accountSealing.js";
   import { createQRedSeals } from "./src/qredSealer.js";
   import { encodePageEvidence } from "./src/pageEvidence.js";
   import { verifyQRedSeals } from "./src/qredVerifier.js";
@@ -49,7 +66,7 @@ const client = await compile({ platform: "browser", external: ["qrcode/lib/rende
   document.querySelector("button").onclick = async () => {
     const output = document.querySelector("output");
     try {
-      const receipts = await attestPagesWithGoogle(pages, { popup: window.open("about:blank", "qred-google"), trusted });
+      const receipts = await attestPagesWithAccount(${JSON.stringify(provider)}, pages, { popup: window.open("about:blank", "qred-account"), trusted });
       seals = await Promise.all(pages.map((page, index) => createQRedSeals({ content: index ? "" : page.content, pageEvidence: index ? page.content : null, attestation: receipts[index],
         pageContext: { pageNumber: index + 1, pageCount: 3, documentRoot: page.metadata.document_root } })));
       const results = await window.verifyOffline();
@@ -61,10 +78,10 @@ const client = await compile({ platform: "browser", external: ["qrcode/lib/rende
 
 async function respond(request) {
   const url = new URL(request.url);
-  if (url.origin === "https://accounts.google.com") {
+  if (url.origin === providerOrigins[provider]) {
     const code = crypto.randomUUID();
     codes.set(code, { nonce: url.searchParams.get("nonce"), challenge: url.searchParams.get("code_challenge") });
-    const callback = origin + "/api/auth/google/callback?state=" + url.searchParams.get("state") + "&code=" + code;
+    const callback = origin + "/api/auth/" + provider + "/callback?state=" + url.searchParams.get("state") + "&code=" + code;
     // An actual cross-origin document severs window.opener, as an identity
     // provider can. Cookie-based status polling must still complete.
     return new Response(`<!doctype html><button>Continue</button><script>document.querySelector('button').onclick=()=>location.href=${JSON.stringify(callback)}</script>`, {
@@ -73,8 +90,11 @@ async function respond(request) {
   }
   if (url.pathname === "/") return new Response('<!doctype html><button>Seal synthetic document</button><output></output><script type="module" src="/client.js"></script>', { headers: { "Content-Type": "text/html" } });
   if (url.pathname === "/client.js") return new Response(client, { headers: { "Content-Type": "text/javascript" } });
-  return createGoogleAuth({ fetchImpl: exchange, trusted,
-    verifyToken: (token, clientId, now) => verifyGoogleIdToken(token, clientId, now, keys) })(request, env);
+  return createAccountAuth({ fetchImpl: exchange, trusted, verifyTokens: {
+    google: (token, clientId, now) => verifyGoogleIdToken(token, clientId, now, keys),
+    microsoft: (token, clientId, now) => verifyMicrosoftIdToken(token, clientId, now, keys),
+    meta: (token, clientId, now) => verifyMetaIdToken(token, clientId, now, keys),
+  } })(request, env);
 }
 const server = createServer(async (incoming, outgoing) => {
   try {

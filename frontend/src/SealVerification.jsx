@@ -7,6 +7,7 @@ import { createVerificationSession } from "./verifier/verificationSession.js";
 import { PhotoTextVerification } from "./verifier/PhotoTextVerification.jsx";
 import { createScanPhotoCollection } from "./verifier/scanPhotos.js";
 import { PdfSealInput } from "./verifier/PdfSealInput.jsx";
+import { authProvider } from "./authProviders.js";
 
 export function useSealVerification() {
   const [collection] = useState(createVerificationSession);
@@ -144,7 +145,10 @@ export function SealVerification({ verification }) {
       {results.map((result, index) => <article key={result.document_id || index} className="verification-result">
         <h3>{result.status}</h3>
         <p>Document: {result.document_id}</p>
-        {result.identity && <p>{result.identity_authenticated ? "Account authenticated through Google" : "Unverified identity claim"}: {result.identity.email}. Name: {result.identity.name} ({result.identity.name_source === "google" ? "Google profile" : "self-declared"}).</p>}
+        {result.identity && <>
+          <p>{result.identity_authenticated ? "Account authenticated through " + authProvider(result.identity.provider)?.label : "Unverified identity claim"}: {result.identity.email}. Name: {result.identity.name} ({result.identity.name_source === result.identity.provider ? authProvider(result.identity.provider)?.label + " profile" : "self-declared"}).</p>
+          {result.identity.provider !== "google" && <p>Email reported by {authProvider(result.identity.provider)?.label}; QRed did not separately verify control of that mailbox.</p>}
+        </>}
         {result.timestamp && <p>{result.metadata_authenticated ? "Seal time" : "Claimed seal time"} ({result.attestation ? "QRed server clock" : "signer’s clock"}): <time dateTime={result.timestamp}>{result.timestamp}</time></p>}
         {result.key_id && <p>Key ID: {result.key_id}</p>}
         {result.pdf && <p>Page {result.page_number} of {result.page_count}</p>}

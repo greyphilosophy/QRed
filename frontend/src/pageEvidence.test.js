@@ -114,12 +114,12 @@ describe("signed binary page references", () => {
 describe("optional evidence budget", () => {
   it("never increases the text's QR count, including unknown Google identity sizes", () => {
     const count = size => size <= 2945 ? 1 : Math.ceil(size / 2905);
-    for (const google of [false, true]) for (const multiple of [false, true]) {
-      const baseHeader = 85 + (multiple ? 36 : 0) + (google ? 32 : 0);
+    for (const attested of [false, true]) for (const multiple of [false, true]) {
+      const baseHeader = 85 + (multiple ? 36 : 0) + (attested ? 32 : 0);
       for (let length = 1; length < 5800; length += 13) {
-        const budget = evidenceBodyBudget(length, { google, multiple });
+        const budget = evidenceBodyBudget(length, { attested, multiple });
         if (!budget) continue;
-        for (const identitySize of google ? [16, 150, 360, 677] : [0]) {
+        for (const identitySize of attested ? [16, 150, 360, 677] : [0]) {
           expect(count(budget + baseHeader + identitySize)).toBeLessThanOrEqual(count(length + baseHeader + identitySize));
           expect(count(budget + baseHeader + identitySize)).toBeLessThanOrEqual(2);
         }
