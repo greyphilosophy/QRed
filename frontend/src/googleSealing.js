@@ -13,7 +13,7 @@ function delay(milliseconds, signal) {
   });
 }
 
-export async function attestPagesWithGoogle(pages, { popup, name = "", signal, onStatus = () => {},
+export async function attestPagesWithGoogle(pages, { popup, signal, onStatus = () => {},
   onIdentity = () => {}, fetchImpl = (...args) => fetch(...args), trusted = trustedAuthorities } = {}) {
   if (!pages.length || pages.length > MAX_ATTESTATION_PAGES) throw new Error("Google sealing supports documents with 1–100 pages. Use a private key file for larger documents.");
   if (!popup) throw new Error("Allow the Google sign-in window, then try again.");
@@ -30,7 +30,7 @@ export async function attestPagesWithGoogle(pages, { popup, name = "", signal, o
     const commitments = await Promise.all(pages.map(async (page, index) =>
       encodeBase64Url(await pageCommitment(page.metadata, page.content, salts[index]))));
     onStatus("Opening Google sign-in. Your PDF and its text stay on this device.");
-    session = await post("/api/auth/google/start", { commitments, name });
+    session = await post("/api/auth/google/start", { commitments });
     const authorization = new URL(session.authorize_url);
     if (authorization.origin !== "https://accounts.google.com" || authorization.pathname !== "/o/oauth2/v2/auth") throw new Error("Unexpected Google sign-in address");
     popup.location.href = authorization.href;

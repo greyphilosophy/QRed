@@ -50,15 +50,16 @@ async function readJson(request) {
   catch { throw new RequestError("Invalid JSON request"); }
 }
 
-export function googleIdentity(payload, fallbackName) {
+export function googleIdentity(payload) {
   if (payload.email_verified !== true || typeof payload.email !== "string" ||
       !(payload.email.toLowerCase().endsWith("@gmail.com") || (typeof payload.hd === "string" && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(payload.hd)))) {
     throw new RequestError("Use a Gmail or Google Workspace account. Other email addresses need separate email verification.", 403);
   }
-  const hasName = typeof payload.name === "string" && payload.name.trim();
+  if (typeof payload.name !== "string" || !payload.name.trim()) {
+    throw new RequestError("Google did not supply a profile name. Add a name to your Google profile and try again, or use a private key file.");
+  }
   const identity = { provider: "google", email: payload.email, subject: payload.sub,
-    name: hasName ? payload.name.trim() : fallbackName, name_source: hasName ? "google" : "self" };
-  if (!identity.name) throw new RequestError("Google did not supply a name. Enter your name in QRed and try again.");
+    name: payload.name.trim(), name_source: "google" };
   try { encodeIdentity(identity); } catch { throw new RequestError("Google returned unsupported account details"); }
   return identity;
 }
@@ -157,7 +158,7 @@ export function createGoogleAuth({ fetchImpl = (...args) => fetch(...args), veri
         const payload = await verifyToken(tokens.id_token, env.QRED_GOOGLE_CLIENT_ID, now());
         if (payload.nonce !== pending.nonce) throw new RequestError("Google authentication did not match this request", 403);
         if (payload.iat < pending.iat - CLOCK_SKEW) throw new RequestError("Google sign-in predates this request. Please try again.", 403);
-        const identity = googleIdentity(payload, pending.name);
+        const identity = googleIdentity(payload);
         const time = now();
         checkGoogleTime(payload, time);
         if (Math.floor(time / 1000) >= pending.exp) throw new RequestError("Sign-in request expired. Please try again.", 403);
@@ -181,16 +182,12 @@ export function createGoogleAuth({ fetchImpl = (...args) => fetch(...args), veri
     const body = await readJson(request);
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new RequestError("Invalid request");
     if (path === "/api/auth/google/start") {
-      onlyFields(body, ["commitments", "name"]);
+      onlyFields(body, ["commitments"]);
       const commitmentsHash = await commitmentDigest(body.commitments);
-      if (body.name !== undefined && typeof body.name !== "string") throw new RequestError("Invalid name");
-      const name = (body.name || "").trim();
-      // eslint-disable-next-line no-control-regex
-      if (utf8.encode(name).length > 160 || /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/u.test(name)) throw new RequestError("Invalid name");
       try { await signingKey(env, trusted); } catch { throw new RequestError("Google sealing is unavailable", 503); }
       const seconds = Math.floor(now() / 1000);
       const id = random(), secret = random(), nonce = random(), pkce = random();
-      const pending = { status: "pending", secret_hash: await hash(secret), commitments_hash: commitmentsHash, name, nonce, pkce,
+      const pending = { status: "pending", secret_hash: await hash(secret), commitments_hash: commitmentsHash, nonce, pkce,
         iat: seconds, exp: seconds + SESSION_SECONDS };
       const auth = new URL("https://accounts.google.com/o/oauth2/v2/auth");
       auth.search = new URLSearchParams({ client_id: env.QRED_GOOGLE_CLIENT_ID, redirect_uri: origin + "/api/auth/google/callback",
