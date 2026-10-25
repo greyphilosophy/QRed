@@ -92,8 +92,11 @@ def test_photo_comparison_reads_real_pixels_offline(browser, sealed_text, path, 
         verify_fixture(page, path, sealed_text)
 
         picker = page.get_by_label("Choose page photo", exact=True)
-        # An uploaded seal now also supplies a scan image; let that automatic
-        # comparison finish before replacing it with the full-page fixture.
+        # The homepage's uploaded seal also starts an automatic comparison.
+        # Wait for its result, not the brief enabled state before OCR begins:
+        # set_input_files can dispatch a change even after a picker is disabled.
+        if path == "/":
+            expect(page.locator(".photo-summary")).to_be_visible(timeout=60000)
         expect(picker).to_be_enabled(timeout=60000)
         picker.set_input_files(page_image(TEXT))
         expect(page.locator(".photo-summary")).to_have_text("Recognized text matches the signed text", timeout=60000)
