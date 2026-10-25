@@ -237,13 +237,13 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
 
     # Step 3: Wait for and click the "Stamp PDF" button inside the tool to proceed to file upload
     try:
-        upload_btn = page.locator('input[type="file"][accept="application/pdf"]').first
+        upload_btn = page.get_by_label("Open PDF", exact=True)
         expect_playwright(upload_btn).to_be_visible(timeout=5_000)
     except Exception as exc:
         raise AssertionError("File input not found after key loading") from exc
 
     # Wait for the file input
-    file_input = page.locator('input[type="file"][accept="application/pdf"]').first
+    file_input = page.get_by_label("Open PDF", exact=True)
     try:
         file_input.set_input_files(file_path)
     except Exception as exc:

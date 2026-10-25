@@ -188,7 +188,8 @@ def _upload_file_to_stamp_tool(
     tmp.close()
 
     try:
-        file_input = page.locator("input[type='file'][accept*='pdf']").first
+        # The verifier also accepts PDFs; select the stamping control by label.
+        file_input = page.get_by_label("Open PDF", exact=True)
 
         if file_input.count() == 0:
             raise AssertionError(
