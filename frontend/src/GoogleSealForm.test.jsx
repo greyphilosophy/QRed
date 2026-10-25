@@ -9,7 +9,7 @@ vi.mock("./pdfClientSeal.js", () => ({ sealPdfInBrowser: vi.fn() }));
 vi.mock("./googleSealing.js", () => ({ googleSealingAvailable: true, attestPagesWithGoogle: vi.fn() }));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-it("offers Google sealing, hides local key controls and shows the account and name provenance", async () => {
+it("offers Google sealing without a name field and displays the Google profile identity", async () => {
   const popup = { close: vi.fn() };
   vi.spyOn(window, "open").mockReturnValue(popup);
   URL.createObjectURL = vi.fn(() => "blob:sealed"); URL.revokeObjectURL = vi.fn();
@@ -27,11 +27,12 @@ it("offers Google sealing, hides local key controls and shows the account and na
   fireEvent.change(screen.getByLabelText("Sealing method"), { target: { value: "google" } });
   expect(screen.queryByLabelText("Private Key")).toBeNull();
   expect(screen.queryByLabelText("Public Key")).toBeNull();
-  fireEvent.change(screen.getByLabelText("Name (used only if Google does not provide one)"), { target: { value: "My fallback" } });
+  expect(screen.queryByRole("textbox")).toBeNull();
   fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [new File(["pdf"], "source.pdf")] } });
-  fireEvent.click(screen.getByRole("button", { name: "Sign in with Google and stamp PDF" }));
+  fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
   await screen.findByText(/Sealed source.pdf in this browser/);
-  expect(attestPagesWithGoogle).toHaveBeenCalledWith([], expect.objectContaining({ name: "My fallback", popup, signal: expect.any(AbortSignal) }));
+  expect(attestPagesWithGoogle).toHaveBeenCalledWith([], expect.objectContaining({ popup, signal: expect.any(AbortSignal) }));
+  expect(attestPagesWithGoogle.mock.lastCall[1]).not.toHaveProperty("name");
   expect(screen.getByText(/Google account: example@gmail.com/).textContent).toContain("Google profile");
   expect(popup.close).toHaveBeenCalled();
 });
@@ -47,7 +48,8 @@ it("cancels an in-progress Google request without saving a document", async () =
   render(<PdfSealForm />);
   fireEvent.change(screen.getByLabelText("Sealing method"), { target: { value: "google" } });
   fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [new File(["pdf"], "source.pdf")] } });
-  fireEvent.click(screen.getByRole("button", { name: "Sign in with Google and stamp PDF" }));
+  fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
+  expect(screen.getByRole("button", { name: "Sign in with Google" }).disabled).toBe(true);
   fireEvent.click(await screen.findByRole("button", { name: "Cancel sealing" }));
   await screen.findByText("Google sealing cancelled.");
   expect(URL.createObjectURL).not.toHaveBeenCalled();

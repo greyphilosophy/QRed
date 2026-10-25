@@ -2,7 +2,12 @@
 
 QRed can attest documents after Google sign-in, with no email/SMS service or paid authentication subscription. Local private-key sealing remains available and works offline. Google is disabled until this installation has a trusted authority key and the server configuration below.
 
-The claim is deliberately limited: QRed authenticated a Google account associated with the recorded email, and attested the prepared document fingerprints at the recorded server time. The display name comes from the Google profile, or is explicitly marked self-declared when Google supplies no name. Neither proves legal identity, organization authority, authorship, or the truth of the document. Exact extracted text remains the primary reference. Optional binary page evidence includes signed lossy grayscale thumbnails and line coordinates; it cannot authenticate every original pixel or guarantee detection of photo substitutions. See [page references](PAGE_REFERENCES.md).
+The claim is deliberately limited: QRed authenticated a Google account associated with the recorded email, and attested the prepared document fingerprints at the recorded server time. The display name comes from the Google profile; QRed does not accept a manually entered name. If Google supplies no profile name, add one to that Google profile or use local private-key sealing. A Google profile name does not prove legal identity, organization authority, authorship, or the truth of the document. Exact extracted text remains the primary reference. Optional binary page evidence includes signed lossy grayscale thumbnails and line coordinates; it cannot authenticate every original pixel or guarantee detection of photo substitutions. See [page references](PAGE_REFERENCES.md).
+
+The sign-in button uses Google's pre-approved artwork, bundled locally with QRed.
+It starts the existing document-bound OAuth popup flow. Displaying the button
+does not load Google's JavaScript SDK, remote fonts, or other third-party assets.
+See the [artwork provenance](../frontend/src/assets/README.md).
 
 ## Enable it on the existing Cloudflare Free plan
 
@@ -51,7 +56,7 @@ Keep Workers on the Free plan. No paid plan, email provider, SMS account, or ide
 
 The user chooses a PDF and **Sign in with Google**. QRed flattens supported fields, extracts/canonicalizes page text, computes the document root and generates a fresh 32-byte random salt per page locally. The browser opens Google's sign-in in a separate window. No Google SDK or other provider script is loaded into the document-processing page.
 
-The backend receives randomized page commitments and an optional fallback name. It never receives PDF bytes, filenames, document text, unsalted document roots, salts, or user private keys. Google receives a normal authentication request with random state, nonce and PKCE values; it does not receive document commitments. QRed necessarily processes Google account identity and ordinary request metadata. The seal itself exposes the recovered text, email and name to its readers.
+The backend receives randomized page commitments. It never receives PDF bytes, filenames, document text, unsalted document roots, salts, or user private keys. Google receives a normal authentication request with random state, nonce and PKCE values; it does not receive document commitments. QRed necessarily processes Google account identity and ordinary request metadata. The seal itself exposes the recovered text, email and name to its readers.
 
 Only Google-signed tokens with the configured audience, issuer, RS256 signature, nonce and valid time claims are accepted. `email_verified` must be the Boolean `true`. The email must be a Gmail address, or the token must contain a Google Workspace/Cloud organization `hd` claim. A Google account merely registered using an outside email address is refused; historical verification of that address is not enough for this flow. The Google `sub` account identifier is included in the signed identity, because email and profile names can change.
 
@@ -59,7 +64,7 @@ Only Google-signed tokens with the configured audience, issuer, RS256 signature,
 
 QRed keeps no per-user or per-request server records. The browser carries short-lived **authenticated-encrypted JWE cookies** (`dir` / `A256GCM`, implemented by `jose`). They are HttpOnly, Secure, SameSite=Lax, host-only cookies with a `__Host-` prefix. HKDF-SHA-256 derives a separate encryption key from the existing high-entropy authority seed, with a QRed-specific domain and the installation's origin, Google client ID and authority key ID as context. No additional secret needs to be provisioned. The server caches only configuration-derived keys and Google's public verification keys, never session records.
 
-Before sign-in, the browser fixes the ordered page commitments. The initial encrypted cookie contains a digest of that list, a hash of a separate random secret retained only in the document window's memory, the fallback name, random nonce, PKCE verifier and a ten-minute expiration. Only random state, nonce and PKCE challenge values go to Google. Storing a digest instead of every commitment keeps cookie size bounded even for 100-page documents.
+Before sign-in, the browser fixes the ordered page commitments. The initial encrypted cookie contains a digest of that list, a hash of a separate random secret retained only in the document window's memory, random nonce, PKCE verifier and a ten-minute expiration. Only random state, nonce and PKCE challenge values go to Google. Storing a digest instead of every commitment keeps cookie size bounded even for 100-page documents.
 
 The callback requires the original request cookie, matching Google nonce, valid PKCE code exchange and a valid Google ID token. Google's `iat` must be an integer no more than **five minutes behind QRed's server clock or 30 seconds ahead**, and cannot predate the initial request by more than 30 seconds. This is the token's issuance time; it does not prove the user just entered a password. The server then fixes its own attestation timestamp. Every page and retry uses that timestamp, even if later requests arrive minutes later.
 
@@ -86,7 +91,7 @@ The v4 record contains the existing timestamp/key-ID/page-context header, follow
 | Field | Encoding |
 | --- | --- |
 | Provider | One byte, `1` = Google |
-| Name source | One byte, `1` = Google profile, `0` = self-declared |
+| Name source | One byte, `1` = Google profile; `0` remains readable for previously issued self-declared names |
 | Email, name, Google subject | Each is a two-byte big-endian UTF-8 byte length followed by its bytes; maximum 254/160/255 bytes respectively |
 | Per-page salt | 32 random bytes, only in the seal/client |
 | QRed signature | 64 Ed25519 bytes |

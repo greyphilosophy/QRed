@@ -4,6 +4,7 @@ import { sealPdfInBrowser } from "./pdfClientSeal.js";
 import { decodeSigningKey, deriveSigningPublicKey, generateSigningKeyPair, readSigningKeyFile, validateSigningKeyPair } from "./signingKeys.js";
 import { encodeBase64Url } from "./sealSignature.js";
 import { attestPagesWithGoogle, googleSealingAvailable } from "./googleSealing.js";
+import googleSignInButton from "./assets/google-sign-in-light.png";
 
 const BOOTSTRAP_URL = "https://qred.org/";
 
@@ -31,7 +32,6 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [method, setMethod] = useState("private-key");
-  const [fallbackName, setFallbackName] = useState("");
   const [googleIdentity, setGoogleIdentity] = useState(null);
   const activeRequest = useRef(null);
   const derivedFor = useRef("");
@@ -147,7 +147,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       const { blob, sealResult, flattenedFieldCount, footerPages = [] } = await sealPdfInBrowser({
         file,
         ...(method === "private-key" ? { privateKey, publicKey: matchingPublicKey } : {
-          attestPages: pages => attestPagesWithGoogle(pages, { popup, name: fallbackName,
+          attestPages: pages => attestPagesWithGoogle(pages, { popup,
             signal: controller.signal, onStatus: setMessage, onIdentity: setGoogleIdentity }),
         }),
         bootstrapUrl: BOOTSTRAP_URL,
@@ -205,11 +205,8 @@ export function PdfSealForm({ onUsePublicKey }) {
       {method === "google" && <div className="signing-key-help">
         <p>Use a Gmail or Google Workspace account. After you choose a document, sign in to authorize QRed to attest its page contents, your email, name, and the server time. Google profile names are not independently verified identities.</p>
         <p>This method needs a connection for each document. Only randomized page fingerprints and account details reach QRed; Google receives the sign-in request. Your PDF, text, and private keys stay on this device. The finished seals can be verified offline.</p>
-        <label htmlFor="google-fallback-name">Name (used only if Google does not provide one)</label>
-        <input id="google-fallback-name" value={fallbackName} maxLength={160} disabled={loading}
-          onChange={event => setFallbackName(event.target.value)} />
-        <small>A name entered here will be labeled self-declared. Your name and email will be readable by anyone who scans the seal.</small>
-        {googleIdentity && <p>Google account: {googleIdentity.email}. Name: {googleIdentity.name} ({googleIdentity.name_source === "google" ? "Google profile" : "self-declared"}).</p>}
+        <small>Your Google profile name and email will be readable by anyone who scans the seal.</small>
+        {googleIdentity && <p>Google account: {googleIdentity.email}. Name: {googleIdentity.name} (Google profile).</p>}
       </div>}
       {method === "private-key" && <><details>
         <summary>Optional: use airplane mode</summary>
@@ -284,9 +281,13 @@ export function PdfSealForm({ onUsePublicKey }) {
         </div>
       </div>
       <p id="signing-key-status" role="status" style={{ marginTop: "1rem", color: keyError ? "#ef4444" : "#64748b" }}>{keyStatus}</p>
-      <button onClick={sealPdf} disabled={loading || loadingKeys} style={{ marginTop: "1rem" }}>
-        {loading ? "Sealing..." : method === "google" ? "Sign in with Google and stamp PDF" : "Stamp and save PDF"}
+      <button type="button" onClick={sealPdf} disabled={loading || loadingKeys} aria-busy={loading}
+        className={method === "google" ? "google-signin-button" : undefined}
+        aria-describedby={method === "google" ? "google-sealing-action" : undefined} style={{ marginTop: "1rem" }}>
+        {method === "google" ? <img src={googleSignInButton} width="180" height="40" alt="Sign in with Google" />
+          : loading ? "Sealing..." : "Stamp and save PDF"}
       </button>
+      {method === "google" && <p id="google-sealing-action" className="key-help">Sign in to stamp and save this PDF.</p>}
       {loading && method === "google" && <button type="button" onClick={() => activeRequest.current?.controller.abort()}>Cancel sealing</button>}
       {message && (
         <p id="stamp-result" role="status" style={{ marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155", whiteSpace: "pre-wrap" }}>

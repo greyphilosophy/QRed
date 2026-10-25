@@ -67,14 +67,14 @@ describe("Google token and account eligibility", () => {
     parts[1] = encodeBase64Url(utf8.encode(JSON.stringify({ sub: "forged" })));
     await expect(verifyGoogleIdToken(parts.join("."), "test-client", epoch, jwks)).rejects.toThrow();
   });
-  it("accepts only authoritative verified emails and labels fallback names", () => {
+  it("accepts only authoritative verified emails and names supplied by Google", () => {
     const user = { email: "alice@gmail.com", email_verified: true, name: "Alice", sub: "123" };
-    expect(googleIdentity(user, "Wrong fallback")).toMatchObject({ name: "Alice", name_source: "google" });
-    expect(googleIdentity({ ...user, email: "alice@example.org", hd: "example.org" }, "")).toMatchObject({ email: "alice@example.org" });
-    expect(googleIdentity({ ...user, name: undefined }, "Declared name")).toMatchObject({ name_source: "self", name: "Declared name" });
+    expect(googleIdentity(user)).toMatchObject({ name: "Alice", name_source: "google" });
+    expect(googleIdentity({ ...user, email: "alice@example.org", hd: "example.org" })).toMatchObject({ email: "alice@example.org" });
     for (const bad of [{ ...user, email_verified: false }, { ...user, email_verified: "true" },
       { ...user, email: "alice@outlook.com" }, { ...user, email: "alice@gmail.com.evil.example" },
-      { ...user, name: undefined }, { ...user, name: "Spoof\u202e" }]) expect(() => googleIdentity(bad, "")).toThrow();
+      { ...user, name: undefined }, { ...user, name: "   " }, { ...user, name: 123 },
+      { ...user, name: "Spoof\u202e" }]) expect(() => googleIdentity(bad)).toThrow();
   });
 });
 
@@ -88,8 +88,8 @@ describe("stateless document-bound Google attestation API", () => {
     method: "POST", headers: { Origin: origin, "Content-Type": "application/json", Cookie: jar.header(), ...headers },
     body: JSON.stringify(body),
   })));
-  async function start(commitments = [fingerprint(0)], { jar = browser, name = "Fallback" } = {}) {
-    const response = await post("/api/auth/google/start", { commitments, name }, { jar });
+  async function start(commitments = [fingerprint(0)], { jar = browser } = {}) {
+    const response = await post("/api/auth/google/start", { commitments }, { jar });
     expect(response.status).toBe(200);
     return { ...await response.json(), commitments, jar };
   }
@@ -149,6 +149,13 @@ describe("stateless document-bound Google attestation API", () => {
     const finish = await post("/api/auth/google/finish", credentials(session));
     expect(finish.status).toBe(200);
     expect(browser.values.size).toBe(0);
+  });
+
+  it("does not issue attestations when Google supplies no profile name", async () => {
+    const session = await start();
+    await login(session, { name: undefined });
+    expect(await status(session)).toMatchObject({ status: "failed", error: expect.stringContaining("Add a name to your Google profile") });
+    expect((await attest(session)).status).toBe(403);
   });
 
   it("requires both the original browser cookie and the separate in-memory secret", async () => {
@@ -260,7 +267,7 @@ describe("stateless document-bound Google attestation API", () => {
   });
 
   it("bounds cookie size for 100-page documents and maximal identity fields", async () => {
-    const session = await start(Array.from({ length: 100 }, (_, index) => fingerprint(index)), { name: '"'.repeat(160) });
+    const session = await start(Array.from({ length: 100 }, (_, index) => fingerprint(index)));
     await login(session, { name: '"'.repeat(160), email: "a".repeat(240) + "@gmail.com", sub: "9".repeat(255) });
     expect((await status(session)).status).toBe("ready");
     expect((await attest(session, 99)).status).toBe(200);
@@ -277,7 +284,7 @@ describe("stateless document-bound Google attestation API", () => {
     const startPath = "/api/auth/google/start";
     expect((await post(startPath, { commitments: [fingerprint(0)] }, { headers: { Origin: "https://evil.example" } })).status).toBe(403);
     for (const body of [{ commitments: ["bad"] }, { commitments: [] }, { commitments: Array(101).fill(fingerprint(0)) },
-      { commitments: [fingerprint(0)], text: "must never be sent" }, { commitments: [fingerprint(0)], name: "x".repeat(161) }]) {
+      { commitments: [fingerprint(0)], text: "must never be sent" }, { commitments: [fingerprint(0)], name: "User-supplied name" }]) {
       expect((await post(startPath, body)).status).toBe(400);
     }
     expect((await post(startPath, { name: "x".repeat(17000) })).status).toBe(413);
@@ -316,6 +323,7 @@ describe("stateless document-bound Google attestation API", () => {
       }, attestation: receipts[1] });
       await expect(verifyQRedSeals(seal.seals, "", trusted)).resolves.toMatchObject({ status: "VALID", content: pages[1].content });
     }
+    expect(Object.keys(sent.find(request => request.path === "/api/auth/google/start").body)).toEqual(["commitments"]);
     expect(new URL(popup.location.href).origin).toBe("https://accounts.google.com");
     expect(popup.close).toHaveBeenCalledOnce();
     expect(browser.values.size).toBe(0);
