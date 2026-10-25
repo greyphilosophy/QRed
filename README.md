@@ -196,9 +196,15 @@ still needs testing.
 
 ```bash
 cd frontend
-npm test          # Vitest unit tests
-cd ../tests
-pytest            # Playwright E2E parity tests
+npm ci
+npm run lint
+npm test          # Unit tests and rendered PDF regressions
+npm run build
+npm exec vite preview -- --host 127.0.0.1 --port 3000
+# In another terminal, from the repository root:
+pip install -r requirements.txt
+python -m playwright install chromium
+QRED_BASE_URL=http://localhost:3000 pytest -v
 ```
 
 With the production build served at `QRED_BASE_URL` (default `http://localhost:3000`),
@@ -215,6 +221,23 @@ both verifier routes with networking blocked or offline. It checks highlighted
 image coordinates and rejects missing model resources with a recoverable error.
 This covers the tested workflows after their resources load; first-use assets,
 page reloads, and device-wide traffic are outside that assertion.
+
+## Shared workflow modules
+
+- `sealFormat.js` defines binary envelope sizes; `sealBudget.js` owns QR capacity
+  and the two-code PDF limit. Evidence planning and final sealing use the same
+  compression selection in `sealCompression.js`.
+- `pdfClientSeal.js` prepares and signs page evidence. `pdf/renderSealedPdf.js`
+  places completed seals and checks watermark recovery, retrying with footers
+  without changing or signing the page evidence again.
+- `verifier/verificationSession.js` owns collected seals, verification revisions,
+  ordering and progress for both verifier screens. Resetting, adding seals, or
+  starting a new key check invalidates older asynchronous results.
+- `qr/cameraSession.js` owns stream cleanup and the throttled decode loop, including
+  camera requests that resolve after scanning has stopped.
+- `tests/browser_helpers.py` provides real production download checks, offline
+  resource readiness and the HTTP/WebSocket guard. Browser tests use synthetic
+  documents and ordinary pytest discovery; no retired Python backend is needed.
 
 ## Deploy to Cloudflare
 

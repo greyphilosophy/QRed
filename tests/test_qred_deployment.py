@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, expect
+from browser_helpers import stamp_and_save, BASE_URL
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -146,16 +147,6 @@ def draw_dense_records_page(pdf):
 
 
 # ---------------------------------------------------------------------------
-# Test constants
-# ---------------------------------------------------------------------------
-
-# The demo public key — matches the hardcoded verification value in the worker
-DEMO_PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="
-
-# A demo private key for in-browser sealing (not exposed by the server)
-DEMO_PRIVATE_KEY = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes="
-
-# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
@@ -194,181 +185,27 @@ def multi_page_pdf_path(pdf_dir):
 # Helper to upload a file via Playwright and wait for the download
 # ---------------------------------------------------------------------------
 
-def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_key: str = "", layout: str = "automatic"):
-    """
-    Upload a PDF to the Playwright-dev frontend and trigger sealing.
-    
-    Returns a tuple: (sealed_pdf_path, seal_result_dict)
-    where seal_result_dict contains the seal metadata from the UI message.
-    
-    The seal result is extracted from the success message that the frontend
-    displays after sealing, which includes:
-    - seal_type: always "QRED"
-    - encoding: the encoding strategy used
-    - document_id: the seal's document ID
-    - encoding: the selected format (plaintext, zlib, or gzip)
-    - seal_count: number of seals created
-    """
-    from playwright.sync_api import expect as expect_playwright
-
-    # Enable test-mode flag so App.jsx exposes seal data for E2E verification
-    page.add_init_script("__qredTestMode = true;")
-
-    BASE_URL = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
-
-    # Navigate to the page — wait for QrScanner to render
-    page.goto(BASE_URL, wait_until="networkidle", timeout=30_000)
-
-    from playwright.sync_api import expect as expect_playwright
-
-    # Step 1: Click "Stamp PDF" to open the PdfSealForm
-    # (QrScanner renders first, then conditionally shows PdfStampTool)
-    stamp_btn = None
-    try:
-        stamp_btn = page.locator('button:has-text("Stamp PDF")').first
-        expect_playwright(stamp_btn).to_be_visible(timeout=10_000)
-        stamp_btn.click()
-        page.wait_for_timeout(500)  # Let React render the PdfStampTool
-    except Exception as exc:
-        raise AssertionError("Failed to click 'Stamp PDF' button — UI may have changed") from exc
-
-    # Signing keys are local; opening the tool no longer fetches a default pair.
-    expect_playwright(page.get_by_role("button", name="Generate key pair", exact=True)).to_be_enabled()
-
-    # Step 3: Wait for and click the "Stamp PDF" button inside the tool to proceed to file upload
-    try:
-        upload_btn = page.get_by_label("Open PDF", exact=True)
-        expect_playwright(upload_btn).to_be_visible(timeout=5_000)
-    except Exception as exc:
-        raise AssertionError("File input not found after key loading") from exc
-
-    # Wait for the file input
-    file_input = page.get_by_label("Open PDF", exact=True)
-    try:
-        file_input.set_input_files(file_path)
-    except Exception as exc:
-        raise AssertionError("Failed to upload PDF file") from exc
-
-    # Fill the private key — essential for sealing to work
-    # Use Playwright's fill() + wait for button to become enabled (most reliable for React)
-    try:
-        pk_input = page.locator('input[aria-label="Private Key"]').first
-        # Verify the input exists and is visible
-        expect_playwright(pk_input).to_be_visible(timeout=3_000)
-        # Use fill() — Playwright v2 handles React state updates automatically
-        pk_input.fill(private_key)
-        # Wait for the seal button to become enabled (confirms React state synced)
-        seal_button = page.locator('button:has-text("Stamp and save PDF")').first
-        expect_playwright(seal_button).to_be_enabled(timeout=5_000)
-    except Exception as exc:
-        raise AssertionError(f"Failed to fill private key or wait for seal button: {exc}") from exc
-
-
-    expect_playwright(page.get_by_label("Encoding Strategy")).to_have_count(0)
+def _upload_and_seal(page: Page, file_path: str, private_key: str = "", layout: str = "automatic"):
+    """Open the real stamping UI and return its downloaded PDF and result."""
+    page.goto(BASE_URL, wait_until="networkidle", timeout=30000)
+    page.get_by_role("button", name="Open PDF stamping tool", exact=True).click()
+    expect(page.get_by_role("button", name="Generate key pair", exact=True)).to_be_enabled()
+    page.get_by_label("Private Key", exact=True).fill(private_key or DEMO_PRIVATE_KEY)
+    expect(page.get_by_label("Encoding Strategy")).to_have_count(0)
     page.get_by_label("Page layout", exact=True).select_option(layout)
-
-    # Click the seal button and wait for download
-    seal_btn = None
-    try:
-        seal_btn = page.locator('button:has-text("Stamp and save PDF")').first
-    except Exception:
-        # Try alternative selectors
-        try:
-            seal_btn = page.locator('button:has-text("Seal")').first
-        except Exception:
-            try:
-                seal_btn = page.locator('button:has-text("Stamp")').first
-            except Exception:
-                raise AssertionError("Seal button not found")
-
-    with page.expect_download(timeout=60_000) as download_info:
-        seal_btn.click()
-
-    download = download_info.value
-    sealed_path = f"/tmp/{download.suggested_filename}"
-    download.save_as(sealed_path)
-
-    # Extract seal result from the success message displayed by the UI
-    seal_result = _extract_seal_result(page)
-
-    return sealed_path, seal_result
+    saved_path, _ = stamp_and_save(page, file_path)
+    return str(saved_path), _extract_seal_result(page)
 
 
 def _extract_seal_result(page: Page) -> dict:
-    """
-    Extract the seal result metadata from the frontend's seal result.
-    
-    The frontend stores the full seal result on window.__lastSealResult after sealing.
-    We wait for it to be available by polling.
-    
-    Returns a dict with the seal metadata and seal strings.
-    """
-    import time
-    import json
-    
-    # Poll for the seal result to be available (up to 15 seconds)
-    for attempt in range(30):
-        time.sleep(0.5)
-        try:
-            raw_result = page.evaluate("""() => {
-                return JSON.stringify(window.__lastSealResult);
-            }""")
-            if raw_result and raw_result != "undefined" and raw_result != "null" and raw_result != '"{}"':
-                try:
-                    result = json.loads(raw_result)
-                    if result and isinstance(result, dict) and len(result) > 0:
-                        # Extract seal strings from the seals array
-                        seal_strings = []
-                        if "seals" in result and isinstance(result["seals"], list):
-                            for s in result["seals"]:
-                                if isinstance(s, str):
-                                    seal_strings.append(s)
-                        
-                        return {
-                            "seal_type": "QRED",
-                            "encoding": result.get("encoding", "unknown"),
-                            "document_id": result.get("document_id", ""),
-                            "seal_count": result.get("estimated_qr_count", result.get("total_seals", 0)),
-                            "seal_strings": seal_strings,  # List of raw seal strings for verification
-                            "full_result": result,  # For debugging if needed
-                        }
-                except json.JSONDecodeError:
-                    pass
-        except Exception:
-            pass
-    
-    # Final fallback: parse from HTML content
-    try:
-        html = page.content()
-        if "Sealed" in html and "Document ID" in html:
-            import re
-            # Find the message in the HTML
-            msg_match = re.search(r'Sealed [^\n<]*Document ID: [^\n<]*', html)
-            if msg_match:
-                msg_text = msg_match.group(0)
-                result = {
-                    "seal_type": "QRED",
-                    "encoding": "unknown",
-                    "document_id": "",
-                    "seal_count": 0,
-                    "seal_strings": [],
-                }
-                for line in msg_text.split("\n"):
-                    line = line.strip()
-                    if "Selected encoding:" in line:
-                        result["encoding"] = line.split("Selected encoding:")[1].strip()
-                    elif "Document ID:" in line:
-                        result["document_id"] = line.split("Document ID:")[1].strip()
-                    elif "Estimated QR count:" in line:
-                        try:
-                            result["seal_count"] = int(line.split(":")[-1].strip())
-                        except ValueError:
-                            pass
-                return result
-    except Exception:
-        pass
-    
-    return {}
+    page.wait_for_function("window.__lastSealResult", timeout=15000)
+    result = page.evaluate("window.__lastSealResult")
+    return {
+        "seal_type": "QRED", "encoding": result["encoding"],
+        "document_id": result["document_id"],
+        "seal_count": result.get("estimated_qr_count", result["total_seals"]),
+        "seal_strings": result["seals"], "full_result": result,
+    }
 
 
 def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", public_key: str = ""):
@@ -388,7 +225,7 @@ def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", 
 
     # Navigate to verifier
     page.goto(f"{BASE_URL}/verifier.html", wait_until="networkidle", timeout=30_000)
-    page.wait_for_timeout(2000)  # let the verifier module initialize
+    page.wait_for_function("typeof window.__qredTestVerify === 'function'")
 
     if not seal_payload or seal_payload.strip() == "":
         raise AssertionError("Seal payload is empty — cannot verify without valid seal data")

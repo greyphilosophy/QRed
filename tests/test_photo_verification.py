@@ -6,16 +6,14 @@ import base64
 import io
 import json
 import os
-import re
 import subprocess
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import pytest
 from PIL import Image, ImageDraw, ImageFont
 from playwright.sync_api import expect
+from browser_helpers import OfflineNetworkGuard, wait_for_offline_resources
 
-os.environ["PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS"] = "1"
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="
 TEXT = "Invoice 1042\nAccount 123456\nApproved total 123.45\nPayment due Friday"
@@ -82,35 +80,15 @@ def test_photo_comparison_reads_real_pixels_offline(browser, sealed_text, path, 
     context = browser.new_context(service_workers="allow", viewport={"width": 430, "height": 932})
     try:
         base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
-        origin = urlsplit(base_url)
-        attempts, loading = [], True
-
-        def guard(route):
-            target = urlsplit(route.request.url)
-            if (loading and route.request.method == "GET" and not route.request.post_data
-                    and target.netloc == origin.netloc and target.scheme == origin.scheme and not target.query):
-                route.continue_()
-            else:
-                attempts.append(f"{route.request.method} {route.request.url}")
-                route.abort("blockedbyclient")
-
-        context.route(re.compile(r"^https?://"), guard)
-        context.route_web_socket(re.compile(r"^wss?://"), lambda socket: attempts.append(socket.url))
+        guard = OfflineNetworkGuard(context, base_url)
         page = context.new_page()
         page.goto(base_url + path, wait_until="networkidle")
-        page.wait_for_function("navigator.serviceWorker.controller?.state === 'activated'")
+        wait_for_offline_resources(page)
         page.get_by_role("button", name="Load text recognition", exact=True).click()
         expect(page.get_by_role("button", name="Text recognition ready", exact=True)).to_be_visible(timeout=60000)
         page.wait_for_load_state("networkidle")
-        assert attempts == []
-        loading = False
-        # Confirm that the guard observes the page AND its service worker.
-        page.evaluate("() => fetch('/__photo_probe__').catch(() => {})")
-        context.service_workers[0].evaluate("() => fetch('/__photo_worker_probe__').catch(() => {})")
-        assert any("__photo_probe__" in entry for entry in attempts)
-        assert any("__photo_worker_probe__" in entry for entry in attempts)
-        attempts.clear()
-        context.set_offline(offline)
+        guard.check_instrumentation(page)
+        guard.block(offline=offline)
         verify_fixture(page, path, sealed_text)
 
         picker = page.get_by_label("Choose page photo", exact=True)
@@ -143,7 +121,7 @@ def test_photo_comparison_reads_real_pixels_offline(browser, sealed_text, path, 
         page.get_by_role("button", name="Clear photo", exact=True).click()
         expect(page.locator(".photo-stage img")).to_have_count(0)
         page.wait_for_load_state("networkidle")
-        assert attempts == [], "Network requests during photo comparison: " + repr(attempts)
+        guard.assert_quiet()
     finally:
         context.close()
 

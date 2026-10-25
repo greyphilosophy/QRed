@@ -80,3 +80,34 @@ export async function decompressBytes(chunks, encoding) {
   const bytes = await transform(concatenate(parts), new DecompressionStream(format), MAX_SEAL_TEXT_BYTES, 1024);
   return bytes;
 }
+
+/** Apply the same compression/fallback policy to planning and final sealing.
+ * measure may add envelope/chunk overhead; its failures participate in fallback.
+ */
+export async function encodedBodyCandidates(bytes, strategy = "automatic", measure = () => ({})) {
+  if (!["automatic", "plaintext", "zlib", "gzip"].includes(strategy)) throw new Error(`Unsupported encoding strategy: ${strategy}`);
+  const candidates = [], failures = [];
+  async function add(encoding) {
+    try {
+      const body = encoding === "plaintext" ? bytes : await compressBytes(bytes, encoding);
+      candidates.push({ encoding, body, payload_bytes: body.length, ...await measure(body, encoding) });
+      return true;
+    } catch (error) {
+      failures.push({ encoding, error_message: error.message });
+      return false;
+    }
+  }
+  await add("plaintext");
+  if (strategy === "automatic") {
+    if (typeof CompressionStream === "function" && !await add("zlib")) await add("gzip");
+  } else if (strategy !== "plaintext") await add(strategy);
+  return { candidates, failures };
+}
+
+export function selectBodyEncoding({ candidates, failures }, strategy = "automatic") {
+  const selected = strategy === "automatic"
+    ? [...candidates].sort((a, b) => (a.qr_count || 1) - (b.qr_count || 1) || a.payload_bytes - b.payload_bytes)[0]
+    : candidates.find(item => item.encoding === strategy);
+  if (!selected) throw new Error(failures.find(item => item.encoding === strategy)?.error_message || failures[0]?.error_message || "No supported seal encoding is available");
+  return selected;
+}

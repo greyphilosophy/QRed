@@ -5,13 +5,14 @@ import { afterEach, expect, it, vi } from "vitest";
 import { fireEvent, waitFor } from "@testing-library/react";
 import jsQR from "jsqr";
 import { PNG } from "pngjs";
+import { startCameraSession } from "./qr/cameraSession.js";
 import { createQrFrameScanner } from "./qr/scanQrImage.js";
 import { isQRedEntryLink } from "./qr/hiddenPayload.js";
 import * as verifier from "./qredVerifier.js";
 import { createQRedSeals } from "./qredSealer.js";
 import { createQRedQrSymbol } from "./qredQr.js";
 import { readSigningKeyFile } from "./signingKeys.js";
-import { orderSealResults, sealCollectionProgress } from "./sealCollection.js";
+import { createVerificationSession } from "./verifier/verificationSession.js";
 import { createScanPhotoCollection } from "./verifier/scanPhotos.js";
 import { signAsync } from "@noble/ed25519";
 import { attestationMessage, pageCommitment } from "./attestation.js";
@@ -38,7 +39,7 @@ function loadStandalone(overrides = {}) {
   document.documentElement.innerHTML = readFileSync("verifier.html", "utf8");
   const source = document.querySelector('script[type="module"]').textContent.replace(/^\s*import .+;$/gm, "");
   const bindings = {
-    createQrFrameScanner, isQRedEntryLink, readSigningKeyFile, orderSealResults, sealCollectionProgress, ...verifier, decodeQRedSeal: verifier.decodeSeal,
+    startCameraSession, createQrFrameScanner, isQRedEntryLink, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
     createScanPhotoCollection: callback => createScanPhotoCollection(callback, async () => new Blob(["frame"], { type: "image/png" })),
     mountPhotoTextVerification: () => ({ update: vi.fn() }),
     mountPdfSealInput: () => ({ update: vi.fn() }),

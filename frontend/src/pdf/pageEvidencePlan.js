@@ -1,38 +1,19 @@
-import { MAX_ENCODED_IDENTITY_BYTES } from "../attestation.js";
 import { encodePageEvidence, encodeVisualReference } from "../pageEvidence.js";
-import { compressBytes } from "../sealCompression.js";
-import { CHUNK_HEADER_BYTES, MAX_QR_PAYLOAD_BYTES, utf8 } from "../sealFormat.js";
+import { encodedBodyCandidates, selectBodyEncoding } from "../sealCompression.js";
+import { sealEnvelopeOverhead, utf8 } from "../sealFormat.js";
+import { evidenceBodyBudget, MAX_PDF_SEALS, recordCapacity } from "../sealBudget.js";
+export { evidenceBodyBudget } from "../sealBudget.js";
 
 export async function encodedBodyLength(bytes, strategy = "automatic") {
-  if (strategy === "plaintext") return bytes.length;
-  if (strategy !== "automatic") return (await compressBytes(bytes, strategy)).length;
-  if (typeof CompressionStream !== "function") return bytes.length;
-  try { return Math.min(bytes.length, (await compressBytes(bytes, "zlib")).length); }
-  catch {
-    try { return Math.min(bytes.length, (await compressBytes(bytes, "gzip")).length); }
-    catch { return bytes.length; }
-  }
-}
-
-// Google binds the document commitments before returning the identity. Reserve
-// its maximum permitted encoded size (8 + 254 + 160 + 255), rather than let
-// optional evidence cause a second code when the real name/email arrives.
-export function evidenceBodyBudget(baseLength, { google = false, multiple = false } = {}) {
-  const header = 85 + (multiple ? 36 : 0);
-  const minimum = header + (google ? 32 : 0);
-  const maximum = minimum + (google ? MAX_ENCODED_IDENTITY_BYTES : 0);
-  if (baseLength + maximum <= MAX_QR_PAYLOAD_BYTES) return MAX_QR_PAYLOAD_BYTES - maximum;
-  if (baseLength + minimum <= MAX_QR_PAYLOAD_BYTES) return 0; // Identity could put this page on either side of the boundary.
-  const limit = 2 * (MAX_QR_PAYLOAD_BYTES - CHUNK_HEADER_BYTES) - maximum;
-  return baseLength <= limit ? limit : 0;
+  return selectBodyEncoding(await encodedBodyCandidates(bytes, strategy), strategy).payload_bytes;
 }
 
 export async function planPageEvidence(page, { google = false, multiple = false, encodingStrategy = "automatic" } = {}) {
   const { text, width, height, lines, image, blank } = page;
   const baseBytes = utf8.encode(text);
   const baseLength = await encodedBodyLength(baseBytes, encodingStrategy);
-  const minimumHeader = 85 + (multiple ? 36 : 0) + (google ? 32 : 0);
-  if (baseLength + minimumHeader > 2 * (MAX_QR_PAYLOAD_BYTES - CHUNK_HEADER_BYTES)) {
+  const minimumHeader = sealEnvelopeOverhead({ google, multiple });
+  if (baseLength + minimumHeader > recordCapacity(MAX_PDF_SEALS)) {
     throw new Error(`PDF page ${page.pageNumber || 1} exceeds the two-QR limit. Shorten the page or split its content across pages.`);
   }
   const budget = evidenceBodyBudget(baseLength, { google, multiple });

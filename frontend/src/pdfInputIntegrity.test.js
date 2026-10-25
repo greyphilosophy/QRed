@@ -91,7 +91,7 @@ it.each(["filled", "blank", "missing-appearance", "multiline", "repeated-widget"
   const text = await extractPdfText(blob);
   if (value) expect(text).toContain("12345.67 dollars");
   if (kind === "blank") expect(text).not.toContain("12345.67 dollars");
-});
+}, 30000); // Includes two-page watermark placement and rendered recovery.
 
 it.each([true, false])("handles Unicode form text without dropping characters (saved appearance: %s)", async (hasAppearance) => {
   const pdf = await makeForm();
