@@ -6,6 +6,7 @@ import { readSigningKeyFile } from "./signingKeys.js";
 import { sealCollectionProgress, verifySealCollection } from "./sealCollection.js";
 import { PhotoTextVerification } from "./verifier/PhotoTextVerification.jsx";
 import { createScanPhotoCollection } from "./verifier/scanPhotos.js";
+import { PdfSealInput } from "./verifier/PdfSealInput.jsx";
 
 export function useSealVerification() {
   const [seals, setSeals] = useState([]);
@@ -34,7 +35,7 @@ export function useSealVerification() {
     return () => { cancelled = true; controller.abort(); clearTimeout(timer); };
   }, []);
 
-  const addSeal = useCallback((text, frame) => {
+  const addSeal = useCallback((text, frame, { replaceImage = false } = {}) => {
     if (isQRedEntryLink(text) && text !== VISIBLE_QR_TEXT) {
       setNotice("That code opens qred.org. Scan the pale watermark to read the document seal.");
       return;
@@ -48,8 +49,9 @@ export function useSealVerification() {
       return;
     }
     setNotice("");
-    photoCollection.capture(text, frame);
+    const captured = photoCollection.capture(text, frame, { replace: replaceImage });
     setSeals((previous) => previous.includes(text) ? previous : [...previous, text]);
+    return captured;
   }, [photoCollection]);
 
   useEffect(() => {
@@ -128,7 +130,7 @@ export function SealVerification({ verification }) {
   return <section className="verification-card" aria-label="Seal verification">
     <h2>Verify collected seals</h2>
     <p>Scan each QR seal for a page. Its scan image is kept for comparison with the signed page contents; you can also take a clearer page photo.</p>
-    <p className="verification-note">QR images and camera frames are processed in this browser and are not sent to a server.</p>
+    <p className="verification-note">PDFs, QR images, and camera frames are processed in this browser and are not sent to a server.</p>
     <details>
       <summary>Optional: use airplane mode</summary>
       <p>Load QRed, then enable airplane mode and turn Wi-Fi and Bluetooth off in your device settings to limit network access while you work. Keep this tab open.</p>
@@ -143,6 +145,7 @@ export function SealVerification({ verification }) {
     </div>}
     <label htmlFor="qr-image">Choose QR image</label>
     <input id="qr-image" type="file" accept="image/*" onChange={readImage} />
+    <PdfSealInput onSeal={addSeal} session={verification.session} />
     <button type="button" onClick={verification.clear}>Clear collected seals</button>
     <div aria-live="polite">
       {verification.progress && <p className="collection-progress">{verification.progress.message}</p>}

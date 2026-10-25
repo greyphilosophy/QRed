@@ -154,6 +154,22 @@ it("does not let a slow image load replace the newly selected page", async () =>
   expect(screen.getByLabelText("Captured scan image").value).toBe("2");
 });
 
+it.each([false, true])("replaces an earlier PDF capture for the same seal, including a pending image (%s)", async pending => {
+  let resolveOld;
+  if (pending) ocr.open.mockReturnValueOnce(new Promise(done => { resolveOld = done; }));
+  const first = capture(1), replacement = capture(2);
+  const view = render(<PhotoTextVerification results={[page]} scanPhotos={[first]} />);
+  await waitFor(() => expect(ocr.open).toHaveBeenCalledWith(first.file));
+  if (!pending) await screen.findByRole("img");
+  view.rerender(<PhotoTextVerification results={[page]} scanPhotos={[]} />);
+  expect(screen.queryByRole("img")).toBeNull();
+  view.rerender(<PhotoTextVerification results={[page]} scanPhotos={[replacement]} />);
+  await screen.findByRole("img");
+  expect(ocr.open).toHaveBeenLastCalledWith(replacement.file);
+  if (pending) await act(async () => resolveOld({ width: 300, height: 200 }));
+  expect(screen.getByLabelText("Captured scan image").value).toBe("2");
+});
+
 it("finishes preloading when a verified seal and its image arrive during loading", async () => {
   let prepared;
   ocr.prepare.mockReturnValueOnce(new Promise(done => { prepared = done; }));

@@ -73,8 +73,21 @@ export async function sealPdfInBrowser({ file, privateKey, publicKey, attestPage
   const prepared = await flattenPdfForSealing(file);
   file = prepared.file;
   const { results: pageSealResults, plans } = await createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages });
-  const footerPages = pageScalingStrategy === "watermark"
-    ? plans.flatMap((page, index) => !page.text || page.hasImages ? [index + 1] : []) : [];
+  const tryWatermarks = pageScalingStrategy === "automatic" || pageScalingStrategy === "watermark";
+  // A logo or embedded graphic does not make a text page unsuitable for a
+  // watermark. Let placement and the rendered recovery check decide whether
+  // that page needs a footer; image-only and blank pages still use one.
+  const footerPages = tryWatermarks
+    ? plans.flatMap((page, index) => !page.text ? [index + 1] : []) : [];
+  let plannedWatermarkLayout = null;
+  if (tryWatermarks) {
+    const watermarkPages = plans.map((_, index) => index).filter(index => !footerPages.includes(index + 1));
+    if (watermarkPages.length) {
+      const { planPdfWatermarks } = await import("./pdf/watermark.js");
+      plannedWatermarkLayout = await planPdfWatermarks(file, pageSealResults, watermarkPages);
+      for (const index of watermarkPages) if (!plannedWatermarkLayout[index]) footerPages.push(index + 1);
+    }
+  }
   async function renderSealedPdf() {
     const pdf = await PDFDocument.load(await file.arrayBuffer());
     const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -83,14 +96,10 @@ export async function sealPdfInBrowser({ file, privateKey, publicKey, attestPage
 
     const PANEL_MARGIN = 18;
     const PANEL_PADDING = 10;
-    let watermarkLayout = null;
-
-    const watermarkPages = pageScalingStrategy === "watermark"
-      ? plans.map((_, index) => index).filter(index => !footerPages.includes(index + 1)) : [];
-    if (watermarkPages.length) {
+    const watermarkLayout = plannedWatermarkLayout?.map((layout, index) => footerPages.includes(index + 1) ? null : layout) ?? null;
+    if (watermarkLayout?.some(Boolean)) {
       const { stampWatermarks } = await import("./pdf/watermark.js");
-      watermarkLayout = await stampWatermarks(pdf, file, pageSealResults, watermarkPages);
-      for (const index of watermarkPages) if (!watermarkLayout[index]) footerPages.push(index + 1);
+      await stampWatermarks(pdf, watermarkLayout, pageSealResults);
     }
     for (let pageIndex = pageSealResults.length - 1; pageIndex >= 0; pageIndex -= 1) {
       if (watermarkLayout?.[pageIndex]) continue;
@@ -98,7 +107,7 @@ export async function sealPdfInBrowser({ file, privateKey, publicKey, attestPage
       const qrValues = pageSealResults[pageIndex].seals;
       const qrImages = await Promise.all(qrValues.map(async (value) => pdf.embedPng(await qrPngBytes(value))));
       const { width, height } = visiblePageGeometry(page);
-      const resolvedPageScalingStrategy = resolvePageScalingStrategy(pageScalingStrategy === "watermark" ? "automatic" : pageScalingStrategy, width, height);
+      const resolvedPageScalingStrategy = resolvePageScalingStrategy(tryWatermarks ? "automatic" : pageScalingStrategy, width, height);
       const layout = resolvedPageScalingStrategy === "legal-footer"
         ? planQrStampLayoutForFooterBand(width, qrImages.length, { footerBandHeight: LEGAL_FOOTER_HEIGHT })
         : planQrStampLayout(width, qrImages.length);

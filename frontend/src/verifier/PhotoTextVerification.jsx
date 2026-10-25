@@ -36,6 +36,7 @@ function PhotoTextCheck({ results = [], session = 0, scanPhotos = [], captureNot
   const recognizing = useRef(false);
   const preparing = useRef(false);
   const currentPhoto = useRef(null);
+  const currentCaptureId = useRef(null);
   const automaticCaptureUsed = useRef(false);
   const attemptedPhoto = useRef(null);
   const pages = results.filter(result => result.status === "VALID" && result.signature_valid === true && result.content?.trim());
@@ -56,6 +57,7 @@ function PhotoTextCheck({ results = [], session = 0, scanPhotos = [], captureNot
   function releasePhoto() {
     if (currentPhoto.current) URL.revokeObjectURL(currentPhoto.current.url);
     currentPhoto.current = null;
+    currentCaptureId.current = null;
     setPhoto(null); setComparison(null); setSelectedWord(null); setError(""); setZoom(1);
   }
   function clearPhoto() { cancel(); releasePhoto(); }
@@ -66,6 +68,14 @@ function PhotoTextCheck({ results = [], session = 0, scanPhotos = [], captureNot
     else clearPhoto();
     automaticCaptureUsed.current = false;
   }, [pageIdentity, page?.content, session]);
+  useEffect(() => {
+    // A newly opened PDF can replace a capture without changing its seal.
+    // Invalidate both displayed and still-loading images from the earlier file.
+    if (currentCaptureId.current != null && !scanPhotos.some(capture => capture.id === currentCaptureId.current)) {
+      clearPhoto();
+      automaticCaptureUsed.current = false;
+    }
+  }, [scanPhotos]);
   useEffect(() => {
     if (busy || error || !page || !firstCapture || automaticCaptureUsed.current) return;
     automaticCaptureUsed.current = true;
@@ -140,6 +150,7 @@ function PhotoTextCheck({ results = [], session = 0, scanPhotos = [], captureNot
   async function loadPhoto(file, captureId = null) {
     automaticCaptureUsed.current = true;
     clearPhoto();
+    currentCaptureId.current = captureId;
     const token = begin();
     setStatus("Opening page photo on this device…");
     try {

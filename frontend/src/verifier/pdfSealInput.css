@@ -1,0 +1,4 @@
+.pdf-seal-input { margin: 1rem 0; }
+.pdf-seal-input label { display: block; margin-bottom: .5rem; font-weight: 600; }
+.pdf-seal-input input { display: block; box-sizing: border-box; max-width: 100%; color: inherit; }
+.pdf-seal-input p { font-size: .9rem; line-height: 1.5; }

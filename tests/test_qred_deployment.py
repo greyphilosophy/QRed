@@ -194,7 +194,7 @@ def multi_page_pdf_path(pdf_dir):
 # Helper to upload a file via Playwright and wait for the download
 # ---------------------------------------------------------------------------
 
-def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_key: str = ""):
+def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_key: str = "", layout: str = "automatic"):
     """
     Upload a PDF to the Playwright-dev frontend and trigger sealing.
     
@@ -237,13 +237,13 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
 
     # Step 3: Wait for and click the "Stamp PDF" button inside the tool to proceed to file upload
     try:
-        upload_btn = page.locator('input[type="file"][accept="application/pdf"]').first
+        upload_btn = page.get_by_label("Open PDF", exact=True)
         expect_playwright(upload_btn).to_be_visible(timeout=5_000)
     except Exception as exc:
         raise AssertionError("File input not found after key loading") from exc
 
     # Wait for the file input
-    file_input = page.locator('input[type="file"][accept="application/pdf"]').first
+    file_input = page.get_by_label("Open PDF", exact=True)
     try:
         file_input.set_input_files(file_path)
     except Exception as exc:
@@ -265,6 +265,7 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", public_k
 
 
     expect_playwright(page.get_by_label("Encoding Strategy")).to_have_count(0)
+    page.get_by_label("Page layout", exact=True).select_option(layout)
 
     # Click the seal button and wait for download
     seal_btn = None
@@ -539,7 +540,7 @@ class TestPdfTextSealing:
     def test_zlib_reduces_a_page_to_one_seal_and_verifies_printed_pixels(self, page: Page, tmp_path):
         source = tmp_path / "delivery-records.pdf"
         make_delivery_records_pdf(source)
-        stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY)
+        stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY, layout="legal-footer")
         details = result["full_result"]
         assert details["encoding"] == "zlib"
         assert details["total_seals"] == 1
@@ -568,7 +569,7 @@ class TestPdfTextSealing:
         pdf = rl_canvas.Canvas(str(source), pagesize=letter)
         draw_dense_records_page(pdf)
         pdf.save()
-        stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY)
+        stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY, layout="legal-footer")
         assert result["full_result"]["total_seals"] == 2
         page.get_by_role("button", name="Use public key to verify", exact=True).click()
         # Scan the second code first, using pixels from the saved PDF. Each
@@ -723,6 +724,7 @@ class TestKeyGenerationImportAndSignatureVerification:
         expect(page.get_by_label("Issuer public key", exact=True)).to_have_count(0)
 
         page.get_by_label("Open PDF", exact=True).set_input_files(simple_pdf_path)
+        page.get_by_label("Page layout", exact=True).select_option("legal-footer")
         with page.expect_download(timeout=60_000) as download_info:
             page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
         sealed_path = tmp_path / download_info.value.suggested_filename
@@ -943,7 +945,7 @@ class TestContinuousSealScanning:
         pdf.showPage()
         pdf.drawString(40, 740, "Final delivery page. All items received.")
         pdf.save()
-        stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY)
+        stamped, result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY, layout="legal-footer")
         assert result["full_result"]["total_seals"] == 2  # First page; the short second page needs one.
         frames = []
         for index, (page_number, column) in enumerate([(2, 0), (1, 1), (1, 0)]):

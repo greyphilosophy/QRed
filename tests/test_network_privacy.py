@@ -46,7 +46,7 @@ def _stamp_and_save(page, directory, name, text):
 
 
 @pytest.mark.parametrize("offline", [False, True], ids=["connected-but-guarded", "airplane-mode"])
-@pytest.mark.parametrize("layout", ["automatic", "watermark"])
+@pytest.mark.parametrize("layout", ["automatic", "legal-footer"])
 def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, layout):
     context = browser.new_context(service_workers="allow", accept_downloads=True)
     try:
@@ -146,7 +146,7 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, la
         # saved-PDF pixels through the normal image-selection UI.
         assert page.evaluate("window.__lastSealResult.encoding") == "zlib"
         footer = tmp_path / "private-invoice-footer"
-        area = [] if layout == "watermark" else ["-x", "0", "-y", "2200", "-W", "1700", "-H", "600"]
+        area = [] if layout == "automatic" else ["-x", "0", "-y", "2200", "-W", "1700", "-H", "600"]
         subprocess.run(["pdftoppm", "-f", "1", "-singlefile", "-r", "200", *area,
                         "-png", str(sealed_path), str(footer)], check=True, capture_output=True)
         page.get_by_label("Choose QR image", exact=True).set_input_files(footer.with_suffix(".png"))

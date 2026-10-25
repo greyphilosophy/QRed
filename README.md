@@ -60,13 +60,29 @@ size and uses the added three-inch footer for QR seals. One or two seals are
 print margin. Larger sets use the grid that allows the largest codes within
 that same footer. The caption sits beside the codes where space permits.
 
-**Pale watermark (experimental)** in **Page layout** preserves the original paper
+**Automatic**, the default **Page layout**, tries pale watermarks first on each
+text page and falls back to a clear footer only on pages where they cannot be
+placed or recovered. The explicit **Pale watermark (experimental)** option uses
+the same behavior; footer layouts can also be selected directly.
+Watermarks preserve the original paper
 dimensions, text size, rotation, and crop on pages where watermarks are readable. A half-inch conventional QR opens
 `https://qred.org/` from a clear area on the first page; pale QR watermarks carry
-each page's signed data. Use QRed's camera or image picker to read the watermarks.
+each page's signed data. The watermark uses 6% black with multiply blending to
+keep the pattern faint and black text intact. Use QRed's camera or image picker
+to read the watermarks.
 The navigation code contains no document data and is ignored during verification.
 Placement checks rendered pixels, including graphics, before using a blank area.
-Image and blank pages automatically use a clear footer. A page also falls back
+Text pages with embedded logos or pictures are eligible for watermarks; the
+rendered recovery check determines whether the seal remains readable.
+Before drawing, QRed analyzes the original page for broad dark areas and gray
+graphics that could interfere with scanning. It selects a position and size
+from that obstruction map, giving extra weight to the QR's finder patterns,
+timing strips, lower-right alignment pattern, and quiet zone while favoring
+larger printed modules. Thin black text is treated as easier to recover around.
+This is a bounded geometric optimization, not a sequence of trial stamps or
+decodes. It predicts readability; it does not guarantee the best possible
+placement. The selected watermark must still pass the rendered recovery check.
+Image-only and blank pages automatically use a clear footer. A page also falls back
 to a footer if there is no clear entry-code space, its watermark is too dense, or
 QRed cannot recover it from the rendered output. Other pages retain their watermark
 layout. Footer fallback expands letter pages to legal size and shrinks other page
@@ -78,7 +94,7 @@ cryptographic signature verification. Digital rendering tests cover opaque white
 backgrounds, text overlap, multiple pages/chunks, and both PDF.js and Poppler.
 They do not establish print-camera reliability. Test a printed copy before
 sharing: pictures, bold text, lighting, grayscale printing, and photocopying can
-destroy information in a pale watermark. Footer layouts remain the default.
+destroy information in a pale watermark.
 
 Each seal uses the smallest QR grid that fits its actual payload, then the
 strongest error correction that fits that grid. Smaller payloads therefore
@@ -105,6 +121,15 @@ page must be reconstructed before its document page count is available. Counts
 from unverified signatures are labeled as unverified. Different document roots,
 keys, timestamps, or page counts are kept separate. Use **Close** to pause scanning
 or **Clear collected seals** to start a fresh collection on the homepage.
+
+Choose **Open PDF to verify** on the homepage or `verify.htm` to read seals from
+every visible PDF page, including multiple QR parts on one page and pale
+watermarks. QRed renders and scans the file locally, retains page images for
+comparison, and uses the same signature checks as camera scans. Progress is
+shown page by page; **Stop reading PDF** keeps seals already found. Opening
+another PDF continues the collection. The completion message lists pages with
+no readable seal or an unfinished scan. A valid seal authenticates its signed
+contents, not every visible mark on the loaded PDF; compare the page below.
 
 Choose **Private key file (offline)** to reuse a local signing identity. Open its `.txt` file or paste the private key; QRed derives the public key automatically. There is no separate public-key entry or derive button in the sealing form. You can still save the public key or select **Use public key to verify** on the same device. After scanning a locally signed seal, the verifier offers **Open issuer public key file** and rechecks collected seals when a key is imported. Obtain this file from the issuer through a trusted channel. Invalid files leave existing keys intact, and replacing a private key asks for confirmation.
 

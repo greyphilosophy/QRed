@@ -269,15 +269,17 @@ export function PdfSealForm({ onUsePublicKey }) {
             onChange={(e) => setPageScalingStrategy(e.target.value)}
             title="Choose where to place the document seals."
           >
-            <option value="automatic">Automatic (legal for letter, shrink otherwise)</option>
+            <option value="automatic">Automatic (watermark first, footer fallback)</option>
             <option value="watermark">Pale watermark (experimental, footer fallback)</option>
             <option value="legal-footer">Expand letter pages to legal size (bottom 3-inch footer)</option>
             <option value="shrink-footer">Shrink the document to create a footer</option>
           </select>
           <small style={{ color: "#64748b", display: "block", marginTop: "0.5rem" }}>
-            {pageScalingStrategy === "watermark"
-              ? "Keeps the original page size where pale seals can be read. Image pages, blank pages, and unreadable watermarks automatically use a clear footer (legal size for letter pages; shrink otherwise). Use QRed's scanner and try a printed copy before sharing."
-              : "Automatic expands letter pages to legal size and keeps seals in the bottom 3 inches; other page sizes shrink to create room for the seals."}
+            {pageScalingStrategy === "automatic" || pageScalingStrategy === "watermark"
+              ? "Tries pale watermarks first, analyzing each page to place seals around obstructing logos or pictures while keeping the original page size. Image-only pages, blank pages, and pages where a readable watermark cannot fit use a clear footer (legal size for letter pages; shrink otherwise). Use QRed's scanner and try a printed copy before sharing."
+              : pageScalingStrategy === "legal-footer"
+                ? "Adds a 3-inch footer below each page, preserving the original content size. Letter pages become legal size."
+                : "Shrinks each page's content to make room for a clear footer, keeping the original paper size."}
           </small>
         </div>
       </div>

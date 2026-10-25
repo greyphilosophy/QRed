@@ -316,7 +316,7 @@
   <header>
     <h1>QRed Verifier</h1>
     <p>Scan QR seals to verify a document. Include the whole page when possible; the scan image is kept for page comparison.</p>
-    <p>Camera frames and seal text are processed in this browser and are not sent to a server.</p>
+    <p>PDFs, camera frames, and seal text are processed in this browser and are not sent to a server.</p>
     <details>
       <summary>Optional: use airplane mode</summary>
       <p>Load QRed, then enable airplane mode and turn Wi-Fi and Bluetooth off in your device settings to limit network access while you work. Keep this tab open.</p>
@@ -353,6 +353,8 @@
       </div>
     </div>
 
+    <section id="pdfSealInput" class="result-card" style="margin-bottom: 1rem;"></section>
+
     <section id="issuerKeyControls" class="result-card" style="margin-bottom: 1rem;" hidden>
       <p>This collection includes a seal made with a private key file. Obtain the issuer’s public key file through a trusted channel to verify it.</p>
       <label for="publicKeyFileInput" style="display:block; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 0.35rem;">Open issuer public key file</label>
@@ -386,6 +388,7 @@
     import { decodeSeal as decodeQRedSeal, verifyQRedSeals, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./src/qredVerifier.js";
     import { mountPhotoTextVerification } from "./src/verifier/mountPhotoTextVerification.jsx";
     import { createScanPhotoCollection } from "./src/verifier/scanPhotos.js";
+    import { mountPdfSealInput } from "./src/verifier/mountPdfSealInput.jsx";
     import { readSigningKeyFile } from "./src/signingKeys.js";
     import { orderSealResults, sealCollectionProgress } from "./src/sealCollection.js";
 
@@ -434,6 +437,7 @@
       photoComparison.update(results, state.scanSession, state.scanImages, Boolean(progress && !progress.finished));
     }
     updatePhotoComparison([]);
+    var pdfInput = mountPdfSealInput(document.getElementById("pdfSealInput"), processScannedSeal);
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(function() {});
 
     // Camera handling
@@ -461,6 +465,7 @@
     btnNewScan.onclick = function() {
       stopScanning();
       state.scanSession += 1;
+      pdfInput.update(state.scanSession);
       state.verificationResults = Object.create(null);
       state.sealsByDocument = Object.create(null);
       state.scannedSeals = [];
@@ -645,8 +650,11 @@
       statusBar.classList.remove("visible");
     }
 
-    function processScannedSeal(sealStr, frame) {
-      if (state.seenSeals.has(sealStr)) return;
+    function processScannedSeal(sealStr, frame, options = {}) {
+      if (state.seenSeals.has(sealStr)) {
+        if (options.replaceImage) return scanPhotos.capture(sealStr, frame, { replace: true });
+        return;
+      }
       state.seenSeals.add(sealStr);
 
       var decoded = decodeSeal(sealStr);
@@ -658,7 +666,7 @@
       }
 
       registerSealInSession(sealStr, decoded);
-      scanPhotos.capture(sealStr, frame);
+      var captured = scanPhotos.capture(sealStr, frame, { replace: options.replaceImage });
 
       var docId = decoded.documentId;
       var docData = state.sealsByDocument[docId];
@@ -666,8 +674,9 @@
       refreshCollectionProgress();
 
       if (collected >= docData.total) {
-        reconstructAndShow(docId);
+        return Promise.all([captured, reconstructAndShow(docId)]);
       }
+      return captured;
     }
 
     function refreshCollectionProgress() {

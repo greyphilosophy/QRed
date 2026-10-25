@@ -54,6 +54,123 @@ def seal(page, pdf_bytes, destination):
 
 
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
+def test_load_pdf_seals_on_both_verifiers_offline(browser, tmp_path, path):
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=(612, 792))
+    for number in (1, 2):
+        pdf.drawString(40, 720, f"PDF verification example - page {number} of 2")
+        pdf.drawString(40, 690, "Account 123456 | Amount 50.00")
+        pdf.showPage()
+    pdf.save()
+    source = {"name": "unsealed.pdf", "mimeType": "application/pdf", "buffer": buffer.getvalue()}
+    context = browser.new_context(service_workers="allow", viewport={"width": 430, "height": 932})
+    try:
+        guarded, attempts = False, []
+
+        def guard_network(route):
+            if guarded:
+                attempts.append(route.request.url)
+                route.abort("blockedbyclient")
+            else:
+                route.continue_()
+
+        context.route(re.compile(r"^https?://"), guard_network)
+        page = context.new_page()
+        page.add_init_script("window.__qredTestMode = true")
+        base = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
+        page.goto(base + "/", wait_until="networkidle")
+        page.wait_for_function("navigator.serviceWorker.controller?.state === 'activated'")
+        page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_label("Private Key", exact=True).fill(PRIVATE_KEY)
+        expect(page.get_by_label("Page layout", exact=True)).to_have_value("automatic")
+        stamped = tmp_path / "pdf-input-sealed.pdf"
+        seal(page, buffer.getvalue(), stamped)
+        expect(page.locator("#stamp-result")).not_to_contain_text("Used clear footers")
+        page.goto(base + path, wait_until="networkidle")
+        picker = page.get_by_label("Open PDF to verify", exact=True)
+        status = page.locator(".pdf-seal-input [role=status]")
+        picker.set_input_files(source)
+        expect(status).to_contain_text("No readable seal on PDF page(s): 1, 2.", timeout=90000)
+        picker.set_input_files(stamped)
+        expect(status).to_have_text("Found 2 QRed seals across 2 of 2 PDF pages.", timeout=90000)
+        page.get_by_label("Open issuer public key file", exact=True).set_input_files({
+            "name": "public-key.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode(),
+        })
+        results = page.locator(".verification-card .verification-result" if path == "/" else "#resultContent .verification-result")
+        expect(results).to_have_count(2)
+        for index in range(2):
+            expect(results.nth(index)).to_contain_text("VALID", timeout=30000)
+            expect(results.nth(index)).to_contain_text(f"PDF verification example - page {index + 1} of 2")
+        page.wait_for_function(r"""async () => {
+            const entries = await Promise.all((await caches.keys()).map(async key =>
+                (await (await caches.open(key)).keys()).map(request => request.url)));
+            return entries.flat().some(url => /\/assets\/pdf\.worker\.min-[\w-]+\.mjs$/.test(url));
+        }""")
+        page.get_by_role("button", name="Clear collected seals" if path == "/" else "New Scan", exact=True).click()
+        expect(status).to_have_count(0)
+        guarded = True
+        context.set_offline(True)
+        picker.set_input_files(stamped)
+        expect(status).to_have_text("Found 2 QRed seals across 2 of 2 PDF pages.", timeout=90000)
+        expect(results).to_have_count(2)
+        for index in range(2):
+            expect(results.nth(index)).to_contain_text("VALID", timeout=30000)
+        progress = page.locator(".verification-card .collection-progress" if path == "/" else "#resultMeta .collection-progress")
+        expect(progress).to_have_text("All 2 pages collected.")
+        assert attempts == [], "Network attempted while reading PDF: " + repr(attempts)
+        picker.set_input_files({"name": "broken.pdf", "mimeType": "application/pdf", "buffer": b"not a PDF"})
+        expect(status).to_contain_text("Could not read PDF seals:", timeout=30000)
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("logo_location", ["letterhead", "center", "sidebar"])
+def test_text_invoice_with_raster_logos_keeps_watermarks(page, tmp_path, logo_location):
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=(612, 792))
+    logo = Image.new("RGB", (120, 60), (60, 90, 120))
+    ImageDraw.Draw(logo).ellipse((35, 5, 85, 55), fill=(180, 210, 230))
+    logo_box = {"letterhead": (246, 702, 120, 60), "center": (246, 346, 120, 100),
+                "sidebar": (454, 150, 140, 470)}[logo_location]
+    for number in (1, 2):
+        pdf.drawImage(ImageReader(logo), *logo_box)
+        pdf.setFont("Helvetica", 12)
+        pdf.drawString(40, 650, f"Example invoice - page {number} of 2")
+        pdf.drawString(40, 630, "Account: 123456 | Amount: 50.00")
+        if number == 1:
+            for row in range(12):
+                pdf.drawString(40, 580 - row * 18, f"Item {row + 1}: service charge")
+        pdf.drawString(40, 70, "Example Lodge | 100 Sample Road")
+        pdf.showPage()
+    pdf.save()
+    page.add_init_script("window.__qredTestMode = true")
+    page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000") + "/", wait_until="networkidle")
+    page.get_by_role("button", name="Open PDF stamping tool").click()
+    page.get_by_label("Private Key", exact=True).fill(PRIVATE_KEY)
+    expect(page.get_by_label("Page layout", exact=True)).to_have_value("automatic")
+    stamped = tmp_path / "invoice-sealed.pdf"
+    result = seal(page, buffer.getvalue(), stamped)
+    assert result["total_seals"] == 1
+    expect(page.locator("#stamp-result")).not_to_contain_text("Used clear footers")
+    subprocess.run(["pdftoppm", "-png", "-r", "144", str(stamped), str(tmp_path / "invoice")], check=True, capture_output=True)
+    for number in (2, 1):
+        printed = tmp_path / f"invoice-{number}.png"
+        with Image.open(printed) as image:
+            assert image.size == (1224, 1584)  # Original letter size on both pages.
+        page.get_by_label("Choose QR image", exact=True).set_input_files(printed)
+        if number == 2:
+            page.get_by_label("Open issuer public key file", exact=True).set_input_files({
+                "name": "public-key.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode(),
+            })
+            expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=30000)
+    expect(page.locator(".verification-card .collection-progress")).to_have_text("All 2 pages collected.", timeout=30000)
+    results = page.locator(".verification-card .verification-result")
+    expect(results).to_have_count(2)
+    for index in range(2):
+        expect(results.nth(index)).to_contain_text(f"Example invoice - page {index + 1} of 2")
+
+
+@pytest.mark.parametrize("path", ["/", "/verify.htm"])
 @pytest.mark.parametrize("blank", [False, True], ids=["image", "blank"])
 def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, path, blank):
     context = browser.new_context(service_workers="allow", viewport={"width": 430, "height": 932})
@@ -78,7 +195,7 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
         page.wait_for_function("navigator.serviceWorker.controller?.state === 'activated'", timeout=10000)
         page.get_by_role("button", name="Open PDF stamping tool").click()
         page.get_by_label("Private Key", exact=True).fill(PRIVATE_KEY)
-        page.get_by_label("Page layout", exact=True).select_option("watermark")
+        expect(page.get_by_label("Page layout", exact=True)).to_have_value("automatic")
         stamped = tmp_path / "sealed.pdf"
         result = seal(page, synthetic_page(blank), stamped)
         assert result["total_seals"] == 1

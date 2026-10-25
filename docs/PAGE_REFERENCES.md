@@ -65,9 +65,30 @@ The uncompressed body shares the existing 8 MiB bound.
 
 ## Placement and verification
 
-Image/blank pages use a clear footer when watermark mode is requested. A failed
-watermark placement or rendered scan falls back on that page too. The PDF is
-rebuilt from the original, so failed watermark ink is not retained. Letter pages
+The default Automatic layout tries watermarks on each text page first, with a
+per-page footer fallback. Explicit watermark mode uses the same behavior;
+explicit footer modes skip watermark placement.
+Text pages with embedded logos or pictures can use watermarks if the rendered
+seals are recoverable. The original visible crop is rendered once for placement
+analysis. A bounded obstruction map distinguishes broad dark regions and gray
+interference from thin black strokes and their antialiased edges. Integral maps
+score the data area, finder/format regions, timing strips, lower-right alignment
+pattern, and quiet zone at possible positions and sizes. The score also favors
+larger modules. These weights rank placements; they are not probabilities of
+successful scanning or allowances for cryptographic errors.
+
+The optimizer evaluates that map on a bounded spatial grid and refines the best
+location. It does not draw, render, or scan each candidate. Multiple seals use
+aligned rows/columns and a shared size, with the worst part weighted most. Page
+margins, the navigation-code keepout, and the 1.5-point minimum module size remain
+hard constraints. It does not enumerate arbitrary packings or QR rotations and
+cannot promise to find every usable placement. Only the chosen layout is drawn
+and checked for exact payload recovery. Its geometry is retained if other pages
+need to be rebuilt with footers; fallback never starts another placement search.
+
+Image-only/blank pages use a clear footer in Automatic and watermark modes. A
+failed watermark placement or rendered scan falls back on that page too. The PDF
+is rebuilt from the original, so failed watermark ink is not retained. Letter pages
 expand to legal size; other pages shrink to leave room. Crops and rotations are
 preserved visually. Fallback changes placement only, so it does not need another
 Google receipt. No QR-placement geometry or automatic photo alignment is encoded
