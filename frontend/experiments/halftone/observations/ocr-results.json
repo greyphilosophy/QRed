@@ -1,0 +1,40 @@
+{
+  "note": "Raw OCR diagnostic only; not human readability or document verification.",
+  "results": [
+    {
+      "variant": "original",
+      "expectedCharacters": 2315,
+      "recognizedCharacters": 2316,
+      "editDistanceIgnoringWhitespace": 6,
+      "characterErrorRate": 0.002591792656587473
+    },
+    {
+      "variant": "33",
+      "expectedCharacters": 2315,
+      "recognizedCharacters": 3178,
+      "editDistanceIgnoringWhitespace": 1306,
+      "characterErrorRate": 0.56414686825054
+    },
+    {
+      "variant": "50",
+      "expectedCharacters": 2315,
+      "recognizedCharacters": 2825,
+      "editDistanceIgnoringWhitespace": 2045,
+      "characterErrorRate": 0.8833693304535637
+    },
+    {
+      "variant": "33-minimal",
+      "expectedCharacters": 2315,
+      "recognizedCharacters": 3086,
+      "editDistanceIgnoringWhitespace": 1198,
+      "characterErrorRate": 0.5174946004319655
+    },
+    {
+      "variant": "50-minimal",
+      "expectedCharacters": 2315,
+      "recognizedCharacters": 2799,
+      "editDistanceIgnoringWhitespace": 2086,
+      "characterErrorRate": 0.9010799136069114
+    }
+  ]
+}

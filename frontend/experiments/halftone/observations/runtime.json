@@ -1,0 +1,9 @@
+{
+  "baselineCommit": "2baf911b580cdb59f30365bdbd7236a5bb6c293b",
+  "node": "v24.22.1",
+  "python": "3.12.14",
+  "pillow": "12.3.0",
+  "reportlab": "4.4.9",
+  "tesseract": "tesseract 5.3.4",
+  "note": "Dependency lockfile at baseline pins JavaScript decoder dependencies. All sources and distortions are synthetic; no physical print tests."
+}

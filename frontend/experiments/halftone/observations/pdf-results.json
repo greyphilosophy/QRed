@@ -1,0 +1,51 @@
+{
+  "total": 3,
+  "complete": true,
+  "results": [
+    {
+      "name": "pdf-page-2",
+      "file": "page-2.png",
+      "cover": "image",
+      "dotFraction": 0.3333333333333333,
+      "markerStyle": "minimal",
+      "condition": "pdf-render-300dpi",
+      "width": 2550,
+      "height": 3300,
+      "firstPass": true,
+      "payloadMatches": true,
+      "signatureValid": true,
+      "visibleText": "QRED.ORG",
+      "milliseconds": 749
+    },
+    {
+      "name": "pdf-page-3",
+      "file": "page-3.png",
+      "cover": "image",
+      "dotFraction": 0.5,
+      "markerStyle": "minimal",
+      "condition": "pdf-render-300dpi",
+      "width": 2550,
+      "height": 3300,
+      "firstPass": true,
+      "payloadMatches": true,
+      "signatureValid": true,
+      "visibleText": "QRED.ORG",
+      "milliseconds": 767
+    },
+    {
+      "name": "pdf-page-4",
+      "file": "page-4.png",
+      "cover": "text",
+      "dotFraction": 0.3333333333333333,
+      "markerStyle": "minimal",
+      "condition": "pdf-render-300dpi",
+      "width": 2550,
+      "height": 3300,
+      "firstPass": true,
+      "payloadMatches": true,
+      "signatureValid": true,
+      "visibleText": "QRED.ORG",
+      "milliseconds": 640
+    }
+  ]
+}
