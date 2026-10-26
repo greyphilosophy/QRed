@@ -24,9 +24,11 @@ def distance(a, b):
     return row[-1]
 
 
+adaptive = len(sys.argv) > 2 and sys.argv[2] == "adaptive"
+variants = ["original", "33-binary", "33-adaptive-gray", "50-binary", "50-adaptive-gray"] if adaptive else ["original", "33", "50", "33-minimal", "50-minimal"]
 results = []
-for name in ["original", "33", "50", "33-minimal", "50-minimal"]:
-    source = directory / ("text-original.png" if name == "original" else "text-dots-" + name + ".png")
+for name in variants:
+    source = directory / ("text-original.png" if name == "original" else ("text-" if adaptive else "text-dots-") + name + ".png")
     image = Image.open(source)
     if name != "original":
         image = image.crop((48, 48, image.width - 48, image.height - 48))
@@ -41,4 +43,4 @@ for name in ["original", "33", "50", "33-minimal", "50-minimal"]:
               "editDistanceIgnoringWhitespace": errors, "characterErrorRate": errors / len(expected)}
     results.append(result)
     print(json.dumps(result), flush=True)
-(directory / "ocr-results.json").write_text(json.dumps({"note": "Raw OCR diagnostic only; not human readability or document verification.", "results": results}, indent=2))
+(directory / ("ocr-adaptive-results.json" if adaptive else "ocr-results.json")).write_text(json.dumps({"note": "Raw OCR diagnostic only; not human readability or document verification.", "results": results}, indent=2))

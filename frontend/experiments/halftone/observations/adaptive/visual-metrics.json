@@ -1,0 +1,66 @@
+[
+  {
+    "cover": "image",
+    "dotFraction": 0.3333333333333333,
+    "encoding": "binary",
+    "meanAbsoluteLumaChange": 20.35312485591979,
+    "rootMeanSquareLumaChange": 51.52498516702283,
+    "note": "Raw pixel difference across active image, including contrast remapping and markers; not a perceptual metric."
+  },
+  {
+    "cover": "image",
+    "dotFraction": 0.3333333333333333,
+    "encoding": "adaptive-gray",
+    "meanAbsoluteLumaChange": 15.0239625338256,
+    "rootMeanSquareLumaChange": 33.21653871812241,
+    "note": "Raw pixel difference across active image, including contrast remapping and markers; not a perceptual metric."
+  },
+  {
+    "cover": "image",
+    "dotFraction": 0.5,
+    "encoding": "binary",
+    "meanAbsoluteLumaChange": 36.74589083242009,
+    "rootMeanSquareLumaChange": 77.97206623734321,
+    "note": "Raw pixel difference across active image, including contrast remapping and markers; not a perceptual metric."
+  },
+  {
+    "cover": "image",
+    "dotFraction": 0.5,
+    "encoding": "adaptive-gray",
+    "meanAbsoluteLumaChange": 22.528196275371418,
+    "rootMeanSquareLumaChange": 44.052193756614095,
+    "note": "Raw pixel difference across active image, including contrast remapping and markers; not a perceptual metric."
+  },
+  {
+    "cover": "text",
+    "dotFraction": 0.3333333333333333,
+    "encoding": "binary",
+    "meanAbsoluteLumaChange": 24.000228976702452,
+    "rootMeanSquareLumaChange": 57.647891526585745,
+    "note": "Raw pixel difference across active image, including contrast remapping and markers; not a perceptual metric."
+  },
+  {
+    "cover": "text",
+    "dotFraction": 0.3333333333333333,
+    "encoding": "adaptive-gray",
+    "meanAbsoluteLumaChange": 18.938167645525446,
+    "rootMeanSquareLumaChange": 37.74315298107889,
+    "note": "Raw pixel difference across active image, including contrast remapping and markers; not a perceptual metric."
+  },
+  {
+    "cover": "text",
+    "dotFraction": 0.5,
+    "encoding": "binary",
+    "meanAbsoluteLumaChange": 39.08992045885778,
+    "rootMeanSquareLumaChange": 86.68539508867451,
+    "note": "Raw pixel difference across active image, including contrast remapping and markers; not a perceptual metric."
+  },
+  {
+    "cover": "text",
+    "dotFraction": 0.5,
+    "encoding": "adaptive-gray",
+    "meanAbsoluteLumaChange": 25.566241873876173,
+    "rootMeanSquareLumaChange": 49.44765906256507,
+    "note": "Raw pixel difference across active image, including contrast remapping and markers; not a perceptual metric."
+  }
+]

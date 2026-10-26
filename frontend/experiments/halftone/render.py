@@ -50,7 +50,9 @@ def cover(kind):
     return image.point(lambda level: round(12.75 + 0.9 * level))
 
 
-def carrier(background, fraction, shape="circle", markers="all"):
+def carrier(background, fraction, shape="circle", markers="all", encoding="binary"):
+    if encoding not in ("binary", "adaptive-gray"):
+        raise ValueError("Unknown experimental encoding")
     image = Image.new("L", (size, size), 255)
     image.paste(background, (margin * tile, margin * tile))
     draw = ImageDraw.Draw(image)
@@ -76,7 +78,15 @@ def carrier(background, fraction, shape="circle", markers="all"):
                 controlled += tile * tile
             else:
                 for dx, dy in dot:
-                    image.putpixel((x + dx, y + dy), value)
+                    dot_value = value
+                    if encoding == "adaptive-gray":
+                        # Three physical tones, still one bit per module:
+                        # logical black -> gray; logical white -> either extreme.
+                        # The extreme can follow each original pixel, preserving
+                        # edges that run through a dot without a polarity map.
+                        original = background.getpixel((col * tile + dx, row * tile + dy))
+                        dot_value = 128 if fixture["matrix"][index] else (0 if original < 128 else 255)
+                    image.putpixel((x + dx, y + dy), dot_value)
                 controlled += len(dot)
     return image, controlled / (active * active)
 
@@ -128,19 +138,24 @@ def simulate(image, condition):
     return jpeg(image.resize((width, width), Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(.6)))
 
 
-manifest = {"sourcePixelsPerModule": tile, "assumedPrintDpi": 300,
-            "note": "Synthetic covers; simulations are not calibrated physical-print measurements.", "samples": []}
-for kind in ["image", "text"]:
-    background = cover(kind)
-    for fraction, markers in [(1/3, "all"), (1/2, "all"), (1, "all"), (1/3, "minimal"), (1/2, "minimal")]:
-        base, controlled = carrier(background, fraction, markers=markers)
-        label = ("full" if fraction == 1 else str(round(fraction * 100))) + ("-minimal" if markers == "minimal" else "")
-        base.save(directory / (kind + "-dots-" + label + ".png"))
-        for condition in ["clean", "photo", "small-photo", "perspective", "print-spread"]:
-            name = kind + "-" + label + "-" + condition
-            filename = name + ".png"
-            simulate(base, condition).save(directory / filename)
-            manifest["samples"].append({"name": name, "file": filename, "cover": kind,
-                "dotFraction": fraction, "markerStyle": markers, "controlledArea": round(controlled, 4), "condition": condition})
-(directory / "manifest.json").write_text(json.dumps(manifest, indent=2))
-print(json.dumps({"samples": len(manifest["samples"]), "size": size}))
+def main():
+    manifest = {"sourcePixelsPerModule": tile, "assumedPrintDpi": 300,
+                "note": "Synthetic covers; simulations are not calibrated physical-print measurements.", "samples": []}
+    for kind in ["image", "text"]:
+        background = cover(kind)
+        for fraction, markers in [(1/3, "all"), (1/2, "all"), (1, "all"), (1/3, "minimal"), (1/2, "minimal")]:
+            base, controlled = carrier(background, fraction, markers=markers)
+            label = ("full" if fraction == 1 else str(round(fraction * 100))) + ("-minimal" if markers == "minimal" else "")
+            base.save(directory / (kind + "-dots-" + label + ".png"))
+            for condition in ["clean", "photo", "small-photo", "perspective", "print-spread"]:
+                name = kind + "-" + label + "-" + condition
+                filename = name + ".png"
+                simulate(base, condition).save(directory / filename)
+                manifest["samples"].append({"name": name, "file": filename, "cover": kind,
+                    "dotFraction": fraction, "markerStyle": markers, "controlledArea": round(controlled, 4), "condition": condition})
+    (directory / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    print(json.dumps({"samples": len(manifest["samples"]), "size": size}))
+
+
+if __name__ == "__main__":
+    main()

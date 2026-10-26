@@ -1,0 +1,40 @@
+{
+  "total": 2,
+  "complete": true,
+  "results": [
+    {
+      "name": "pdf-page-2",
+      "file": "page-2.png",
+      "cover": "image",
+      "dotFraction": 0.5,
+      "markerStyle": "minimal",
+      "encoding": "adaptive-gray",
+      "condition": "pdf-render-300dpi",
+      "width": 2550,
+      "height": 3300,
+      "decoder": "experimental three-tone",
+      "payloadMatches": true,
+      "signatureValid": true,
+      "locatedCandidates": 2,
+      "attemptedGrids": 1,
+      "milliseconds": 766
+    },
+    {
+      "name": "pdf-page-3",
+      "file": "page-3.png",
+      "cover": "text",
+      "dotFraction": 0.3333333333333333,
+      "markerStyle": "minimal",
+      "encoding": "adaptive-gray",
+      "condition": "pdf-render-300dpi",
+      "width": 2550,
+      "height": 3300,
+      "decoder": "experimental three-tone",
+      "payloadMatches": false,
+      "signatureValid": false,
+      "locatedCandidates": 2,
+      "attemptedGrids": 12,
+      "milliseconds": 785
+    }
+  ]
+}

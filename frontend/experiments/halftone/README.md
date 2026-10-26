@@ -9,6 +9,10 @@ It is **not ready for production**: all dotted variants fail the tested projecti
 tilt, smaller dots are fragile, and dots disrupt fine text. No physical printer or
 phone camera has been tested.
 
+The subsequent [three-tone experiment](ADAPTIVE.md) lets black and white carry
+the same bit, selecting the closer color, while gray carries the other bit. It
+improves appearance but needs a custom reader and has additional print risks.
+
 ## Reproduce
 
 From `frontend`, after installing the project's Node dependencies:
