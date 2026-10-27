@@ -56,7 +56,7 @@ it("presents each account provider as a separate, consistently labelled, selecta
   expect(screen.queryByLabelText("Sealing method")).toBeNull();
   const offline = screen.getByRole("button", { name: "Private key (offline)" });
   expect(offline.getAttribute("aria-pressed")).toBe("true");
-  for (const [provider, details] of Object.entries(AUTH_PROVIDERS)) {
+  for (const details of Object.values(AUTH_PROVIDERS)) {
     expect(details.button).toMatch(/^Authenticate with (Google|Microsoft|Facebook|Amazon) login$/);
     const selection = screen.getByRole("button", { name: details.button });
     expect(selection.getAttribute("aria-pressed")).toBe("false");
