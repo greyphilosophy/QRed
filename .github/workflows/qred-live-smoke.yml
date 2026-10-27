@@ -79,3 +79,50 @@ jobs:
               sys.exit(1)
           print("LIVE SMOKE PASS: public pages and authentication endpoints respond as expected")
           PY
+
+      - name: Verify live Microsoft PKCE start, pending session, and cancellation
+        run: |
+          python - <<'PY'
+          import base64, http.cookiejar, json, urllib.request, urllib.parse, urllib.error
+          origin = "https://qred.org"
+          jar = http.cookiejar.CookieJar()
+          opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+          def post(path, body):
+              req = urllib.request.Request(origin + path, method="POST",
+                  data=json.dumps(body).encode("utf-8"),
+                  headers={"Origin": origin, "Content-Type": "application/json",
+                           "User-Agent": "QRed-Live-Smoke-GithubActions/1.0"})
+              try:
+                  with opener.open(req, timeout=15) as resp:
+                      return resp.status, json.loads(resp.read())
+              except urllib.error.HTTPError as exc:
+                  return exc.code, json.loads(exc.read())
+          synthetic_commitment = base64.urlsafe_b64encode(bytes(32)).decode("ascii").rstrip("=")
+          code, started = post("/api/auth/microsoft/start", {"commitments": [synthetic_commitment]})
+          if code != 200:
+              raise AssertionError(f"Microsoft start failed: HTTP {code}; error={started.get('error')!r}")
+          assert len(started["id"]) == 43 and len(started["secret"]) == 43
+          assert len(jar) > 0, "Expected short-lived authenticated session cookie"
+          assert all(cookie.secure for cookie in jar), "Session cookie must be secure"
+          url = urllib.parse.urlparse(started["authorize_url"])
+          q = urllib.parse.parse_qs(url.query)
+          assert url.scheme == "https" and url.hostname == "login.microsoftonline.com"
+          assert q["redirect_uri"] == [origin + "/api/auth/microsoft/callback"]
+          assert q["client_id"] == ["50e418de-6982-4d0f-a513-8c8139b4ea4f"]
+          assert q["response_type"] == ["code"]
+          assert q["code_challenge_method"] == ["S256"]
+          assert q["scope"] == ["openid email profile"]
+          assert len(q["code_challenge"][0]) == 43
+          print("Microsoft start: HTTP 200, correct Azure SPA client ID, redirect, PKCE S256, encrypted session cookie")
+          creds = {"id": started["id"], "secret": started["secret"]}
+          code, status = post("/api/auth/microsoft/status", creds)
+          assert code == 200 and status["status"] == "pending", (code, status)
+          print("Microsoft status: HTTP 200 pending, bound to original authenticated browser session")
+          code, result = post("/api/auth/microsoft/finish", creds)
+          assert code == 200 and result["finished"] is True, (code, result)
+          print("Microsoft finish: HTTP 200, cancelled cleanly")
+          code, result = post("/api/auth/microsoft/status", creds)
+          assert code == 403, (code, result)
+          print("Microsoft session after cancellation: HTTP 403; cookies were cleared; no document or sign-in credentials sent")
+          print("LIVE AUTH START/CANCEL SMOKE PASS")
+          PY
