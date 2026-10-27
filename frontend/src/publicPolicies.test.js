@@ -53,7 +53,7 @@ describe("public QRed policy and security pages", () => {
     expect(html).toContain("Microsoft");
     expect(svg).toContain("<title");
     expect(svg).toContain("<desc");
-    expect(svg).toContain("random page salts");
+    expect(svg).toContain("Keeps PDFs, text, and salts local");
     expect(svg).not.toMatch(/<script\b/i);
     expect(svg).not.toMatch(/<foreignObject\b/i);
   });
