@@ -51,8 +51,11 @@ async function exchange(url, options) {
     user_id: "browser-test-user", email: "browser.test@example.org", name: "Browser Test" });
   const params = provider === "meta" ? new URL(url).searchParams : options.body;
   const code = params.get("code"), grant = codes.get(code);
-  const challenge = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(params.get("code_verifier")))).toString("base64url");
-  if (!grant || grant.challenge !== challenge || params.get("client_id") !== "browser-test-client" ||
+  const challenge = provider === "meta" ? null :
+    Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(params.get("code_verifier")))).toString("base64url");
+  if (!grant || grant.challenge !== challenge ||
+      (provider === "meta" && params.has("code_verifier")) ||
+      params.get("client_id") !== "browser-test-client" ||
       (provider !== "microsoft" && params.get("client_secret") !== "synthetic-secret") ||
       (provider === "microsoft" && params.has("client_secret")) ||
       params.get("redirect_uri") !== origin + "/api/auth/" + provider + "/callback") return new Response("invalid_grant", { status: 400 });

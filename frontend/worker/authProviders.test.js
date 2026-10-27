@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
-import { authorizationUrl, exchangeIdentity, providerConfiguration, providerIdentity, validateMicrosoftSpaToken, verifyMetaAccessToken, verifyMetaIdToken, verifyMicrosoftIdToken } from "./authProviders.js";
+import { authorizationUrl, exchangeIdentity, providerConfiguration, providerIdentity, validateMicrosoftSpaToken, verifyMetaAccessToken, safeMetaErrorDetails, verifyMetaIdToken, verifyMicrosoftIdToken } from "./authProviders.js";
 import { allowedAuthorizationUrl } from "../src/authProviders.js";
 
 const now = Date.parse("2026-10-25T12:00:00Z"), seconds = now / 1000;
@@ -78,7 +78,7 @@ describe("standard Facebook Login access-token verification", () => {
         expect(params.get("client_id")).toBe(config.clientId);
         expect(params.get("client_secret")).toBe(config.clientSecret);
         expect(params.get("redirect_uri")).toBe("https://qred.test/api/auth/meta/callback");
-        expect(params.get("code_verifier")).toBe("verifier");
+        expect(params.has("code_verifier")).toBe(false);
         return changes.tokenHttpError ? new Response("error", { status: 403 }) :
           Response.json({ ...good, ...changes.token });
       }
@@ -183,7 +183,17 @@ it.each([
 ])("restricts %s authorization to its provider, code flow and PKCE", (provider, endpoint, scope) => {
   const url = new URL(authorizationUrl(provider, { clientId: "client", graphVersion: "v26.0" }, { origin: "https://qred.test", id: "state", nonce: "nonce", challenge: "challenge" }));
   expect(url.origin + url.pathname).toBe(endpoint);
-  expect(Object.fromEntries(url.searchParams)).toMatchObject({ scope, response_type: "code", code_challenge_method: "S256", code_challenge: "challenge", state: "state", redirect_uri: "https://qred.test/api/auth/" + provider + "/callback" });
+  expect(Object.fromEntries(url.searchParams)).toMatchObject({
+    scope, response_type: "code", state: "state", redirect_uri: "https://qred.test/api/auth/" + provider + "/callback",
+  });
+  if (provider === "meta") {
+    expect(url.searchParams.has("code_challenge")).toBe(false);
+    expect(url.searchParams.has("code_challenge_method")).toBe(false);
+    expect(url.searchParams.has("nonce")).toBe(false);
+  } else {
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(url.searchParams.get("code_challenge")).toBe("challenge");
+  }
   expect(allowedAuthorizationUrl(provider, url.href)).toBe(true);
   for (const other of ["https://attacker.example/", endpoint.replace("https:", "http:"), endpoint + "#credentials", endpoint.replace("https://", "https://attacker@")]) expect(allowedAuthorizationUrl(provider, other)).toBe(false);
 });
@@ -194,4 +204,41 @@ it("requires each provider's own configuration and bounds the Meta API version",
     .toMatchObject({ clientId: "public-client-id" });
   expect(providerConfiguration("meta", { QRED_META_APP_ID: "app", QRED_META_APP_SECRET: "secret", QRED_META_GRAPH_VERSION: "../v26.0" })).toBeNull();
   expect(providerConfiguration("toString", {})).toBeNull();
+});
+
+
+describe("redacted Meta token-exchange diagnostics", () => {
+  const config = { clientId: "facebook-app", clientSecret: "server-only-secret", graphVersion: "v26.0" };
+  const context = { code: "one-use-code", origin: "https://qred.test", pending: { pkce: "secret-local-verifier" }, now: () => now };
+  it("reports only Meta's numeric HTTP/error/subcode, not reflected credentials or free-form text", async () => {
+    const upstreamMessage = "Client secret server-only-secret, code one-use-code, do not show";
+    const exchange = exchangeIdentity("meta", config, {
+      ...context, fetchImpl: async () => Response.json({ error: { code: 100, error_subcode: 36008, message: upstreamMessage,
+        fbtrace_id: "MetaTraceSecretDoNotEcho" } }, { status: 400 }),
+    });
+    await expect(exchange).rejects.toThrow(/HTTP 400; Meta error 100; subcode 36008/);
+    await expect(exchange).rejects.not.toThrow(upstreamMessage);
+    expect(safeMetaErrorDetails(400, { error: { code: 100, error_subcode: 36008, message: upstreamMessage } }))
+      .toBe(" (HTTP 400; Meta error 100; subcode 36008)");
+  });
+  it("ignores provider-controlled strings, arrays and invalid numeric codes", () => {
+    expect(safeMetaErrorDetails(403, { error: { code: "100; secret", error_subcode: -3, message: "token" } }))
+      .toBe(" (HTTP 403)");
+    expect(safeMetaErrorDetails(999, { error: { code: 100000000000 } })).toBe("");
+  });
+  it("fails without exposing network errors or malformed upstream responses", async () => {
+    for (const fetchImpl of [
+      async () => { throw new Error("leaked client_secret server-only-secret"); },
+      async () => new Response("private token=secret", { status: 400 }),
+    ]) {
+      try {
+        await exchangeIdentity("meta", config, { ...context, fetchImpl });
+        throw new Error("Expected a failure");
+      } catch (error) {
+        expect(error.message).toContain("Facebook rejected QRed's login code exchange");
+        expect(error.message).not.toContain("server-only-secret");
+        expect(error.message).not.toContain("private token");
+      }
+    }
+  });
 });

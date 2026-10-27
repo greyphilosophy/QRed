@@ -68,3 +68,66 @@ it("removes the complete comparison when verification becomes invalid", async ()
   expect(screen.queryByRole("region")).toBeNull();
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:reference-photo");
 });
+
+
+
+it("keeps a manually chosen full-page image when a later QR capture replaces the automatic scan", async () => {
+  // The captured QR footer is only 432 pixels tall; the user's page photo
+  // contains the entire 2016-pixel legal-size printed page.
+  const fullPage = new File(["full page"], "printed-full-page.png", { type: "image/png" });
+  const replacement = { ...capture, id: 2, file: new File(["later scan"], "seal-later.png", { type: "image/png" }) };
+  photo.open.mockImplementation(async file =>
+    file === fullPage ? { width: 1224, height: 2016 } : { width: 1224, height: 432 });
+  photo.preview.mockImplementation(async canvas => "blob:photo-height-" + canvas.height);
+
+  const view = render(<PageEvidenceVerification results={[page]} scanPhotos={[capture]} />);
+  const selected = () => screen.getByRole("img", { name: "Page photo beside the signed visual reference" });
+  await waitFor(() => expect(selected().getAttribute("src")).toBe("blob:photo-height-432"));
+  fireEvent.change(screen.getByLabelText("Choose visual comparison photo"), {
+    target: { files: [fullPage] },
+  });
+  await waitFor(() => expect(selected().getAttribute("src")).toBe("blob:photo-height-2016"));
+  expect(photo.open).toHaveBeenCalledTimes(2);
+
+  // A late asynchronous capture ID change must not override the user's choice.
+  view.rerender(<PageEvidenceVerification results={[page]} scanPhotos={[replacement]} />);
+  await act(async () => {});
+  expect(photo.open).toHaveBeenCalledTimes(2);
+  expect(selected().getAttribute("src")).toBe("blob:photo-height-2016");
+});
+
+it("does not let a pending QR footer decode overwrite a manually chosen full-page photo", async () => {
+  let finishCapture;
+  const fullPage = new File(["full page"], "printed-full-page.png", { type: "image/png" });
+  photo.open.mockImplementation(file => file === capture.file
+    ? new Promise(resolve => { finishCapture = resolve; })
+    : Promise.resolve({ width: 1224, height: 2016 }));
+  photo.preview.mockImplementation(async canvas => "blob:photo-height-" + canvas.height);
+
+  render(<PageEvidenceVerification results={[page]} scanPhotos={[capture]} />);
+  await waitFor(() => expect(photo.open).toHaveBeenCalledWith(capture.file));
+  fireEvent.change(screen.getByLabelText("Choose visual comparison photo"), {
+    target: { files: [fullPage] },
+  });
+  const selected = () => screen.getByRole("img", { name: "Page photo beside the signed visual reference" });
+  await waitFor(() => expect(selected().getAttribute("src")).toBe("blob:photo-height-2016"));
+  await act(async () => finishCapture({ width: 1224, height: 432 }));
+  expect(selected().getAttribute("src")).toBe("blob:photo-height-2016");
+});
+
+it("does not replace an explicitly selected page photo when the first scan arrives afterward", async () => {
+  const fullPage = new File(["full page"], "printed-full-page.png", { type: "image/png" });
+  photo.open.mockResolvedValue({ width: 1224, height: 2016 });
+  photo.preview.mockResolvedValue("blob:whole-page");
+  const view = render(<PageEvidenceVerification results={[page]} scanPhotos={[]} />);
+  fireEvent.change(screen.getByLabelText("Choose visual comparison photo"), {
+    target: { files: [fullPage] },
+  });
+  await screen.findByRole("img", { name: "Page photo beside the signed visual reference" });
+  expect(photo.open).toHaveBeenCalledTimes(1);
+  view.rerender(<PageEvidenceVerification results={[page]} scanPhotos={[capture]} />);
+  await act(async () => {});
+  expect(photo.open).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("img", { name: "Page photo beside the signed visual reference" }).getAttribute("src"))
+    .toBe("blob:whole-page");
+});

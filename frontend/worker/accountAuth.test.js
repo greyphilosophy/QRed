@@ -52,7 +52,13 @@ function fixture(provider) {
     expect(params.get("client_id")).toBe(provider + "-client");
     expect(params.get("client_secret")).toBe(provider + "-secret");
     expect(params.get("redirect_uri")).toBe(origin + "/api/auth/" + provider + "/callback");
-    expect(encodeBase64Url(await sha256(utf8.encode(params.get("code_verifier"))))).toBe(authorization.searchParams.get("code_challenge"));
+    if (provider === "meta") {
+      expect(params.has("code_verifier")).toBe(false);
+      expect(authorization.searchParams.has("code_challenge")).toBe(false);
+    } else {
+      expect(encodeBase64Url(await sha256(utf8.encode(params.get("code_verifier")))))
+        .toBe(authorization.searchParams.get("code_challenge"));
+    }
     idTokenClaims = { name: "Profile Name", email: "user@gmail.com", email_verified: true, sub: "account-user", tid: tenant,
       nonce: authorization.searchParams.get("nonce"), iat: epoch / 1000 };
     return Response.json(provider === "amazon" ? { access_token: "opaque-amazon-token", token_type: "bearer", expires_in: 3600 } :
