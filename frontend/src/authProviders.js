@@ -1,9 +1,9 @@
 // Provider IDs are part of the signed v4 identity; never reuse an assigned ID.
 export const AUTH_PROVIDERS = Object.freeze({
-  google: { id: 1, label: "Google", button: "Sign in with Google" },
-  microsoft: { id: 2, label: "Microsoft", button: "Sign in with Microsoft" },
-  meta: { id: 3, label: "Facebook (Meta)", button: "Continue with Facebook" },
-  amazon: { id: 4, label: "Amazon", button: "Login with Amazon" },
+  google: { id: 1, label: "Google", button: "Authenticate with Google login" },
+  microsoft: { id: 2, label: "Microsoft", button: "Authenticate with Microsoft login" },
+  meta: { id: 3, label: "Facebook (Meta)", button: "Authenticate with Facebook login" },
+  amazon: { id: 4, label: "Amazon", button: "Authenticate with Amazon login" },
 });
 
 export function authProvider(name) {
