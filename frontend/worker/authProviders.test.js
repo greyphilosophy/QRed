@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
-import { authorizationUrl, exchangeIdentity, providerConfiguration, providerIdentity, verifyMetaIdToken, verifyMicrosoftIdToken } from "./authProviders.js";
+import { authorizationUrl, exchangeIdentity, providerConfiguration, providerIdentity, validateMicrosoftSpaToken, verifyMetaIdToken, verifyMicrosoftIdToken } from "./authProviders.js";
 import { allowedAuthorizationUrl } from "../src/authProviders.js";
 
 const now = Date.parse("2026-10-25T12:00:00Z"), seconds = now / 1000;
@@ -35,11 +35,17 @@ describe.each(["microsoft", "meta"])("%s identity tokens", provider => {
   });
   it("checks the nonce and token issuance against the pending request during exchange", async () => {
     for (const change of [{ nonce: "different-request" }, { iat: seconds - 31 }]) {
-      await expect(exchangeIdentity(provider, { clientId: "test-client", clientSecret: "secret", graphVersion: "v26.0" }, {
-        code: "code", origin: "https://qred.test", pending: { nonce: "nonce", pkce: "verifier", iat: seconds }, now: () => now,
-        fetchImpl: async () => Response.json({ id_token: await token({ ...claims(provider), ...change }) }),
-        verifyTokens: { [provider]: (value, client, time) => verify[provider](value, client, time, keys) },
-      })).rejects.toThrow();
+      const idToken = await token({ ...claims(provider), ...change });
+      const verifier = { [provider]: (value, client, time) => verify[provider](value, client, time, keys) };
+      if (provider === "microsoft") {
+        await expect(validateMicrosoftSpaToken(idToken, { clientId: "test-client" },
+          { nonce: "nonce", iat: seconds }, () => now, verifier)).rejects.toThrow();
+      } else {
+        await expect(exchangeIdentity(provider, { clientId: "test-client", clientSecret: "secret", graphVersion: "v26.0" }, {
+          code: "code", origin: "https://qred.test", pending: { nonce: "nonce", pkce: "verifier", iat: seconds }, now: () => now,
+          fetchImpl: async () => Response.json({ id_token: idToken }), verifyTokens: verifier,
+        })).rejects.toThrow();
+      }
     }
   });
 });
@@ -124,6 +130,8 @@ it.each([
 
 it("requires each provider's own configuration and bounds the Meta API version", () => {
   expect(providerConfiguration("microsoft", { QRED_GOOGLE_CLIENT_ID: "google", QRED_GOOGLE_CLIENT_SECRET: "secret" })).toBeNull();
+  expect(providerConfiguration("microsoft", { QRED_MICROSOFT_CLIENT_ID: "public-client-id" }))
+    .toMatchObject({ clientId: "public-client-id" });
   expect(providerConfiguration("meta", { QRED_META_APP_ID: "app", QRED_META_APP_SECRET: "secret", QRED_META_GRAPH_VERSION: "../v26.0" })).toBeNull();
   expect(providerConfiguration("toString", {})).toBeNull();
 });
