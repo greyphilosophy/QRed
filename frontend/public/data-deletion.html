@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="How to request deletion, disconnect an identity provider, and understand what QRed can and cannot remove.">
+  <title>User Data Deletion | QRed</title>
+  <link rel="stylesheet" href="/legal.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><nav class="nav-shell" aria-label="Primary">
+  <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">Q</span>QRed</a>
+  <div class="site-nav"><a href="/">Home</a><a href="/verify.htm">Verifier</a><a href="/privacy.html">Privacy</a>
+<a href="/data-deletion.html" aria-current="page">Data deletion</a>
+<a href="/terms.html">Terms</a>
+<a href="/security.html">Security & architecture</a></div>
+</nav></header>
+<main id="main" class="content">
+  <p class="kicker">Account & data controls</p>
+  <h1>User Data Deletion</h1>
+  <p class="lead">How to request deletion, disconnect an identity provider, and understand what QRed can and cannot remove.</p>
+  <p class="meta">Last updated: October 26, 2026</p>
+  
+<section aria-labelledby="d1"><h2 id="d1">1. Request deletion or ask what QRed holds</h2>
+<p>Email <a class="contact" href="mailto:greyphilosophy@gmail.com">greyphilosophy@gmail.com</a> with the subject <strong>QRed data deletion request</strong>. Tell us the identity provider you used (if any), the account email, and approximately when you signed in. We may need to confirm that the request relates to your account before disclosing or changing account-related information.</p>
+<p><strong>Do not send PDFs, document contents, passwords, access tokens, or signing keys.</strong> We will review the request and explain what data, if any, is under QRed's control and what may be retained by hosting or identity providers. We cannot promise to erase material we do not possess or control.</p></section>
+<section aria-labelledby="d2"><h2 id="d2">2. What QRed stores</h2>
+<p>The current QRed app has no server database of uploaded user documents or registered user accounts. Browser-based sealing and verification process selected PDFs and images locally. Account-backed sealing creates an encrypted, <strong>approximately ten-minute</strong> browser-cookie session. QRed's Worker does not maintain a permanent sign-in record for that session.</p>
+<p>Cloudflare or identity providers may process and retain separate security and operational logs. Their deletion procedures and retention limits are not the same as QRed's temporary application cookies.</p></section>
+<section aria-labelledby="d3"><h2 id="d3">3. Actions you can take now</h2>
+<ol>
+<li><strong>Cancel or complete an in-progress QRed sign-in.</strong> QRed attempts to clear associated short-lived session cookies. Sessions also expire automatically.</li>
+<li><strong>Clear QRed site data</strong> in your browser if you want to remove QRed cookies and cached site resources on that device. Deleting local documents and files you saved remains your responsibility.</li>
+<li><strong>Remove QRed's authorization at the identity provider</strong>, if shown in that provider's connected-app settings (for Facebook, see its <em>Apps and Websites</em> settings). This affects provider permissions and future sign-in; it does not withdraw an already issued seal.</li>
+<li><strong>Contact QRed</strong> at the address above if you want us to review any available records under our control.</li>
+</ol></section>
+<section aria-labelledby="d4"><h2 id="d4">4. Distributed documents and irrevocable copies</h2>
+<p>QRed does not centrally host completed seals. When you print, email, save, or distribute a sealed document, recipients may possess a copy containing embedded signed content and account identity details. QRed <strong>cannot remotely erase or revoke every copy</strong>, nor can deleting a provider connection undo a previously valid signature.</p>
+<p>If you need removal from a recipient's system, contact that recipient or the operator of the relevant records repository directly.</p></section>
+<section aria-labelledby="d5"><h2 id="d5">5. Further details</h2>
+<p>See the <a href="/privacy.html">Privacy Policy</a> for data categories and the <a href="/security.html">Security &amp; architecture</a> page for a data-flow diagram. These instructions are public and do not require a QRed login.</p></section>
+</main>
+<footer class="site-footer">
+  <p>QRed · Tamper-evident document sealing and verification</p>
+  <p><a href="/">Home</a><a href="/privacy.html">Privacy</a><a href="/data-deletion.html">Data deletion</a><a href="/terms.html">Terms</a><a href="/security.html">Security</a></p>
+  <p>Questions? <a class="contact" href="mailto:greyphilosophy@gmail.com">greyphilosophy@gmail.com</a></p>
+</footer>
+</body></html>
