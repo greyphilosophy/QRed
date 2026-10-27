@@ -126,3 +126,70 @@ jobs:
           print("Microsoft session after cancellation: HTTP 403; cookies were cleared; no document or sign-in credentials sent")
           print("LIVE AUTH START/CANCEL SMOKE PASS")
           PY
+
+      - name: Verify newly published Meta policy pages and network diagram
+        run: |
+          python - <<'PY'
+          import sys, urllib.request, urllib.error
+          from html.parser import HTMLParser
+
+          base = "https://qred.org"
+          pages = {
+              "/privacy.html": "Privacy Policy",
+              "/data-deletion.html": "User Data Deletion",
+              "/terms.html": "Terms of Service",
+              "/security.html": "Security & Architecture",
+          }
+          failures = []
+          class PageScanner(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.title = False
+                  self.title_text = ""
+                  self.links = set()
+              def handle_starttag(self, tag, attrs):
+                  data = dict(attrs)
+                  if tag == "title": self.title = True
+                  if tag == "a" and data.get("href"): self.links.add(data["href"])
+              def handle_endtag(self, tag):
+                  if tag == "title": self.title = False
+              def handle_data(self, data):
+                  if self.title: self.title_text += data
+
+          for path, title in pages.items():
+              url = base + path
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "QRed-policy-live-smoke/1.0"}), timeout=15) as r:
+                      status, kind, content = r.status, r.headers.get("Content-Type", ""), r.read(200000).decode("utf-8", "replace")
+                  scan = PageScanner()
+                  scan.feed(content)
+                  links_ok = all(p in scan.links for p in pages)
+                  ok = status == 200 and "text/html" in kind and title in scan.title_text and links_ok
+                  print(f"{path}: HTTP {status} | title={scan.title_text!r} | links={links_ok} | {'PASS' if ok else 'FAIL'}")
+                  if not ok: failures.append(path)
+                  if path == "/security.html" and 'src="/qred-network-data-flow.svg"' not in content:
+                      failures.append("security diagram inclusion missing")
+                  if path == "/data-deletion.html" and "greyphilosophy@gmail.com" not in content:
+                      failures.append("Meta data-deletion contact missing")
+              except Exception as exc:
+                  print(f"{path}: ERROR {type(exc).__name__}: {exc}")
+                  failures.append(path)
+
+          for path, marker, mime in [
+              ("/qred-network-data-flow.svg", "<svg", "image/svg+xml"),
+              ("/legal.css", ".site-header", "text/css"),
+          ]:
+              try:
+                  with urllib.request.urlopen(base+path, timeout=15) as r:
+                      status, kind, content = r.status, r.headers.get("content-type",""), r.read(100000).decode("utf-8","replace")
+                  ok = status == 200 and mime in kind and marker in content
+                  print(f"{path}: HTTP {status} | type={kind} | {'PASS' if ok else 'FAIL'}")
+                  if not ok: failures.append(path)
+              except Exception as exc:
+                  print(f"{path}: ERROR {type(exc).__name__}: {exc}")
+                  failures.append(path)
+          if failures:
+              print("LIVE POLICY TEST FAILURES:", failures)
+              sys.exit(1)
+          print("LIVE POLICY PAGES AND DIAGRAM: PASS")
+          PY
