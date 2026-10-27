@@ -33,6 +33,18 @@ function fixture(provider) {
   };
   const cookie = () => [...jar].map(([key, value]) => key + "=" + value).join("; ");
   const exchange = vi.fn(async (url, options) => {
+    if (provider === "meta" && url.startsWith("https://graph.facebook.com/v26.0/debug_token?")) {
+      const query = new URL(url).searchParams;
+      expect(query.get("input_token")).toBe("opaque-meta-token");
+      expect(query.get("access_token")).toBe("meta-client|meta-secret");
+      return Response.json({ data: { app_id: "meta-client", user_id: "1234567890",
+        is_valid: true, type: "USER", expires_at: epoch / 1000 + 3600, scopes: ["email"] } });
+    }
+    if (provider === "meta" && url.startsWith("https://graph.facebook.com/v26.0/me?")) {
+      expect(options.headers.Authorization).toBe("Bearer opaque-meta-token");
+      expect(new URL(url).searchParams.get("appsecret_proof")).toMatch(/^[0-9a-f]{64}$/);
+      return Response.json({ id: "1234567890", name: "Profile Name", email: "user@gmail.com" });
+    }
     if (url.startsWith("https://api.amazon.com/auth/o2/tokeninfo?")) return Response.json({
       iss: "https://www.amazon.com", aud: "amazon-client", user_id: "amazon-user", exp: 3599 });
     if (url === "https://api.amazon.com/user/profile") return Response.json({ user_id: "amazon-user", name: "Amazon Profile", email: "user@example.org" });
@@ -43,7 +55,9 @@ function fixture(provider) {
     expect(encodeBase64Url(await sha256(utf8.encode(params.get("code_verifier"))))).toBe(authorization.searchParams.get("code_challenge"));
     idTokenClaims = { name: "Profile Name", email: "user@gmail.com", email_verified: true, sub: "account-user", tid: tenant,
       nonce: authorization.searchParams.get("nonce"), iat: epoch / 1000 };
-    return Response.json(provider === "amazon" ? { access_token: "opaque-amazon-token", token_type: "bearer", expires_in: 3600 } : { id_token: "synthetic-id-token" });
+    return Response.json(provider === "amazon" ? { access_token: "opaque-amazon-token", token_type: "bearer", expires_in: 3600 } :
+      provider === "meta" ? { access_token: "opaque-meta-token", token_type: "bearer", expires_in: 3600 } :
+      { id_token: "synthetic-id-token" });
   });
   const handle = (request, config = env) => createAccountAuth({ fetchImpl: exchange, trusted, now: () => epoch,
     verifyTokens: { [provider]: async () => idTokenClaims } })(request, config);
@@ -183,4 +197,18 @@ it("rejects Microsoft SPA completion without the authenticated pending cookie", 
   const status = await (await flow.post("/api/auth/microsoft/status", { id: session.id, secret: session.secret })).json();
   expect(status.status).toBe("failed");
   expect(flow.exchange).not.toHaveBeenCalled();
+});
+
+
+it("does not expose Facebook Graph access tokens in authenticated session status", async () => {
+  const flow = fixture("meta");
+  // This check exercises callback error propagation without disclosing the
+  // OAuth code or Graph access token to the browser response.
+  const started = await (await flow.post("/api/auth/meta/start", { commitments: [fingerprint] })).json();
+  const result = await flow.login(started);
+  expect(result.status).toBe(200); // Error callback page is intentionally HTTP 200.
+  const status = await (await flow.post("/api/auth/meta/status", { id: started.id, secret: started.secret })).json();
+  expect(status.status).toBe("ready");
+  expect(JSON.stringify(status)).not.toContain("opaque-meta-token");
+  expect(JSON.stringify(status)).not.toContain("one-use-code");
 });
