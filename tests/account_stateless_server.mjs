@@ -36,14 +36,14 @@ async function exchange(url, options) {
       return new Response("Invalid Meta token", { status: 403 });
     }
     return Response.json({ data: { is_valid: true, app_id: "browser-test-client", type: "USER",
-      user_id: "browser-test-user", expires_at: Math.floor(Date.now() / 1000) + 3600, scopes: ["email"] } });
+      user_id: "1234567890123", expires_at: Math.floor(Date.now() / 1000) + 3600, scopes: ["email"] } });
   }
   if (provider === "meta" && url.startsWith("https://graph.facebook.com/v26.0/me?")) {
     const params = new URL(url).searchParams;
     if (options.headers.Authorization !== "Bearer synthetic-meta-token" || !/^[0-9a-f]{64}$/.test(params.get("appsecret_proof") || "")) {
       return new Response("Invalid Meta profile proof", { status: 403 });
     }
-    return Response.json({ id: "browser-test-user", email: "browser.test@example.org", name: "Browser Test" });
+    return Response.json({ id: "1234567890123", email: "browser.test@example.org", name: "Browser Test" });
   }
   if (provider === "amazon" && url.startsWith("https://api.amazon.com/auth/o2/tokeninfo?")) return Response.json({
     iss: "https://www.amazon.com", aud: "browser-test-client", user_id: "browser-test-user", exp: 3599 });
