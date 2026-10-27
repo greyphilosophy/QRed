@@ -5,7 +5,8 @@ import { cookieSessions, SESSION_SECONDS } from "./accountSession.js";
 
 import { AUTH_PROVIDERS, authProvider } from "../src/authProviders.js";
 import { RequestError } from "./authErrors.js";
-import { authorizationUrl, exchangeIdentity, providerConfiguration } from "./authProviders.js";
+import { authorizationUrl, exchangeIdentity, providerConfiguration, validateMicrosoftSpaToken } from "./authProviders.js";
+import { microsoftSpaCallbackPage } from "./microsoftSpaCallback.js";
 
 let cachedSigningKey;
 const random = () => encodeBase64Url(crypto.getRandomValues(new Uint8Array(32)));
@@ -32,7 +33,7 @@ async function commitmentDigest(commitments) {
   return hash(JSON.stringify(commitments));
 }
 
-async function readJson(request) {
+async function readJson(request, maxSize = 16384) {
   if (request.headers.get("Content-Type")?.split(";")[0] !== "application/json" || !request.body) throw new RequestError("Expected a JSON request");
   const reader = request.body.getReader();
   const chunks = []; let size = 0;
@@ -40,7 +41,7 @@ async function readJson(request) {
     const { done, value } = await reader.read();
     if (done) break;
     size += value.length;
-    if (size > 16384) { await reader.cancel(); throw new RequestError("Request is too large", 413); }
+    if (size > maxSize) { await reader.cancel(); throw new RequestError("Request is too large", 413); }
     chunks.push(value);
   }
   try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(concatenate(chunks))); }
@@ -94,7 +95,7 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
     if (path === "/api/auth/config" && request.method === "GET") {
       return json(Object.fromEntries(Object.keys(AUTH_PROVIDERS).map(provider => [provider, configured(provider, env)])));
     }
-    const authRoute = path.match(/^\/api\/auth\/([a-z]+)\/(start|callback|status|finish)$/);
+    const authRoute = path.match(/^\/api\/auth\/([a-z]+)\/(start|callback|status|finish|complete)$/);
     const attestRoute = path.match(/^\/api\/attest\/([a-z]+)$/);
     const provider = authRoute?.[1] || attestRoute?.[1];
     const action = authRoute?.[2] || (attestRoute ? "attest" : null);
@@ -118,6 +119,13 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
       if (!pending) throw new RequestError("Return to the browser where you started signing in, or start again.", 403);
       if (pending.status === "failed") return callbackPage(id, origin, false);
       if (pending.status !== "pending") throw new RequestError("Invalid sign-in request", 403);
+      // The Microsoft SPA must redeem its PKCE code from the browser so Azure
+      // sends an Origin header. A confidential Worker exchange is not supported
+      // for a redirect URI registered as Single-page application.
+      if (provider === "microsoft" && !url.searchParams.has("error")) {
+        const code = url.searchParams.get("code");
+        if (code && code.length <= 4096) return microsoftSpaCallbackPage({ id, code, verifier: pending.pkce, clientId: config.clientId, origin });
+      }
       try {
         const code = url.searchParams.get("code");
         if (url.searchParams.has("error") || !code || code.length > 4096) throw new RequestError("Sign-in was cancelled. You can try again.");
@@ -142,8 +150,40 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
     }
     if (request.method !== "POST") throw new RequestError("Method not allowed", 405);
     if (request.headers.get("Origin") !== origin) throw new RequestError("Invalid request origin", 403);
-    const body = await readJson(request);
+    const body = await readJson(request, action === "complete" ? 20480 : 16384);
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new RequestError("Invalid request");
+    if (action === "complete") {
+      if (provider !== "microsoft") throw new RequestError("Unknown endpoint", 404);
+      onlyFields(body, ["id", "id_token", "error"]);
+      if (typeof body.id !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(body.id)) throw new RequestError("Invalid sign-in request", 403);
+      // An already completed session cannot be replaced or extended by a
+      // duplicate code callback, including a failure arriving out of order.
+      const completed = await readSession(body.id, "receipt");
+      if (completed?.status === "ready") return json({ status: "ready" });
+      const pending = await readSession(body.id, "request");
+      if (!pending || pending.status !== "pending") throw new RequestError("Sign-in request expired or already completed", 403);
+      const fail = async () => json({ error: "Microsoft sign-in could not be completed or verified. Please try again." }, 403,
+        cookieHeaders([await sessions.write(body.id, "request", {
+          status: "failed", secret_hash: pending.secret_hash, error: "Microsoft sign-in could not be completed or verified. Please try again.",
+          iat: pending.iat, exp: pending.exp,
+        })]));
+      if (body.error !== undefined) {
+        if (body.error !== "failed" || body.id_token !== undefined) throw new RequestError("Invalid sign-in response", 403);
+        return fail();
+      }
+      try {
+        const authenticated = await validateMicrosoftSpaToken(body.id_token, config, pending, now, verifyTokens);
+        const time = now();
+        if (Math.floor(time / 1000) >= pending.exp) return fail();
+        const receipt = { status: "ready", secret_hash: pending.secret_hash, commitments_hash: pending.commitments_hash,
+          identity: authenticated.identity, issued_at: new Date(time).toISOString(), provider_iat: authenticated.provider_iat,
+          iat: Math.floor(time / 1000), exp: pending.exp };
+        return json({ status: "ready" }, 200, cookieHeaders([
+          await sessions.write(body.id, "receipt", receipt), sessions.clear(body.id, "request"),
+        ]));
+      } catch { return fail(); }
+    }
+
     if (action === "start") {
       onlyFields(body, ["commitments"]);
       const commitmentsHash = await commitmentDigest(body.commitments);

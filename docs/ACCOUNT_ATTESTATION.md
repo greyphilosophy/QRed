@@ -21,12 +21,12 @@ The verifier names the provider. Microsoft, Facebook, and Amazon seals explicitl
 
 Keep the existing `QRED_ORIGIN`, `QRED_ATTESTATION_KEY_ID`, and secret `QRED_ATTESTATION_PRIVATE_KEY`. The corresponding authority public key must already be in `frontend/src/trustedAuthorities.json`. **Do not create a new authority key for each provider.** Independent installations should follow the authority-key instructions in [Google attestation setup](GOOGLE_ATTESTATION.md).
 
-Add the following public settings to the Wrangler configuration used by your deployment. This repository has root and frontend configurations; keep their values consistent. Add client secrets to the deployed Worker's **Variables and Secrets** as encrypted secrets, or use `wrangler secret put NAME` from the corresponding project directory. Do not put secrets in Wrangler `vars`, source control, `VITE_*` variables, frontend code, or this guide.
+Add the following public settings to the Wrangler configuration used by your deployment. This repository has root and frontend configurations; keep their values consistent. Microsoft needs only its public application ID and a **Single-page application** redirect registered in Azure; do not create a Microsoft client secret. Google, Meta, and Amazon still require encrypted client secrets in the deployed Worker's **Variables and Secrets**, or through `wrangler secret put NAME` from the corresponding project directory. Do not put secrets in Wrangler `vars`, source control, `VITE_*` variables, frontend code, or this guide.
 
 | Method | Public setting | Encrypted secret | Exact callback URI for qred.org |
 | --- | --- | --- | --- |
 | Google (existing) | `QRED_GOOGLE_CLIENT_ID` | `QRED_GOOGLE_CLIENT_SECRET` | `https://qred.org/api/auth/google/callback` |
-| Microsoft | `QRED_MICROSOFT_CLIENT_ID` | `QRED_MICROSOFT_CLIENT_SECRET` | `https://qred.org/api/auth/microsoft/callback` |
+| Microsoft | `QRED_MICROSOFT_CLIENT_ID` | None — browser PKCE | `https://qred.org/api/auth/microsoft/callback` |
 | Facebook (Meta) | `QRED_META_APP_ID` | `QRED_META_APP_SECRET` | `https://qred.org/api/auth/meta/callback` |
 | Amazon | `QRED_AMAZON_CLIENT_ID` | `QRED_AMAZON_CLIENT_SECRET` | `https://qred.org/api/auth/amazon/callback` |
 
@@ -35,8 +35,8 @@ Meta also uses `QRED_META_GRAPH_VERSION`, initially `v26.0`. Match it to a versi
 ### Microsoft
 
 1. In the [Microsoft Entra admin center](https://entra.microsoft.com/), register an application. For QRed's intended audience, choose accounts in any organizational directory **and personal Microsoft accounts**.
-2. Add a **Web** platform with the exact Microsoft callback above. This is a confidential server code flow, not a browser-only SPA or implicit flow.
-3. Create a client secret. Copy its **value**, not the secret ID, into `QRED_MICROSOFT_CLIENT_SECRET`. Put the Application (client) ID in `QRED_MICROSOFT_CLIENT_ID`. Record the secret's expiration so it can be rotated.
+2. Under **Authentication**, remove the existing **Web** redirect URI if it uses the Microsoft callback above. Add **Single-page application** as the platform with the **exact same callback URL**. The URI must be registered under SPA for Microsoft's token endpoint to permit a browser CORS request. Do not enable implicit/hybrid ID-token or access-token grants.
+3. Copy the public **Application (client) ID** into `QRED_MICROSOFT_CLIENT_ID` (both Wrangler configurations or the matching deployment variable). **Do not generate a client secret**: the authorization-code exchange uses PKCE in the callback window, while QRed's Worker validates the resulting Microsoft-signed ID token and binds it to the encrypted, document-specific session. This change removes routine Microsoft client-secret rotation.
 4. Configure branding, homepage, privacy information, publisher details, and consent as required by the portal. QRed requests only `openid email profile`; it does not call Microsoft Graph, request mail access, or request `offline_access`. Organization policies may still require an administrator's consent or prohibit the app.
 5. Test both a personal account and an allowed work/school account. Some Microsoft accounts do not supply an email claim; those accounts cannot seal through this method.
 
@@ -65,7 +65,9 @@ References: [security profiles](https://developer.amazon.com/docs/login-with-ama
 
 The [stateless Google protocol](GOOGLE_ATTESTATION.md#stateless-sign-in-and-document-binding) now has a shared implementation in `frontend/worker/accountAuth.js`, `accountSession.js`, and `authProviders.js`. Existing Google entry points remain thin compatibility wrappers.
 
-Each provider has its own `/api/auth/{provider}/start`, `callback`, `status`, and `finish` routes and `/api/attest/{provider}` route. The start request fixes the ordered page commitments before login. PKCE, random state, an encrypted HttpOnly pending cookie, and a separate in-memory browser secret bind the flow to that browser and document. The ten-minute cookie expiration is fixed at start; retries cannot renew it or change the identity, page commitments, or server timestamp. Each request can use a fresh Worker instance.
+Each provider has its own `/api/auth/{provider}/start`, `callback`, `status`, and `finish` routes and `/api/attest/{provider}` route. Microsoft additionally has a POST `/api/auth/microsoft/complete` endpoint for its SPA token handoff. The start request fixes the ordered page commitments before login. PKCE, random state, an encrypted HttpOnly pending cookie, and a separate in-memory browser secret bind the flow to that browser and document. The ten-minute cookie expiration is fixed at start; retries cannot renew it or change the identity, page commitments, or server timestamp. Each request can use a fresh Worker instance.
+
+Microsoft receives the one-time PKCE verifier and client ID in a nonce-protected, no-store, same-origin callback page, after the Worker validates the state and pending encrypted cookie. The callback redeems the authorization code directly against Microsoft's CORS-enabled SPA token endpoint and posts **only the ID token** back to QRed's Worker. The Worker checks the ID token signature, audience, issuer, nonce, issuance time and account identity before issuing an attestation receipt. No Microsoft refresh/access token or client secret is kept by QRed. The callback page requires a strict CSP, does not use storage, and strips the one-time authorization code from its address bar.
 
 Provider, client ID, origin, and authority key bind the encrypted sessions. New providers also have distinct cookie-name prefixes, so their cleanup requests cannot clear another provider's session. Renaming a cookie cannot defeat its encryption binding. The callback never accepts a provider or account identity supplied by the browser. Authorization and exchange URLs are fixed allowlists, and server-side provider requests reject redirects. Failure after authentication cannot replace a successful receipt with a new identity.
 

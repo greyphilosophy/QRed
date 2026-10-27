@@ -22,7 +22,7 @@ const seed = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
 const keyId = "da522162396ab2d0";
 const trusted = { [keyId]: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q" };
 const env = { QRED_ORIGIN: origin, QRED_GOOGLE_CLIENT_ID: "browser-test-client", QRED_GOOGLE_CLIENT_SECRET: "synthetic-secret",
-  QRED_MICROSOFT_CLIENT_ID: "browser-test-client", QRED_MICROSOFT_CLIENT_SECRET: "synthetic-secret",
+  QRED_MICROSOFT_CLIENT_ID: "browser-test-client",
   QRED_META_APP_ID: "browser-test-client", QRED_META_APP_SECRET: "synthetic-secret",
   QRED_AMAZON_CLIENT_ID: "browser-test-client", QRED_AMAZON_CLIENT_SECRET: "synthetic-secret",
   QRED_ATTESTATION_PRIVATE_KEY: seed, QRED_ATTESTATION_KEY_ID: keyId };
@@ -38,7 +38,9 @@ async function exchange(url, options) {
   const code = params.get("code"), grant = codes.get(code);
   const challenge = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(params.get("code_verifier")))).toString("base64url");
   if (!grant || grant.challenge !== challenge || params.get("client_id") !== "browser-test-client" ||
-      params.get("client_secret") !== "synthetic-secret" || params.get("redirect_uri") !== origin + "/api/auth/" + provider + "/callback") return new Response("invalid_grant", { status: 400 });
+      (provider !== "microsoft" && params.get("client_secret") !== "synthetic-secret") ||
+      (provider === "microsoft" && params.has("client_secret")) ||
+      params.get("redirect_uri") !== origin + "/api/auth/" + provider + "/callback") return new Response("invalid_grant", { status: 400 });
   codes.delete(code);
   if (provider === "amazon") return Response.json({ access_token: "opaque-token", token_type: "bearer", expires_in: 3600 });
   const now = Math.floor(Date.now() / 1000);
@@ -79,6 +81,15 @@ const client = await compile({ platform: "browser", external: ["qrcode/lib/rende
 async function respond(request) {
   const url = new URL(request.url);
   if (url.origin === providerOrigins[provider]) {
+    if (provider === "microsoft" && url.pathname === "/common/oauth2/v2.0/token" && request.method === "POST") {
+      // Simulate the real SPA CORS token endpoint. Unlike a confidential
+      // Worker request, this browser code exchange carries no client secret.
+      const result = await exchange(url.href, { body: new URLSearchParams(await request.text()) });
+      const headers = new Headers(result.headers);
+      headers.set("Access-Control-Allow-Origin", origin);
+      headers.set("Vary", "Origin");
+      return new Response(await result.arrayBuffer(), { status: result.status, headers });
+    }
     const code = crypto.randomUUID();
     codes.set(code, { nonce: url.searchParams.get("nonce"), challenge: url.searchParams.get("code_challenge") });
     const callback = origin + "/api/auth/" + provider + "/callback?state=" + url.searchParams.get("state") + "&code=" + code;
