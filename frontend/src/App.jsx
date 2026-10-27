@@ -35,6 +35,15 @@ function App() {
           <PdfSealForm onUsePublicKey={verification.setPublicKey} />
         </section>
       )}
+      <footer className="policy-footer" aria-label="QRed policies and project documentation">
+        <span>QRed · Tamper-evident document sealing</span>
+        <nav aria-label="Policies and security information">
+          <a href="/privacy.html">Privacy</a>
+          <a href="/data-deletion.html">Data deletion</a>
+          <a href="/terms.html">Terms</a>
+          <a href="/security.html">Security &amp; architecture</a>
+        </nav>
+      </footer>
     </main>
   );
 }

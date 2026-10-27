@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="Data flows, trust boundaries, offline capability, and limitations for organizational security reviews.">
+  <title>Security & Architecture | QRed</title>
+  <link rel="stylesheet" href="/legal.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><nav class="nav-shell" aria-label="Primary">
+  <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">Q</span>QRed</a>
+  <div class="site-nav"><a href="/">Home</a><a href="/verify.htm">Verifier</a><a href="/privacy.html">Privacy</a>
+<a href="/data-deletion.html">Data deletion</a>
+<a href="/terms.html">Terms</a>
+<a href="/security.html" aria-current="page">Security & architecture</a></div>
+</nav></header>
+<main id="main" class="content">
+  <p class="kicker">System design & due diligence</p>
+  <h1>Security & Architecture</h1>
+  <p class="lead">Data flows, trust boundaries, offline capability, and limitations for organizational security reviews.</p>
+  <p class="meta">Last updated: October 26, 2026</p>
+  
+<div class="note"><p><strong>Architecture overview, not an audit:</strong> this is a logical diagram of the current open-source implementation, not a guarantee about every network packet, a penetration-test report, a security certification, or approval to process CJI.</p></div>
+<section aria-labelledby="s1"><h2 id="s1">1. Logical network and data-flow diagram</h2>
+<figure class="figure">
+  <img src="/qred-network-data-flow.svg" alt="Logical diagram of QRed. Cloudflare delivers web resources to a user's browser, where PDFs, photographs, local keys and document sealing stay. The user can share a sealed result with a recipient who verifies offline. Optional account sealing communicates with an identity provider and a Cloudflare Worker, sending salted page commitments and returning signed attestations.">
+  <figcaption>High-level logical flows. <a href="/qred-network-data-flow.svg">Open or save the full-size SVG diagram</a> for a security review. The diagram includes optional online traffic; offline verification is possible when needed resources and trust anchors are already present.</figcaption>
+</figure>
+<h3>Trust boundaries</h3>
+<p><strong>User-controlled device:</strong> original PDF files, camera photos, extracted text, signing keys, random page salts, and the sealed output are handled in the browser by the current document workflow. Device security and any downloads or onward sharing are the user's responsibility.</p>
+<p><strong>QRed's Cloudflare deployment:</strong> serves application resources and exposes a small Worker API for public configuration, key information, sign-in, and account-backed attestations. Its authority signing seed is a configured Worker secret and is not returned to browsers.</p>
+<p><strong>External identity providers:</strong> Google, Microsoft, Facebook (Meta), and Amazon handle sign-in under their own systems. These providers do not receive the original document or its page commitments from QRed's sign-in requests.</p>
+<p><strong>Recipients:</strong> obtain printed or digital sealed documents through whatever channels the sender chooses. They may verify signed payloads using QRed's bundled authority trust anchors or independently obtained local signer public keys.</p></section>
+<section aria-labelledby="s2"><h2 id="s2">2. Actual information flows</h2>
+<div class="table-scroll"><table>
+<thead><tr><th>Action</th><th>Information crossing the network</th><th>What stays on the user device</th></tr></thead>
+<tbody>
+<tr><td>Open QRed website</td><td>Normal HTTPS requests for site, code, fonts/model resources, and related hosting metadata</td><td>Files not yet chosen; locally selected documents</td></tr>
+<tr><td>Local-key sealing</td><td>No server-side signing request required once application resources are available</td><td>Private key, PDF bytes, extracted text, sealing and output</td></tr>
+<tr><td>Verify a saved/printed seal</td><td>May operate offline once required resources and trust anchors are loaded; connected mode may fetch site resources and the default public key</td><td>Page photos, recognized text, recovered seal evidence, comparison</td></tr>
+<tr><td>Account sign-in</td><td>OAuth redirect, short-lived state/PKCE information, identity tokens or profiles according to provider; QRed Worker processes provider identity</td><td>Original PDF, document text and per-page salts</td></tr>
+<tr><td>Account-backed attestation</td><td>Randomly salted page commitments and bounded account/session metadata sent to the QRed Worker; signed attestation returned</td><td>Original document, filename, unsalted root, individual salts and final PDF</td></tr>
+<tr><td>Distribute finished PDF</td><td>Whatever the user sends through their chosen print, email, or records system (not controlled by QRed)</td><td>User-chosen copies and backups; the recipient receives embedded readable evidence</td></tr>
+</tbody></table></div>
+<p>QRed's current implementation does not maintain a database of user accounts or uploaded documents. Account authentication uses secure encrypted, document-bound cookies that expire after approximately ten minutes. Network/hosting telemetry and identity-provider records can exist separately.</p></section>
+<section aria-labelledby="s3"><h2 id="s3">3. Provider-specific authentication</h2>
+<p>All four providers are optional and independently configured. Their availability can change by deployment; an unconfigured provider should not be described as enabled.</p>
+<ul>
+<li><strong>Google:</strong> server-side OAuth code exchange; verified Gmail or eligible Workspace identity.</li>
+<li><strong>Microsoft:</strong> single-page application authorization code with PKCE, redeemed in the browser; QRed Worker validates the signed ID token. No Microsoft client secret.</li>
+<li><strong>Facebook (Meta):</strong> server-side code exchange that expects a signed OpenID Connect identity token. Compatibility with Meta's documented experimental flow requires a real-account test before production enablement.</li>
+<li><strong>Amazon:</strong> server-side authorization code exchange, token validation, and authenticated account profile lookup.</li>
+</ul>
+<p>The Worker binds identity and the ordered page commitments to a short-lived session. QRed does not independently verify legal identity or organizational signing authority from profile names. For Microsoft, Meta and Amazon, a provider-reported email must not be interpreted as QRed independently verifying ownership of that mailbox.</p></section>
+<section aria-labelledby="s4"><h2 id="s4">4. Limits of authentication and document evidence</h2>
+<p>Signatures authenticate the bytes actually covered by their signed QRed payload, not necessarily every aspect of the visible printed or scanned document. QR recovery, OCR, image quantization, camera quality, layout changes, and later physical alterations can affect detection. Original pages may include graphics, form marks, or fine details that lossy visual evidence does not fully preserve.</p>
+<p>Recipients should compare recovered signed text and visual evidence with the document and verify the trustworthiness of the relevant public key. Public account trust anchors are bundled with the application; an offline copy cannot learn that a trust anchor was revoked until updated. A local public key received from an untrusted party is not proof of issuer identity.</p>
+<p><strong>Confidentiality warning:</strong> QRed QR payloads can reveal document text and attested profile details to compatible readers. A cryptographic seal does not encrypt a document or prevent distribution.</p></section>
+<section aria-labelledby="s5"><h2 id="s5">5. Security evidence and organization reviews</h2>
+<p>Implementation and automated tests are available in <a href="https://github.com/greyphilosophy/QRed">QRed's repository</a>; <a href="https://github.com/greyphilosophy/QRed/actions">CI runs</a> provide repeatable evidence for tested functionality. Tests do not replace independent penetration testing, operational monitoring, organization-specific risk assessment, incident-response plans, or compliance authorization.</p>
+<p>For an organization handling criminal justice information, QRed does not claim CJIS compliance or authorization. An organization's responsible officials should review endpoint security, hosting and subcontractor obligations, network egress, identity assurance, key management, auditability, retention, accessibility, and printed/sealed-document disclosure risk. An offline-capable browser application is not automatically suitable for processing CJI.</p>
+<p>See the <a href="/privacy.html">Privacy Policy</a>, <a href="/data-deletion.html">Data Deletion Instructions</a>, and <a href="/terms.html">Terms of Service</a>. Questions about architecture and data handling: <a class="contact" href="mailto:greyphilosophy@gmail.com">greyphilosophy@gmail.com</a>.</p></section>
+</main>
+<footer class="site-footer">
+  <p>QRed · Tamper-evident document sealing and verification</p>
+  <p><a href="/">Home</a><a href="/privacy.html">Privacy</a><a href="/data-deletion.html">Data deletion</a><a href="/terms.html">Terms</a><a href="/security.html">Security</a></p>
+  <p>Questions? <a class="contact" href="mailto:greyphilosophy@gmail.com">greyphilosophy@gmail.com</a></p>
+</footer>
+</body></html>
