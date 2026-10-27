@@ -52,6 +52,17 @@ Meta also uses `QRED_META_GRAPH_VERSION`, initially `v26.0`. Match it to a versi
 
 References: [app registration](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app), [authorization code flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow), [ID-token claims](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference), and [issuer and signing-key validation](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#validate-the-issuer).
 
+### Google and Facebook callback diagnostics
+
+If an account login reaches `/api/auth/google/callback` or `/api/auth/meta/callback` but the seal fails, the callback now distinguishes the following stages without displaying codes, tokens, raw provider error messages or secrets:
+
+- **Provider code exchange:** Google displays a bounded HTTP status and allowlisted OAuth protocol code (for example `invalid_client` for rejected app credentials or `invalid_grant` for an invalid/expired code or redirect mismatch). Meta displays a bounded HTTP status and numeric Graph error/subcode when available.
+- **Network request / provider reply:** request timeouts and invalid JSON are identified separately from a provider's HTTP rejection.
+- **Google signed identity-token verification:** a failure to validate Google's signed ID token names only the verification category (e.g. signing key unavailable, invalid signature or invalid claims). The raw JWT and provider exception message are never displayed.
+- **QRed receipt creation:** unexpected failures after provider verification are distinguished from earlier provider-validation failures.
+
+These are **diagnostic categories**, not evidence that an OAuth provider was compromised. `GET /api/auth/config` checks only whether QRed has the corresponding app ID and secret configured; it **does not verify the correctness** of provider credentials. Always register exactly `https://qred.org/api/auth/google/callback` or `https://qred.org/api/auth/meta/callback` as the matching provider redirect URI. Only share the sanitized callback page's error text, never the full callback URL (it can contain a single-use OAuth code), provider secrets, cookies or `id_token` values.
+
 ### Facebook (Meta)
 
 1. Create a Meta developer app with **Facebook Login** for a website. Configure qred.org as the app domain/site and the exact Meta callback above as a valid OAuth redirect URI. Enable the web/server OAuth settings required by the app dashboard.
