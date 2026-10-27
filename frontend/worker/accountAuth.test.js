@@ -14,7 +14,7 @@ const trusted = { [keyId]: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q" };
 const providers = ["google", "microsoft", "meta", "amazon"];
 const env = { QRED_ORIGIN: origin, QRED_ATTESTATION_PRIVATE_KEY: seed, QRED_ATTESTATION_KEY_ID: keyId,
   QRED_GOOGLE_CLIENT_ID: "google-client", QRED_GOOGLE_CLIENT_SECRET: "google-secret",
-  QRED_MICROSOFT_CLIENT_ID: "microsoft-client", QRED_MICROSOFT_CLIENT_SECRET: "microsoft-secret",
+  QRED_MICROSOFT_CLIENT_ID: "microsoft-client",
   QRED_META_APP_ID: "meta-client", QRED_META_APP_SECRET: "meta-secret",
   QRED_AMAZON_CLIENT_ID: "amazon-client", QRED_AMAZON_CLIENT_SECRET: "amazon-secret" };
 const fingerprint = encodeBase64Url(new Uint8Array(32).fill(1));
@@ -52,7 +52,21 @@ function fixture(provider) {
   }), config));
   const login = async session => {
     authorization = new URL(session.authorize_url);
-    return receive(await handle(new Request(origin + "/api/auth/" + provider + "/callback?state=" + session.id + "&code=one-use-code", { headers: { Cookie: cookie() } })));
+    const response = receive(await handle(new Request(origin + "/api/auth/" + provider + "/callback?state=" + session.id + "&code=one-use-code", { headers: { Cookie: cookie() } })));
+    if (provider === "microsoft") {
+      const html = await response.clone().text();
+      expect(html).toContain("https://login.microsoftonline.com/common/oauth2/v2.0/token");
+      expect(html).not.toContain("client_secret");
+      const verifier = await cookieSessions(env, origin, () => epoch, "microsoft", "microsoft-client")
+        .read(new Request(origin, { headers: { Cookie: cookie() } }), session.id, "request");
+      expect(encodeBase64Url(await sha256(utf8.encode(verifier.pkce)))).toBe(authorization.searchParams.get("code_challenge"));
+      idTokenClaims = { name: "Profile Name", email: "user@gmail.com", sub: "account-user", tid: tenant,
+        nonce: authorization.searchParams.get("nonce"), iat: epoch / 1000 };
+      const completion = await post("/api/auth/microsoft/complete", { id: session.id, id_token: "synthetic-id-token" });
+      expect(completion.status).toBe(200);
+      expect(exchange).not.toHaveBeenCalled();
+    }
+    return response;
   };
   const clientFetch = async (path, options) => {
     const body = JSON.parse(options.body); sent.push({ path, body });
