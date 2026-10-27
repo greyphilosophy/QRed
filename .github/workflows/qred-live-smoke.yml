@@ -129,6 +129,68 @@ jobs:
           print("LIVE AUTH START/CANCEL SMOKE PASS")
           PY
 
+      - name: Diagnose live Meta configuration and return-tab session with synthetic consent denial
+        run: |
+          python - <<'PY'
+          import base64, http.cookiejar, json, urllib.parse, urllib.request, urllib.error
+          origin = "https://qred.org"
+          jar = http.cookiejar.CookieJar()
+          client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+          headers = {"User-Agent": "QRed-Meta-Cookie-Probe/1.0", "Cache-Control": "no-cache"}
+          def get(path):
+              request = urllib.request.Request(origin + path, headers=headers)
+              try:
+                  with client.open(request, timeout=15) as response:
+                      return response.status, response.read(10000).decode("utf-8", "replace")
+              except urllib.error.HTTPError as error:
+                  return error.code, error.read(10000).decode("utf-8", "replace")
+          def post(path, payload):
+              request = urllib.request.Request(origin + path, method="POST",
+                  data=json.dumps(payload).encode(), headers={**headers, "Origin": origin,
+                      "Content-Type": "application/json"})
+              try:
+                  with client.open(request, timeout=15) as response:
+                      return response.status, json.loads(response.read())
+              except urllib.error.HTTPError as error:
+                  return error.code, json.loads(error.read())
+
+          code, body = get("/api/auth/config")
+          assert code == 200
+          availability = json.loads(body)
+          print("LIVE CONFIG:", json.dumps(availability, sort_keys=True))
+          if availability.get("meta") is not True:
+              print("META DIAGNOSIS: Meta is not fully configured in the active production Worker.")
+              raise SystemExit(1)
+
+          # This synthetic callback uses a *denied consent* query. It does not
+          # contact Facebook, exchange a token, or sign a document. Never log
+          # session IDs, session secrets, cookies or callback query strings.
+          fingerprint = base64.urlsafe_b64encode(bytes(32)).decode().rstrip("=")
+          code, start = post("/api/auth/meta/start", {"commitments": [fingerprint]})
+          assert code == 200, ("Meta start failed", code, start.get("error"))
+          assert len(start["id"]) == 43 and len(start["secret"]) == 43
+          assert any(c.name.startswith("__Host-qred-meta-request-") for c in jar)
+          print("META START: HTTP 200; encrypted request cookie present")
+          creds = {"id": start["id"], "secret": start["secret"]}
+          code, status = post("/api/auth/meta/status", creds)
+          assert code == 200 and status.get("status") == "pending", (code, status)
+          print("META STATUS BEFORE CALLBACK: pending")
+
+          callback_path = "/api/auth/meta/callback?" + urllib.parse.urlencode({
+              "state": start["id"], "error": "access_denied"})
+          code, html = get(callback_path)
+          assert code == 200, ("Meta callback rejected pending cookie", code)
+          assert "Sign-in could not be completed" in html
+          assert "window.close()" not in html
+          print("META CALLBACK: HTTP 200 with visible failure; callback cookie accepted")
+          code, after = post("/api/auth/meta/status", creds)
+          assert code == 200 and after.get("status") == "failed", (code, after.get("status"))
+          print("META STATUS AFTER CALLBACK: failed (not indefinitely pending)")
+          code, finish = post("/api/auth/meta/finish", creds)
+          assert code == 200 and finish.get("finished") is True
+          print("META SESSION: cleared successfully; no real Facebook account or document used")
+          PY
+
       - name: Verify newly published Meta policy pages and network diagram
         run: |
           python - <<'PY'
