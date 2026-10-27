@@ -421,7 +421,7 @@ export function PdfSealForm({ onUsePublicKey }) {
         onClick={checkSignInStatus} disabled={checkingAccount}>
         {checkingAccount ? "Checking sign-in..." : "Check sign-in status"}
       </button>}
-      {loading && usesAccount && <button type="button" onClick={cancelSealing}>Cancel sealing</button>
+      {loading && usesAccount && <button type="button" onClick={cancelSealing}>Cancel sealing</button>}
       {message && (
         <p id="stamp-result" role="status" style={{ marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155", whiteSpace: "pre-wrap" }}>
           {message}
