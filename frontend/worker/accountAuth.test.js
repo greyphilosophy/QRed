@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
 import { createAccountAuth } from "./accountAuth.js";
-import { attestPagesWithAccount } from "../src/accountSealing.js";
+import { beginAccountSignIn, attestPagesWithAccount } from "../src/accountSealing.js";
 import { cookieSessions } from "./accountSession.js";
 import { createQRedSeals } from "../src/qredSealer.js";
 import { verifyQRedSeals } from "../src/qredVerifier.js";
@@ -217,6 +217,49 @@ it("does not expose Facebook Graph access tokens in authenticated session status
   expect(status.status).toBe("ready");
   expect(JSON.stringify(status)).not.toContain("opaque-meta-token");
   expect(JSON.stringify(status)).not.toContain("one-use-code");
+});
+
+it("rejects Facebook callbacks that cannot access the originating session cookie", async () => {
+  const flow = fixture("meta");
+  const session = await (await flow.post("/api/auth/meta/start", { commitments: [fingerprint] })).json();
+  const response = await flow.handle(new Request(origin + "/api/auth/meta/callback?state=" +
+    session.id + "&code=one-use-code"));
+  expect(response.status).toBe(403);
+  const json = await response.json();
+  expect(json.error).toContain("encrypted sign-in session cookie");
+  expect(json.error).toContain("original QRed tab");
+  expect(json.error).not.toContain(session.id);
+  expect(json.error).not.toContain(session.secret);
+  expect(flow.exchange).not.toHaveBeenCalled();
+  const status = await (await flow.post("/api/auth/meta/status", {
+    id: session.id, secret: session.secret,
+  })).json();
+  expect(status.status).toBe("pending"); // Missing cookies never create a signed receipt.
+});
+
+describe.each(providers)("%s prepared native-link handoff", provider => {
+  it("verifies and attests a prepared session without a popup handle", async () => {
+    const flow = fixture(provider);
+    const pages = [{ content: "Native link synthetic document",
+      metadata: { pdf: true, page_number: 1, page_count: 1 } }];
+    // Native <a target=_blank rel=noopener> deliberately has no window.opener,
+    // but signed cookies and server-side status checks must still work.
+    const preparedSession = await beginAccountSignIn(provider, pages, { fetchImpl: flow.clientFetch });
+    const receipts = await attestPagesWithAccount(provider, pages, {
+      popup: null, preparedSession, fetchImpl: flow.clientFetch, trusted,
+    });
+    expect(receipts).toHaveLength(1);
+    expect(flow.jar.size).toBe(0);
+    expect(flow.sent.map(item => item.path)).toContain("/api/auth/" + provider + "/status");
+    expect(flow.sent.map(item => item.path)).toContain("/api/attest/" + provider);
+    const signed = await createQRedSeals({
+      content: pages[0].content, attestation: receipts[0],
+      pageContext: { pageNumber: 1, pageCount: 1 },
+    });
+    await expect(verifyQRedSeals(signed.seals, "", trusted))
+      .resolves.toMatchObject({ status: "VALID", identity_authenticated: true, identity: { provider } });
+    expect(JSON.stringify(flow.sent)).not.toContain(pages[0].content);
+  });
 });
 
 it("keeps a rejected Facebook callback open with sanitized error details instead of silently closing", async () => {

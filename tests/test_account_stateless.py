@@ -63,7 +63,7 @@ def test_stateless_account_cookie_handoff_and_offline_verification(browser, play
         # The first click does PDF preparation and begins a short-lived session.
         # Mobile must NOT open a blank about:blank window before this work ends.
         page.get_by_role("button", name="Seal synthetic document").click()
-        expect(page.get_by_role("button", name="Continue to provider")).to_be_visible()
+        expect(page.get_by_role("link", name="Continue to provider")).to_be_visible()
         assert len(context.pages) == 1
         pending = [cookie for cookie in context.cookies() if cookie["name"].startswith("__Host-qred-") and "request-" in cookie["name"]]
         assert len(pending) == 1
@@ -71,10 +71,14 @@ def test_stateless_account_cookie_handoff_and_offline_verification(browser, play
         assert pending[0]["sameSite"] == "Lax"
         assert pending[0]["domain"] == "qred.test"
         assert len(pending[0]["value"].split(".")) == 5  # Encrypted JWE, not readable JWT.
-        # Second user gesture opens a real provider URL immediately, never
-        # about:blank. The parent tab can be paused while the provider is open.
+        # Second user gesture follows a native, secure link to the provider.
+        # No asynchronous window.open or about:blank placeholder is involved.
+        link = page.get_by_role("link", name="Continue to provider")
+        assert link.get_attribute("href").startswith(provider_origin + "/")
+        assert link.get_attribute("target") == "_blank"
+        assert set((link.get_attribute("rel") or "").split()) >= {"noopener", "noreferrer"}
         with context.expect_page() as opened:
-            page.get_by_role("button", name="Continue to provider").click()
+            page.get_by_role("link", name="Continue to provider").click()
         popup = opened.value
         popup.wait_for_url(provider_origin + "/**")
         expect(popup.get_by_role("button", name="Continue")).to_be_visible()
@@ -139,9 +143,9 @@ def test_failed_meta_oauth_popup_stays_visible_for_diagnosis(browser, playwright
         page = context.new_page()
         page.goto("https://qred.test/")
         page.get_by_role("button", name="Seal synthetic document").click()
-        expect(page.get_by_role("button", name="Continue to provider")).to_be_visible()
+        expect(page.get_by_role("link", name="Continue to provider")).to_be_visible()
         with context.expect_page() as opened:
-            page.get_by_role("button", name="Continue to provider").click()
+            page.get_by_role("link", name="Continue to provider").click()
         popup = opened.value
         popup.wait_for_url("https://www.facebook.com/**")
         popup.get_by_role("button", name="Continue").click()
@@ -190,9 +194,9 @@ def test_facebook_success_callback_stays_visible_until_original_tab_can_confirm(
         original = context.new_page()
         original.goto("https://qred.test/")
         original.get_by_role("button", name="Seal synthetic document").click()
-        expect(original.get_by_role("button", name="Continue to provider")).to_be_visible()
+        expect(original.get_by_role("link", name="Continue to provider")).to_be_visible()
         with context.expect_page() as opened:
-            original.get_by_role("button", name="Continue to provider").click()
+            original.get_by_role("link", name="Continue to provider").click()
         popup = opened.value
         popup.wait_for_url("https://www.facebook.com/**")
         popup.get_by_role("button", name="Continue").click()
