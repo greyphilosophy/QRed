@@ -226,6 +226,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     const controller = new AbortController();
     const request = { controller, popup: null };
     activeRequest.current = request;
+    let saved = false;
     setLoading(true);
     setSigningIdentity(null);
     setReadyForSignIn(false);
@@ -269,6 +270,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       link.href = url;
       link.download = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
       link.click();
+      saved = true;
       URL.revokeObjectURL(url);
 
       const IS_TEST = typeof window !== "undefined" && window.__qredTestMode === true;
@@ -290,7 +292,12 @@ export function PdfSealForm({ onUsePublicKey }) {
     } catch (error) {
       setMessage(controller.signal.aborted ? "Account sealing cancelled." : `PDF sealing failed: ${error.message}`);
     } finally {
-      try { request.popup?.close(); } catch { /* The provider may isolate the popup. */ }
+      // If sign-in failed, leave the provider callback tab visible so its
+      // sanitized error can be read. Never close it as a side effect of the
+      // original document window reporting an error.
+      if (saved || controller.signal.aborted) {
+        try { request.popup?.close(); } catch { /* The provider may isolate the popup. */ }
+      }
       if (activeRequest.current === request) activeRequest.current = null;
       setReadyForSignIn(false);
       setAuthenticating(false);
