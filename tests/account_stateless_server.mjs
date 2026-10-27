@@ -84,21 +84,33 @@ const client = await compile({ platform: "browser", external: ["qrcode/lib/rende
   }));
   let seals, prepared;
   window.verifyOffline = () => Promise.all(seals.map(seal => verifyQRedSeals(seal.seals, "", trusted)));
-  document.querySelector("button").onclick = async () => {
-    const output = document.querySelector("output");
-    const button = document.querySelector("button");
+  const output = document.querySelector("output");
+  const prepareButton = document.querySelector("button");
+  const continueLink = document.createElement("a");
+  continueLink.textContent = "Continue to provider";
+  continueLink.target = "_blank";
+  continueLink.rel = "noopener noreferrer";
+  continueLink.hidden = true;
+  prepareButton.after(continueLink);
+  prepareButton.onclick = async () => {
     try {
-      if (!prepared) {
-        // All private document commitments and the pending authentication
-        // cookie are ready BEFORE opening the new tab.
-        prepared = await beginAccountSignIn(${JSON.stringify(provider)}, pages);
-        button.textContent = "Continue to provider";
-        return;
-      }
-      const popup = window.open(prepared.authorize_url, "qred-account");
-      if (!popup) throw new Error("The sign-in window was blocked");
+      // All private page commitments and the encrypted account cookie are
+      // ready BEFORE rendering the real user-clicked provider link.
+      prepared = await beginAccountSignIn(${JSON.stringify(provider)}, pages);
+      continueLink.href = prepared.authorize_url;
+      prepareButton.hidden = true;
+      continueLink.hidden = false;
+    } catch (error) { output.textContent = error.message; output.dataset.status = "error"; }
+  };
+  continueLink.onclick = async event => {
+    if (!prepared) { event.preventDefault(); return; }
+    // Native browser navigation is the default action of this real anchor.
+    // It does not require creating a blank tab through window.open().
+    const session = prepared;
+    prepared = null;
+    try {
       const receipts = await attestPagesWithAccount(${JSON.stringify(provider)}, pages,
-        { popup, preparedSession: prepared, trusted });
+        { preparedSession: session, trusted });
       seals = await Promise.all(pages.map((page, index) => createQRedSeals({ content: index ? "" : page.content, pageEvidence: index ? page.content : null, attestation: receipts[index],
         pageContext: { pageNumber: index + 1, pageCount: 3, documentRoot: page.metadata.document_root } })));
       const results = await window.verifyOffline();
