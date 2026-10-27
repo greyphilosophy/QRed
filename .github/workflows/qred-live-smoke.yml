@@ -52,6 +52,8 @@ jobs:
           except Exception:
               fail.append("Public key API returned non-JSON")
 
+          # Diagnostic: report only the four public provider availability booleans.
+          # Never request or print Cloudflare secrets, OAuth tokens or session cookies.
           status, data = get("/api/auth/config")
           try:
               auth = json.loads(data or "")
