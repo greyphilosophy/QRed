@@ -71,7 +71,7 @@ async function exchange(url, options) {
 }
 // The optional Node PNG renderer is not used by browser sealing/verification.
 const client = await compile({ platform: "browser", external: ["qrcode/lib/renderer/png"], stdin: { resolveDir: frontend, loader: "js", contents: `
-  import { attestPagesWithAccount } from "./src/accountSealing.js";
+  import { beginAccountSignIn, attestPagesWithAccount } from "./src/accountSealing.js";
   import { createQRedSeals } from "./src/qredSealer.js";
   import { encodePageEvidence } from "./src/pageEvidence.js";
   import { verifyQRedSeals } from "./src/qredVerifier.js";
@@ -82,12 +82,23 @@ const client = await compile({ platform: "browser", external: ["qrcode/lib/rende
   const pages = contents.map((content, i) => ({
     content, metadata: { pdf: true, ...(i ? { page_evidence: true } : {}), page_number: i + 1, page_count: 3, document_root: "d4".repeat(32) }
   }));
-  let seals;
+  let seals, prepared;
   window.verifyOffline = () => Promise.all(seals.map(seal => verifyQRedSeals(seal.seals, "", trusted)));
   document.querySelector("button").onclick = async () => {
     const output = document.querySelector("output");
+    const button = document.querySelector("button");
     try {
-      const receipts = await attestPagesWithAccount(${JSON.stringify(provider)}, pages, { popup: window.open("about:blank", "qred-account"), trusted });
+      if (!prepared) {
+        // All private document commitments and the pending authentication
+        // cookie are ready BEFORE opening the new tab.
+        prepared = await beginAccountSignIn(${JSON.stringify(provider)}, pages);
+        button.textContent = "Continue to provider";
+        return;
+      }
+      const popup = window.open(prepared.authorize_url, "qred-account");
+      if (!popup) throw new Error("The sign-in window was blocked");
+      const receipts = await attestPagesWithAccount(${JSON.stringify(provider)}, pages,
+        { popup, preparedSession: prepared, trusted });
       seals = await Promise.all(pages.map((page, index) => createQRedSeals({ content: index ? "" : page.content, pageEvidence: index ? page.content : null, attestation: receipts[index],
         pageContext: { pageNumber: index + 1, pageCount: 3, documentRoot: page.metadata.document_root } })));
       const results = await window.verifyOffline();

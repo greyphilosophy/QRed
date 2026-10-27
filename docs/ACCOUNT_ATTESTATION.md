@@ -2,6 +2,14 @@
 
 QRed supports Google, Microsoft, Facebook (Meta), and Login with Amazon alongside offline private-key sealing. Each account method is enabled independently after its server credentials are configured. The form checks availability when an account method is selected; private-key sealing does not make that request.
 
+### Mobile browser sign-in and document preparation
+
+Account sealing deliberately uses **two steps**. First select a PDF and choose **Prepare PDF for [provider] sign-in**. QRed flattens and analyzes the document, generates randomized salted page commitments on the device, and creates a short-lived encrypted account session **before opening any new window or tab**. When the page displays the provider's real sign-in button, tap it again to navigate directly to the provider authorization URL. The old pattern of pre-opening `about:blank` while processing the PDF could leave mobile browsers stuck on an empty foreground tab, especially when the browser throttles the originating tab.
+
+The prepared state, original document, page salts, and in-memory window secret remain only in the original browser tab. Account sessions have a fixed ten-minute expiry starting at preparation. If sign-in takes too long, prepare again. Mobile browsers can leave the provider's callback tab open rather than closing it; return to the original QRed tab to let the document finish sealing and save the result. Do not reload or close the original QRed tab until the sealed file is saved. Cancellation clears available session cookies, and no provider login is started automatically when a PDF is selected.
+
+This applies to Google, Microsoft, Meta, and Amazon. It changes only the start/open sequence; the existing document-commitment binding and provider token checks remain unchanged.
+
 All four use the existing Cloudflare Worker and authority key. No database, user-key registry, authentication subscription, or provider JavaScript SDK is added. The PDF, extracted text, page images, and randomized page salts stay on the device. QRed receives randomized page commitments and account details. The provider receives a sign-in request, without document commitments. Account sealing needs a connection for each document; the resulting seals verify offline with QRed's bundled trusted authority keys.
 
 ## What a seal attests
