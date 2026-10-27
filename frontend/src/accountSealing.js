@@ -83,7 +83,7 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
   if (!popup) throw new Error("Allow the " + label + " sign-in window, then try again.");
   const authPath = "/api/auth/" + provider;
   let session = preparedSession;
-  let providerOpened = false, identityVerified = false;
+  let providerOpened = false, statusReady = false;
   const post = (path, body) => postJson(path, body, fetchImpl, signal, label);
   try {
     if (session) {
@@ -110,7 +110,7 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
     while (Date.now() < deadline) {
       if (signal?.aborted) throw new Error("Account sealing cancelled");
       const status = await post(authPath + "/status", credentials);
-      if (status.status === "ready") { identity = status.identity; timestamp = status.timestamp; break; }
+      if (status.status === "ready") { statusReady = true; identity = status.identity; timestamp = status.timestamp; break; }
       if (status.status === "failed") throw new Error(status.error || label + " sign-in failed");
       // The provider may sever window.opener. Cookies are still shared and
       // polling resumes when mobile users return to the QRed tab.
@@ -119,7 +119,6 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
     if (!identity) throw new Error(label + " sign-in expired. Prepare the document again and retry.");
     if (identity.provider !== provider) throw new Error("Sign-in provider changed during authentication");
     encodeIdentity(identity);
-    identityVerified = true;
     onIdentity(identity);
     onStatus(label + " sign-in completed. Obtaining document attestations…");
     const receipts = [];
@@ -135,7 +134,7 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
     // Preserve a provider failure page so the user can read its sanitized
     // error, especially on phones where a tab may close otherwise. Only
     // close a verified login, cancellation or rejected/unopened flow.
-    if (identityVerified || signal?.aborted || !providerOpened) {
+    if (statusReady || signal?.aborted || !providerOpened) {
       try { popup.close(); } catch { /* The provider may isolate the popup. */ }
     }
     if (session) await finishAccountSignIn(provider, session, { fetchImpl });
