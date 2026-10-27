@@ -1,10 +1,12 @@
 import { concatenate, decodeBase64Url, encodeBase64Url, encodeMetadata, hexToBytes, sha256, signedContentBytes, strictUtf8, utf8 } from "./sealFormat.js";
+import { AUTH_PROVIDERS, authProvider } from "./authProviders.js";
 
 export const MAX_ATTESTATION_PAGES = 100;
 const IDENTITY_LIMITS = { email: 254, name: 160, subject: 255 };
 export const MAX_ENCODED_IDENTITY_BYTES = 8 + Object.values(IDENTITY_LIMITS).reduce((sum, size) => sum + size, 0);
 const COMMITMENT_DOMAIN = new TextEncoder().encode("QRed private page commitment v1\0");
 const SIGNATURE_DOMAIN = new TextEncoder().encode("QRed Google document attestation v1\0");
+const ACCOUNT_SIGNATURE_DOMAIN = new TextEncoder().encode("QRed account document attestation v1\0");
 
 function field(value, maximum) {
   // eslint-disable-next-line no-control-regex -- Reject controls and directional overrides in displayed identity fields.
@@ -17,15 +19,18 @@ function field(value, maximum) {
 }
 
 export function encodeIdentity(identity) {
-  if (identity?.provider !== "google" || !["google", "self"].includes(identity.name_source) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(identity.email)) throw new Error("Invalid attestation identity");
-  return concatenate([new Uint8Array([1, identity.name_source === "google" ? 1 : 0]),
+  const provider = authProvider(identity?.provider);
+  if (!provider || ![identity.provider, "self"].includes(identity.name_source) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(identity.email)) throw new Error("Invalid attestation identity");
+  return concatenate([new Uint8Array([provider.id, identity.name_source === identity.provider ? 1 : 0]),
     field(identity.email, IDENTITY_LIMITS.email), field(identity.name, IDENTITY_LIMITS.name), field(identity.subject, IDENTITY_LIMITS.subject)]);
 }
 
 export function decodeIdentity(bytes, offset = 0) {
   const start = offset;
-  if (bytes[offset++] !== 1 || ![0, 1].includes(bytes[offset])) throw new Error("Unsupported attestation identity");
-  const name_source = bytes[offset++] === 1 ? "google" : "self";
+  const providerId = bytes[offset++];
+  const provider = Object.keys(AUTH_PROVIDERS).find(name => AUTH_PROVIDERS[name].id === providerId);
+  if (!provider || ![0, 1].includes(bytes[offset])) throw new Error("Unsupported attestation identity");
+  const name_source = bytes[offset++] === 1 ? provider : "self";
   const read = () => {
     if (offset + 2 > bytes.length) throw new Error("Truncated attestation identity");
     const size = new DataView(bytes.buffer, bytes.byteOffset + offset, 2).getUint16(0);
@@ -35,7 +40,7 @@ export function decodeIdentity(bytes, offset = 0) {
     offset += size;
     return value;
   };
-  const identity = { provider: "google", name_source, email: read(), name: read(), subject: read() };
+  const identity = { provider, name_source, email: read(), name: read(), subject: read() };
   if (encodeIdentity(identity).length !== offset - start) throw new Error("Invalid attestation identity");
   return { identity, offset };
 }
@@ -54,7 +59,9 @@ export function attestationMessage({ timestamp, key_id, identity }, commitment) 
   const milliseconds = Date.parse(timestamp);
   if (!Number.isSafeInteger(milliseconds) || milliseconds < 0) throw new Error("Invalid attestation timestamp");
   new DataView(time.buffer).setBigUint64(0, BigInt(milliseconds));
-  return concatenate([SIGNATURE_DOMAIN, time, hexToBytes(key_id, 8), encodeIdentity(identity), commitment]);
+  // Keep the original domain for already issued Google attestations.
+  const domain = identity?.provider === "google" ? SIGNATURE_DOMAIN : ACCOUNT_SIGNATURE_DOMAIN;
+  return concatenate([domain, time, hexToBytes(key_id, 8), encodeIdentity(identity), commitment]);
 }
 
 export function decodeFixedBase64(value, length) {

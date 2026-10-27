@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { signAsync } from "@noble/ed25519";
-import { attestationMessage, pageCommitment } from "./attestation.js";
+import { attestationMessage, decodeIdentity, encodeIdentity, pageCommitment } from "./attestation.js";
 import { decodeBase64Url, decodeEnvelope, encodeBase64Url, encodeEnvelope, qrPayloadBytes, sealString } from "./sealFormat.js";
 import { createQRedSeals } from "./qredSealer.js";
 import { decodeSeal, verifyQRedSeals } from "./qredVerifier.js";
@@ -28,6 +28,22 @@ async function attested(content, extra = {}) {
     attestation: { ...metadata, salt, signature: encodeBase64Url(signature), public_key: publicKey } });
 }
 describe("compact document-specific attestations", () => {
+  it("preserves the issued Google signing format and reuses the provider byte for new methods", () => {
+    // Golden bytes from the pre-provider implementation on main (2baf911).
+    const golden = "5152656420476f6f676c6520646f63756d656e74206174746573746174696f6e20763100000001a1569b9800da522162396ab2d00101000f616c69636540676d61696c2e636f6d000d416c696365204578616d706c650004313233342a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a";
+    expect(Buffer.from(attestationMessage(metadata, new Uint8Array(32).fill(42))).toString("hex")).toBe(golden);
+    const original = encodeIdentity(metadata.identity);
+    for (const [index, provider] of ["google", "microsoft", "meta", "amazon"].entries()) {
+      const identity = { ...metadata.identity, provider, name_source: provider };
+      const bytes = encodeIdentity(identity);
+      expect(bytes[0]).toBe(index + 1);
+      expect(bytes.subarray(1)).toEqual(original.subarray(1));
+      expect(decodeIdentity(bytes).identity).toEqual(identity);
+    }
+    const unknown = original.slice(); unknown[0] = 5;
+    expect(() => decodeIdentity(unknown)).toThrow("Unsupported");
+    expect(decodeIdentity(encodeIdentity({ ...metadata.identity, name_source: "self" })).identity.name_source).toBe("self");
+  });
   it("verifies offline using pinned authority keys and never trusts a manually supplied authority", async () => {
     const sealed = await attested("Invoice 42");
     expect(decodeSeal(sealed.seals[0]).version).toBe("4");

@@ -193,7 +193,7 @@ export async function verifyQRedSeals(seals, publicKey, authorities = trustedAut
     page_number: metadata.page_number, page_count: metadata.page_count, page_hash: pageHash,
     document_root: metadata.pdf ? metadata.document_root || pageHash : null,
     metadata_authenticated: false, signature_valid: false,
-    ...(metadata.version === "4" ? { identity: metadata.identity, attestation: "google", identity_authenticated: false } : {}),
+    ...(metadata.version === "4" ? { identity: metadata.identity, attestation: metadata.identity.provider, identity_authenticated: false } : {}),
   };
   if (metadata.version === "4") publicKey = authorities[metadata.key_id];
   if (!publicKey?.trim()) return { ...result, status: "UNVERIFIED", error_message: "No trusted public key available for signature verification" };

@@ -17,7 +17,7 @@ import re
 import tempfile
 
 import pytest
-from playwright.sync_api import Page, expect, sync_playwright
+from playwright.sync_api import Page, expect
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas as rl_canvas
 
@@ -253,23 +253,9 @@ def _check_results(page: Page) -> dict:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def _pw():
-    """Playwright manager -- opens once per test module."""
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True, args=[
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-gpu",
-        ])
-        yield pw, browser
-        browser.close()
-
-
 @pytest.fixture()
-def page(_pw):
-    """Fresh Playwright page per test (same browser, new context)."""
-    pw, browser = _pw
+def page(browser):
+    """Use pytest's browser so test order cannot start a nested Playwright runtime."""
     context = browser.new_context(
         viewport={"width": 1280, "height": 720},
         ignore_https_errors=True,

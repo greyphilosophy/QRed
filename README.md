@@ -31,7 +31,7 @@ cd frontend
 npm ci && npm start
 ```
 
-The demo app runs at `http://localhost:3000`. Local private-key sealing and QR processing run in the browser without a backend. Optional Google sealing uses a Cloudflare Worker to attest randomized document fingerprints; PDFs and document text stay on the device. See [Google attestation setup](docs/GOOGLE_ATTESTATION.md).
+The demo app runs at `http://localhost:3000`. Local private-key sealing and QR processing run in the browser without a backend. Optional account sealing uses a Cloudflare Worker to attest randomized document fingerprints; PDFs and document text stay on the device. See [account sign-in setup](docs/ACCOUNT_ATTESTATION.md).
 
 Use Node 24. For PDF raster regression tests, install `poppler-utils`
 (`pdftoppm`).
@@ -133,9 +133,9 @@ contents, not every visible mark on the loaded PDF; compare the page below.
 
 Choose **Private key file (offline)** to reuse a local signing identity. Open its `.txt` file or paste the private key; QRed derives the public key automatically. There is no separate public-key entry or derive button in the sealing form. You can still save the public key or select **Use public key to verify** on the same device. After scanning a locally signed seal, the verifier offers **Open issuer public key file** and rechecks collected seals when a key is imported. Obtain this file from the issuer through a trusted channel. Invalid files leave existing keys intact, and replacing a private key asks for confirmation.
 
-When configured, **Sign in with Google** supports Gmail and qualifying Google Workspace accounts. QRed attests the prepared document, email, Google profile name, and server time. The Google flow uses encrypted, short-lived browser cookies without a database. Each document requires a connection to obtain its attestation; scanning works offline with the trusted authority keys built into the verifier. [Setup, protocol and privacy details](docs/GOOGLE_ATTESTATION.md).
+When configured, **Google**, **Microsoft**, **Facebook (Meta)**, and **Amazon** sign-in let QRed attest the prepared document, provider account, profile name/email, and server time. Google retains its Gmail/Workspace eligibility rule. For the other providers, verifiers identify the email as provider-reported, not independently verified mailbox control. Each method uses encrypted, short-lived browser cookies without a database. Each document requires a connection to obtain its attestation; scanning works offline with the trusted authority keys built into the verifier. Providers are enabled independently with their own app credentials; Meta's documented OIDC flow also needs a live compatibility check. [Setup, protocol and privacy details](docs/ACCOUNT_ATTESTATION.md).
 
-There is no public-key text field in the verifier. Google seals select a bundled trusted authority key automatically using the key ID in the QR payload, so their verification needs no key-file import. An unknown authority remains unverified; a key supplied by the QR itself would not establish trust.
+There is no public-key text field in the verifier. Account seals select a bundled trusted authority key automatically using the key ID in the QR payload, so their verification needs no key-file import. An unknown authority remains unverified; a key supplied by the QR itself would not establish trust.
 
 Key files contain one raw key as Base64URL or standard Base64, with or without padding. Surrounding whitespace and a UTF-8 BOM are accepted; files larger than 4 KB are rejected. The private key is a raw 32-byte Ed25519 seed; the public key is a raw 32-byte Ed25519 public key (43 encoded characters, optionally followed by `=`). PEM, SSH, hex, and expanded 64-byte private keys are not accepted. Because raw private and public keys have the same encoding, use the appropriate file control; QRed catches swapped files when they retain its saved filenames. For the private-key method, key generation, file reading, derivation, validation, and signing happen locally; user keys are never sent to a server or saved in browser storage.
 
@@ -274,7 +274,7 @@ Configure the Cloudflare Pages project with these settings:
 
 Use `npm ci && npm run build:pages` after setting the project root to `frontend`, where `package.json` and `package-lock.json` live. The `build:pages` script builds the static frontend and copies `frontend/worker/index.js` to `build/_worker.js`, which is required for Cloudflare Pages to run the `/api/*` Worker routes in production. If Cloudflare runs from the repository root, use the root `npm run build` script and publish `frontend/build`; the root `wrangler.jsonc` declares that Pages output directory. If the UI requires manual settings instead, use `cd frontend && npm ci && npm run build:pages` and set the build output directory to `frontend/build`.
 
-The frontend supports Cloudflare Pages or Workers with static assets. `frontend/worker/index.js` serves the public-key API and optional Google authentication/attestation endpoints. PDF processing and QR generation stay in the browser. Local signatures use user-held keys; Google attestations use a separate QRed authority secret in the Worker. The server never returns that secret or receives user private keys. Google remains disabled until its [configuration](docs/GOOGLE_ATTESTATION.md) is complete.
+The frontend supports Cloudflare Pages or Workers with static assets. `frontend/worker/index.js` serves the public-key API and optional account authentication/attestation endpoints. PDF processing and QR generation stay in the browser. Local signatures use user-held keys; Account attestations use a separate QRed authority secret in the Worker. The server never returns that secret or receives user private keys. Each account provider remains disabled until its [configuration](docs/ACCOUNT_ATTESTATION.md) is complete.
 
 Optional Worker variables for a custom public key are:
 
@@ -283,7 +283,7 @@ Optional Worker variables for a custom public key are:
 | `QRED_DEFAULT_PUBLIC_KEY` | Base64URL-encoded Ed25519 public key. |
 | `QRED_DEFAULT_KEY_ID` | Optional key ID. If omitted, the Worker derives it from `QRED_DEFAULT_PUBLIC_KEY`. |
 
-Local signers generate a pair in the browser or open their private key file. Google signers authenticate an eligible account instead; the Worker signs using its dedicated authority secret.
+Local signers generate a pair in the browser or open their private key file. Account signers authenticate with a configured provider instead; the Worker signs using its dedicated authority secret.
 
 ## Cloudflare Pages custom domains
 
@@ -412,7 +412,7 @@ Each issuing authority maintains a signing key pair:
 - Private key: used to sign document payloads. Must be generated and stored securely by the issuer — never uploaded to any server.
 - Public key: used by the verifier to validate signatures. This is the only key that may be served from the server (e.g., via `/api/keys/default`).
 
-**User private keys and document contents stay on the device.** Local signing and verification work offline after resources are loaded. Optional Google sealing sends randomized page commitments and account details to QRed. The server holds its own authority signing key as a secret and never sends it to clients. Its public trust anchors are bundled in the verifier; unknown Google-attestation authorities remain unverified. See [the attestation privacy and trust model](docs/GOOGLE_ATTESTATION.md).
+**User private keys and document contents stay on the device.** Local signing and verification work offline after resources are loaded. Optional account sealing sends randomized page commitments and account details to QRed. The server holds its own authority signing key as a secret and never sends it to clients. Its public trust anchors are bundled in the verifier; unknown account-attestation authorities remain unverified. See [the attestation privacy and trust model](docs/ACCOUNT_ATTESTATION.md).
 
 The default demo keypair is provided solely for testing. In production, issuers should generate their own keypair and supply the private key directly in the browser.
 

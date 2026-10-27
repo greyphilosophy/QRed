@@ -45,7 +45,7 @@ async function documentMerkleRoot(pageTexts) {
 async function createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages }) {
   const { readPdfPagesWithEvidence } = await import("./pdf/readPdfText.js");
   const plans = await readPdfPagesWithEvidence(file, page => planPageEvidence(page, {
-    google: Boolean(attestPages), multiple: page.pageCount > 1, encodingStrategy,
+    attested: Boolean(attestPages), multiple: page.pageCount > 1, encodingStrategy,
   }));
   const merkleRoot = await documentMerkleRoot(plans.map(page => page.body));
   const timestamp = new Date().toISOString();

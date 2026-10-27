@@ -1,0 +1,78 @@
+import { encodeIdentity, MAX_ATTESTATION_PAGES, pageCommitment } from "./attestation.js";
+import { encodeBase64Url } from "./sealFormat.js";
+import { authProvider, allowedAuthorizationUrl } from "./authProviders.js";
+import trustedAuthorities from "./trustedAuthorities.json";
+
+export const accountSealingAvailable = Object.keys(trustedAuthorities).length > 0;
+
+function delay(milliseconds, signal) {
+  return new Promise((resolve, reject) => {
+    const aborted = () => { clearTimeout(timer); reject(new Error("Account sealing cancelled")); };
+    const timer = setTimeout(() => { signal?.removeEventListener("abort", aborted); resolve(); }, milliseconds);
+    if (signal?.aborted) aborted();
+    else signal?.addEventListener("abort", aborted, { once: true });
+  });
+}
+
+export async function attestPagesWithAccount(provider, pages, { popup, signal, onStatus = () => {},
+  onIdentity = () => {}, fetchImpl = (...args) => fetch(...args), trusted = trustedAuthorities } = {}) {
+  const label = authProvider(provider)?.label;
+  if (!label) throw new Error("Unsupported sign-in provider");
+  const authPath = "/api/auth/" + provider;
+  if (!pages.length || pages.length > MAX_ATTESTATION_PAGES) throw new Error(label + " sealing supports documents with 1–100 pages. Use a private key file for larger documents.");
+  if (!popup) throw new Error("Allow the " + label + " sign-in window, then try again.");
+  let session;
+  const post = async (path, body) => {
+    const response = await fetchImpl(path, { method: "POST", credentials: "same-origin", signal,
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || label + " sealing could not be completed");
+    return result;
+  };
+  try {
+    const salts = pages.map(() => crypto.getRandomValues(new Uint8Array(32)));
+    const commitments = await Promise.all(pages.map(async (page, index) =>
+      encodeBase64Url(await pageCommitment(page.metadata, page.content, salts[index]))));
+    onStatus("Opening " + label + " sign-in. Your PDF and its text stay on this device.");
+    session = await post(authPath + "/start", { commitments });
+    const authorization = new URL(session.authorize_url);
+    if (!allowedAuthorizationUrl(provider, authorization.href)) throw new Error("Unexpected sign-in address");
+    popup.location.href = authorization.href;
+    const credentials = { id: session.id, secret: session.secret };
+    const deadline = Date.now() + 10 * 60 * 1000;
+    let identity, timestamp;
+    while (Date.now() < deadline) {
+      if (signal?.aborted) throw new Error("Account sealing cancelled");
+      const status = await post(authPath + "/status", credentials);
+      if (status.status === "ready") { identity = status.identity; timestamp = status.timestamp; break; }
+      if (status.status === "failed") throw new Error(status.error || label + " sign-in failed");
+      // Browser opener isolation can make a live sign-in window appear closed.
+      // Completion comes from the server; the form's Cancel button aborts polling.
+      await delay(1500, signal);
+    }
+    if (!identity) throw new Error(label + " sign-in expired. Please try again.");
+    if (identity.provider !== provider) throw new Error("Sign-in provider changed during authentication");
+    encodeIdentity(identity);
+    onIdentity(identity);
+    onStatus(label + " sign-in completed. Obtaining document attestations…");
+    const receipts = [];
+    // One page per request keeps signing work bounded on the Workers Free tier.
+    for (let index = 0; index < pages.length; index += 1) {
+      const receipt = await post("/api/attest/" + provider, { ...credentials, commitments, index });
+      if (!trusted[receipt.key_id]) throw new Error("This QRed authority key is not trusted by this copy of the app. Reload QRed and try again.");
+      if (JSON.stringify(receipt.identity) !== JSON.stringify(identity) ||
+          receipt.timestamp !== timestamp) throw new Error("Inconsistent document attestation");
+      receipts.push({ ...receipt, public_key: trusted[receipt.key_id], salt: salts[index] });
+    }
+    return receipts;
+  } finally {
+    try { popup.close(); } catch { /* The provider may isolate the popup. */ }
+    if (session?.id && session?.secret) {
+      // Clear the encrypted HttpOnly cookies even when a later step fails.
+      // No credentials are written to localStorage/sessionStorage or navigation URLs.
+      await fetchImpl(authPath + "/finish", { method: "POST", credentials: "same-origin", keepalive: true,
+        signal: AbortSignal.timeout(5000), headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: session.id, secret: session.secret }) }).catch(() => {});
+    }
+  }
+}

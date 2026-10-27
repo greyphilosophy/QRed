@@ -391,6 +391,7 @@
     import { createScanPhotoCollection } from "./src/verifier/scanPhotos.js";
     import { mountPdfSealInput } from "./src/verifier/mountPdfSealInput.jsx";
     import { readSigningKeyFile } from "./src/signingKeys.js";
+    import { authProvider } from "./src/authProviders.js";
     import { createVerificationSession } from "./src/verifier/verificationSession.js";
 
     // QRed Protocol - decode QRed seal strings for scanner UI state.
@@ -689,8 +690,12 @@
 
     function renderResultMetadata(rm, payload) {
       if (payload.identity) {
-        rm.innerHTML += "<div class='meta-item'><strong>" + (payload.identity_authenticated ? "Account authenticated through Google:" : "Unverified identity claim:") + "</strong> " + escapeHtml(payload.identity.email) + "</div>";
-        rm.innerHTML += "<div class='meta-item'><strong>Name (" + (payload.identity.name_source === "google" ? "Google profile" : "self-declared") + "):</strong> " + escapeHtml(payload.identity.name) + "</div>";
+        var provider = authProvider(payload.identity.provider)?.label || "Unknown provider";
+        rm.innerHTML += "<div class='meta-item'><strong>" + (payload.identity_authenticated ? "Account authenticated through " + provider + ":" : "Unverified identity claim:") + "</strong> " + escapeHtml(payload.identity.email) + "</div>";
+        rm.innerHTML += "<div class='meta-item'><strong>Name (" + (payload.identity.name_source === payload.identity.provider ? provider + " profile" : "self-declared") + "):</strong> " + escapeHtml(payload.identity.name) + "</div>";
+      }
+      if (payload.identity && payload.identity.provider !== "google") {
+        rm.innerHTML += "<div class='meta-item'>Email reported by " + escapeHtml(authProvider(payload.identity.provider)?.label || "Unknown provider") + "; QRed did not separately verify control of that mailbox.</div>";
       }
       if (payload.document_id) {
         rm.innerHTML += "<div class='meta-item'><strong>Doc ID:</strong> " + escapeHtml(payload.document_id) + "</div>";

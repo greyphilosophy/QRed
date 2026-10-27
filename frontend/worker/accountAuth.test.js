@@ -1,0 +1,151 @@
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { webcrypto } from "node:crypto";
+import { createAccountAuth } from "./accountAuth.js";
+import { attestPagesWithAccount } from "../src/accountSealing.js";
+import { cookieSessions } from "./accountSession.js";
+import { createQRedSeals } from "../src/qredSealer.js";
+import { verifyQRedSeals } from "../src/qredVerifier.js";
+import { decodeEnvelope, encodeBase64Url, encodeEnvelope, qrPayloadBytes, sealString, sha256, utf8 } from "../src/sealFormat.js";
+
+const origin = "https://qred.test", epoch = Date.parse("2026-10-25T12:00:00Z");
+const tenant = "11111111-2222-3333-4444-555555555555";
+const seed = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", keyId = "da522162396ab2d0";
+const trusted = { [keyId]: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q" };
+const providers = ["google", "microsoft", "meta", "amazon"];
+const env = { QRED_ORIGIN: origin, QRED_ATTESTATION_PRIVATE_KEY: seed, QRED_ATTESTATION_KEY_ID: keyId,
+  QRED_GOOGLE_CLIENT_ID: "google-client", QRED_GOOGLE_CLIENT_SECRET: "google-secret",
+  QRED_MICROSOFT_CLIENT_ID: "microsoft-client", QRED_MICROSOFT_CLIENT_SECRET: "microsoft-secret",
+  QRED_META_APP_ID: "meta-client", QRED_META_APP_SECRET: "meta-secret",
+  QRED_AMAZON_CLIENT_ID: "amazon-client", QRED_AMAZON_CLIENT_SECRET: "amazon-secret" };
+const fingerprint = encodeBase64Url(new Uint8Array(32).fill(1));
+beforeAll(() => vi.stubGlobal("crypto", webcrypto));
+
+function fixture(provider) {
+  const jar = new Map(), sent = [];
+  let authorization, idTokenClaims;
+  const receive = response => {
+    for (const header of response.headers.getSetCookie()) {
+      const pair = header.split(";")[0], index = pair.indexOf("=");
+      if (header.includes("Max-Age=0")) jar.delete(pair.slice(0, index));
+      else jar.set(pair.slice(0, index), pair.slice(index + 1));
+    }
+    return response;
+  };
+  const cookie = () => [...jar].map(([key, value]) => key + "=" + value).join("; ");
+  const exchange = vi.fn(async (url, options) => {
+    if (url.startsWith("https://api.amazon.com/auth/o2/tokeninfo?")) return Response.json({
+      iss: "https://www.amazon.com", aud: "amazon-client", user_id: "amazon-user", exp: 3599 });
+    if (url === "https://api.amazon.com/user/profile") return Response.json({ user_id: "amazon-user", name: "Amazon Profile", email: "user@example.org" });
+    const params = provider === "meta" ? new URL(url).searchParams : options.body;
+    expect(params.get("client_id")).toBe(provider + "-client");
+    expect(params.get("client_secret")).toBe(provider + "-secret");
+    expect(params.get("redirect_uri")).toBe(origin + "/api/auth/" + provider + "/callback");
+    expect(encodeBase64Url(await sha256(utf8.encode(params.get("code_verifier"))))).toBe(authorization.searchParams.get("code_challenge"));
+    idTokenClaims = { name: "Profile Name", email: "user@gmail.com", email_verified: true, sub: "account-user", tid: tenant,
+      nonce: authorization.searchParams.get("nonce"), iat: epoch / 1000 };
+    return Response.json(provider === "amazon" ? { access_token: "opaque-amazon-token", token_type: "bearer", expires_in: 3600 } : { id_token: "synthetic-id-token" });
+  });
+  const handle = (request, config = env) => createAccountAuth({ fetchImpl: exchange, trusted, now: () => epoch,
+    verifyTokens: { [provider]: async () => idTokenClaims } })(request, config);
+  const post = async (path, body, config) => receive(await handle(new Request(origin + path, {
+    method: "POST", headers: { Origin: origin, "Content-Type": "application/json", Cookie: cookie() }, body: JSON.stringify(body),
+  }), config));
+  const login = async session => {
+    authorization = new URL(session.authorize_url);
+    return receive(await handle(new Request(origin + "/api/auth/" + provider + "/callback?state=" + session.id + "&code=one-use-code", { headers: { Cookie: cookie() } })));
+  };
+  const clientFetch = async (path, options) => {
+    const body = JSON.parse(options.body); sent.push({ path, body });
+    const response = await post(path, body);
+    if (path.endsWith("/start")) await login(await response.clone().json());
+    return response;
+  };
+  return { jar, sent, post, handle, login, clientFetch, exchange, cookie };
+}
+
+describe.each(providers)("%s document attestations", provider => {
+  it("runs the client/server protocol privately and verifies offline with the correct provider", async () => {
+    const flow = fixture(provider), popup = { location: {}, close: vi.fn() };
+    const pages = [1, 2].map(page => ({ content: "Confidential synthetic page " + page,
+      metadata: { pdf: true, page_number: page, page_count: 2, document_root: "c3".repeat(32) } }));
+    const receipts = await attestPagesWithAccount(provider, pages, { fetchImpl: flow.clientFetch, popup, trusted });
+    expect(receipts).toHaveLength(2);
+    expect(flow.jar.size).toBe(0);
+    expect(popup.close).toHaveBeenCalledOnce();
+    for (let index = 0; index < pages.length; index++) {
+      const receipt = receipts[index], page = pages[index];
+      const sealed = await createQRedSeals({ content: page.content, pageContext: { pageNumber: index + 1, pageCount: 2, documentRoot: page.metadata.document_root }, attestation: receipt });
+      await expect(verifyQRedSeals(sealed.seals, "", trusted)).resolves.toMatchObject({ status: "VALID", identity_authenticated: true, attestation: provider, identity: { provider, name_source: provider }, page_number: index + 1 });
+      const original = decodeEnvelope(qrPayloadBytes(sealed.seals[0]));
+      for (const other of providers.filter(name => name !== provider)) {
+        const changed = { ...original, identity: { ...original.identity, provider: other, name_source: other } };
+        const record = encodeEnvelope(changed, original.signature, original.data, original.encoding);
+        await expect(verifyQRedSeals([sealString(record)], "", trusted)).resolves.toMatchObject({ status: "INVALID", identity_authenticated: false });
+      }
+      const wire = JSON.stringify(flow.sent);
+      for (const hidden of [page.content, page.metadata.document_root, encodeBase64Url(receipt.salt), seed]) expect(wire).not.toContain(hidden);
+    }
+  });
+
+  it("rejects provider substitution, client changes and renamed cross-provider cookies", async () => {
+    const flow = fixture(provider);
+    const session = await (await flow.post("/api/auth/" + provider + "/start", { commitments: [fingerprint] })).json();
+    const credentials = { id: session.id, secret: session.secret };
+    for (const other of providers.filter(name => name !== provider)) {
+      const callback = await flow.handle(new Request(origin + "/api/auth/" + other + "/callback?state=" + session.id + "&code=unused", { headers: { Cookie: flow.cookie() } }));
+      expect(callback.status).toBe(403);
+    }
+    expect(flow.exchange).not.toHaveBeenCalled();
+    await flow.login(session);
+    const ownCookie = flow.cookie();
+    for (const other of providers.filter(name => name !== provider)) {
+      // Renaming the cookie cannot defeat the cryptographic provider binding.
+      const fakeCookie = ownCookie.replace(/__Host-qred-(?:microsoft-|meta-|amazon-)?receipt-/, "__Host-qred-" + (other === "google" ? "" : other + "-") + "receipt-");
+      const response = await flow.handle(new Request(origin + "/api/attest/" + other, {
+        method: "POST", headers: { Origin: origin, "Content-Type": "application/json", Cookie: fakeCookie },
+        body: JSON.stringify({ ...credentials, commitments: [fingerprint], index: 0 }),
+      }), { ...env, [other === "meta" ? "QRED_META_APP_ID" : "QRED_" + other.toUpperCase() + "_CLIENT_ID"]: provider + "-client" });
+      expect(response.status).toBe(403);
+      await flow.post("/api/auth/" + other + "/finish", credentials);
+      expect(flow.cookie()).toBe(ownCookie);
+    }
+    const clientField = provider === "meta" ? "QRED_META_APP_ID" : "QRED_" + provider.toUpperCase() + "_CLIENT_ID";
+    expect((await flow.post("/api/auth/" + provider + "/status", credentials, { ...env, [clientField]: "changed-client" })).status).toBe(403);
+    const response = await flow.post("/api/auth/" + provider + "/status", credentials);
+    expect((await response.json()).identity.provider).toBe(provider);
+    const sessionData = await cookieSessions(env, origin, () => epoch, provider, provider + "-client").read(new Request(origin, { headers: { Cookie: ownCookie } }), session.id, "receipt");
+    expect(JSON.stringify(sessionData)).not.toMatch(/opaque-amazon-token|synthetic-id-token|pkce|nonce/);
+  });
+
+  it("closes and clears the client session when the server redirects to a different provider", async () => {
+    const popup = { location: {}, close: vi.fn() }, paths = [];
+    const fetchImpl = async path => {
+      paths.push(path);
+      return Response.json({ id: "id", secret: "secret", authorize_url: "https://attacker.example/login" });
+    };
+    await expect(attestPagesWithAccount(provider, [{ content: "Private", metadata: {} }], { popup, fetchImpl, trusted })).rejects.toThrow("Unexpected sign-in address");
+    expect(popup.location.href).toBeUndefined();
+    expect(popup.close).toHaveBeenCalledOnce();
+    expect(paths).toEqual(["/api/auth/" + provider + "/start", "/api/auth/" + provider + "/finish"]);
+  });
+});
+
+it("advertises providers independently and rejects unknown routes", async () => {
+  const { handle } = fixture("google");
+  const response = await handle(new Request(origin + "/api/auth/config"), { ...env, QRED_META_APP_SECRET: "" });
+  expect(await response.json()).toEqual({ google: true, microsoft: true, meta: false, amazon: true });
+  expect((await handle(new Request(origin + "/api/auth/unknown/start"))).status).toBe(404);
+  expect((await handle(new Request(origin + "/api/auth/google/extra/path"))).status).toBe(404);
+});
+
+it("rejects a status identity from another provider before requesting attestations", async () => {
+  const popup = { location: {}, close: vi.fn() }, paths = [];
+  const fetchImpl = async path => {
+    paths.push(path);
+    if (path.endsWith("/start")) return Response.json({ id: "id", secret: "secret", authorize_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize" });
+    return Response.json({ status: "ready", identity: { provider: "google" }, timestamp: new Date(epoch).toISOString() });
+  };
+  await expect(attestPagesWithAccount("microsoft", [{ content: "Private", metadata: {} }], { popup, fetchImpl, trusted })).rejects.toThrow("provider changed");
+  expect(paths).toEqual(["/api/auth/microsoft/start", "/api/auth/microsoft/status", "/api/auth/microsoft/finish"]);
+  expect(popup.close).toHaveBeenCalledOnce();
+});
