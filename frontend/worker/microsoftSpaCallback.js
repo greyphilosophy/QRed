@@ -8,7 +8,7 @@ const escapeScriptJson = value => JSON.stringify(value)
   .replace(/</g, "\\u003c").replace(/>/g, "\\u003e")
   .replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 
-export function microsoftSpaCallbackPage({ id, code, verifier, clientId, origin }) {
+export function microsoftSpaCallbackPage({ id, code, verifier, clientId }) {
   const nonceBytes = crypto.getRandomValues(new Uint8Array(18));
   const nonce = Array.from(nonceBytes, byte => byte.toString(16).padStart(2, "0")).join("");
   const settings = escapeScriptJson({ id, code, verifier, clientId });
