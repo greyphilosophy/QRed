@@ -53,6 +53,18 @@ export async function beginAccountSignIn(provider, pages, { signal, fetchImpl = 
   return session;
 }
 
+// A user-initiated resync is helpful on mobile after the provider tab closes
+// and the original tab returns from suspension. The server, not the tab-close
+// event or a provider postMessage, remains the only source of sign-in truth.
+export async function checkAccountSignInStatus(provider, session, { fetchImpl = apiFetch, signal } = {}) {
+  const label = authProvider(provider)?.label;
+  if (!label || session?.provider !== provider || !session.id || !session.secret) {
+    throw new Error("No matching account sign-in session. Prepare the PDF again.");
+  }
+  return postJson("/api/auth/" + provider + "/status",
+    { id: session.id, secret: session.secret }, fetchImpl, signal, label);
+}
+
 export async function finishAccountSignIn(provider, session, { fetchImpl = apiFetch } = {}) {
   if (!session?.id || !session?.secret) return;
   // Do not use the cancelled request's signal: clearing cookies must still work
@@ -71,6 +83,7 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
   if (!popup) throw new Error("Allow the " + label + " sign-in window, then try again.");
   const authPath = "/api/auth/" + provider;
   let session = preparedSession;
+  let providerOpened = false, statusReady = false;
   const post = (path, body) => postJson(path, body, fetchImpl, signal, label);
   try {
     if (session) {
@@ -80,6 +93,7 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
           !allowedAuthorizationUrl(provider, session.authorize_url)) {
         throw new Error("The prepared account sign-in does not match this document.");
       }
+      providerOpened = true;
       onStatus("Complete " + label + " sign-in, then return to QRed to finish sealing.");
     } else {
       // Compatibility with callers that have not opted into the two-step mobile
@@ -87,6 +101,7 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
       session = await beginAccountSignIn(provider, pages, { signal, fetchImpl });
       onStatus("Opening " + label + " sign-in. Your PDF and its text stay on this device.");
       popup.location.href = session.authorize_url;
+      providerOpened = true;
     }
     const { salts, commitments } = session;
     const credentials = { id: session.id, secret: session.secret };
@@ -95,7 +110,7 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
     while (Date.now() < deadline) {
       if (signal?.aborted) throw new Error("Account sealing cancelled");
       const status = await post(authPath + "/status", credentials);
-      if (status.status === "ready") { identity = status.identity; timestamp = status.timestamp; break; }
+      if (status.status === "ready") { statusReady = true; identity = status.identity; timestamp = status.timestamp; break; }
       if (status.status === "failed") throw new Error(status.error || label + " sign-in failed");
       // The provider may sever window.opener. Cookies are still shared and
       // polling resumes when mobile users return to the QRed tab.
@@ -116,7 +131,12 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
     }
     return receipts;
   } finally {
-    try { popup.close(); } catch { /* The provider may isolate the popup. */ }
+    // Preserve a provider failure page so the user can read its sanitized
+    // error, especially on phones where a tab may close otherwise. Only
+    // close a verified login, cancellation or rejected/unopened flow.
+    if (statusReady || signal?.aborted || !providerOpened) {
+      try { popup.close(); } catch { /* The provider may isolate the popup. */ }
+    }
     if (session) await finishAccountSignIn(provider, session, { fetchImpl });
   }
 }

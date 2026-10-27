@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { sealPdfInBrowser } from "./pdfClientSeal.js";
 import { decodeSigningKey, deriveSigningPublicKey, generateSigningKeyPair, readSigningKeyFile, validateSigningKeyPair } from "./signingKeys.js";
 import { encodeBase64Url } from "./sealSignature.js";
-import { beginAccountSignIn, finishAccountSignIn, attestPagesWithAccount, accountSealingAvailable } from "./accountSealing.js";
+import { beginAccountSignIn, finishAccountSignIn, checkAccountSignInStatus, attestPagesWithAccount, accountSealingAvailable } from "./accountSealing.js";
 import { AUTH_PROVIDERS, authProvider } from "./authProviders.js";
 import { ProviderSignInButton } from "./ProviderSignInButton.jsx";
 
@@ -34,6 +34,7 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [loading, setLoading] = useState(false);
   const [readyForSignIn, setReadyForSignIn] = useState(false);
   const [authenticating, setAuthenticating] = useState(false);
+  const [checkingAccount, setCheckingAccount] = useState(false);
   const [method, setMethod] = useState("private-key");
   const [signingIdentity, setSigningIdentity] = useState(null);
   const [availability, setAvailability] = useState(null);
@@ -169,6 +170,29 @@ export function PdfSealForm({ onUsePublicKey }) {
     setAuthenticating(false);
   }
 
+  async function checkSignInStatus() {
+    const request = activeRequest.current;
+    if (!request?.session || request.controller.signal.aborted) return;
+    setCheckingAccount(true);
+    try {
+      const result = await checkAccountSignInStatus(request.provider, request.session,
+        { signal: request.controller.signal });
+      // Do not replace the finished PDF message with an older status response.
+      if (activeRequest.current !== request) return;
+      if (result.status === "ready") setMessage("Account sign-in verified by QRed. Finishing your PDF locally…");
+      else if (result.status === "failed") setMessage("Account sign-in failed: " +
+        (result.error || "The provider did not complete the request. Cancel and prepare the PDF again."));
+      else setMessage("QRed has not received a completed sign-in from the provider. " +
+        "If the Facebook tab closed, review any message it showed or cancel and prepare a new sign-in.");
+    } catch (error) {
+      if (activeRequest.current === request && !request.controller.signal.aborted)
+        setMessage("Could not confirm account sign-in: " + error.message +
+          " You can cancel and prepare the PDF again.");
+    } finally {
+      if (activeRequest.current === request) setCheckingAccount(false);
+    }
+  }
+
   async function sealPdf() {
     // Second, explicit user gesture: the PDF and its document-bound
     // authentication session are already prepared. Navigate directly to the
@@ -202,6 +226,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     const controller = new AbortController();
     const request = { controller, popup: null };
     activeRequest.current = request;
+    let saved = false;
     setLoading(true);
     setSigningIdentity(null);
     setReadyForSignIn(false);
@@ -216,6 +241,7 @@ export function PdfSealForm({ onUsePublicKey }) {
         ...(method === "private-key" ? { privateKey, publicKey: matchingPublicKey } : {
           attestPages: async pages => {
             const session = await beginAccountSignIn(method, pages, { signal: controller.signal });
+            request.session = session; request.provider = method;
             let handedOff = false;
             try {
               if (controller.signal.aborted) throw new Error("Account sealing cancelled");
@@ -244,6 +270,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       link.href = url;
       link.download = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
       link.click();
+      saved = true;
       URL.revokeObjectURL(url);
 
       const IS_TEST = typeof window !== "undefined" && window.__qredTestMode === true;
@@ -265,10 +292,16 @@ export function PdfSealForm({ onUsePublicKey }) {
     } catch (error) {
       setMessage(controller.signal.aborted ? "Account sealing cancelled." : `PDF sealing failed: ${error.message}`);
     } finally {
-      try { request.popup?.close(); } catch { /* The provider may isolate the popup. */ }
+      // If sign-in failed, leave the provider callback tab visible so its
+      // sanitized error can be read. Never close it as a side effect of the
+      // original document window reporting an error.
+      if (saved || controller.signal.aborted) {
+        try { request.popup?.close(); } catch { /* The provider may isolate the popup. */ }
+      }
       if (activeRequest.current === request) activeRequest.current = null;
       setReadyForSignIn(false);
       setAuthenticating(false);
+      setCheckingAccount(false);
       setLoading(false);
     }
   }
@@ -391,6 +424,10 @@ export function PdfSealForm({ onUsePublicKey }) {
         {readyForSignIn ? "Your PDF is prepared. Tap the provider button to open sign-in directly. On a phone, return to this QRed tab afterward."
           : "QRed prepares your PDF on this device before opening the sign-in tab. Your document is not sent to the provider."}
       </p>}
+      {loading && usesAccount && authenticating && <button type="button"
+        onClick={checkSignInStatus} disabled={checkingAccount}>
+        {checkingAccount ? "Checking sign-in..." : "Check sign-in status"}
+      </button>}
       {loading && usesAccount && <button type="button" onClick={cancelSealing}>Cancel sealing</button>}
       {message && (
         <p id="stamp-result" role="status" style={{ marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155", whiteSpace: "pre-wrap" }}>
