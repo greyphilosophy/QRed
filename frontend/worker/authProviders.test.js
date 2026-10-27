@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
-import { authorizationUrl, exchangeIdentity, providerConfiguration, providerIdentity, validateMicrosoftSpaToken, verifyMetaAccessToken, safeMetaErrorDetails, verifyMetaIdToken, verifyMicrosoftIdToken } from "./authProviders.js";
+import { authorizationUrl, exchangeIdentity, providerConfiguration, providerIdentity, validateMicrosoftSpaToken, verifyMetaAccessToken, safeMetaErrorDetails, safeGoogleTokenErrorDetails, safeGoogleIdTokenErrorReason, verifyMetaIdToken, verifyMicrosoftIdToken } from "./authProviders.js";
 import { allowedAuthorizationUrl } from "../src/authProviders.js";
 
 const now = Date.parse("2026-10-25T12:00:00Z"), seconds = now / 1000;
@@ -210,6 +210,95 @@ it("requires each provider's own configuration and bounds the Meta API version",
   expect(providerConfiguration("toString", {})).toBeNull();
 });
 
+
+describe("redacted Google token-exchange and verification diagnostics", () => {
+  const config = { clientId: "google-app", clientSecret: "google-server-secret" };
+  const context = {
+    code: "one-time-authorization-code", origin: "https://qred.test",
+    pending: { nonce: "nonce", iat: seconds, pkce: "local-pkce-verifier" }, now: () => now,
+  };
+
+  it.each([
+    [401, "invalid_client"], [400, "invalid_grant"], [400, "invalid_request"],
+  ])("reports Google HTTP %i and the allowlisted OAuth %s error only", async (httpStatus, oauthCode) => {
+    const upstreamDescription = "google-server-secret / one-time-authorization-code / id_token";
+    const fetchImpl = async (url, options) => {
+      expect(url).toBe("https://oauth2.googleapis.com/token");
+      expect(options.method).toBe("POST");
+      expect(options.redirect).toBe("error");
+      expect(options.body.get("client_secret")).toBe(config.clientSecret);
+      expect(options.body.get("code")).toBe(context.code);
+      expect(options.body.get("redirect_uri")).toBe("https://qred.test/api/auth/google/callback");
+      expect(options.body.get("code_verifier")).toBe(context.pending.pkce);
+      expect(options.body.get("grant_type")).toBe("authorization_code");
+      return Response.json({ error: oauthCode, error_description: upstreamDescription,
+        incident_detail: "<script>secret</script>" }, { status: httpStatus });
+    };
+    let message = "";
+    try {
+      await exchangeIdentity("google", config, { ...context, fetchImpl });
+      throw new Error("Expected Google to reject the code exchange");
+    } catch (error) { message = error.message; }
+    expect(message).toContain("Google declined QRed's authorization code exchange");
+    expect(message).toContain("HTTP " + httpStatus + "; OAuth " + oauthCode);
+    expect(message).not.toContain("google-server-secret");
+    expect(message).not.toContain("one-time-authorization-code");
+    expect(message).not.toContain("id_token");
+    expect(message).not.toContain("incident_detail");
+  });
+
+  it("never echoes unknown Google error values, request URLs or provider prose", () => {
+    expect(safeGoogleTokenErrorDetails(400, {
+      error: "invalid_grant;google-server-secret", error_description: "secrets",
+    })).toBe(" (HTTP 400)");
+    expect(safeGoogleTokenErrorDetails(401, { error: "invalid_client" }))
+      .toBe(" (HTTP 401; OAuth invalid_client)");
+    expect(safeGoogleTokenErrorDetails(200, { error: "invalid_grant" }))
+      .toBe(" (OAuth invalid_grant)");
+    expect(safeGoogleTokenErrorDetails(700, { error: "arbitrary" })).toBe("");
+    expect(safeGoogleTokenErrorDetails(403, { error: ["invalid_grant"] })).toBe(" (HTTP 403)");
+  });
+
+  it("distinguishes unreachable Google token endpoint from a rejected credential", async () => {
+    for (const fetchImpl of [
+      async () => { throw new Error("private code=one-time-authorization-code, client_secret=google-server-secret"); },
+      async () => new Response("the private secret is google-server-secret", { status: 400 }),
+    ]) {
+      let message = "";
+      try {
+        await exchangeIdentity("google", config, { ...context, fetchImpl });
+        throw new Error("Expected failed Google token request");
+      } catch (error) { message = error.message; }
+      expect(message).toContain("Google declined QRed's authorization code exchange");
+      expect(message).not.toContain("google-server-secret");
+      expect(message).not.toContain(context.code);
+      expect(message).not.toContain("private secret");
+    }
+    await expect(exchangeIdentity("google", config, {
+      ...context, fetchImpl: async () => { throw new Error("network unavailable"); },
+    })).rejects.toThrow("could not contact the provider or request timed out");
+    await expect(exchangeIdentity("google", config, {
+      ...context, fetchImpl: async () => new Response("not JSON", { status: 200 }),
+    })).rejects.toThrow("invalid provider JSON response");
+  });
+
+  it("identifies unexpected Google identity-token signature/JWKS failures without exposing error messages", async () => {
+    const malicious = "google-server-secret & one-time-authorization-code";
+    for (const [code, expected] of [
+      ["ERR_JWKS_NO_MATCHING_KEY", "Google signing key not found"],
+      ["ERR_JWT_CLAIM_VALIDATION_FAILED", "invalid token claims"],
+      ["ERR_JWS_SIGNATURE_VERIFICATION_FAILED", "invalid signature"],
+      ["unexpected " + malicious, "token or signing keys unavailable"],
+    ]) {
+      expect(safeGoogleIdTokenErrorReason({ code, message: malicious })).toBe(expected);
+      await expect(exchangeIdentity("google", config, {
+        ...context,
+        fetchImpl: async () => Response.json({ id_token: "synthetic-Google-id-token" }),
+        verifyTokens: { google: async () => { throw Object.assign(new Error(malicious), { code }); } },
+      })).rejects.toThrow("Google identity token verification failed (" + expected + ")");
+    }
+  });
+});
 
 describe("redacted Meta token-exchange diagnostics", () => {
   const config = { clientId: "facebook-app", clientSecret: "server-only-secret", graphVersion: "v26.0" };
