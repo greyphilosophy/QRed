@@ -140,7 +140,7 @@ it("never opens a mobile popup during delayed PDF parsing; sign-in begins only o
   expect(screen.getByRole("button", { name: "Preparing document..." })).toBeTruthy();
   expect(open).not.toHaveBeenCalled();
   parsed();
-  const signIn = await screen.findByRole("button", { name: "Continue with Facebook" });
+  const signIn = await screen.findByRole("button", { name: AUTH_PROVIDERS.meta.button });
   expect(open).not.toHaveBeenCalled();
   fireEvent.click(signIn);
   await screen.findByText(/Sealed source.pdf in this browser/);
