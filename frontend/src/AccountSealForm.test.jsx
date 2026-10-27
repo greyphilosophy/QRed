@@ -206,3 +206,17 @@ it("reports missing or expired browser session on an explicit status check witho
   expect(message.textContent).not.toContain("test-secret");
   fireEvent.click(screen.getByRole("button", { name: "Cancel sealing" }));
 });
+
+
+it("leaves the provider tab visible after a failed OAuth exchange, rather than silently closing it", async () => {
+  const popup = { close: vi.fn() };
+  vi.spyOn(window, "open").mockReturnValue(popup);
+  attestPagesWithAccount.mockRejectedValue(new Error("Facebook rejected QRed's login code exchange (HTTP 400; Meta error 100)"));
+  sealPdfInBrowser.mockImplementation(options => options.attestPages([]));
+  render(<PdfSealForm />);
+  fireEvent.click(await prepare("meta"));
+  const message = await screen.findByText(/PDF sealing failed: Facebook rejected QRed's login code exchange/);
+  expect(message.textContent).toContain("Meta error 100");
+  expect(popup.close).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Check sign-in status" })).toBeNull();
+});
