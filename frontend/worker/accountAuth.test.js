@@ -283,3 +283,25 @@ it("HTML-escapes a provider-originated error before showing it in the callback",
   expect(html).not.toContain("<img");
   expect(html).not.toContain("window.close()");
 });
+
+
+it("does not close a failed provider window from the client protocol cleanup", async () => {
+  const popup = { location: {}, close: vi.fn() }, paths = [];
+  const fetchImpl = async path => {
+    paths.push(path);
+    if (path.endsWith("/start")) return Response.json({
+      id: "synthetic-session", secret: "synthetic-secret",
+      authorize_url: "https://www.facebook.com/v26.0/dialog/oauth",
+    });
+    if (path.endsWith("/status")) return Response.json({
+      status: "failed", error: "Facebook rejected QRed's login code exchange (HTTP 400; Meta error 100)",
+    });
+    if (path.endsWith("/finish")) return Response.json({ finished: true });
+    throw new Error("Unexpected request path " + path);
+  };
+  await expect(attestPagesWithAccount("meta", [{ content: "Synthetic text", metadata: {} }],
+    { popup, fetchImpl, trusted })).rejects.toThrow("Facebook rejected");
+  expect(popup.close).not.toHaveBeenCalled();
+  expect(popup.location.href).toBe("https://www.facebook.com/v26.0/dialog/oauth");
+  expect(paths).toEqual(["/api/auth/meta/start", "/api/auth/meta/status", "/api/auth/meta/finish"]);
+});
