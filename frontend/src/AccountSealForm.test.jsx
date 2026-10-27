@@ -225,6 +225,7 @@ it("reports missing or expired browser session on an explicit status check witho
   const message = await screen.findByText(/Could not confirm account sign-in:/);
   expect(message.textContent).toContain("Sign-in request expired or belongs to another browser");
   expect(message.textContent).not.toContain("test-secret");
+  expect(open).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Cancel sealing" }));
 });
 
