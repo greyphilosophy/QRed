@@ -105,7 +105,11 @@ it.each(Object.entries(AUTH_PROVIDERS))("prepares %s first, then opens the real 
   const signIn = await prepare(provider, details);
   expect(open).not.toHaveBeenCalled(); // No empty popup during slow PDF prep.
   expect(beginAccountSignIn).toHaveBeenCalledWith(provider, [], expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  expect(signIn.tagName).toBe("A");
   expect(signIn.getAttribute("href")).toBe(mockAuthUrl(provider));
+  // Only the provider-issued authorization URL is navigated to; the private
+  // document-specific QRed session secret is never put in an address bar.
+  expect(signIn.getAttribute("href")).not.toContain("test-secret");
   expect(signIn.getAttribute("target")).toBe("_blank");
   expect(signIn.getAttribute("rel")).toContain("noopener");
   expect(signIn.getAttribute("rel")).toContain("noreferrer");
