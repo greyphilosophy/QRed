@@ -314,15 +314,26 @@ export function PdfSealForm({ onUsePublicKey }) {
       </p>
       <p>Your PDF stays on your device. Stamping happens in this browser, and the file is not sent to a server.</p>
       <div className="demo-input">
-        <label htmlFor="sealing-method">Sealing method</label>
-        <select id="sealing-method" value={method} disabled={loading || loadingKeys}
-          onChange={event => { setMethod(event.target.value); setMessage(""); setSigningIdentity(null); }}>
-          <option value="private-key">Private key file (offline)</option>
-          {Object.entries(AUTH_PROVIDERS).map(([id, account]) => <option key={id} value={id}
-            disabled={!accountSealingAvailable || availability?.[id] === false}>
-            {account.button}{!accountSealingAvailable || availability?.[id] === false ? " (not enabled)" : ""}
-          </option>)}
-        </select>
+        {loading
+          ? <p className="sealing-method-selected">Sealing method: {method === "private-key" ? "Private key (offline)" : provider.label + " login"}</p>
+          : <fieldset className="sealing-methods">
+            <legend>Sealing method</legend>
+            <p className="key-help">Choose how to seal your PDF. Account methods prepare the PDF locally before opening the login page.</p>
+            <div className="sealing-method-grid">
+              <button type="button" aria-pressed={method === "private-key"}
+                onClick={() => { setMethod("private-key"); setMessage(""); setSigningIdentity(null); }}
+                disabled={loadingKeys}>
+                Private key (offline)
+              </button>
+              {Object.entries(AUTH_PROVIDERS).map(([id, account]) => <button
+                key={id} type="button" aria-pressed={method === id}
+                onClick={() => { setMethod(id); setMessage(""); setSigningIdentity(null); }}
+                disabled={loadingKeys || !accountSealingAvailable || availability?.[id] === false}
+                title={availability?.[id] === false ? "Not enabled on this QRed installation" : undefined}>
+                {account.button}
+              </button>)}
+            </div>
+          </fieldset>}
       </div>
       {usesAccount && <div className="signing-key-help">
         <p>{method === "google" ? "Use a Gmail or Google Workspace account. " : method === "microsoft" ? "Use a personal, work, or school Microsoft account. " : `Use your ${provider.label} account. `}
@@ -421,8 +432,8 @@ export function PdfSealForm({ onUsePublicKey }) {
           {loading ? "Sealing..." : "Stamp and save PDF"}
         </button>}
       {usesAccount && <p id="account-sealing-action" className="key-help">
-        {readyForSignIn ? "Your PDF is prepared. Tap the provider button to open sign-in directly. On a phone, return to this QRed tab afterward."
-          : "QRed prepares your PDF on this device before opening the sign-in tab. Your document is not sent to the provider."}
+        {readyForSignIn ? "Your PDF is prepared. Tap Authenticate to open the provider's login page directly. On a phone, return to this QRed tab afterward."
+          : "First prepare your PDF on this device, then authenticate with your selected login. Your document is not sent to the provider."}
       </p>}
       {loading && usesAccount && authenticating && <button type="button"
         onClick={checkSignInStatus} disabled={checkingAccount}>
