@@ -193,31 +193,34 @@ export function PdfSealForm({ onUsePublicKey }) {
     }
   }
 
-  async function sealPdf() {
-    // Second, explicit user gesture: the PDF and its document-bound
-    // authentication session are already prepared. Navigate directly to the
-    // provider URL. There is no about:blank tab waiting for PDF processing.
+  function openPreparedSignIn(event) {
     const waiting = pendingAccountSignIn.current;
-    if (waiting) {
-      if (waiting.provider !== method || Date.now() >= waiting.session.startedAt + 9 * 60 * 1000) {
-        pendingAccountSignIn.current = null;
-        setReadyForSignIn(false);
-        waiting.reject(new Error("Sign-in preparation expired. Prepare the PDF again."));
-        return;
-      }
-      const popup = window.open(waiting.session.authorize_url, "_blank", "popup,width=520,height=680");
-      if (!popup) {
-        setMessage("Your browser blocked the " + provider.label + " sign-in tab. Allow pop-ups for QRed, or open QRed in your browser and retry.");
-        return;
-      }
-      if (activeRequest.current) activeRequest.current.popup = popup;
-      pendingAccountSignIn.current = null;
-      setReadyForSignIn(false);
-      setAuthenticating(true);
-      waiting.resolve(popup);
+    if (!waiting) {
+      event.preventDefault();
       return;
     }
+    if (waiting.provider !== method || Date.now() >= waiting.session.startedAt + 9 * 60 * 1000) {
+      event.preventDefault();
+      pendingAccountSignIn.current = null;
+      waiting.reject(new Error("Sign-in preparation expired. Prepare the PDF again."));
+      setReadyForSignIn(false);
+      return;
+    }
+    // DO NOT call preventDefault: the browser follows the actual href on this
+    // user gesture. We do not create an about:blank popup or navigate it using
+    // delayed JavaScript. Leave the clicked link mounted until default
+    // navigation has started; otherwise some mobile browsers cancel it.
+    pendingAccountSignIn.current = null;
+    waiting.resolve(null);
+    setTimeout(() => {
+      if (activeRequest.current && !activeRequest.current.controller.signal.aborted) {
+        setReadyForSignIn(false);
+        setAuthenticating(true);
+      }
+    }, 0);
+  }
 
+  async function sealPdf() {
     if (!file || (method === "private-key" && !privateKey.trim())) {
       setMessage("Choose a PDF and a sealing method. For local sealing, generate, open, or paste your private key.");
       return;
@@ -420,7 +423,8 @@ export function PdfSealForm({ onUsePublicKey }) {
       </div>
       <p id="signing-key-status" role="status" style={{ marginTop: "1rem", color: keyError ? "#ef4444" : "#64748b" }}>{keyStatus}</p>
       {usesAccount ? readyForSignIn
-        ? <ProviderSignInButton provider={method} onClick={sealPdf}
+        ? <ProviderSignInButton provider={method} onClick={openPreparedSignIn}
+          href={pendingAccountSignIn.current?.session.authorize_url}
           disabled={loadingKeys || !accountSealingAvailable || availability?.[method] !== true}
           aria-describedby="account-sealing-action" style={{ marginTop: "1rem" }} />
         : <button type="button" onClick={sealPdf}
