@@ -193,3 +193,50 @@ jobs:
               sys.exit(1)
           print("LIVE POLICY PAGES AND DIAGRAM: PASS")
           PY
+
+      - name: Verify deployed standard Facebook OAuth authorization request and session cleanup
+        run: |
+          python - <<'PY'
+          import base64, http.cookiejar, json, urllib.parse, urllib.request, urllib.error
+
+          origin = "https://qred.org"
+          cookiejar = http.cookiejar.CookieJar()
+          client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookiejar))
+          def post(path, payload):
+              req = urllib.request.Request(origin + path, method="POST",
+                  data=json.dumps(payload).encode(),
+                  headers={"Origin": origin, "Content-Type": "application/json",
+                           "User-Agent": "QRed-live-Meta-smoke/1.0"})
+              try:
+                  with client.open(req, timeout=15) as response:
+                      return response.status, json.loads(response.read())
+              except urllib.error.HTTPError as exc:
+                  return exc.code, json.loads(exc.read())
+
+          digest = base64.urlsafe_b64encode(bytes(32)).decode().rstrip("=")
+          code, started = post("/api/auth/meta/start", {"commitments": [digest]})
+          if code != 200:
+              raise AssertionError(f"Meta start refused: HTTP {code}, reason={started.get('error')}")
+          assert len(started["id"]) == 43 and len(started["secret"]) == 43
+          assert cookiejar and all(c.secure for c in cookiejar)
+          parsed = urllib.parse.urlsplit(started["authorize_url"])
+          params = urllib.parse.parse_qs(parsed.query)
+          assert parsed.scheme == "https" and parsed.hostname == "www.facebook.com"
+          assert parsed.path.endswith("/dialog/oauth"), parsed.path
+          assert params.get("client_id") == ["2087701785187116"]
+          assert params.get("redirect_uri") == [origin + "/api/auth/meta/callback"]
+          assert params.get("response_type") == ["code"]
+          assert set(params.get("scope", [""])[0].split(",")) == {"public_profile","email"}
+          assert len(params.get("state", [""])[0]) == 43
+          for disallowed in ["nonce", "code_challenge", "code_challenge_method"]:
+              assert disallowed not in params, f"Unsupported Meta parameter still deployed: {disallowed}"
+          print("LIVE META AUTHORIZE PASS: HTTP 200; expected QRed App ID, redirect and scope; no unsupported PKCE/nonce fields")
+          creds = {"id": started["id"], "secret": started["secret"]}
+          code, status = post("/api/auth/meta/status", creds)
+          assert code == 200 and status["status"] == "pending", (code, status)
+          code, finished = post("/api/auth/meta/finish", creds)
+          assert code == 200 and finished["finished"] is True, (code, finished)
+          code, result = post("/api/auth/meta/status", creds)
+          assert code == 403, (code, result)
+          print("LIVE META SESSION PASS: encrypted pending session, safe cancellation, subsequent access rejected")
+          PY
