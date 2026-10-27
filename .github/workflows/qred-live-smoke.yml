@@ -156,14 +156,32 @@ jobs:
           js = "\n".join(candidates)
           # Do not print the OAuth URL, identities, session state or tokens.
           features = {
-              "uniform_auth_labels": "Authenticate with Facebook login" in js,
+              "uniform_facebook_label": "Authenticate with Facebook login" in js,
+              "uniform_google_label": "Authenticate with Google login" in js,
+              "old_facebook_label": "Continue with Facebook" in js,
               "native_noopener_href": "noopener noreferrer" in js,
               "old_window_open_popup_removed": "popup,width=520,height=680" not in js,
               "prepared_pdf_flow": "Preparing document..." in js,
+              "new_method_grid": "sealing-method-grid" in js,
           }
           print("LIVE FRONTEND FEATURES:", features)
-          if not all(features.values()):
-              raise AssertionError("QRed production browser bundle is not the latest native-link build")
+          if not (features["native_noopener_href"] and
+                  features["old_window_open_popup_removed"] and features["prepared_pdf_flow"]):
+              raise AssertionError("QRed browser bundle still has a JavaScript popup flow")
+
+          # Fixed-length synthetic state. Never log callback URL or query string.
+          # No Facebook provider is contacted without the pending cookie.
+          fake_state = "A" * 43
+          fake_url = origin + "/api/auth/meta/callback?state=" + fake_state + "&code=invalid-synthetic"
+          try:
+              with urllib.request.urlopen(urllib.request.Request(fake_url, headers=headers), timeout=15) as response:
+                  code, result = response.status, response.read(8000).decode()
+          except urllib.error.HTTPError as exc:
+              code, result = exc.code, exc.read(8000).decode()
+          missing_session_message = "encrypted sign-in session cookie" in result
+          print("LIVE META CALLBACK WITHOUT COOKIE: HTTP", code,
+                "missing-session message:", missing_session_message)
+          assert code == 403 and missing_session_message, "Deployed Worker callback is not the latest version"
           PY
 
       - name: Diagnose live Meta configuration and return-tab session with synthetic consent denial
