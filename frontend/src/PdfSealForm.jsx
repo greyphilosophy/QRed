@@ -33,6 +33,9 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [readyForSignIn, setReadyForSignIn] = useState(false);
+  // Keep the verified authorization href stable across the link's click.
+  // Clearing a ref in onClick must not remove href before native navigation.
+  const [preparedAuthorizeUrl, setPreparedAuthorizeUrl] = useState("");
   const [authenticating, setAuthenticating] = useState(false);
   const [checkingAccount, setCheckingAccount] = useState(false);
   const [method, setMethod] = useState("private-key");
@@ -167,6 +170,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     pendingAccountSignIn.current = null;
     waiting?.reject(new Error("Account sealing cancelled"));
     setReadyForSignIn(false);
+    setPreparedAuthorizeUrl("");
     setAuthenticating(false);
   }
 
@@ -204,6 +208,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       pendingAccountSignIn.current = null;
       waiting.reject(new Error("Sign-in preparation expired. Prepare the PDF again."));
       setReadyForSignIn(false);
+      setPreparedAuthorizeUrl("");
       return;
     }
     // DO NOT call preventDefault: the browser follows the actual href on this
@@ -215,6 +220,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     setTimeout(() => {
       if (activeRequest.current && !activeRequest.current.controller.signal.aborted) {
         setReadyForSignIn(false);
+        setPreparedAuthorizeUrl("");
         setAuthenticating(true);
       }
     }, 0);
@@ -233,6 +239,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     setLoading(true);
     setSigningIdentity(null);
     setReadyForSignIn(false);
+    setPreparedAuthorizeUrl("");
     setAuthenticating(false);
     try {
       // Validate before parsing a PDF so key errors are immediate and actionable.
@@ -250,6 +257,7 @@ export function PdfSealForm({ onUsePublicKey }) {
               if (controller.signal.aborted) throw new Error("Account sealing cancelled");
               const popup = await new Promise((resolve, reject) => {
                 pendingAccountSignIn.current = { provider: method, session, resolve, reject };
+                setPreparedAuthorizeUrl(session.authorize_url);
                 setReadyForSignIn(true);
                 setMessage("PDF ready. Tap the " + provider.label + " sign-in button below. Once signed in, return to this QRed tab to finish sealing.");
               });
@@ -303,6 +311,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       }
       if (activeRequest.current === request) activeRequest.current = null;
       setReadyForSignIn(false);
+      setPreparedAuthorizeUrl("");
       setAuthenticating(false);
       setCheckingAccount(false);
       setLoading(false);
@@ -424,7 +433,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       <p id="signing-key-status" role="status" style={{ marginTop: "1rem", color: keyError ? "#ef4444" : "#64748b" }}>{keyStatus}</p>
       {usesAccount ? readyForSignIn
         ? <ProviderSignInButton provider={method} onClick={openPreparedSignIn}
-          href={pendingAccountSignIn.current?.session.authorize_url}
+          href={preparedAuthorizeUrl}
           disabled={loadingKeys || !accountSealingAvailable || availability?.[method] !== true}
           aria-describedby="account-sealing-action" style={{ marginTop: "1rem" }} />
         : <button type="button" onClick={sealPdf}
