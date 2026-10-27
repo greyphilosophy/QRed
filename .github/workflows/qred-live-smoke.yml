@@ -1,0 +1,81 @@
+name: Live QRed smoke probe (isolated branch)
+on:
+  push:
+    branches: [test/live-qred-smoke-20261027]
+jobs:
+  live-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    permissions:
+      contents: read
+    steps:
+      - name: Test production QRed public URLs without credentials
+        run: |
+          python - <<'PY'
+          import json, sys, urllib.request, urllib.error
+
+          BASE = "https://qred.org"
+          fail = []
+          def get(path, method="GET", data=None, headers=None):
+              url = BASE + path
+              req = urllib.request.Request(url, method=method, data=data, headers={"User-Agent": "QRed-Live-Smoke-GithubActions/1.0", **(headers or {})})
+              try:
+                  with urllib.request.urlopen(req, timeout=15) as resp:
+                      status = resp.status
+                      text = resp.read(100_000).decode("utf-8", "replace")
+                      content_type = resp.headers.get("content-type", "")
+                      effective = resp.url
+              except urllib.error.HTTPError as exc:
+                  status = exc.code
+                  text = exc.read(100_000).decode("utf-8", "replace")
+                  content_type = exc.headers.get("content-type", "")
+                  effective = exc.url
+              except Exception as exc:
+                  print(f"{path}: NETWORK ERROR: {type(exc).__name__}: {exc}")
+                  fail.append(path + ": network error")
+                  return 0, None
+              print(f"{path}: HTTP {status}; content-type={content_type}; final={effective}; body-prefix={text[:170]!r}")
+              return status, text
+
+          status, html = get("/")
+          if status != 200 or not html or "QRed" not in html:
+              fail.append("Home page should serve QRed HTML")
+          status, html = get("/verify.htm")
+          if status != 200 or not html or "QRed" not in html:
+              fail.append("Verification page should serve QRed HTML")
+          status, data = get("/api/keys/default")
+          try:
+              keys = json.loads(data or "")
+              print("Public key API format:", sorted(keys.keys()))
+              if status != 200 or not keys.get("key_id") or not keys.get("public_key"):
+                  fail.append("Public key API not working")
+          except Exception:
+              fail.append("Public key API returned non-JSON")
+
+          status, data = get("/api/auth/config")
+          try:
+              auth = json.loads(data or "")
+              print("Reported provider availability:", json.dumps(auth, sort_keys=True))
+              if status != 200 or any(not isinstance(auth.get(k), bool) for k in ("google", "microsoft", "meta", "amazon")):
+                  fail.append("Authentication config missing or invalid")
+              if auth.get("microsoft") is not True:
+                  fail.append("Microsoft authentication is NOT configured on the live worker")
+          except Exception:
+              fail.append("Authentication config returned non-JSON")
+          status, data = get("/api/auth/microsoft/complete")
+          if status != 405:
+              fail.append("Microsoft SPA completion route not active (expected HTTP 405 on GET)")
+          status, data = get("/api/auth/microsoft/callback")
+          if status != 403:
+              fail.append("Microsoft callback should reject missing state (expected HTTP 403)")
+          status, data = get("/api/auth/microsoft/start", method="POST",
+              data=b'{"commitments":[]}',
+              headers={"Origin": BASE, "Content-Type": "application/json"})
+          if status != 400:
+              fail.append("Microsoft start should reject missing page commitments (expected HTTP 400)")
+          print("")
+          if fail:
+              print("LIVE SMOKE FAILURES:", json.dumps(fail, indent=2))
+              sys.exit(1)
+          print("LIVE SMOKE PASS: public pages and authentication endpoints respond as expected")
+          PY
