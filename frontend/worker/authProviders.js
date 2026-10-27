@@ -14,7 +14,8 @@ export function providerConfiguration(provider, env) {
   if (!authProvider(provider)) return null;
   const prefix = "QRED_" + (provider === "meta" ? "META_APP" : provider.toUpperCase() + "_CLIENT");
   const clientId = env[prefix + "_ID"]?.trim(), clientSecret = env[prefix + "_SECRET"]?.trim();
-  if (!clientId || !clientSecret) return null;
+  // Microsoft is a public SPA client; its browser PKCE flow must not require a secret.
+  if (!clientId || (provider !== "microsoft" && !clientSecret)) return null;
   const graphVersion = env.QRED_META_GRAPH_VERSION || "v26.0";
   if (provider === "meta" && !/^v\d{1,2}\.\d{1,2}$/.test(graphVersion)) return null;
   return { clientId, clientSecret, graphVersion };
@@ -108,7 +109,19 @@ export async function verifyMicrosoftIdToken(token, clientId, now, keys = micros
   return verifyIdToken(token, clientId, now, scopedKey, issuer, "microsoft", ["tid", "ver"]);
 }
 
-const tokenVerifiers = { google: verifyGoogleIdToken, microsoft: verifyMicrosoftIdToken, meta: verifyMetaIdToken };
+// The browser obtains the Microsoft ID token using a one-time authorization
+// code and PKCE. Only this server decides whether it represents a valid account.
+export async function validateMicrosoftSpaToken(token, config, pending, now, verifyTokens = {}) {
+  if (typeof token !== "string" || !token || token.length > 16384) throw new RequestError("Invalid Microsoft identity token", 403);
+  const payload = await (verifyTokens.microsoft || verifyMicrosoftIdToken)(token, config.clientId, now());
+  if (payload.nonce !== pending.nonce || payload.iat < pending.iat - CLOCK_SKEW) {
+    throw new RequestError("Microsoft identity did not match this document sign-in request", 403);
+  }
+  checkTokenTime(payload, now(), "microsoft");
+  return { identity: providerIdentity("microsoft", payload), provider_iat: payload.iat };
+}
+
+const tokenVerifiers = { google: verifyGoogleIdToken, meta: verifyMetaIdToken };
 
 async function providerJson(fetchImpl, url, options = {}) {
   const response = await fetchImpl(url, { ...options, redirect: "error", signal: AbortSignal.timeout(10000) });
@@ -117,9 +130,10 @@ async function providerJson(fetchImpl, url, options = {}) {
 }
 
 export async function exchangeIdentity(provider, config, { code, origin, pending, fetchImpl, now, verifyTokens = {} }) {
+  // A Microsoft SPA redirect cannot redeem a code server-side or use a client secret.
+  if (provider === "microsoft") throw new RequestError("Microsoft requires browser PKCE", 403);
   const endpoints = {
     google: "https://oauth2.googleapis.com/token",
-    microsoft: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
     meta: "https://graph.facebook.com/" + config.graphVersion + "/oauth/access_token",
     amazon: "https://api.amazon.com/auth/o2/token",
   };
