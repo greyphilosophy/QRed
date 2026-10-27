@@ -228,9 +228,9 @@ jobs:
           assert params.get("response_type") == ["code"]
           assert set(params.get("scope", [""])[0].split(",")) == {"public_profile","email"}
           assert len(params.get("state", [""])[0]) == 43
-          for disallowed in ["nonce", "code_challenge", "code_challenge_method"]:
+          for disallowed in ["nonce", "code_challenge", "code_challenge_method", "display", "auth_type"]:
               assert disallowed not in params, f"Unsupported Meta parameter still deployed: {disallowed}"
-          print("LIVE META AUTHORIZE PASS: HTTP 200; expected QRed App ID, redirect and scope; no unsupported PKCE/nonce fields")
+          print("LIVE META AUTHORIZE PASS: HTTP 200; expected QRed App ID, redirect and scope; no unsupported PKCE/nonce/desktop-popup fields")
           creds = {"id": started["id"], "secret": started["secret"]}
           code, status = post("/api/auth/meta/status", creds)
           assert code == 200 and status["status"] == "pending", (code, status)
