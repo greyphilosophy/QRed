@@ -30,6 +30,21 @@ const rsa = await generateKeyPair("RS256", { extractable: true });
 const keys = createLocalJWKSet({ keys: [{ ...await exportJWK(rsa.publicKey), kid: "synthetic-provider-key", alg: "RS256", issuer: "https://login.microsoftonline.com/{tenantid}/v2.0" }] });
 const codes = new Map(); // This is the fake provider's state, not QRed's.
 async function exchange(url, options) {
+  if (provider === "meta" && url.startsWith("https://graph.facebook.com/v26.0/debug_token?")) {
+    const params = new URL(url).searchParams;
+    if (params.get("input_token") !== "synthetic-meta-token" || params.get("access_token") !== "browser-test-client|synthetic-secret") {
+      return new Response("Invalid Meta token", { status: 403 });
+    }
+    return Response.json({ data: { is_valid: true, app_id: "browser-test-client", type: "USER",
+      user_id: "browser-test-user", expires_at: Math.floor(Date.now() / 1000) + 3600, scopes: ["email"] } });
+  }
+  if (provider === "meta" && url.startsWith("https://graph.facebook.com/v26.0/me?")) {
+    const params = new URL(url).searchParams;
+    if (options.headers.Authorization !== "Bearer synthetic-meta-token" || !/^[0-9a-f]{64}$/.test(params.get("appsecret_proof") || "")) {
+      return new Response("Invalid Meta profile proof", { status: 403 });
+    }
+    return Response.json({ id: "browser-test-user", email: "browser.test@example.org", name: "Browser Test" });
+  }
   if (provider === "amazon" && url.startsWith("https://api.amazon.com/auth/o2/tokeninfo?")) return Response.json({
     iss: "https://www.amazon.com", aud: "browser-test-client", user_id: "browser-test-user", exp: 3599 });
   if (provider === "amazon" && url === "https://api.amazon.com/user/profile") return Response.json({
@@ -43,6 +58,7 @@ async function exchange(url, options) {
       params.get("redirect_uri") !== origin + "/api/auth/" + provider + "/callback") return new Response("invalid_grant", { status: 400 });
   codes.delete(code);
   if (provider === "amazon") return Response.json({ access_token: "opaque-token", token_type: "bearer", expires_in: 3600 });
+  if (provider === "meta") return Response.json({ access_token: "synthetic-meta-token", token_type: "bearer", expires_in: 3600 });
   const now = Math.floor(Date.now() / 1000);
   const token = await new SignJWT({ sub: "browser-test-user", email: "browser.test@gmail.com", email_verified: true,
     name: "Browser Test", nonce: grant.nonce, ...(provider === "microsoft" ? { tid: tenant, ver: "2.0" } : {}) })
