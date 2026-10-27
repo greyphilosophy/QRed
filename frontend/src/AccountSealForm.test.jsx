@@ -143,6 +143,9 @@ it("cancels an in-progress account request without saving a document", async () 
   vi.spyOn(window, "open").mockReturnValue(popup);
   URL.createObjectURL = vi.fn();
   attestPagesWithAccount.mockImplementation((_provider, _pages, { signal }) => new Promise((_resolve, reject) => {
+    // Cancellation may happen before this continuation runs. Match the real
+    // polling code, which checks signal.aborted as well as listening for abort.
+    if (signal.aborted) { reject(new Error("Aborted")); return; }
     signal.addEventListener("abort", () => reject(new Error("Aborted")), { once: true });
   }));
   sealPdfInBrowser.mockImplementation(options => options.attestPages([]));
