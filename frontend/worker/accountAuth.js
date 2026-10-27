@@ -76,17 +76,33 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
     return Boolean(providerConfiguration(provider, env) &&
       env.QRED_ATTESTATION_PRIVATE_KEY && trusted[env.QRED_ATTESTATION_KEY_ID]);
   }
-  function callbackPage(id, origin, successful, cookies = []) {
+  function callbackPage(id, origin, successful, cookies = [], error = "") {
     const nonce = random();
-    const script = "if(window.opener){window.opener.postMessage(" + JSON.stringify({ type: "qred-account-complete", id }) + "," + JSON.stringify(origin) + ");window.close();}";
     const headers = cookieHeaders(cookies);
     headers.set("Content-Type", "text/html;charset=utf-8");
     headers.set("Cache-Control", "no-store");
     headers.set("Referrer-Policy", "no-referrer");
     headers.set("Content-Security-Policy", "default-src 'none'; script-src 'nonce-" + nonce + "'; frame-ancestors 'none'; base-uri 'none'");
-    return new Response("<!doctype html><meta charset=utf-8><title>QRed sign-in</title><p>" +
-      (successful ? "Sign-in completed. Return to your QRed document window." : "Sign-in could not be completed. Return to QRed for details or try again.") +
-      "</p><script nonce=\"" + nonce + "\">" + script + "</script>", { headers });
+    // Never show raw provider responses, OAuth codes, tokens or secrets here.
+    // Errors come from QRed's own bounded, sanitized RequestError messages.
+    const escapeHtml = value => String(value).slice(0, 500).replace(/[&<>"']/g, char =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+    const message = successful
+      ? "<p>Sign-in completed. Return to your original QRed tab to finish sealing your PDF.</p>"
+      : "<p role=\"alert\">Sign-in could not be completed.</p>" +
+        (error ? "<p>" + escapeHtml(error) + "</p>" : "") +
+        "<p>Return to your original QRed tab to retry or cancel sealing. Keep that original tab open.</p>";
+    // Only automatically close a SUCCESSFUL popup. Previously QRed closed
+    // failed popups too, hiding the exact reason on mobile browsers.
+    const script = successful
+      ? "<script nonce=\"" + nonce + "\">if(window.opener){window.opener.postMessage(" +
+        JSON.stringify({ type: "qred-account-complete", id }) + "," + JSON.stringify(origin) +
+        ");window.close();}</script>"
+      : "";
+    return new Response("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">" +
+      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
+      "<title>QRed sign-in</title></head><body><h1>QRed sign-in</h1>" +
+      message + script + "</body></html>", { headers });
   }
   async function handle(request, env) {
     const url = new URL(request.url);
@@ -117,7 +133,7 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
       if (complete?.status === "ready") return callbackPage(id, origin, true);
       const pending = await readSession(id, "request");
       if (!pending) throw new RequestError("Return to the browser where you started signing in, or start again.", 403);
-      if (pending.status === "failed") return callbackPage(id, origin, false);
+      if (pending.status === "failed") return callbackPage(id, origin, false, [], pending.error);
       if (pending.status !== "pending") throw new RequestError("Invalid sign-in request", 403);
       // The Microsoft SPA must redeem its PKCE code from the browser so Azure
       // sends an Origin header. A confidential Worker exchange is not supported
@@ -145,7 +161,7 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
         const message = error instanceof RequestError ? error.message : "Authentication failed. Please try again.";
         return callbackPage(id, origin, false, [await sessions.write(id, "request", {
           status: "failed", secret_hash: pending.secret_hash, error: message, iat: pending.iat, exp: pending.exp,
-        })]);
+        })], message);
       }
     }
     if (request.method !== "POST") throw new RequestError("Method not allowed", 405);
