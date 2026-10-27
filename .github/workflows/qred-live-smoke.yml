@@ -129,6 +129,43 @@ jobs:
           print("LIVE AUTH START/CANCEL SMOKE PASS")
           PY
 
+      - name: Verify production browser bundle uses native OAuth link, not old JavaScript popup
+        run: |
+          python - <<'PY'
+          import re, urllib.request, urllib.parse
+          origin = "https://qred.org"
+          headers = {"User-Agent": "QRed-native-link-deploy-probe/1.0",
+                     "Accept-Encoding": "identity", "Cache-Control": "no-cache"}
+          def get(url, limit):
+              request = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  return response.status, response.headers.get("Content-Type", ""), response.read(limit)
+          status, content_type, html = get(origin + "/", 400000)
+          assert status == 200 and "text/html" in content_type
+          page = html.decode("utf-8", "replace")
+          bundles = re.findall(r'<script[^>]+src="([^"]+\.js)"', page)
+          print("LIVE FRONTEND: module script count", len(bundles))
+          assert bundles, "Production homepage has no JS entrypoint"
+          candidates = []
+          for path in bundles:
+              url = urllib.parse.urljoin(origin + "/", path)
+              assert urllib.parse.urlsplit(url).netloc == "qred.org"
+              code, kind, body = get(url, 9000000)
+              assert code == 200 and ("javascript" in kind or url.endswith(".js")), (code, kind)
+              candidates.append(body.decode("utf-8", "replace"))
+          js = "\n".join(candidates)
+          # Do not print the OAuth URL, identities, session state or tokens.
+          features = {
+              "uniform_auth_labels": "Authenticate with Facebook login" in js,
+              "native_noopener_href": "noopener noreferrer" in js,
+              "old_window_open_popup_removed": "popup,width=520,height=680" not in js,
+              "prepared_pdf_flow": "Preparing document..." in js,
+          }
+          print("LIVE FRONTEND FEATURES:", features)
+          if not all(features.values()):
+              raise AssertionError("QRed production browser bundle is not the latest native-link build")
+          PY
+
       - name: Diagnose live Meta configuration and return-tab session with synthetic consent denial
         run: |
           python - <<'PY'
