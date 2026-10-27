@@ -41,7 +41,7 @@ async function prepare(provider, details = AUTH_PROVIDERS[provider]) {
   const prep = await screen.findByRole("button", { name: `Prepare PDF for ${details.label} sign-in` });
   await waitFor(() => expect(prep.disabled).toBe(false));
   fireEvent.click(prep);
-  return screen.findByRole("button", { name: details.button });
+  return screen.findByRole("link", { name: details.button });
 }
 
 it("does not check account services during private-key/offline sealing", () => {
@@ -89,8 +89,7 @@ it("disables an unconfigured provider and recovers from a failed availability ch
 });
 
 it.each(Object.entries(AUTH_PROVIDERS))("prepares %s first, then opens the real sign-in page on a fresh user gesture", async (provider, details) => {
-  const popup = { close: vi.fn() };
-  const open = vi.spyOn(window, "open").mockReturnValue(popup);
+  const open = vi.spyOn(window, "open");
   URL.createObjectURL = vi.fn(() => "blob:sealed"); URL.revokeObjectURL = vi.fn();
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
   attestPagesWithAccount.mockImplementation(async (_provider, _pages, options) => {
@@ -106,24 +105,24 @@ it.each(Object.entries(AUTH_PROVIDERS))("prepares %s first, then opens the real 
   const signIn = await prepare(provider, details);
   expect(open).not.toHaveBeenCalled(); // No empty popup during slow PDF prep.
   expect(beginAccountSignIn).toHaveBeenCalledWith(provider, [], expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  expect(signIn.getAttribute("href")).toBe(mockAuthUrl(provider));
+  expect(signIn.getAttribute("target")).toBe("_blank");
+  expect(signIn.getAttribute("rel")).toContain("noopener");
+  expect(signIn.getAttribute("rel")).toContain("noreferrer");
   fireEvent.click(signIn);
   await screen.findByText(/Sealed source.pdf in this browser/);
-  expect(open).toHaveBeenCalledTimes(1);
-  expect(open).toHaveBeenCalledWith(mockAuthUrl(provider), "_blank", expect.any(String));
-  expect(open.mock.calls[0][0]).not.toBe("about:blank");
+  expect(open).not.toHaveBeenCalled(); // No JavaScript popup is ever created.
   expect(attestPagesWithAccount).toHaveBeenCalledWith(provider, [], expect.objectContaining({
-    popup, preparedSession: expect.objectContaining({ provider }), signal: expect.any(AbortSignal),
+    popup: null, preparedSession: expect.objectContaining({ provider }), signal: expect.any(AbortSignal),
   }));
   expect(screen.getByText(new RegExp(details.label.replace(/[()]/g, "\\$&") + " account: example@gmail.com")).textContent)
     .toContain(details.label + " profile");
-  expect(popup.close).toHaveBeenCalled();
 });
 
 it("never opens a mobile popup during delayed PDF parsing; sign-in begins only on a second tap", async () => {
   let parsed;
   const parsing = new Promise(resolve => { parsed = resolve; });
-  const popup = { close: vi.fn() };
-  const open = vi.spyOn(window, "open").mockReturnValue(popup);
+  const open = vi.spyOn(window, "open");
   URL.createObjectURL = vi.fn(() => "blob:sealed"); URL.revokeObjectURL = vi.fn();
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
   sealPdfInBrowser.mockImplementation(async options => {
@@ -140,11 +139,12 @@ it("never opens a mobile popup during delayed PDF parsing; sign-in begins only o
   expect(screen.getByRole("button", { name: "Preparing document..." })).toBeTruthy();
   expect(open).not.toHaveBeenCalled();
   parsed();
-  const signIn = await screen.findByRole("button", { name: "Continue with Facebook" });
+  const signIn = await screen.findByRole("link", { name: AUTH_PROVIDERS.meta.button });
   expect(open).not.toHaveBeenCalled();
+  expect(signIn.getAttribute("href")).toBe(mockAuthUrl("meta"));
   fireEvent.click(signIn);
   await screen.findByText(/Sealed source.pdf in this browser/);
-  expect(open).toHaveBeenCalledWith(mockAuthUrl("meta"), "_blank", expect.any(String));
+  expect(open).not.toHaveBeenCalled();
 });
 
 it("cancels a prepared but unopened account session, clearing its cookies", async () => {
@@ -160,8 +160,7 @@ it("cancels a prepared but unopened account session, clearing its cookies", asyn
 });
 
 it("cancels an in-progress account request without saving a document", async () => {
-  const popup = { close: vi.fn() };
-  vi.spyOn(window, "open").mockReturnValue(popup);
+  const open = vi.spyOn(window, "open");
   URL.createObjectURL = vi.fn();
   attestPagesWithAccount.mockImplementation((_provider, _pages, { signal }) => new Promise((_resolve, reject) => {
     // Cancellation may happen before this continuation runs. Match the real
@@ -173,17 +172,16 @@ it("cancels an in-progress account request without saving a document", async () 
   render(<PdfSealForm />);
   const signIn = await prepare("google");
   fireEvent.click(signIn);
-  expect(screen.getByRole("button", { name: "Completing sign-in..." }).disabled).toBe(true);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Completing sign-in..." }).disabled).toBe(true));
   fireEvent.click(screen.getByRole("button", { name: "Cancel sealing" }));
   await screen.findByText("Account sealing cancelled.");
   expect(URL.createObjectURL).not.toHaveBeenCalled();
-  expect(popup.close).toHaveBeenCalled();
+  expect(open).not.toHaveBeenCalled();
 });
 
 
 it("lets a phone user recheck pending, rejected and completed provider status without reopening Facebook", async () => {
-  const popup = { close: vi.fn() };
-  const open = vi.spyOn(window, "open").mockReturnValue(popup);
+  const open = vi.spyOn(window, "open");
   // Keep the original QRed account flow waiting after the popup closes; a
   // status recheck must not issue a new authorization or upload the PDF.
   attestPagesWithAccount.mockImplementation(() => new Promise(() => {}));
@@ -197,7 +195,7 @@ it("lets a phone user recheck pending, rejected and completed provider status wi
   expect(checkAccountSignInStatus).toHaveBeenCalledWith("meta", expect.objectContaining({
     id: "test-auth-id", secret: "test-secret", provider: "meta",
   }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
-  expect(open).toHaveBeenCalledTimes(1);
+  expect(open).not.toHaveBeenCalled();
   expect(beginAccountSignIn).toHaveBeenCalledTimes(1);
 
   checkAccountSignInStatus.mockResolvedValueOnce({ status: "failed",
@@ -208,13 +206,12 @@ it("lets a phone user recheck pending, rejected and completed provider status wi
   checkAccountSignInStatus.mockResolvedValueOnce({ status: "ready" });
   fireEvent.click(check);
   await screen.findByText(/Account sign-in verified by QRed. Finishing your PDF locally/);
-  expect(open).toHaveBeenCalledTimes(1);
+  expect(open).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Cancel sealing" }));
 });
 
 it("reports missing or expired browser session on an explicit status check without exposing secrets", async () => {
-  const popup = { close: vi.fn() };
-  vi.spyOn(window, "open").mockReturnValue(popup);
+  const open = vi.spyOn(window, "open");
   attestPagesWithAccount.mockImplementation(() => new Promise(() => {}));
   sealPdfInBrowser.mockImplementation(options => options.attestPages([]));
   checkAccountSignInStatus.mockRejectedValue(new Error("Sign-in request expired or belongs to another browser"));
@@ -229,14 +226,13 @@ it("reports missing or expired browser session on an explicit status check witho
 
 
 it("leaves the provider tab visible after a failed OAuth exchange, rather than silently closing it", async () => {
-  const popup = { close: vi.fn() };
-  vi.spyOn(window, "open").mockReturnValue(popup);
+  const open = vi.spyOn(window, "open");
   attestPagesWithAccount.mockRejectedValue(new Error("Facebook rejected QRed's login code exchange (HTTP 400; Meta error 100)"));
   sealPdfInBrowser.mockImplementation(options => options.attestPages([]));
   render(<PdfSealForm />);
   fireEvent.click(await prepare("meta"));
   const message = await screen.findByText(/PDF sealing failed: Facebook rejected QRed's login code exchange/);
   expect(message.textContent).toContain("Meta error 100");
-  expect(popup.close).not.toHaveBeenCalled();
+  expect(open).not.toHaveBeenCalled();
   expect(screen.queryByRole("button", { name: "Check sign-in status" })).toBeNull();
 });
