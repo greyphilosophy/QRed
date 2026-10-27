@@ -83,6 +83,7 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
   if (!popup) throw new Error("Allow the " + label + " sign-in window, then try again.");
   const authPath = "/api/auth/" + provider;
   let session = preparedSession;
+  let providerOpened = false, identityVerified = false;
   const post = (path, body) => postJson(path, body, fetchImpl, signal, label);
   try {
     if (session) {
@@ -92,6 +93,7 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
           !allowedAuthorizationUrl(provider, session.authorize_url)) {
         throw new Error("The prepared account sign-in does not match this document.");
       }
+      providerOpened = true;
       onStatus("Complete " + label + " sign-in, then return to QRed to finish sealing.");
     } else {
       // Compatibility with callers that have not opted into the two-step mobile
@@ -99,6 +101,7 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
       session = await beginAccountSignIn(provider, pages, { signal, fetchImpl });
       onStatus("Opening " + label + " sign-in. Your PDF and its text stay on this device.");
       popup.location.href = session.authorize_url;
+      providerOpened = true;
     }
     const { salts, commitments } = session;
     const credentials = { id: session.id, secret: session.secret };
@@ -116,6 +119,7 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
     if (!identity) throw new Error(label + " sign-in expired. Prepare the document again and retry.");
     if (identity.provider !== provider) throw new Error("Sign-in provider changed during authentication");
     encodeIdentity(identity);
+    identityVerified = true;
     onIdentity(identity);
     onStatus(label + " sign-in completed. Obtaining document attestations…");
     const receipts = [];
@@ -128,7 +132,12 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
     }
     return receipts;
   } finally {
-    try { popup.close(); } catch { /* The provider may isolate the popup. */ }
+    // Preserve a provider failure page so the user can read its sanitized
+    // error, especially on phones where a tab may close otherwise. Only
+    // close a verified login, cancellation or rejected/unopened flow.
+    if (identityVerified || signal?.aborted || !providerOpened) {
+      try { popup.close(); } catch { /* The provider may isolate the popup. */ }
+    }
     if (session) await finishAccountSignIn(provider, session, { fetchImpl });
   }
 }
