@@ -81,6 +81,37 @@ describe("App PDF signing keys", () => {
     expect(screen.queryByLabelText("Private Key")).toBeNull();
   });
 
+  it("opens Stamp PDF and scrolls/focuses the stamping section on first and repeated clicks", async () => {
+    const scroll = vi.fn(), previous = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scroll;
+    try {
+      render(<App />);
+      const trigger = screen.getByRole("button", { name: "Open PDF stamping tool" });
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+      fireEvent.click(trigger);
+      const section = document.getElementById("pdf-stamp-tool");
+      expect(section).not.toBeNull();
+      expect(trigger.getAttribute("aria-controls")).toBe("pdf-stamp-tool");
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
+      const heading = screen.getByRole("heading", { name: "Stamp a PDF with QRed seals" });
+      await waitFor(() => expect(scroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" }));
+      expect(scroll.mock.instances[0]).toBe(section);
+      expect(document.activeElement).toBe(heading);
+
+      scroll.mockClear();
+      fireEvent.click(trigger);
+      expect(scroll).toHaveBeenCalledOnce();
+      expect(scroll.mock.instances[0]).toBe(section);
+
+      fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+      expect(document.getElementById("pdf-stamp-tool")).toBeNull();
+    } finally {
+      if (previous === undefined) delete HTMLElement.prototype.scrollIntoView;
+      else HTMLElement.prototype.scrollIntoView = previous;
+    }
+  });
+
   it("starts with empty signing keys and generates a matching pair without a network request", async () => {
     render(React.createElement(PdfSealForm));
     expect(screen.getByLabelText("Private Key").value).toBe("");

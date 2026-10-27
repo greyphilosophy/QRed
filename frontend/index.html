@@ -236,7 +236,10 @@
       .pdf-stamp-tool {
         margin: 1.5rem auto 0;
         max-width: 920px;
+        scroll-margin-top: 1.25rem;
       }
+      .pdf-stamp-tool .tool-header h2:focus { outline: none; }
+      .pdf-stamp-tool .tool-header h2:focus-visible { outline: 2px solid #2563eb; outline-offset: 4px; }
 
       .tool-header {
         align-items: center;
@@ -261,19 +264,58 @@
       .pdf-stamp-tool button:disabled { cursor: not-allowed; opacity: 0.55; }
       .pdf-stamp-tool button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 
-      /* Provider artwork is bundled locally; no sign-in SDK runs on the document page. */
-      .pdf-stamp-tool .account-signin-button {
-        display: inline-flex;
-        align-items: center;
-        background: transparent;
-        border: 0;
-        border-radius: 4px;
+      /* Selection buttons all have consistent, accessible labels and states. */
+      .sealing-methods { border: 0; margin: 0 0 1.1rem; padding: 0; min-width: 0; }
+      .sealing-methods legend {
+        color: #334155;
+        font-size: 0.95rem;
+        font-weight: 700;
         padding: 0;
       }
-      .account-signin-button img { display: block; }
-      .pdf-stamp-tool .facebook-signin-button { background: #fff; border: 1px solid #dadce0; gap: 10px; padding: 0 12px; font-weight: 600; }
+      .sealing-methods .key-help { margin: 0.35rem 0 0.8rem; }
+      .sealing-method-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem; }
+      .pdf-stamp-tool .sealing-method-grid button {
+        align-items: center;
+        background: white;
+        border: 2px solid #cbd5e1;
+        border-radius: 9px;
+        display: flex;
+        font-size: 0.94rem;
+        justify-content: center;
+        line-height: 1.35;
+        min-height: 3.4rem;
+        padding: 0.65rem 0.9rem;
+        text-align: center;
+        width: 100%;
+      }
+      .pdf-stamp-tool .sealing-method-grid button[aria-pressed="true"] {
+        background: #eff6ff;
+        border-color: #2563eb;
+        color: #1d4ed8;
+        font-weight: 700;
+      }
+      .pdf-stamp-tool .sealing-method-grid button:not(:disabled):hover {
+        background: #eff6ff;
+        border-color: #3b82f6;
+      }
+      .sealing-method-selected { font-weight: 700; color: #334155; margin: 0 0 1rem; }
+      /* All provider login actions use the same appearance; no sign-in SDK runs on this page. */
+      .pdf-stamp-tool .account-signin-button {
+        align-items: center;
+        background: #1d4ed8;
+        border: 2px solid #1d4ed8;
+        border-radius: 9px;
+        color: white;
+        display: inline-flex;
+        font-weight: 700;
+        justify-content: center;
+        min-height: 3.2rem;
+        padding: 0.7rem 1rem;
+        width: min(100%, 360px);
+      }
       .pdf-stamp-tool .account-signin-button:not(:disabled):hover {
-        box-shadow: 0 1px 2px rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
+        background: #1e40af;
+        border-color: #1e40af;
       }
 
       .card {
@@ -341,7 +383,7 @@
       .meta-label { color: #bfdbfe; font-weight: 700; }
 
       @media (max-width: 640px) {
-        .demo-grid { grid-template-columns: 1fr; }
+        .demo-grid, .sealing-method-grid { grid-template-columns: 1fr; }
         .ar-controls { border-radius: 28px; flex-direction: column; }
         .ar-scan-feedback { bottom: calc(clamp(1rem, 3vw, 2rem) + 8.5rem); }
       }

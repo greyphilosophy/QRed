@@ -36,7 +36,7 @@ const upload = () => fireEvent.change(screen.getByLabelText("Open PDF"), {
   target: { files: [new File(["pdf"], "source.pdf")] },
 });
 async function prepare(provider, details = AUTH_PROVIDERS[provider]) {
-  fireEvent.change(screen.getByLabelText("Sealing method"), { target: { value: provider } });
+  fireEvent.click(screen.getByRole("button", { name: details.button }));
   upload();
   const prep = await screen.findByRole("button", { name: `Prepare PDF for ${details.label} sign-in` });
   await waitFor(() => expect(prep.disabled).toBe(false));
@@ -51,6 +51,26 @@ it("does not check account services during private-key/offline sealing", () => {
   expect(screen.getByRole("button", { name: "Stamp and save PDF" }).disabled).toBe(false);
 });
 
+it("presents each account provider as a separate, consistently labelled, selectable button", async () => {
+  render(<PdfSealForm />);
+  expect(screen.queryByLabelText("Sealing method")).toBeNull();
+  const offline = screen.getByRole("button", { name: "Private key (offline)" });
+  expect(offline.getAttribute("aria-pressed")).toBe("true");
+  for (const details of Object.values(AUTH_PROVIDERS)) {
+    expect(details.button).toMatch(/^Authenticate with (Google|Microsoft|Facebook|Amazon) login$/);
+    const selection = screen.getByRole("button", { name: details.button });
+    expect(selection.getAttribute("aria-pressed")).toBe("false");
+  }
+  fireEvent.click(screen.getByRole("button", { name: AUTH_PROVIDERS.meta.button }));
+  expect(screen.getByRole("button", { name: AUTH_PROVIDERS.meta.button }).getAttribute("aria-pressed")).toBe("true");
+  expect(offline.getAttribute("aria-pressed")).toBe("false");
+  expect(screen.queryByLabelText("Private Key")).toBeNull();
+  expect(screen.getByRole("button", { name: "Prepare PDF for Facebook (Meta) sign-in" })).toBeTruthy();
+  fireEvent.click(offline);
+  expect(offline.getAttribute("aria-pressed")).toBe("true");
+  expect(screen.getByLabelText("Private Key")).toBeTruthy();
+});
+
 it("disables an unconfigured provider and recovers from a failed availability check", async () => {
   fetch.mockRejectedValueOnce(new Error("offline"));
   fetch.mockResolvedValueOnce({
@@ -58,13 +78,13 @@ it("disables an unconfigured provider and recovers from a failed availability ch
   });
   const open = vi.spyOn(window, "open");
   render(<PdfSealForm />);
-  fireEvent.change(screen.getByLabelText("Sealing method"), { target: { value: "microsoft" } });
+  fireEvent.click(screen.getByRole("button", { name: AUTH_PROVIDERS.microsoft.button }));
   expect(screen.getByRole("button", { name: /Prepare PDF for Microsoft sign-in/ }).disabled).toBe(true);
   fireEvent.click(await screen.findByRole("button", { name: "Retry sign-in availability" }));
   await screen.findByText(/Microsoft sealing is not enabled/);
   expect(screen.getByRole("button", { name: /Prepare PDF for Microsoft sign-in/ }).disabled).toBe(true);
   expect(open).not.toHaveBeenCalled();
-  fireEvent.change(screen.getByLabelText("Sealing method"), { target: { value: "google" } });
+  fireEvent.click(screen.getByRole("button", { name: AUTH_PROVIDERS.google.button }));
   await waitFor(() => expect(screen.getByRole("button", { name: /Prepare PDF for Google sign-in/ }).disabled).toBe(false));
 });
 
@@ -113,14 +133,14 @@ it("never opens a mobile popup during delayed PDF parsing; sign-in begins only o
   });
   attestPagesWithAccount.mockResolvedValue([]);
   render(<PdfSealForm />);
-  fireEvent.change(screen.getByLabelText("Sealing method"), { target: { value: "meta" } });
+  fireEvent.click(screen.getByRole("button", { name: AUTH_PROVIDERS.meta.button }));
   upload();
   await waitFor(() => expect(screen.getByRole("button", { name: "Prepare PDF for Facebook (Meta) sign-in" }).disabled).toBe(false));
   fireEvent.click(screen.getByRole("button", { name: "Prepare PDF for Facebook (Meta) sign-in" }));
   expect(screen.getByRole("button", { name: "Preparing document..." })).toBeTruthy();
   expect(open).not.toHaveBeenCalled();
   parsed();
-  const signIn = await screen.findByRole("button", { name: "Continue with Facebook" });
+  const signIn = await screen.findByRole("button", { name: AUTH_PROVIDERS.meta.button });
   expect(open).not.toHaveBeenCalled();
   fireEvent.click(signIn);
   await screen.findByText(/Sealed source.pdf in this browser/);
