@@ -190,6 +190,10 @@ it.each([
     expect(url.searchParams.has("code_challenge")).toBe(false);
     expect(url.searchParams.has("code_challenge_method")).toBe(false);
     expect(url.searchParams.has("nonce")).toBe(false);
+    // A top-level browser tab should render the provider's default responsive
+    // dialog, not force the desktop popup-only view or unnecessary re-consent.
+    expect(url.searchParams.has("display")).toBe(false);
+    expect(url.searchParams.has("auth_type")).toBe(false);
   } else {
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("code_challenge")).toBe("challenge");

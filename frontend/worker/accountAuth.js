@@ -76,7 +76,7 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
     return Boolean(providerConfiguration(provider, env) &&
       env.QRED_ATTESTATION_PRIVATE_KEY && trusted[env.QRED_ATTESTATION_KEY_ID]);
   }
-  function callbackPage(id, origin, successful, cookies = [], error = "") {
+  function callbackPage(provider, id, origin, successful, cookies = [], error = "") {
     const nonce = random();
     const headers = cookieHeaders(cookies);
     headers.set("Content-Type", "text/html;charset=utf-8");
@@ -88,13 +88,20 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
     const escapeHtml = value => String(value).slice(0, 500).replace(/[&<>"']/g, char =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
     const message = successful
-      ? "<p>Sign-in completed. Return to your original QRed tab to finish sealing your PDF.</p>"
+      ? (provider === "meta"
+        ? "<p role=\"status\">Facebook sign-in was verified by QRed in this tab.</p>" +
+          "<p>Switch back to the <strong>original QRed tab</strong> to finish sealing the PDF. Do not reload it.</p>" +
+          "<p>If QRed still reports a pending sign-in after you return, its session cookie may not have reached the original tab. " +
+          "Use <strong>Check sign-in status</strong> there and report that result; this page alone does not mean the PDF was sealed.</p>"
+        : "<p>Sign-in completed. Return to your original QRed tab to finish sealing your PDF.</p>")
       : "<p role=\"alert\">Sign-in could not be completed.</p>" +
         (error ? "<p>" + escapeHtml(error) + "</p>" : "") +
         "<p>Return to your original QRed tab to retry or cancel sealing. Keep that original tab open.</p>";
-    // Only automatically close a SUCCESSFUL popup. Previously QRed closed
-    // failed popups too, hiding the exact reason on mobile browsers.
-    const script = successful
+    // Facebook's Android popup can close before the original tab receives its
+    // receipt cookie. Leave its successful callback visible for diagnosis and
+    // explicit return. Failed callbacks already remain visible.
+    // Other providers retain the existing successful-popup auto-close flow.
+    const script = successful && provider !== "meta"
       ? "<script nonce=\"" + nonce + "\">if(window.opener){window.opener.postMessage(" +
         JSON.stringify({ type: "qred-account-complete", id }) + "," + JSON.stringify(origin) +
         ");window.close();}</script>"
@@ -130,10 +137,10 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
       if (!/^[A-Za-z0-9_-]{43}$/.test(id || "")) throw new RequestError("Invalid sign-in request", 403);
       // A duplicate callback with a completed cookie cannot renew the timestamp.
       const complete = await readSession(id, "receipt");
-      if (complete?.status === "ready") return callbackPage(id, origin, true);
+      if (complete?.status === "ready") return callbackPage(provider, id, origin, true);
       const pending = await readSession(id, "request");
       if (!pending) throw new RequestError("Return to the browser where you started signing in, or start again.", 403);
-      if (pending.status === "failed") return callbackPage(id, origin, false, [], pending.error);
+      if (pending.status === "failed") return callbackPage(provider, id, origin, false, [], pending.error);
       if (pending.status !== "pending") throw new RequestError("Invalid sign-in request", 403);
       // The Microsoft SPA must redeem its PKCE code from the browser so Azure
       // sends an Origin header. A confidential Worker exchange is not supported
@@ -154,12 +161,12 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
           iat: Math.floor(time / 1000), exp: pending.exp };
         // Keep the success cookie separate: a concurrent failed code exchange
         // must not overwrite a successful result. The provider enforces code single-use.
-        return callbackPage(id, origin, true, [
+        return callbackPage(provider, id, origin, true, [
           await sessions.write(id, "receipt", receipt), sessions.clear(id, "request"),
         ]);
       } catch (error) {
         const message = error instanceof RequestError ? error.message : "Authentication failed. Please try again.";
-        return callbackPage(id, origin, false, [await sessions.write(id, "request", {
+        return callbackPage(provider, id, origin, false, [await sessions.write(id, "request", {
           status: "failed", secret_hash: pending.secret_hash, error: message, iat: pending.iat, exp: pending.exp,
         })], message);
       }

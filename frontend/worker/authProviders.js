@@ -38,7 +38,10 @@ export function authorizationUrl(provider, config, { origin, id, nonce, challeng
     scope: provider === "amazon" ? "profile" : provider === "meta" ? "public_profile,email" : "openid email profile",
     ...(["google", "microsoft"].includes(provider) ? { nonce } : {}),
     ...(["google", "microsoft"].includes(provider) ? { prompt: "select_account" } : {}),
-    ...(provider === "meta" ? { display: "popup", auth_type: "rerequest" } : {}),
+    // Standard Meta OAuth supports browser-chosen presentation. Forcing the
+    // desktop "popup" dialog on Android can interrupt top-level redirects.
+    // A manual "rerequest" is unnecessary for the initial email permission;
+    // absent fields already fail closed during QRed's verified profile lookup.
   }).toString();
   return auth.href;
 }
