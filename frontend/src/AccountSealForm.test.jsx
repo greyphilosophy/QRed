@@ -149,7 +149,7 @@ it("cancels an in-progress account request without saving a document", async () 
   render(<PdfSealForm />);
   const signIn = await prepare("google");
   fireEvent.click(signIn);
-  expect(screen.getByRole("button", { name: "Preparing document..." }).disabled).toBe(true);
+  expect(screen.getByRole("button", { name: "Completing sign-in..." }).disabled).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Cancel sealing" }));
   await screen.findByText("Account sealing cancelled.");
   expect(URL.createObjectURL).not.toHaveBeenCalled();
