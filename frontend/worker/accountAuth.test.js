@@ -218,3 +218,68 @@ it("does not expose Facebook Graph access tokens in authenticated session status
   expect(JSON.stringify(status)).not.toContain("opaque-meta-token");
   expect(JSON.stringify(status)).not.toContain("one-use-code");
 });
+
+it("keeps a rejected Facebook callback open with sanitized error details instead of silently closing", async () => {
+  const flow = fixture("meta");
+  const session = await (await flow.post("/api/auth/meta/start", { commitments: [fingerprint] })).json();
+  const upstream = createAccountAuth({
+    trusted, now: () => epoch,
+    fetchImpl: async () => Response.json({ error: {
+      code: 100, error_subcode: 36008,
+      message: "Hidden OAuth code one-use-code, secret meta-secret, <script>alert(1)</script>",
+    } }, { status: 400 }),
+  });
+  const callback = await upstream(new Request(origin + "/api/auth/meta/callback?state=" +
+    session.id + "&code=one-use-code", { headers: { Cookie: flow.cookie() } }), env);
+  expect(callback.status).toBe(200);
+  const html = await callback.text();
+  expect(html).toContain('role="alert"');
+  expect(html).toContain("Sign-in could not be completed.");
+  expect(html).toContain("Meta error 100; subcode 36008");
+  expect(html).not.toContain("one-use-code");
+  expect(html).not.toContain("meta-secret");
+  expect(html).not.toContain("<script>");
+  expect(html).not.toContain("window.close()");
+  expect(callback.headers.get("Cache-Control")).toBe("no-store");
+  expect(callback.headers.get("Referrer-Policy")).toBe("no-referrer");
+  const failedCookie = callback.headers.getSetCookie()[0].split(";")[0];
+  const status = await flow.handle(new Request(origin + "/api/auth/meta/status", {
+    method: "POST",
+    headers: { Origin: origin, "Content-Type": "application/json", Cookie: failedCookie },
+    body: JSON.stringify({ id: session.id, secret: session.secret }),
+  }));
+  expect(status.status).toBe(200);
+  expect(await status.json()).toMatchObject({ status: "failed",
+    error: expect.stringContaining("Meta error 100") });
+});
+
+it.each(["google", "meta", "amazon"])("closes a successful %s popup only after sign-in completed", async provider => {
+  const flow = fixture(provider);
+  const session = await (await flow.post("/api/auth/" + provider + "/start", { commitments: [fingerprint] })).json();
+  const callback = await flow.login(session);
+  expect(callback.status).toBe(200);
+  const html = await callback.text();
+  expect(html).toContain("Sign-in completed.");
+  expect(html).not.toContain('role="alert"');
+  expect(html).toContain("window.close()");
+});
+
+it("HTML-escapes a provider-originated error before showing it in the callback", async () => {
+  const flow = fixture("google");
+  const session = await (await flow.post("/api/auth/google/start", { commitments: [fingerprint] })).json();
+  const escaped = createAccountAuth({
+    trusted, now: () => epoch,
+    fetchImpl: async () => Response.json({ id_token: "synthetic-jwt" }),
+    verifyTokens: { google: async () => {
+      const { RequestError } = await import("./authErrors.js");
+      throw new RequestError('Invalid profile <img src=x onerror=alert(1)> & "quoted"', 403);
+    } },
+  });
+  const callback = await escaped(new Request(origin + "/api/auth/google/callback?state=" +
+    session.id + "&code=one-use-code", { headers: { Cookie: flow.cookie() } }), env);
+  const html = await callback.text();
+  expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+  expect(html).toContain("&amp; &quot;quoted&quot;");
+  expect(html).not.toContain("<img");
+  expect(html).not.toContain("window.close()");
+});
