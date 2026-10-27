@@ -6,6 +6,9 @@ import { openPagePhoto, photoPreviewUrl } from "./photoOcr.js";
 function EvidencePage({ page, captures }) {
   const { evidence } = page;
   const id = useId(), canvas = useRef(null), generation = useRef(0), currentUrl = useRef(null);
+  // A user-selected full-page photo must win over a QR-only scan captured
+  // asynchronously. Scan snapshots can finish well after signature validation.
+  const explicitPhoto = useRef(false);
   const [line, setLine] = useState(-1), [photo, setPhoto] = useState(null), [error, setError] = useState("");
   const [captureId, setCaptureId] = useState("");
   const firstCapture = captures[0];
@@ -20,13 +23,23 @@ function EvidencePage({ page, captures }) {
     context.putImageData(pixels, 0, 0);
   }, [evidence.visual]);
   useEffect(() => {
+    // The initial QR snapshot is only a starting point for comparison. Never
+    // replace a full-page photo the user intentionally opened, even when a
+    // delayed scanner snapshot arrives or another capture is collected.
+    if (explicitPhoto.current) return;
     if (firstCapture) loadPhoto(firstCapture.file, firstCapture.id);
-    else { setPhoto(null); setCaptureId(""); }
-    return () => {
+    else {
       generation.current++;
       if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
-    };
+      currentUrl.current = null;
+      setPhoto(null); setCaptureId("");
+    }
   }, [firstCapture?.id]);
+  useEffect(() => () => {
+    generation.current++;
+    if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
+    currentUrl.current = null;
+  }, []);
   async function loadPhoto(file, selectedCapture = "") {
     const token = ++generation.current;
     setError(""); setCaptureId(selectedCapture); setPhoto(null);
@@ -39,7 +52,10 @@ function EvidencePage({ page, captures }) {
   }
   function choose(event) {
     const file = event.target.files?.[0]; event.target.value = "";
-    if (file) loadPhoto(file);
+    if (file) {
+      explicitPhoto.current = true;
+      loadPhoto(file);
+    }
   }
   return <>
     {evidence.blank ? <p className="photo-summary">The signer recorded this page as blank. Check the printed page for added marks.</p> : <p className="photo-note">
@@ -79,7 +95,10 @@ function EvidencePage({ page, captures }) {
     {captures.length > 1 && <><label htmlFor={`${id}-capture`}>Visual comparison scan image</label>
       <select id={`${id}-capture`} value={captureId} onChange={event => {
         const capture = captures.find(item => String(item.id) === event.target.value);
-        if (capture) loadPhoto(capture.file, capture.id);
+        if (capture) {
+          explicitPhoto.current = true;
+          loadPhoto(capture.file, capture.id);
+        }
       }}><option value="" disabled>Uploaded photo</option>{captures.map(capture => <option key={capture.id} value={capture.id}>Scan of seal {capture.chunkNumber + 1}</option>)}</select></>}
     <div className="photo-inputs">
       <div><label htmlFor={`${id}-camera`}>Take visual comparison photo</label><input id={`${id}-camera`} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={choose} /></div>
