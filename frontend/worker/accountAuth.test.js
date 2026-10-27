@@ -163,3 +163,24 @@ it("rejects a status identity from another provider before requesting attestatio
   expect(paths).toEqual(["/api/auth/microsoft/start", "/api/auth/microsoft/status", "/api/auth/microsoft/finish"]);
   expect(popup.close).toHaveBeenCalledOnce();
 });
+
+
+it("rejects Microsoft SPA completion without the authenticated pending cookie", async () => {
+  const flow = fixture("microsoft");
+  const session = await (await flow.post("/api/auth/microsoft/start", { commitments: [fingerprint] })).json();
+  const noCookie = await flow.handle(new Request(origin + "/api/auth/microsoft/complete", {
+    method: "POST", headers: { Origin: origin, "Content-Type": "application/json" },
+    body: JSON.stringify({ id: session.id, id_token: "forged-id-token" }),
+  }));
+  expect(noCookie.status).toBe(403);
+  const crossOrigin = await flow.handle(new Request(origin + "/api/auth/microsoft/complete", {
+    method: "POST", headers: { Origin: "https://attacker.example", "Content-Type": "application/json", Cookie: flow.cookie() },
+    body: JSON.stringify({ id: session.id, id_token: "forged-id-token" }),
+  }));
+  expect(crossOrigin.status).toBe(403);
+  const forged = await flow.post("/api/auth/microsoft/complete", { id: session.id, id_token: "forged-id-token" });
+  expect(forged.status).toBe(403);
+  const status = await (await flow.post("/api/auth/microsoft/status", { id: session.id, secret: session.secret })).json();
+  expect(status.status).toBe("failed");
+  expect(flow.exchange).not.toHaveBeenCalled();
+});
