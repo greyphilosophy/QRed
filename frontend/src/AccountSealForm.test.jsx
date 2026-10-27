@@ -3,13 +3,13 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { PdfSealForm } from "./PdfSealForm.jsx";
 import { sealPdfInBrowser } from "./pdfClientSeal.js";
-import { beginAccountSignIn, finishAccountSignIn, attestPagesWithAccount } from "./accountSealing.js";
+import { beginAccountSignIn, finishAccountSignIn, checkAccountSignInStatus, attestPagesWithAccount } from "./accountSealing.js";
 import { AUTH_PROVIDERS } from "./authProviders.js";
 
 vi.mock("./pdfClientSeal.js", () => ({ sealPdfInBrowser: vi.fn() }));
 vi.mock("./accountSealing.js", () => ({
   accountSealingAvailable: true,
-  beginAccountSignIn: vi.fn(), finishAccountSignIn: vi.fn(), attestPagesWithAccount: vi.fn(),
+  beginAccountSignIn: vi.fn(), finishAccountSignIn: vi.fn(), checkAccountSignInStatus: vi.fn(), attestPagesWithAccount: vi.fn(),
 }));
 
 const mockAuthUrl = provider => ({
@@ -28,6 +28,7 @@ beforeEach(() => {
   })));
   beginAccountSignIn.mockImplementation(async provider => session(provider));
   finishAccountSignIn.mockResolvedValue();
+  checkAccountSignInStatus.mockResolvedValue({ status: "pending" });
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
@@ -157,4 +158,51 @@ it("cancels an in-progress account request without saving a document", async () 
   await screen.findByText("Account sealing cancelled.");
   expect(URL.createObjectURL).not.toHaveBeenCalled();
   expect(popup.close).toHaveBeenCalled();
+});
+
+
+it("lets a phone user recheck pending, rejected and completed provider status without reopening Facebook", async () => {
+  const popup = { close: vi.fn() };
+  const open = vi.spyOn(window, "open").mockReturnValue(popup);
+  // Keep the original QRed account flow waiting after the popup closes; a
+  // status recheck must not issue a new authorization or upload the PDF.
+  attestPagesWithAccount.mockImplementation(() => new Promise(() => {}));
+  sealPdfInBrowser.mockImplementation(options => options.attestPages([]));
+  render(<PdfSealForm />);
+  const signIn = await prepare("meta");
+  fireEvent.click(signIn);
+  const check = await screen.findByRole("button", { name: "Check sign-in status" });
+  fireEvent.click(check);
+  await screen.findByText(/QRed has not received a completed sign-in from the provider/);
+  expect(checkAccountSignInStatus).toHaveBeenCalledWith("meta", expect.objectContaining({
+    id: "test-auth-id", secret: "test-secret", provider: "meta",
+  }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  expect(open).toHaveBeenCalledTimes(1);
+  expect(beginAccountSignIn).toHaveBeenCalledTimes(1);
+
+  checkAccountSignInStatus.mockResolvedValueOnce({ status: "failed",
+    error: "Facebook rejected QRed's login code exchange (HTTP 400; Meta error 100)" });
+  fireEvent.click(check);
+  await screen.findByText(/Account sign-in failed: Facebook rejected QRed's login code exchange/);
+
+  checkAccountSignInStatus.mockResolvedValueOnce({ status: "ready" });
+  fireEvent.click(check);
+  await screen.findByText(/Account sign-in verified by QRed. Finishing your PDF locally/);
+  expect(open).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel sealing" }));
+});
+
+it("reports missing or expired browser session on an explicit status check without exposing secrets", async () => {
+  const popup = { close: vi.fn() };
+  vi.spyOn(window, "open").mockReturnValue(popup);
+  attestPagesWithAccount.mockImplementation(() => new Promise(() => {}));
+  sealPdfInBrowser.mockImplementation(options => options.attestPages([]));
+  checkAccountSignInStatus.mockRejectedValue(new Error("Sign-in request expired or belongs to another browser"));
+  render(<PdfSealForm />);
+  fireEvent.click(await prepare("meta"));
+  fireEvent.click(await screen.findByRole("button", { name: "Check sign-in status" }));
+  const message = await screen.findByText(/Could not confirm account sign-in:/);
+  expect(message.textContent).toContain("Sign-in request expired or belongs to another browser");
+  expect(message.textContent).not.toContain("test-secret");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel sealing" }));
 });
