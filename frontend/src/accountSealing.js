@@ -53,6 +53,18 @@ export async function beginAccountSignIn(provider, pages, { signal, fetchImpl = 
   return session;
 }
 
+// A user-initiated resync is helpful on mobile after the provider tab closes
+// and the original tab returns from suspension. The server, not the tab-close
+// event or a provider postMessage, remains the only source of sign-in truth.
+export async function checkAccountSignInStatus(provider, session, { fetchImpl = apiFetch, signal } = {}) {
+  const label = authProvider(provider)?.label;
+  if (!label || session?.provider !== provider || !session.id || !session.secret) {
+    throw new Error("No matching account sign-in session. Prepare the PDF again.");
+  }
+  return postJson("/api/auth/" + provider + "/status",
+    { id: session.id, secret: session.secret }, fetchImpl, signal, label);
+}
+
 export async function finishAccountSignIn(provider, session, { fetchImpl = apiFetch } = {}) {
   if (!session?.id || !session?.secret) return;
   // Do not use the cancelled request's signal: clearing cookies must still work
