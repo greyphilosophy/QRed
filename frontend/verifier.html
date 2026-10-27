@@ -306,10 +306,12 @@
     .footer {
       text-align: center;
       padding: 1rem;
-      font-size: 0.8rem;
+      font-size: 0.85rem;
       color: var(--text-dim);
-      opacity: 0.6;
     }
+    .footer nav { display: flex; justify-content: center; flex-wrap: wrap; gap: .55rem 1rem; margin-top: .55rem; }
+    .footer a { color: #93c5fd; text-underline-offset: 3px; }
+    .footer a:focus-visible { outline: 2px solid #93c5fd; outline-offset: 3px; }
   </style>
 </head>
 <body>
@@ -378,9 +380,15 @@
     <div id="errorMsg" style="color: var(--error); font-size: 0.85rem; padding: 0.5rem; display: none;"></div>
   </main>
 
-  <div class="footer">
+  <footer class="footer">
     QRed - Tamper-Evident Document Sealing
-  </div>
+    <nav aria-label="Policies and security information">
+      <a href="/privacy.html">Privacy</a>
+      <a href="/data-deletion.html">Data deletion</a>
+      <a href="/terms.html">Terms</a>
+      <a href="/security.html">Security &amp; architecture</a>
+    </nav>
+  </footer>
 
   <script type="module">
     import { startCameraSession } from "./src/qr/cameraSession.js";
