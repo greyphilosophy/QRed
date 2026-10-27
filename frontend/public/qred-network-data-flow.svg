@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 670" role="img" aria-labelledby="diagram-title diagram-desc">
+<title id="diagram-title">QRed document and optional authentication network data flows</title>
+<desc id="diagram-desc">Top: Cloudflare delivers QRed's application to a browser. PDF, camera photos and signing keys remain on the device. The user may share the sealed PDF with a recipient who can verify offline. Bottom: for optional account-backed sealing, the browser communicates with an identity provider and QRed Worker. The browser sends randomized salted page commitments, never the document itself. The Worker validates identity and returns a signed attestation. Microsoft uses browser-based PKCE; Google, Meta, and Amazon use Worker code exchange.</desc>
+<defs>
+  <marker id="arrow-blue" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0 L9 4.5 L0 9 Z" fill="#376bd0"/></marker>
+  <marker id="arrow-green" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0 L9 4.5 L0 9 Z" fill="#147a69"/></marker>
+  <marker id="arrow-purple" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0 L9 4.5 L0 9 Z" fill="#7851b5"/></marker>
+  <style>
+  text{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;fill:#223348}
+  .heading{font-size:24px;font-weight:800}.subtitle{font-size:16px;fill:#617184}.zone{fill:#f9fbff;stroke:#d7e3f1;stroke-width:2}.zone-title{font-size:18px;font-weight:700;fill:#47617e}
+  .box{fill:#fff;stroke:#b7c9e3;stroke-width:2}.box-privacy{fill:#f2f8ff;stroke:#75a1d9;stroke-width:2}
+  .box-external{fill:#f8f4ff;stroke:#ab92d5;stroke-width:2}.box-trusted{fill:#f0faf8;stroke:#78b6a8;stroke-width:2}
+  .box-title{font-size:20px;font-weight:800}.box-detail{font-size:15px;fill:#4d5f76}.edge{stroke:#376bd0;stroke-width:3;fill:none;marker-end:url(#arrow-blue)}.edge-green{stroke:#147a69;stroke-width:3;fill:none;marker-end:url(#arrow-green)}.edge-purple{stroke:#7851b5;stroke-width:3;fill:none;marker-end:url(#arrow-purple)}
+  .edge-label{font-size:14px;font-weight:650;fill:#425774}.caption{font-size:14px;fill:#5b697c}
+  </style>
+</defs>
+<rect width="1200" height="670" rx="16" fill="#fff"/>
+<text x="42" y="44" class="heading">QRed | Network and trust boundaries</text>
+<text x="43" y="67" class="subtitle">Illustrative logical flows • current application design • not a compliance certification</text>
+<rect class="zone" x="24" y="91" width="1152" height="234" rx="18"/>
+<text x="43" y="121" class="zone-title">01 — Document processing and offline verification</text>
+<rect class="box" x="45" y="159" width="270" height="118" rx="13"/>
+<text x="180" y="193" text-anchor="middle" class="box-title">Cloudflare hosting</text>
+<text x="180" y="221" text-anchor="middle" class="box-detail">Delivers website, scripts,</text>
+<text x="180" y="243" text-anchor="middle" class="box-detail">OCR and app resources</text>
+<rect class="box-privacy" x="422" y="151" width="337" height="132" rx="13"/>
+<text x="590" y="185" text-anchor="middle" class="box-title">User browser / device</text>
+<text x="590" y="212" text-anchor="middle" class="box-detail">PDFs, photos, local private keys,</text>
+<text x="590" y="234" text-anchor="middle" class="box-detail">sealing and verification</text>
+<text x="590" y="256" text-anchor="middle" class="box-detail">Browser-owned document output</text>
+<rect class="box-trusted" x="856" y="159" width="293" height="118" rx="13"/>
+<text x="1002" y="193" text-anchor="middle" class="box-title">Recipient device</text>
+<text x="1002" y="221" text-anchor="middle" class="box-detail">Receives sealed document</text>
+<text x="1002" y="243" text-anchor="middle" class="box-detail">Can verify offline*</text>
+<path class="edge" d="M315 220 H417"/>
+<text x="367" y="204" text-anchor="middle" class="edge-label">HTTPS</text>
+<path class="edge-green" d="M759 220 H850"/>
+<text x="804" y="203" text-anchor="middle" class="edge-label">Share</text>
+<text x="48" y="308" class="caption">* After required resources are available locally. QRed cannot control copies of a sealed document that users distribute.</text>
+<rect class="zone" x="24" y="341" width="1152" height="291" rx="18"/>
+<text x="43" y="373" class="zone-title">02 — Optional account-backed sealing (requires network access)</text>
+<rect class="box-privacy" x="45" y="408" width="297" height="124" rx="13"/>
+<text x="193" y="443" text-anchor="middle" class="box-title">User browser / device</text>
+<text x="193" y="472" text-anchor="middle" class="box-detail">Hashes pages with random salts</text>
+<text x="193" y="494" text-anchor="middle" class="box-detail">Keeps PDFs, text, and salts local</text>
+<rect class="box-external" x="450" y="408" width="301" height="124" rx="13"/>
+<text x="600" y="443" text-anchor="middle" class="box-title">Identity provider</text>
+<text x="600" y="471" text-anchor="middle" class="box-detail">Google, Microsoft, Meta,</text>
+<text x="600" y="493" text-anchor="middle" class="box-detail">or Amazon authentication</text>
+<rect class="box" x="851" y="408" width="296" height="124" rx="13"/>
+<text x="999" y="443" text-anchor="middle" class="box-title">QRed Cloudflare Worker</text>
+<text x="999" y="471" text-anchor="middle" class="box-detail">Checks account identity</text>
+<text x="999" y="493" text-anchor="middle" class="box-detail">Signs page commitments</text>
+<path class="edge-purple" d="M342 456 H444"/>
+<text x="393" y="439" text-anchor="middle" class="edge-label">Sign in</text>
+<path class="edge-purple" d="M751 456 H845"/>
+<text x="797" y="439" text-anchor="middle" class="edge-label">Claims†</text>
+<path class="edge" d="M193 532 V569 H997 V537"/>
+<text x="600" y="562" text-anchor="middle" class="edge-label">Salted page commitments → Worker</text>
+<path class="edge-green" d="M997 537 V605 H193 V538"/>
+<text x="600" y="600" text-anchor="middle" class="edge-label">← Signed attestation returned to browser</text>
+<text x="42" y="650" class="caption">† Provider flow varies: Microsoft redeems PKCE in the browser; Google/Meta/Amazon exchange codes via the Worker.</text>
+</svg>
