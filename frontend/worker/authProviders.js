@@ -31,9 +31,12 @@ export function authorizationUrl(provider, config, { origin, id, nonce, challeng
   const auth = new URL(urls[provider]);
   auth.search = new URLSearchParams({
     client_id: config.clientId, redirect_uri: origin + "/api/auth/" + provider + "/callback",
-    response_type: "code", state: id, code_challenge: challenge, code_challenge_method: "S256",
+    response_type: "code", state: id,
+    // Meta's standard confidential web OAuth flow is state-bound but does not
+    // document PKCE or OIDC nonce support. Do not send unsupported extensions.
+    ...(provider === "meta" ? {} : { code_challenge: challenge, code_challenge_method: "S256" }),
     scope: provider === "amazon" ? "profile" : provider === "meta" ? "public_profile,email" : "openid email profile",
-    ...(provider === "amazon" ? {} : { nonce }),
+    ...(["google", "microsoft"].includes(provider) ? { nonce } : {}),
     ...(["google", "microsoft"].includes(provider) ? { prompt: "select_account" } : {}),
     ...(provider === "meta" ? { display: "popup", auth_type: "rerequest" } : {}),
   }).toString();
@@ -123,16 +126,50 @@ export async function validateMicrosoftSpaToken(token, config, pending, now, ver
 
 const tokenVerifiers = { google: verifyGoogleIdToken, meta: verifyMetaIdToken };
 
-async function providerJson(fetchImpl, url, options = {}, failureMessage = "The sign-in service could not complete this request. Please try again.") {
+// Meta returns machine-readable error numbers. Expose ONLY bounded integers,
+// never provider error messages, URLs, OAuth codes, tokens, or secret values.
+// Some Meta errors include submitted credentials in free-form messages.
+export function safeMetaErrorDetails(responseStatus, data) {
+  const status = Number.isSafeInteger(responseStatus) && responseStatus >= 400 &&
+    responseStatus <= 599 ? responseStatus : null;
+  const error = data && typeof data === "object" && !Array.isArray(data) ? data.error : null;
+  const safeInt = value => Number.isSafeInteger(value) && value >= 1 && value <= 999999 ? value : null;
+  const code = safeInt(error?.code);
+  const subcode = safeInt(error?.error_subcode);
+  const details = [
+    ...(status ? ["HTTP " + status] : []),
+    ...(code ? ["Meta error " + code] : []),
+    ...(subcode ? ["subcode " + subcode] : []),
+  ];
+  return details.length ? " (" + details.join("; ") + ")" : "";
+}
+
+async function providerJson(fetchImpl, url, options = {},
+  failureMessage = "The sign-in service could not complete this request. Please try again.",
+  metaDiagnostics = false) {
+  let response;
   try {
-    const response = await fetchImpl(url, { ...options, redirect: "error", signal: AbortSignal.timeout(10000) });
-    if (!response.ok) throw new RequestError(failureMessage, 403);
-    return await response.json();
+    response = await fetchImpl(url, { ...options, redirect: "error", signal: AbortSignal.timeout(10000) });
   } catch {
-    // No provider response body, URL (which can contain credentials), or
-    // low-level exception is ever copied into the document window.
+    // The original exception may include the request URL and credentials.
     throw new RequestError(failureMessage, 403);
   }
+  if (!response.ok) {
+    let details = "";
+    if (metaDiagnostics) {
+      try {
+        // Bound upstream data before parsing it; never echo its free-form text.
+        const text = await response.text();
+        const data = text.length <= 4096 ? JSON.parse(text) : null;
+        details = safeMetaErrorDetails(response.status, data);
+      } catch {
+        details = safeMetaErrorDetails(response.status, null);
+      }
+    }
+    throw new RequestError(failureMessage + details, 403);
+  }
+  try { return await response.json(); }
+  catch { throw new RequestError(failureMessage, 403); }
 }
 
 // Standard Facebook Login returns an opaque OAuth access token, not an OIDC
@@ -190,14 +227,16 @@ export async function exchangeIdentity(provider, config, { code, origin, pending
   };
   const parameters = new URLSearchParams({
     code, client_id: config.clientId, client_secret: config.clientSecret,
-    code_verifier: pending.pkce, redirect_uri: origin + "/api/auth/" + provider + "/callback",
+    ...(provider === "meta" ? {} : { code_verifier: pending.pkce }),
+    redirect_uri: origin + "/api/auth/" + provider + "/callback",
     ...(provider === "meta" ? {} : { grant_type: "authorization_code" }),
   });
   // Meta documents GET for its code exchange; other providers use form POST.
   const tokens = await providerJson(fetchImpl, provider === "meta" ? endpoints.meta + "?" + parameters : endpoints[provider],
     provider === "meta" ? {} : { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: parameters },
     provider === "meta" ? "Facebook rejected QRed's login code exchange. Check the app credentials and callback URI." :
-      "The sign-in service could not complete this request. Please try again.");
+      "The sign-in service could not complete this request. Please try again.",
+    provider === "meta");
   if (provider === "meta") return verifyMetaAccessToken(tokens, config, fetchImpl, now);
   if (provider !== "amazon") {
     if (typeof tokens.id_token !== "string" || tokens.id_token.length > 16384) throw new RequestError("The sign-in service did not return an identity token", 403);
