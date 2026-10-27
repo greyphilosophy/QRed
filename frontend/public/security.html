@@ -51,7 +51,7 @@
 <ul>
 <li><strong>Google:</strong> server-side OAuth code exchange; verified Gmail or eligible Workspace identity.</li>
 <li><strong>Microsoft:</strong> single-page application authorization code with PKCE, redeemed in the browser; QRed Worker validates the signed ID token. No Microsoft client secret.</li>
-<li><strong>Facebook (Meta):</strong> server-side code exchange that expects a signed OpenID Connect identity token. Compatibility with Meta's documented experimental flow requires a real-account test before production enablement.</li>
+<li><strong>Facebook (Meta):</strong> standard server-side OAuth code exchange. The Worker verifies the resulting access token using Meta's <code>debug_token</code> endpoint, checks that the token is valid and bound to QRed's App ID and user, and fetches a matching name/email profile. A signed OIDC identity token is not required. Live provider approval and real-account verification remain necessary.</li>
 <li><strong>Amazon:</strong> server-side authorization code exchange, token validation, and authenticated account profile lookup.</li>
 </ul>
 <p>The Worker binds identity and the ordered page commitments to a short-lived session. QRed does not independently verify legal identity or organizational signing authority from profile names. For Microsoft, Meta and Amazon, a provider-reported email must not be interpreted as QRed independently verifying ownership of that mailbox.</p></section>

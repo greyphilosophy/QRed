@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
-import { authorizationUrl, exchangeIdentity, providerConfiguration, providerIdentity, validateMicrosoftSpaToken, verifyMetaIdToken, verifyMicrosoftIdToken } from "./authProviders.js";
+import { authorizationUrl, exchangeIdentity, providerConfiguration, providerIdentity, validateMicrosoftSpaToken, verifyMetaAccessToken, verifyMetaIdToken, verifyMicrosoftIdToken } from "./authProviders.js";
 import { allowedAuthorizationUrl } from "../src/authProviders.js";
 
 const now = Date.parse("2026-10-25T12:00:00Z"), seconds = now / 1000;
@@ -33,22 +33,17 @@ describe.each(["microsoft", "meta"])("%s identity tokens", provider => {
     forged[2] = (forged[2][0] === "A" ? "B" : "A") + forged[2].slice(1);
     await expect(verify[provider](forged.join("."), "test-client", now, keys)).rejects.toThrow();
   });
-  it("checks the nonce and token issuance against the pending request during exchange", async () => {
-    for (const change of [{ nonce: "different-request" }, { iat: seconds - 31 }]) {
-      const idToken = await token({ ...claims(provider), ...change });
-      const verifier = { [provider]: (value, client, time) => verify[provider](value, client, time, keys) };
-      if (provider === "microsoft") {
-        await expect(validateMicrosoftSpaToken(idToken, { clientId: "test-client" },
-          { nonce: "nonce", iat: seconds }, () => now, verifier)).rejects.toThrow();
-      } else {
-        await expect(exchangeIdentity(provider, { clientId: "test-client", clientSecret: "secret", graphVersion: "v26.0" }, {
-          code: "code", origin: "https://qred.test", pending: { nonce: "nonce", pkce: "verifier", iat: seconds }, now: () => now,
-          fetchImpl: async () => Response.json({ id_token: idToken }), verifyTokens: verifier,
-        })).rejects.toThrow();
-      }
-    }
-  });
 });
+
+it("binds Microsoft's signed ID token to the pending nonce and request time", async () => {
+  for (const change of [{ nonce: "different-request" }, { iat: seconds - 31 }]) {
+    const idToken = await token({ ...claims("microsoft"), ...change });
+    await expect(validateMicrosoftSpaToken(idToken, { clientId: "test-client" },
+      { nonce: "nonce", iat: seconds }, () => now,
+      { microsoft: (value, client, time) => verifyMicrosoftIdToken(value, client, time, keys) })).rejects.toThrow();
+  }
+});
+
 
 it("checks the Microsoft signing key's tenant scope, not just the token issuer", async () => {
   const value = await token(claims("microsoft"));
@@ -70,11 +65,76 @@ it.each(["microsoft", "meta", "amazon"])("requires %s to supply both email and p
   }
 });
 
-it("fails closed when Meta does not return the requested OIDC identity token", async () => {
-  await expect(exchangeIdentity("meta", { clientId: "app", clientSecret: "secret", graphVersion: "v26.0" }, {
-    code: "code", origin: "https://qred.test", pending: {}, now: () => now,
-    fetchImpl: async () => Response.json({ access_token: "opaque-token" }),
-  })).rejects.toThrow("identity token");
+
+describe("standard Facebook Login access-token verification", () => {
+  const config = { clientId: "facebook-app", clientSecret: "server-only-secret", graphVersion: "v26.0" };
+  const good = { access_token: "opaque-user-token", token_type: "bearer", expires_in: 3600 };
+  async function authenticate(changes = {}) {
+    const requests = [];
+    const fetchImpl = async (url, options) => {
+      requests.push({ url, options });
+      if (url.startsWith("https://graph.facebook.com/v26.0/oauth/access_token?")) {
+        const params = new URL(url).searchParams;
+        expect(params.get("client_id")).toBe(config.clientId);
+        expect(params.get("client_secret")).toBe(config.clientSecret);
+        expect(params.get("redirect_uri")).toBe("https://qred.test/api/auth/meta/callback");
+        expect(params.get("code_verifier")).toBe("verifier");
+        return changes.tokenHttpError ? new Response("error", { status: 403 }) :
+          Response.json({ ...good, ...changes.token });
+      }
+      if (url.startsWith("https://graph.facebook.com/v26.0/debug_token?")) {
+        const params = new URL(url).searchParams;
+        expect(params.get("input_token")).toBe("opaque-user-token");
+        expect(params.get("access_token")).toBe("facebook-app|server-only-secret");
+        return changes.debugHttpError ? new Response("error", { status: 403 }) :
+          Response.json({ data: { is_valid: true, app_id: "facebook-app", type: "USER",
+            user_id: "1234567890", expires_at: seconds + 3600, scopes: ["email"], ...changes.debug } });
+      }
+      if (url.startsWith("https://graph.facebook.com/v26.0/me?")) {
+        const params = new URL(url).searchParams;
+        expect(params.get("fields")).toBe("id,name,email");
+        expect(params.get("appsecret_proof")).toMatch(/^[0-9a-f]{64}$/);
+        const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(config.clientSecret),
+          { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+        const mac = Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", key,
+          new TextEncoder().encode("opaque-user-token"))), b => b.toString(16).padStart(2, "0")).join("");
+        expect(params.get("appsecret_proof")).toBe(mac);
+        expect(options.headers.Authorization).toBe("Bearer opaque-user-token");
+        return changes.profileHttpError ? new Response("error", { status: 403 }) :
+          Response.json({ id: "1234567890", name: "Facebook Profile", email: "person@example.org", ...changes.profile });
+      }
+      throw new Error("Unexpected Meta endpoint " + url);
+    };
+    const result = await exchangeIdentity("meta", config, {
+      code: "one-use-code", origin: "https://qred.test", pending: { pkce: "verifier" },
+      now: () => now, fetchImpl,
+    });
+    return { result, requests };
+  }
+  it("authenticates a Facebook account using app-bound introspection and a matching profile", async () => {
+    const { result, requests } = await authenticate();
+    expect(result).toEqual({ identity: { provider: "meta", name_source: "meta", name: "Facebook Profile",
+      email: "person@example.org", subject: "1234567890" } });
+    expect(requests).toHaveLength(3);
+    expect(requests.every(({ options }) => options.redirect === "error")).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("opaque-user-token");
+    expect(JSON.stringify(result)).not.toContain("server-only-secret");
+  });
+  it.each([
+    { token: { access_token: "" } }, { token: { access_token: undefined } },
+    { token: { token_type: "MAC" } }, { token: { expires_in: 0 } },
+    { debug: { app_id: "attacker-app" } }, { debug: { is_valid: false } },
+    { debug: { type: "PAGE" } }, { debug: { expires_at: seconds - 1 } },
+    { debug: { user_id: "" } }, { debug: { scopes: ["public_profile"] } },
+    { profile: { id: "another-user" } }, { profile: { name: "" } },
+    { profile: { email: undefined } }, { profile: { email: "" } },
+    { tokenHttpError: true }, { debugHttpError: true }, { profileHttpError: true },
+  ])("rejects invalid Facebook OAuth evidence without creating a signing identity: %j", async changes => {
+    await expect(authenticate(changes)).rejects.toThrow();
+  });
+  it("does not trust an experimental id_token in place of a verified Meta access token", async () => {
+    await expect(authenticate({ token: { access_token: undefined, id_token: "unverified" } })).rejects.toThrow("usable");
+  });
 });
 
 describe("Login with Amazon", () => {
@@ -118,7 +178,7 @@ describe("Login with Amazon", () => {
 it.each([
   ["google", "https://accounts.google.com/o/oauth2/v2/auth", "openid email profile"],
   ["microsoft", "https://login.microsoftonline.com/common/oauth2/v2.0/authorize", "openid email profile"],
-  ["meta", "https://www.facebook.com/v26.0/dialog/oauth", "openid public_profile email"],
+  ["meta", "https://www.facebook.com/v26.0/dialog/oauth", "public_profile,email"],
   ["amazon", "https://www.amazon.com/ap/oa", "profile"],
 ])("restricts %s authorization to its provider, code flow and PKCE", (provider, endpoint, scope) => {
   const url = new URL(authorizationUrl(provider, { clientId: "client", graphVersion: "v26.0" }, { origin: "https://qred.test", id: "state", nonce: "nonce", challenge: "challenge" }));
