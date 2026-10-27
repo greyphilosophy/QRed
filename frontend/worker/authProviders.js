@@ -147,32 +147,73 @@ export function safeMetaErrorDetails(responseStatus, data) {
   return details.length ? " (" + details.join("; ") + ")" : "";
 }
 
+// Google returns a standard OAuth error on a rejected code exchange. Only
+// fixed, documented protocol identifiers may reach the browser; the provider's
+// free-form error_description can echo URLs, codes or client credentials.
+const GOOGLE_OAUTH_ERRORS = new Set([
+  "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
+  "unsupported_grant_type", "invalid_scope", "access_denied", "expired_token",
+  "temporarily_unavailable", "admin_policy_enforced", "org_internal",
+]);
+export function safeGoogleTokenErrorDetails(responseStatus, data) {
+  const status = Number.isSafeInteger(responseStatus) && responseStatus >= 400 &&
+    responseStatus <= 599 ? responseStatus : null;
+  const value = data && typeof data === "object" && !Array.isArray(data) ? data.error : null;
+  const code = typeof value === "string" && GOOGLE_OAUTH_ERRORS.has(value) ? value : null;
+  const details = [
+    ...(status ? ["HTTP " + status] : []),
+    ...(code ? ["OAuth " + code] : []),
+  ];
+  return details.length ? " (" + details.join("; ") + ")" : "";
+}
+
+const GOOGLE_ID_TOKEN_ERRORS = Object.freeze({
+  ERR_JWKS_TIMEOUT: "Google signing keys temporarily unavailable",
+  ERR_JWKS_NO_MATCHING_KEY: "Google signing key not found",
+  ERR_JWS_SIGNATURE_VERIFICATION_FAILED: "invalid signature",
+  ERR_JWT_CLAIM_VALIDATION_FAILED: "invalid token claims",
+  ERR_JWT_EXPIRED: "expired token",
+  ERR_JWS_INVALID: "malformed token",
+  ERR_JWT_INVALID: "malformed token",
+});
+export function safeGoogleIdTokenErrorReason(error) {
+  return typeof error?.code === "string" &&
+    Object.hasOwn(GOOGLE_ID_TOKEN_ERRORS, error.code) ?
+      GOOGLE_ID_TOKEN_ERRORS[error.code] : "token or signing keys unavailable";
+}
+
 async function providerJson(fetchImpl, url, options = {},
   failureMessage = "The sign-in service could not complete this request. Please try again.",
-  metaDiagnostics = false) {
+  diagnosticsProvider = null) {
   let response;
   try {
     response = await fetchImpl(url, { ...options, redirect: "error", signal: AbortSignal.timeout(10000) });
   } catch {
-    // The original exception may include the request URL and credentials.
-    throw new RequestError(failureMessage, 403);
+    // Fetch exceptions can include the OAuth code and client secret in the
+    // request URL. Never copy the raw exception or request URL into a response.
+    throw new RequestError(failureMessage +
+      (diagnosticsProvider ? " (could not contact the provider or request timed out)" : ""), 403);
   }
   if (!response.ok) {
     let details = "";
-    if (metaDiagnostics) {
+    if (diagnosticsProvider === "google" || diagnosticsProvider === "meta") {
+      let data = null;
       try {
-        // Bound upstream data before parsing it; never echo its free-form text.
+        // Never echo untrusted provider error descriptions or trace IDs.
         const text = await response.text();
-        const data = text.length <= 4096 ? JSON.parse(text) : null;
-        details = safeMetaErrorDetails(response.status, data);
-      } catch {
-        details = safeMetaErrorDetails(response.status, null);
-      }
+        if (text.length <= 4096) data = JSON.parse(text);
+      } catch { /* Ignore malformed or unreadable provider error bodies. */ }
+      details = diagnosticsProvider === "meta"
+        ? safeMetaErrorDetails(response.status, data)
+        : safeGoogleTokenErrorDetails(response.status, data);
     }
     throw new RequestError(failureMessage + details, 403);
   }
   try { return await response.json(); }
-  catch { throw new RequestError(failureMessage, 403); }
+  catch {
+    throw new RequestError(failureMessage +
+      (diagnosticsProvider ? " (invalid provider JSON response)" : ""), 403);
+  }
 }
 
 // Standard Facebook Login returns an opaque OAuth access token, not an OIDC
@@ -238,12 +279,23 @@ export async function exchangeIdentity(provider, config, { code, origin, pending
   const tokens = await providerJson(fetchImpl, provider === "meta" ? endpoints.meta + "?" + parameters : endpoints[provider],
     provider === "meta" ? {} : { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: parameters },
     provider === "meta" ? "Facebook rejected QRed's login code exchange. Check the app credentials and callback URI." :
+      provider === "google" ? "Google declined QRed's authorization code exchange." :
       "The sign-in service could not complete this request. Please try again.",
-    provider === "meta");
+    provider === "google" || provider === "meta" ? provider : null);
   if (provider === "meta") return verifyMetaAccessToken(tokens, config, fetchImpl, now);
   if (provider !== "amazon") {
     if (typeof tokens.id_token !== "string" || tokens.id_token.length > 16384) throw new RequestError("The sign-in service did not return an identity token", 403);
-    const payload = await (verifyTokens[provider] || tokenVerifiers[provider])(tokens.id_token, config.clientId, now());
+    let payload;
+    try {
+      payload = await (verifyTokens[provider] || tokenVerifiers[provider])(tokens.id_token, config.clientId, now());
+    } catch (error) {
+      if (error instanceof RequestError || provider !== "google") throw error;
+      // jose/JWKS errors otherwise escaped to the callback's catch-all as
+      // "Authentication failed", hiding which step rejected Google sign-in.
+      // Report only fixed error categories, never exception messages/tokens.
+      throw new RequestError("Google identity token verification failed (" +
+        safeGoogleIdTokenErrorReason(error) + "). Please try again.", 403);
+    }
     if (payload.nonce !== pending.nonce) throw new RequestError("Authentication did not match this request", 403);
     if (payload.iat < pending.iat - CLOCK_SKEW) throw new RequestError("Sign-in predates this request. Please try again.", 403);
     checkTokenTime(payload, now(), provider);
