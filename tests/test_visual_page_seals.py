@@ -213,8 +213,14 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
             values = thumbnail.evaluate("el => Array.from(el.getContext('2d').getImageData(0,0,el.width,el.height).data)")
             assert min(values[::4]) == 0 and max(values[::4]) == 255
         reference.get_by_label("Choose visual comparison photo", exact=True).set_input_files(tmp_path / "printed.png")
-        expect(reference.get_by_role("img", name="Page photo beside the signed visual reference")).to_be_visible()
-        expect(reference.get_by_role("img", name="Page photo beside the signed visual reference")).to_have_js_property("naturalHeight", 2016)
+        photo = reference.get_by_role("img", name="Page photo beside the signed visual reference")
+        # The earlier QR-only scan is 432 px tall; wait for the user's full-page
+        # replacement to finish decoding rather than observing the first image.
+        # Under CI load PNG decoding/re-encoding can exceed Playwright's
+        # default five-second assertion timeout. The exact full-page pixels
+        # still have to be present; accepting the QR crop is not sufficient.
+        expect(photo).to_have_js_property("naturalWidth", 1224, timeout=30000)
+        expect(photo).to_have_js_property("naturalHeight", 2016, timeout=30000)
         guard.assert_quiet()
         if not blank and path == "/":
             page.screenshot(path=str(tmp_path / "visual-reference-mobile.png"), full_page=True)
