@@ -180,7 +180,7 @@ jobs:
               ("/legal.css", ".site-header", "text/css"),
           ]:
               try:
-                  with urllib.request.urlopen(base+path, timeout=15) as r:
+                  with urllib.request.urlopen(urllib.request.Request(base+path, headers={"User-Agent": "QRed-policy-live-smoke/1.0", "Accept": "*/*"}), timeout=15) as r:
                       status, kind, content = r.status, r.headers.get("content-type",""), r.read(100000).decode("utf-8","replace")
                   ok = status == 200 and mime in kind and marker in content
                   print(f"{path}: HTTP {status} | type={kind} | {'PASS' if ok else 'FAIL'}")
