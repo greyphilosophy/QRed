@@ -124,9 +124,15 @@ export async function validateMicrosoftSpaToken(token, config, pending, now, ver
 const tokenVerifiers = { google: verifyGoogleIdToken, meta: verifyMetaIdToken };
 
 async function providerJson(fetchImpl, url, options = {}, failureMessage = "The sign-in service could not complete this request. Please try again.") {
-  const response = await fetchImpl(url, { ...options, redirect: "error", signal: AbortSignal.timeout(10000) });
-  if (!response.ok) throw new RequestError(failureMessage, 403);
-  return response.json();
+  try {
+    const response = await fetchImpl(url, { ...options, redirect: "error", signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new RequestError(failureMessage, 403);
+    return await response.json();
+  } catch {
+    // No provider response body, URL (which can contain credentials), or
+    // low-level exception is ever copied into the document window.
+    throw new RequestError(failureMessage, 403);
+  }
 }
 
 // Standard Facebook Login returns an opaque OAuth access token, not an OIDC
@@ -135,7 +141,7 @@ async function providerJson(fetchImpl, url, options = {}, failureMessage = "The 
 export async function verifyMetaAccessToken(tokens, config, fetchImpl, now) {
   if (typeof tokens?.access_token !== "string" || !tokens.access_token ||
       tokens.access_token.length > 2048 ||
-      (tokens.token_type != null && tokens.token_type.toLowerCase() !== "bearer") ||
+      (tokens.token_type != null && (typeof tokens.token_type !== "string" || tokens.token_type.toLowerCase() !== "bearer")) ||
       !Number.isFinite(tokens.expires_in) || tokens.expires_in <= 0) {
     throw new RequestError("Facebook did not return a usable account token. Please try again.", 403);
   }
