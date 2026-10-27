@@ -80,7 +80,10 @@ export async function finishAccountSignIn(provider, session, { fetchImpl = apiFe
 export async function attestPagesWithAccount(provider, pages, { popup, signal, onStatus = () => {},
   onIdentity = () => {}, fetchImpl = apiFetch, trusted = trustedAuthorities, preparedSession = null } = {}) {
   const label = ensurePages(provider, pages);
-  if (!popup) throw new Error("Allow the " + label + " sign-in window, then try again.");
+  // The UI now opens the prepared provider URL through a native, noopener link.
+  // No Window handle is available for that cross-origin tab. Poll the existing
+  // authenticated session instead. Legacy unprepared callers still need popup.
+  if (!popup && !preparedSession) throw new Error("Allow the " + label + " sign-in window, then try again.");
   const authPath = "/api/auth/" + provider;
   let session = preparedSession;
   let providerOpened = false, statusReady = false;
@@ -135,7 +138,7 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
     // error, especially on phones where a tab may close otherwise. Only
     // close a verified login, cancellation or rejected/unopened flow.
     if (statusReady || signal?.aborted || !providerOpened) {
-      try { popup.close(); } catch { /* The provider may isolate the popup. */ }
+      try { popup?.close(); } catch { /* The provider may isolate the popup. */ }
     }
     if (session) await finishAccountSignIn(provider, session, { fetchImpl });
   }
