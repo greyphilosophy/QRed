@@ -253,7 +253,7 @@ it("keeps a rejected Facebook callback open with sanitized error details instead
     error: expect.stringContaining("Meta error 100") });
 });
 
-it.each(["google", "meta", "amazon"])("closes a successful %s popup only after sign-in completed", async provider => {
+it.each(["google", "amazon"])("closes a successful %s popup only after sign-in completed", async provider => {
   const flow = fixture(provider);
   const session = await (await flow.post("/api/auth/" + provider + "/start", { commitments: [fingerprint] })).json();
   const callback = await flow.login(session);
@@ -262,6 +262,35 @@ it.each(["google", "meta", "amazon"])("closes a successful %s popup only after s
   expect(html).toContain("Sign-in completed.");
   expect(html).not.toContain('role="alert"');
   expect(html).toContain("window.close()");
+});
+
+it("keeps successful Facebook callback visible so mobile users can verify handoff to the original tab", async () => {
+  const flow = fixture("meta");
+  const session = await (await flow.post("/api/auth/meta/start", { commitments: [fingerprint] })).json();
+  const callback = await flow.login(session);
+  expect(callback.status).toBe(200);
+  const html = await callback.text();
+  expect(html).toContain("Facebook sign-in was verified by QRed in this tab.");
+  expect(html).toContain("original QRed tab");
+  expect(html).toContain("Check sign-in status");
+  expect(html).not.toContain("window.close()");
+  expect(html).not.toContain("one-use-code");
+  expect(html).not.toContain("opaque-meta-token");
+  expect(html).not.toContain("meta-secret");
+  expect(html).not.toContain(session.secret);
+  expect(html).not.toContain('role="alert"');
+  expect(callback.headers.get("Cache-Control")).toBe("no-store");
+  expect(callback.headers.get("Referrer-Policy")).toBe("no-referrer");
+  const status = await flow.post("/api/auth/meta/status", {
+    id: session.id, secret: session.secret,
+  });
+  expect(await status.json()).toMatchObject({ status: "ready", identity: { provider: "meta" } });
+  // Replaying an already-completed callback must still display its safe result
+  // without closing the tab or renewing the session.
+  const replay = await flow.handle(new Request(origin + "/api/auth/meta/callback?state=" +
+    session.id + "&code=duplicate", { headers: { Cookie: flow.cookie() } }));
+  expect(replay.status).toBe(200);
+  expect(await replay.text()).not.toContain("window.close()");
 });
 
 it("HTML-escapes a provider-originated error before showing it in the callback", async () => {
