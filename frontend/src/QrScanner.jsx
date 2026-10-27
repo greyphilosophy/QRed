@@ -14,7 +14,7 @@ import "./qrScanner.css";
  * 2. Scanning — camera feed + jsQR loop; collection mode waits for all pages
  * 3. Result — displays the scanned QR text, "New scan" resumes scanning
  */
-export function QrScanner({ onOpenPdfStampTool, onSealDetected, returnPayload = false, resultPanel,
+export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSealDetected, returnPayload = false, resultPanel,
   collectSeals = false, collectionProgress }) {
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
@@ -54,6 +54,8 @@ export function QrScanner({ onOpenPdfStampTool, onSealDetected, returnPayload = 
     }, torchEnabled ? "Flashlight on" : "Flashlight off") : null,
     onOpenPdfStampTool ? React.createElement("button", {
       "aria-label": "Open PDF stamping tool",
+      "aria-controls": "pdf-stamp-tool",
+      "aria-expanded": pdfStampToolOpen,
       className: "ar-button ar-button-secondary",
       onClick: onOpenPdfStampTool,
       type: "button",
