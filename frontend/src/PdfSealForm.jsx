@@ -33,6 +33,7 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [readyForSignIn, setReadyForSignIn] = useState(false);
+  const [authenticating, setAuthenticating] = useState(false);
   const [method, setMethod] = useState("private-key");
   const [signingIdentity, setSigningIdentity] = useState(null);
   const [availability, setAvailability] = useState(null);
@@ -165,6 +166,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     pendingAccountSignIn.current = null;
     waiting?.reject(new Error("Account sealing cancelled"));
     setReadyForSignIn(false);
+    setAuthenticating(false);
   }
 
   async function sealPdf() {
@@ -174,8 +176,9 @@ export function PdfSealForm({ onUsePublicKey }) {
     const waiting = pendingAccountSignIn.current;
     if (waiting) {
       if (waiting.provider !== method || Date.now() >= waiting.session.startedAt + 9 * 60 * 1000) {
-        cancelSealing();
-        setMessage("Sign-in preparation expired. Prepare the PDF again.");
+        pendingAccountSignIn.current = null;
+        setReadyForSignIn(false);
+        waiting.reject(new Error("Sign-in preparation expired. Prepare the PDF again."));
         return;
       }
       const popup = window.open(waiting.session.authorize_url, "_blank", "popup,width=520,height=680");
@@ -186,6 +189,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       if (activeRequest.current) activeRequest.current.popup = popup;
       pendingAccountSignIn.current = null;
       setReadyForSignIn(false);
+      setAuthenticating(true);
       waiting.resolve(popup);
       return;
     }
@@ -201,6 +205,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     setLoading(true);
     setSigningIdentity(null);
     setReadyForSignIn(false);
+    setAuthenticating(false);
     try {
       // Validate before parsing a PDF so key errors are immediate and actionable.
       const matchingPublicKey = method === "private-key" ? await deriveSigningPublicKey(privateKey) : null;
@@ -263,6 +268,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       try { request.popup?.close(); } catch { /* The provider may isolate the popup. */ }
       if (activeRequest.current === request) activeRequest.current = null;
       setReadyForSignIn(false);
+      setAuthenticating(false);
       setLoading(false);
     }
   }
@@ -376,7 +382,7 @@ export function PdfSealForm({ onUsePublicKey }) {
         : <button type="button" onClick={sealPdf}
           disabled={loading || loadingKeys || !accountSealingAvailable || availability?.[method] !== true}
           aria-busy={loading} style={{ marginTop: "1rem" }}>
-          {loading ? "Preparing document..." : `Prepare PDF for ${provider.label} sign-in`}
+          {loading ? (authenticating ? "Completing sign-in..." : "Preparing document...") : `Prepare PDF for ${provider.label} sign-in`}
         </button>
         : <button type="button" onClick={sealPdf} disabled={loading || loadingKeys} aria-busy={loading} style={{ marginTop: "1rem" }}>
           {loading ? "Sealing..." : "Stamp and save PDF"}
