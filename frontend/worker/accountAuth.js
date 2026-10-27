@@ -139,7 +139,7 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
       const complete = await readSession(id, "receipt");
       if (complete?.status === "ready") return callbackPage(provider, id, origin, true);
       const pending = await readSession(id, "request");
-      if (!pending) throw new RequestError("Return to the browser where you started signing in, or start again.", 403);
+      if (!pending) throw new RequestError("QRed could not find its encrypted sign-in session cookie when your identity provider returned. Return to the original QRed tab, cancel this attempt, and retry using the same browser profile.", 403);
       if (pending.status === "failed") return callbackPage(provider, id, origin, false, [], pending.error);
       if (pending.status !== "pending") throw new RequestError("Invalid sign-in request", 403);
       // The Microsoft SPA must redeem its PKCE code from the browser so Azure
