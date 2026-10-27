@@ -32,7 +32,7 @@ export function authorizationUrl(provider, config, { origin, id, nonce, challeng
   auth.search = new URLSearchParams({
     client_id: config.clientId, redirect_uri: origin + "/api/auth/" + provider + "/callback",
     response_type: "code", state: id, code_challenge: challenge, code_challenge_method: "S256",
-    scope: provider === "amazon" ? "profile" : provider === "meta" ? "openid public_profile email" : "openid email profile",
+    scope: provider === "amazon" ? "profile" : provider === "meta" ? "public_profile,email" : "openid email profile",
     ...(provider === "amazon" ? {} : { nonce }),
     ...(["google", "microsoft"].includes(provider) ? { prompt: "select_account" } : {}),
     ...(provider === "meta" ? { display: "popup", auth_type: "rerequest" } : {}),
@@ -123,10 +123,55 @@ export async function validateMicrosoftSpaToken(token, config, pending, now, ver
 
 const tokenVerifiers = { google: verifyGoogleIdToken, meta: verifyMetaIdToken };
 
-async function providerJson(fetchImpl, url, options = {}) {
+async function providerJson(fetchImpl, url, options = {}, failureMessage = "The sign-in service could not complete this request. Please try again.") {
   const response = await fetchImpl(url, { ...options, redirect: "error", signal: AbortSignal.timeout(10000) });
-  if (!response.ok) throw new RequestError("The sign-in service could not complete this request. Please try again.", 403);
+  if (!response.ok) throw new RequestError(failureMessage, 403);
   return response.json();
+}
+
+// Standard Facebook Login returns an opaque OAuth access token, not an OIDC
+// identity token. Treat the Graph token debugger as an independent, app-bound
+// authorization check and require a matching user profile before sealing.
+export async function verifyMetaAccessToken(tokens, config, fetchImpl, now) {
+  if (typeof tokens?.access_token !== "string" || !tokens.access_token ||
+      tokens.access_token.length > 2048 ||
+      (tokens.token_type != null && tokens.token_type.toLowerCase() !== "bearer") ||
+      !Number.isFinite(tokens.expires_in) || tokens.expires_in <= 0) {
+    throw new RequestError("Facebook did not return a usable account token. Please try again.", 403);
+  }
+  const base = "https://graph.facebook.com/" + config.graphVersion;
+  // The debug_token API requires an app-scoped inspector credential. Both the
+  // inspected token and app secret go only to Meta, over TLS, never to the QRed
+  // frontend or an attestation cookie.
+  const debug = await providerJson(fetchImpl, base + "/debug_token?" +
+    new URLSearchParams({ input_token: tokens.access_token,
+      access_token: config.clientId + "|" + config.clientSecret }),
+    {}, "Facebook could not validate the QRed account token. Please try again.");
+  const data = debug?.data;
+  const seconds = Math.floor(now() / 1000);
+  if (data?.is_valid !== true || String(data?.app_id) !== config.clientId ||
+      data?.type !== "USER" || typeof data.user_id !== "string" ||
+      !/^[0-9]+$/.test(data.user_id) || !Number.isSafeInteger(data.expires_at) ||
+      data.expires_at <= seconds || !Array.isArray(data.scopes)) {
+    throw new RequestError("Facebook returned an invalid, expired, or unrelated account token.", 403);
+  }
+  if (!data.scopes.includes("email")) {
+    throw new RequestError("Allow QRed to access your Facebook email address and try again.", 403);
+  }
+  // appsecret_proof binds use of the user token to QRed's server secret.
+  const hmacKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(config.clientSecret),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const proof = Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", hmacKey,
+    new TextEncoder().encode(tokens.access_token))), b => b.toString(16).padStart(2, "0")).join("");
+  const profile = await providerJson(fetchImpl, base + "/me?" +
+    new URLSearchParams({ fields: "id,name,email", appsecret_proof: proof }),
+    { headers: { Authorization: "Bearer " + tokens.access_token } },
+    "Facebook could not provide your name and email to QRed. Please check your permissions.");
+  if (profile?.id !== data.user_id) {
+    throw new RequestError("Facebook profile did not match the authenticated account.", 403);
+  }
+  return { identity: providerIdentity("meta",
+    { sub: data.user_id, name: profile.name, email: profile.email }) };
 }
 
 export async function exchangeIdentity(provider, config, { code, origin, pending, fetchImpl, now, verifyTokens = {} }) {
@@ -144,7 +189,10 @@ export async function exchangeIdentity(provider, config, { code, origin, pending
   });
   // Meta documents GET for its code exchange; other providers use form POST.
   const tokens = await providerJson(fetchImpl, provider === "meta" ? endpoints.meta + "?" + parameters : endpoints[provider],
-    provider === "meta" ? {} : { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: parameters });
+    provider === "meta" ? {} : { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: parameters },
+    provider === "meta" ? "Facebook rejected QRed's login code exchange. Check the app credentials and callback URI." :
+      "The sign-in service could not complete this request. Please try again.");
+  if (provider === "meta") return verifyMetaAccessToken(tokens, config, fetchImpl, now);
   if (provider !== "amazon") {
     if (typeof tokens.id_token !== "string" || tokens.id_token.length > 16384) throw new RequestError("The sign-in service did not return an identity token", 403);
     const payload = await (verifyTokens[provider] || tokenVerifiers[provider])(tokens.id_token, config.clientId, now());
