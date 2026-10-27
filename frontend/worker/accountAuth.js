@@ -149,10 +149,12 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
         const code = url.searchParams.get("code");
         if (code && code.length <= 4096) return microsoftSpaCallbackPage({ id, code, verifier: pending.pkce, clientId: config.clientId, origin });
       }
+      let stage = "provider";
       try {
         const code = url.searchParams.get("code");
         if (url.searchParams.has("error") || !code || code.length > 4096) throw new RequestError("Sign-in was cancelled. You can try again.");
         const authenticated = await exchangeIdentity(provider, config, { code, origin, pending, fetchImpl, now, verifyTokens });
+        stage = "receipt";
         const identity = authenticated.identity;
         const time = now();
         if (Math.floor(time / 1000) >= pending.exp) throw new RequestError("Sign-in request expired. Please try again.", 403);
@@ -165,7 +167,13 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
           await sessions.write(id, "receipt", receipt), sessions.clear(id, "request"),
         ]);
       } catch (error) {
-        const message = error instanceof RequestError ? error.message : "Authentication failed. Please try again.";
+        // Distinguish unexpected provider/token-processing failures from
+        // failures creating a signed-in browser session. Never emit the raw
+        // exception: token parsers and fetches can include confidential values.
+        const message = error instanceof RequestError ? error.message :
+          stage === "receipt"
+            ? "QRed could not save the verified sign-in session. Please try again."
+            : label + " sign-in failed during provider validation. Please try again.";
         return callbackPage(provider, id, origin, false, [await sessions.write(id, "request", {
           status: "failed", secret_hash: pending.secret_hash, error: message, iat: pending.iat, exp: pending.exp,
         })], message);
