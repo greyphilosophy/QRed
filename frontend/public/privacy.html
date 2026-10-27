@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="How QRed handles document contents, account identity, and temporary technical data.">
+  <title>Privacy Policy | QRed</title>
+  <link rel="stylesheet" href="/legal.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><nav class="nav-shell" aria-label="Primary">
+  <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">Q</span>QRed</a>
+  <div class="site-nav"><a href="/">Home</a><a href="/verify.htm">Verifier</a><a href="/privacy.html" aria-current="page">Privacy</a>
+<a href="/data-deletion.html">Data deletion</a>
+<a href="/terms.html">Terms</a>
+<a href="/security.html">Security & architecture</a></div>
+</nav></header>
+<main id="main" class="content">
+  <p class="kicker">Privacy & data handling</p>
+  <h1>Privacy Policy</h1>
+  <p class="lead">How QRed handles document contents, account identity, and temporary technical data.</p>
+  <p class="meta">Last updated: October 26, 2026</p>
+  
+<section aria-labelledby="p1"><h2 id="p1">1. What QRed does</h2>
+<p>QRed helps people seal documents with QR codes and cryptographic signatures, and check those seals later. QRed is designed to process original PDF files, page images, extracted text, and locally held signing keys <strong>on the user's device</strong>. Normal browser sealing and verification workflows do not send original document files to QRed's server.</p>
+<p>Account-backed sealing is optional. It connects to an external identity provider and QRed's Cloudflare Worker to request a signed document attestation. It does not require uploading the original PDF or its text to that Worker. See the <a href="/security.html">security and data-flow overview</a>.</p></section>
+<section aria-labelledby="p2"><h2 id="p2">2. Information involved in QRed</h2>
+<h3>Documents and local key material</h3>
+<p>The browser opens and processes files that you select. QRed's current implementation does not operate a user-document storage service, and it does not send your local private signing key to the QRed Worker. You decide where to save, print, and share the finished document.</p>
+<h3>Account-backed attestations</h3>
+<p>When you select an available account provider (Google, Microsoft, Facebook/Meta, or Amazon), QRed uses that provider to authenticate the account. Depending on provider and account, QRed receives a provider account identifier, profile name, and email address, as well as limited authentication metadata.</p>
+<p>For the document attestation, the browser creates <strong>randomly salted page commitments</strong> and sends these derived values to the QRed Worker for signing. The Worker does not receive PDF bytes, filenames, extracted document text, unsalted document roots, or the random page salts through this workflow. These derived values should nevertheless be treated as document-related metadata, not as a universal anonymization guarantee.</p>
+<h3>Sessions and operational information</h3>
+<p>QRed uses short-lived, encrypted, secure browser cookies during account sign-in. The current design has no permanent QRed user account database; authentication sessions expire about ten minutes after they begin. Site delivery and API requests necessarily expose ordinary connection information (such as network addresses, timestamps, and request metadata) to the hosting infrastructure, which may retain operational, security, or diagnostic logs under its own settings and policies.</p></section>
+<section aria-labelledby="p3"><h2 id="p3">3. What appears in a seal</h2>
+<p>A QRed-readable QR payload can carry signed document text or page evidence and associated metadata. Account-backed seals include the <strong>provider name, profile name, email address, provider-scoped account identifier, and attestation time</strong>. These details may be read by anybody who receives a copy of the sealed document and uses a compatible decoder. They are not a private repository or an encrypted container for document contents.</p>
+<p><strong>Consider confidentiality before sharing:</strong> a valid seal does not prevent recipients from copying the page, reading its content, or redistributing the seal and its embedded data.</p></section>
+<section aria-labelledby="p4"><h2 id="p4">4. Third-party services</h2>
+<p>QRed's site and optional Worker API run on Cloudflare infrastructure. An identity provider you choose processes its normal sign-in request and identity information under its own terms and privacy policy. QRed's document-processing page does not load a provider's JavaScript login SDK.</p>
+<p>The browser may download application code, fonts or OCR model resources from qred.org when they are not yet available locally. Offline verification is possible once its required resources have been loaded and the relevant trust keys are available.</p></section>
+<section aria-labelledby="p5"><h2 id="p5">5. Retention and deletion</h2>
+<p>QRed does not currently maintain a database of individual sign-ins or stored PDFs. Encrypted sign-in cookies expire and are cleared when possible on completion or cancellation. Hosting-layer logs may exist independently and have separate retention controls. A completed seal remains with the document wherever its holder stores or distributes it; QRed cannot remotely retrieve or delete those copies.</p>
+<p>For account permissions, deletion requests, and the limits of deletion, see <a href="/data-deletion.html">Data deletion instructions</a>.</p></section>
+<section aria-labelledby="p6"><h2 id="p6">6. Security and regulated information</h2>
+<p>QRed aims to minimize unnecessary document transfer, but no technical design guarantees safety or suitability in all environments. It is not represented as approved, certified, or compliant for criminal justice information (CJIS), HIPAA, FERPA, or any other specific regulated use. Organizations must assess applicable controls, device security, hosting, identity-provider use, and their own procedures before processing regulated data.</p></section>
+<section aria-labelledby="p7"><h2 id="p7">7. Changes and questions</h2>
+<p>This notice may be revised as the service changes. We will update its date when we materially revise it. You can review the public <a href="https://github.com/greyphilosophy/QRed">QRed source code and tests</a>, but code and automated tests do not amount to a security certification or contractual assurance.</p>
+<p>For privacy requests, email <a class="contact" href="mailto:greyphilosophy@gmail.com">greyphilosophy@gmail.com</a>. Please do not attach sensitive documents, passwords, or private keys to your request.</p></section>
+</main>
+<footer class="site-footer">
+  <p>QRed · Tamper-evident document sealing and verification</p>
+  <p><a href="/">Home</a><a href="/privacy.html">Privacy</a><a href="/data-deletion.html">Data deletion</a><a href="/terms.html">Terms</a><a href="/security.html">Security</a></p>
+  <p>Questions? <a class="contact" href="mailto:greyphilosophy@gmail.com">greyphilosophy@gmail.com</a></p>
+</footer>
+</body></html>
