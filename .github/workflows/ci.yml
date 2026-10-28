@@ -74,7 +74,7 @@ jobs:
   e2e-tests:
     name: E2E (${{ matrix.shard }})
     runs-on: ubuntu-latest
-    # Six isolated runners retain every real-browser regression, with each
+    # Eight isolated runners retain every real-browser regression, with each
     # of the two ~69s PDF verification cases on a separate worker.
     # Newly added tests run automatically in the deployment/catch-all shard.
     strategy:
@@ -89,8 +89,10 @@ jobs:
             pytest_args: "tests/test_visual_page_seals.py -k 'not test_load_pdf_seals_on_both_verifiers_offline'"
           - shard: auth-and-corrupt
             pytest_args: "tests/test_account_stateless.py tests/test_corrupt_pdf.py"
-          - shard: privacy-and-photo
-            pytest_args: "tests/test_network_privacy.py tests/test_photo_verification.py"
+          - shard: network-privacy
+            pytest_args: "tests/test_network_privacy.py"
+          - shard: photo-verification
+            pytest_args: "tests/test_photo_verification.py"
           - shard: deployment-document
             pytest_args: "tests/test_qred_deployment.py::TestPlainTextSealAndVerify tests/test_qred_deployment.py::TestMultiQrDocuments tests/test_qred_deployment.py::TestPdfTextSealing tests/test_qred_deployment.py::TestImageOnlyPdfs tests/test_qred_deployment.py::TestPdfExtractionIntegrity"
           - shard: deployment-scanning-and-new-tests
