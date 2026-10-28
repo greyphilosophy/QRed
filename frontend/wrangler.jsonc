@@ -21,8 +21,6 @@
     "QRED_ORIGIN": "https://qred.org",
     "QRED_GOOGLE_CLIENT_ID": "21775093456-tqmg3efc48kspnau7k9rj2vm4ksvq6pn.apps.googleusercontent.com",
     "QRED_MICROSOFT_CLIENT_ID": "50e418de-6982-4d0f-a513-8c8139b4ea4f",
-    "QRED_META_APP_ID": "2087701785187116",
-    "QRED_META_GRAPH_VERSION": "v26.0",
     "QRED_AMAZON_CLIENT_ID": "",
     "QRED_ATTESTATION_KEY_ID": "477eb945edeca1a8"
   },
