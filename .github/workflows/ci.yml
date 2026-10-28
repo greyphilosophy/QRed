@@ -28,7 +28,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - name: Test frontend and rendered PDF seals
         working-directory: frontend
-        run: npm test -- --exclude src/pdfWatermark.test.js --exclude src/pdfClientSeal.test.js --exclude src/pdfInputIntegrity.test.js --exclude src/pdfVisualEvidence.test.js --exclude src/qr/scanQrImage.test.js --exclude src/verifier/scanPdf.test.js
+        run: npm test -- --exclude '**/{pdfWatermark,pdfClientSeal,pdfInputIntegrity,pdfVisualEvidence,scanQrImage,scanPdf}.test.js'
       - name: Build frontend
         working-directory: frontend
         run: npm run build:pages
