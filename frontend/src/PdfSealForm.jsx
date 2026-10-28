@@ -80,7 +80,6 @@ export function PdfSealForm({ onUsePublicKey }) {
     }, 0);
     return () => clearTimeout(timer);
     // sealPdf intentionally reads the latest render when the input changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file, method, pageScalingStrategy, accountAvailable]);
 
   useEffect(() => () => {
