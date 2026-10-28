@@ -236,7 +236,7 @@ def _check_results(page: Page) -> dict:
     """
     result_text = page.locator("#stamp-result").inner_text().strip()
     has_error = result_text.startswith("PDF sealing failed:")
-    had_success = result_text.startswith("Sealed ") and "Document ID:" in result_text
+    had_success = result_text.startswith("Sealed ") and "Download started:" in result_text
     completed = has_error or had_success
 
     return {
