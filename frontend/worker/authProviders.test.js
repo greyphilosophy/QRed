@@ -27,7 +27,7 @@ describe.each(["microsoft"])("%s identity tokens", provider => {
     await expect(verify[provider](await token(claims(provider)), "test-client", now, keys)).resolves.toMatchObject({ sub: "account-123" });
     const invalid = [{ iss: "https://attacker.example" }, { aud: "another-app" }, { aud: ["test-client", "another-app"] },
       { azp: "another-app" }, { exp: seconds - 31 }, { exp: undefined }, { nonce: undefined }, { sub: undefined },
-      { iat: seconds - 1201 }, { iat: seconds + 31 }, { iat: seconds + 0.5 }];
+      { iat: seconds + 31 }, { iat: seconds + 0.5 }];
     if (provider === "microsoft") invalid.push({ tid: "not-a-guid" }, { tid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" }, { ver: "1.0" });
     for (const change of invalid) await expect(verify[provider](await token({ ...claims(provider), ...change }), "test-client", now, keys)).rejects.toThrow();
     const forged = (await token(claims(provider))).split(".");
@@ -72,20 +72,22 @@ it("requires Microsoft's signed document nonce but accepts a recent SSO token is
   const recent = await check({ iat: seconds - 120 });
   expect(recent.identity.provider).toBe("microsoft");
   expect(recent.provider_iat).toBe(seconds - 120);
-  // A 15-minute mail/MFA challenge is valid for Microsoft.
-  const fifteenMinutesOld = await check({ iat: seconds - 15 * 60 });
-  expect(fifteenMinutesOld.identity.provider).toBe("microsoft");
-  // Beyond 20 minutes is still rejected, even with a matching signed nonce.
-  await expect(check({ iat: seconds - 1201 })).rejects.toThrow();
+  // Microsoft may reuse a pre-existing SSO authentication time. The
+  // request-specific signed nonce, not iat, binds it to QRed's five-minute
+  // document session. Even an older iat is not a substitute for a nonce.
+  const sso = await check({ iat: seconds - 35 * 60 });
+  expect(sso.identity.provider).toBe("microsoft");
+  // The actual token must still be unexpired and cannot be future-issued.
+  await expect(check({ iat: seconds - 35 * 60, exp: seconds - 31 })).rejects.toThrow();
   await expect(check({ iat: seconds + 31 })).rejects.toThrow();
 });
 
 
-it("keeps Google's five-minute token freshness even as Microsoft's window grows", () => {
+it("keeps Google's five-minute token freshness, while Microsoft freshness uses the signed nonce and session", () => {
   expect(() => checkTokenTime({ iat: seconds - 301 }, now, "google")).toThrow("too old");
-  expect(() => checkTokenTime({ iat: seconds - 15 * 60 }, now, "microsoft")).not.toThrow();
-  expect(() => checkTokenTime({ iat: seconds - 1201 }, now, "microsoft")).toThrow("too old");
+  expect(() => checkTokenTime({ iat: seconds - 35 * 60 }, now, "microsoft")).not.toThrow();
   expect(() => checkTokenTime({ iat: seconds + 31 }, now, "microsoft")).toThrow("clock");
+  expect(() => checkTokenTime({ iat: undefined }, now, "microsoft")).toThrow();
 });
 
 it("checks the Microsoft signing key's tenant scope, not just the token issuer", async () => {
