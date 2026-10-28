@@ -5,7 +5,7 @@ import { cookieSessions, SESSION_SECONDS } from "./accountSession.js";
 
 import { AUTH_PROVIDERS, authProvider } from "../src/authProviders.js";
 import { RequestError } from "./authErrors.js";
-import { authorizationUrl, exchangeIdentity, providerConfiguration, validateMicrosoftSpaToken } from "./authProviders.js";
+import { authorizationUrl, exchangeIdentity, providerConfiguration, safeMicrosoftVerificationReason, validateMicrosoftSpaToken } from "./authProviders.js";
 import { microsoftSpaCallbackPage } from "./microsoftSpaCallback.js";
 
 let cachedSigningKey;
@@ -196,26 +196,34 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
       if (completed?.status === "ready") return json({ status: "ready" });
       const pending = await readSession(body.id, "request");
       if (!pending || pending.status !== "pending") throw new RequestError("Sign-in request expired or already completed", 403);
-      const fail = async () => json({ error: "Microsoft sign-in could not be completed or verified. Please try again." }, 403,
-        cookieHeaders([await sessions.write(body.id, "request", {
-          status: "failed", secret_hash: pending.secret_hash, error: "Microsoft sign-in could not be completed or verified. Please try again.",
+      // Keep all diagnostics server-authored and bounded. Never return raw jose
+      // exceptions, an ID token, an Azure error description or request parameters.
+      const fail = async (message = "Microsoft sign-in could not be completed or verified. Please try again.") =>
+        json({ error: message }, 403, cookieHeaders([await sessions.write(body.id, "request", {
+          status: "failed", secret_hash: pending.secret_hash, error: message,
           iat: pending.iat, exp: pending.exp,
         })]));
       if (body.error !== undefined) {
         if (body.error !== "failed" || body.id_token !== undefined) throw new RequestError("Invalid sign-in response", 403);
         return fail();
       }
+      let validated = false;
       try {
         const authenticated = await validateMicrosoftSpaToken(body.id_token, config, pending, now, verifyTokens);
+        validated = true;
         const time = now();
-        if (Math.floor(time / 1000) >= pending.exp) return fail();
+        if (Math.floor(time / 1000) >= pending.exp) return fail("Microsoft sign-in request expired. Prepare your PDF again.");
         const receipt = { status: "ready", secret_hash: pending.secret_hash, commitments_hash: pending.commitments_hash,
           identity: authenticated.identity, issued_at: new Date(time).toISOString(), provider_iat: authenticated.provider_iat,
           iat: Math.floor(time / 1000), exp: pending.exp };
         return json({ status: "ready" }, 200, cookieHeaders([
           await sessions.write(body.id, "receipt", receipt), sessions.clear(body.id, "request"),
         ]));
-      } catch { return fail(); }
+      } catch (error) {
+        return fail(validated
+          ? "QRed could not save the verified Microsoft sign-in session. Please try again."
+          : safeMicrosoftVerificationReason(error));
+      }
     }
 
     if (action === "start") {
