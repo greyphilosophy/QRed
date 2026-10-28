@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
-import { authorizationUrl, checkTokenTime, exchangeIdentity, providerConfiguration, providerIdentity, validateMicrosoftSpaToken, safeMicrosoftVerificationReason, safeGoogleTokenErrorDetails, safeGoogleIdTokenErrorReason, verifyMicrosoftIdToken } from "./authProviders.js";
+import { authorizationUrl, checkTokenTime, exchangeIdentity, providerConfiguration, providerIdentity, validateMicrosoftSpaToken, safeMicrosoftVerificationReason, safeAmazonTokenErrorDetails, safeGoogleTokenErrorDetails, safeGoogleIdTokenErrorReason, verifyMicrosoftIdToken } from "./authProviders.js";
 import { allowedAuthorizationUrl } from "../src/authProviders.js";
 import { RequestError } from "./authErrors.js";
 
@@ -154,6 +154,78 @@ describe("Login with Amazon", () => {
     { profile: { user_id: "another-account" } }, { profile: { email: undefined } }, { profile: { name: undefined } },
   ])("rejects untrusted or incomplete Amazon responses %j", async changes => {
     await expect(exchange(changes)).rejects.toThrow();
+  });
+});
+
+
+describe("sanitized Login with Amazon diagnostics", () => {
+  const config = { clientId: "amazon-app", clientSecret: "private-client-secret" };
+  const context = { code: "private-authorization-code", origin: "https://qred.test",
+    pending: { pkce: "private-pkce-verifier" }, now: () => now };
+  const tokens = { access_token: "private-amazon-access-token", token_type: "bearer", expires_in: 3600 };
+  const tokenInfo = { iss: "https://www.amazon.com", aud: "amazon-app", user_id: "amazon-account", exp: 3500 };
+
+  it("only reports bounded Amazon HTTP statuses and known OAuth codes", () => {
+    expect(safeAmazonTokenErrorDetails(400, { error: "invalid_grant", error_description: "PRIVATE" }))
+      .toBe(" (HTTP 400; OAuth invalid_grant)");
+    expect(safeAmazonTokenErrorDetails(401, { error: "invalid_client" }))
+      .toBe(" (HTTP 401; OAuth invalid_client)");
+    expect(safeAmazonTokenErrorDetails(403, { error: "private-token" }))
+      .toBe(" (HTTP 403)");
+    expect(safeAmazonTokenErrorDetails(503, { error: ["invalid_grant"] }))
+      .toBe(" (HTTP 503)");
+    expect(safeAmazonTokenErrorDetails(700, { error: "private" })).toBe("");
+  });
+
+  it.each([
+    ["exchange", "Amazon declined QRed's authorization code exchange."],
+    ["tokeninfo", "Amazon could not verify the access token."],
+    ["profile", "Amazon could not retrieve the authenticated profile."],
+  ])("identifies Amazon %s failures without exposing provider secrets", async (stage, expected) => {
+    const fetchImpl = async (url, options) => {
+      expect(options.redirect).toBe("manual");
+      expect(options.signal).toBeInstanceOf(AbortSignal);
+      if (stage === "exchange" || url === "https://api.amazon.com/auth/o2/token" && stage !== "exchange") {
+        if (stage === "exchange") return Response.json({ error: "invalid_grant", error_description:
+          "private-client-secret private-authorization-code private-amazon-access-token" }, { status: 400 });
+        return Response.json(tokens);
+      }
+      if (url.startsWith("https://api.amazon.com/auth/o2/tokeninfo?")) {
+        if (stage === "tokeninfo") return Response.json({ error: "invalid_grant", error_description: "private-amazon-access-token" }, { status: 403 });
+        return Response.json(tokenInfo);
+      }
+      expect(url).toBe("https://api.amazon.com/user/profile");
+      if (stage === "profile") return Response.json({ error: "access_denied", error_description: "private-amazon-access-token" }, { status: 401 });
+      return Response.json({ user_id: "amazon-account", name: "Example", email: "example@example.org" });
+    };
+    let message;
+    try {
+      await exchangeIdentity("amazon", config, { ...context, fetchImpl });
+      throw new Error("Expected an Amazon authentication failure");
+    } catch (error) { message = error.message; }
+    expect(message).toContain(expected);
+    expect(message).toMatch(/HTTP (400|401|403); OAuth (invalid_grant|access_denied)/);
+    for (const secret of [context.code, context.pending.pkce, config.clientSecret, tokens.access_token]) {
+      expect(message).not.toContain(secret);
+    }
+  });
+
+  it.each(["exchange", "tokeninfo", "profile"])("distinguishes %s timeout from provider rejection", async stage => {
+    const fetchImpl = async url => {
+      if (stage === "exchange" && url.endsWith("/token")) throw new Error("PRIVATE private-client-secret");
+      if (url.endsWith("/token")) return Response.json(tokens);
+      if (stage === "tokeninfo" && url.includes("/tokeninfo?")) throw new Error("PRIVATE private-amazon-access-token");
+      if (url.includes("/tokeninfo?")) return Response.json(tokenInfo);
+      throw new Error("PRIVATE private-amazon-access-token");
+    };
+    await expect(exchangeIdentity("amazon", config, { ...context, fetchImpl }))
+      .rejects.toThrow("could not contact the provider or request timed out");
+  });
+
+  it("rejects malformed token types with a bounded error", async () => {
+    const fetchImpl = async () => Response.json({ ...tokens, token_type: { toLowerCase: "surprise" } });
+    await expect(exchangeIdentity("amazon", config, { ...context, fetchImpl }))
+      .rejects.toThrow("Amazon did not return a valid access token");
   });
 });
 
