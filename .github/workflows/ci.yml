@@ -40,8 +40,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - shard: watermark
-            test_args: "src/pdfWatermark.test.js"
+          - shard: watermark-layout
+            test_args: "src/pdfWatermark.test.js -t 'analyzes logos|defaults to watermarks'"
+          - shard: watermark-render
+            test_args: "src/pdfWatermark.test.js -t 'keeps two pages|keeps rotated|fits and verifies both parts|recognizes only entry'"
+          - shard: watermark-footer
+            test_args: "src/pdfWatermark.test.js -t 'Automatic uses a readable footer'"
           - shard: pdf-and-scanning
             test_args: "src/pdfClientSeal.test.js src/pdfInputIntegrity.test.js src/pdfVisualEvidence.test.js src/qr/scanQrImage.test.js src/verifier/scanPdf.test.js"
     steps:
