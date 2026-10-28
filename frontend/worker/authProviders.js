@@ -28,6 +28,7 @@ export function authorizationUrl(provider, config, { origin, id, nonce, challeng
   auth.search = new URLSearchParams({
     client_id: config.clientId, redirect_uri: origin + "/api/auth/" + provider + "/callback",
     response_type: "code", state: id,
+    code_challenge: challenge, code_challenge_method: "S256",
     scope: provider === "amazon" ? "profile" : "openid email profile",
     ...(["google", "microsoft"].includes(provider) ? { nonce } : {}),
     ...(["google", "microsoft"].includes(provider) ? { prompt: "select_account" } : {}),
