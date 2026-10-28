@@ -1,0 +1,72 @@
+name: One-off read-only QRed production smoke check
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/live-qred-smoke.yml"
+permissions:
+  contents: read
+jobs:
+  live-http-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check public production endpoints only
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.request
+          import urllib.error
+          from urllib.parse import urljoin
+
+          base = "https://qred.org"
+          failures = []
+
+          def request(path):
+              url = urljoin(base, path)
+              req = urllib.request.Request(url, headers={
+                  "User-Agent": "QRed-readonly-live-smoke/1.0",
+                  "Accept": "application/json, text/html;q=0.9",
+              })
+              try:
+                  with urllib.request.urlopen(req, timeout=20) as resp:
+                      return resp.status, resp.headers, resp.read(250000).decode("utf-8", errors="replace")
+              except urllib.error.HTTPError as exc:
+                  return exc.code, exc.headers, exc.read(250000).decode("utf-8", errors="replace")
+
+          for path, expected in [
+              ("/", 200),
+              ("/privacy.html", 200),
+              ("/api/auth/config", 200),
+              ("/api/auth/microsoft/callback", 403),
+              ("/api/auth/google/callback", 403),
+          ]:
+              try:
+                  status, headers, body = request(path)
+                  print(f"GET {path}: HTTP {status}; content-type={headers.get('Content-Type', 'missing')}; server={headers.get('Server', 'missing')}")
+                  if status != expected:
+                      failures.append(f"{path}: expected {expected}, got {status}")
+                  if path == "/" and status == 200 and "QRed" not in body:
+                      failures.append("Homepage does not contain QRed")
+                  if path == "/api/auth/config" and status == 200:
+                      try:
+                          config = json.loads(body)
+                      except ValueError:
+                          failures.append("Provider config is not JSON")
+                      else:
+                          availability = {k: bool(v) for k,v in config.items() if isinstance(v, bool)}
+                          print("Public provider availability:", json.dumps(availability, sort_keys=True))
+                          if sorted(availability) != ["amazon", "google", "microsoft"]:
+                              failures.append("Provider keys do not match current expected release")
+                          if not availability.get("google"):
+                              failures.append("Google not enabled")
+                          if not availability.get("microsoft"):
+                              failures.append("Microsoft not enabled")
+              except Exception as exc:
+                  print(f"GET {path}: FAILED {type(exc).__name__}: {exc}")
+                  failures.append(f"{path}: request failed")
+          print("RESULT:", "PASS" if not failures else "FAIL")
+          for issue in failures:
+              print("FAILURE:", issue)
+          raise SystemExit(0 if not failures else 1)
+          PY
