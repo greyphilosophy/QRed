@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
-import { authorizationUrl, exchangeIdentity, providerConfiguration, providerIdentity, validateMicrosoftSpaToken, safeMicrosoftVerificationReason, safeGoogleTokenErrorDetails, safeGoogleIdTokenErrorReason, verifyMicrosoftIdToken } from "./authProviders.js";
+import { authorizationUrl, checkTokenTime, exchangeIdentity, providerConfiguration, providerIdentity, validateMicrosoftSpaToken, safeMicrosoftVerificationReason, safeGoogleTokenErrorDetails, safeGoogleIdTokenErrorReason, verifyMicrosoftIdToken } from "./authProviders.js";
 import { allowedAuthorizationUrl } from "../src/authProviders.js";
 import { RequestError } from "./authErrors.js";
 
@@ -27,7 +27,7 @@ describe.each(["microsoft"])("%s identity tokens", provider => {
     await expect(verify[provider](await token(claims(provider)), "test-client", now, keys)).resolves.toMatchObject({ sub: "account-123" });
     const invalid = [{ iss: "https://attacker.example" }, { aud: "another-app" }, { aud: ["test-client", "another-app"] },
       { azp: "another-app" }, { exp: seconds - 31 }, { exp: undefined }, { nonce: undefined }, { sub: undefined },
-      { iat: seconds - 301 }, { iat: seconds + 31 }, { iat: seconds + 0.5 }];
+      { iat: seconds - 1201 }, { iat: seconds + 31 }, { iat: seconds + 0.5 }];
     if (provider === "microsoft") invalid.push({ tid: "not-a-guid" }, { tid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" }, { ver: "1.0" });
     for (const change of invalid) await expect(verify[provider](await token({ ...claims(provider), ...change }), "test-client", now, keys)).rejects.toThrow();
     const forged = (await token(claims(provider))).split(".");
@@ -72,11 +72,21 @@ it("requires Microsoft's signed document nonce but accepts a recent SSO token is
   const recent = await check({ iat: seconds - 120 });
   expect(recent.identity.provider).toBe("microsoft");
   expect(recent.provider_iat).toBe(seconds - 120);
-  // The maximum-five-minute age check still rejects stale tokens.
-  await expect(check({ iat: seconds - 301 })).rejects.toThrow();
+  // A 15-minute mail/MFA challenge is valid for Microsoft.
+  const fifteenMinutesOld = await check({ iat: seconds - 15 * 60 });
+  expect(fifteenMinutesOld.identity.provider).toBe("microsoft");
+  // Beyond 20 minutes is still rejected, even with a matching signed nonce.
+  await expect(check({ iat: seconds - 1201 })).rejects.toThrow();
   await expect(check({ iat: seconds + 31 })).rejects.toThrow();
 });
 
+
+it("keeps Google's five-minute token freshness even as Microsoft's window grows", () => {
+  expect(() => checkTokenTime({ iat: seconds - 301 }, now, "google")).toThrow("too old");
+  expect(() => checkTokenTime({ iat: seconds - 15 * 60 }, now, "microsoft")).not.toThrow();
+  expect(() => checkTokenTime({ iat: seconds - 1201 }, now, "microsoft")).toThrow("too old");
+  expect(() => checkTokenTime({ iat: seconds + 31 }, now, "microsoft")).toThrow("clock");
+});
 
 it("checks the Microsoft signing key's tenant scope, not just the token issuer", async () => {
   const value = await token(claims("microsoft"));
