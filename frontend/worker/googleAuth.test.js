@@ -288,7 +288,7 @@ describe("stateless document-bound Google attestation API", () => {
       expect((await post(startPath, body)).status).toBe(400);
     }
     expect((await post(startPath, { name: "x".repeat(17000) })).status).toBe(413);
-    expect(await (await handle(new Request(origin + "/api/auth/config"))).json()).toEqual({ google: true, microsoft: false, meta: false, amazon: false });
+    expect(await (await handle(new Request(origin + "/api/auth/config"))).json()).toEqual({ google: true, microsoft: false, amazon: false });
     delete env.QRED_ATTESTATION_PRIVATE_KEY;
     expect((await post(startPath, {})).status).toBe(503);
   });
