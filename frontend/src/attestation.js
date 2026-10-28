@@ -1,5 +1,5 @@
 import { concatenate, decodeBase64Url, encodeBase64Url, encodeMetadata, hexToBytes, sha256, signedContentBytes, strictUtf8, utf8 } from "./sealFormat.js";
-import { AUTH_PROVIDERS, authProvider } from "./authProviders.js";
+import { IDENTITY_PROVIDERS } from "./authProviders.js";
 
 export const MAX_ATTESTATION_PAGES = 100;
 const IDENTITY_LIMITS = { email: 254, name: 160, subject: 255 };
@@ -19,7 +19,7 @@ function field(value, maximum) {
 }
 
 export function encodeIdentity(identity) {
-  const provider = authProvider(identity?.provider);
+  const provider = IDENTITY_PROVIDERS[identity?.provider];
   if (!provider || ![identity.provider, "self"].includes(identity.name_source) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(identity.email)) throw new Error("Invalid attestation identity");
   return concatenate([new Uint8Array([provider.id, identity.name_source === identity.provider ? 1 : 0]),
     field(identity.email, IDENTITY_LIMITS.email), field(identity.name, IDENTITY_LIMITS.name), field(identity.subject, IDENTITY_LIMITS.subject)]);
@@ -28,7 +28,7 @@ export function encodeIdentity(identity) {
 export function decodeIdentity(bytes, offset = 0) {
   const start = offset;
   const providerId = bytes[offset++];
-  const provider = Object.keys(AUTH_PROVIDERS).find(name => AUTH_PROVIDERS[name].id === providerId);
+  const provider = Object.keys(IDENTITY_PROVIDERS).find(name => IDENTITY_PROVIDERS[name].id === providerId);
   if (!provider || ![0, 1].includes(bytes[offset])) throw new Error("Unsupported attestation identity");
   const name_source = bytes[offset++] === 1 ? provider : "self";
   const read = () => {

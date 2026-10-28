@@ -32,7 +32,7 @@
 <h3>Trust boundaries</h3>
 <p><strong>User-controlled device:</strong> original PDF files, camera photos, extracted text, signing keys, random page salts, and the sealed output are handled in the browser by the current document workflow. Device security and any downloads or onward sharing are the user's responsibility.</p>
 <p><strong>QRed's Cloudflare deployment:</strong> serves application resources and exposes a small Worker API for public configuration, key information, sign-in, and account-backed attestations. Its authority signing seed is a configured Worker secret and is not returned to browsers.</p>
-<p><strong>External identity providers:</strong> Google, Microsoft, Facebook (Meta), and Amazon handle sign-in under their own systems. These providers do not receive the original document or its page commitments from QRed's sign-in requests.</p>
+<p><strong>External identity providers:</strong> Google, Microsoft, and Amazon handle sign-in under their own systems. These providers do not receive the original document or its page commitments from QRed's sign-in requests.</p>
 <p><strong>Recipients:</strong> obtain printed or digital sealed documents through whatever channels the sender chooses. They may verify signed payloads using QRed's bundled authority trust anchors or independently obtained local signer public keys.</p></section>
 <section aria-labelledby="s2"><h2 id="s2">2. Actual information flows</h2>
 <div class="table-scroll"><table>
@@ -51,10 +51,9 @@
 <ul>
 <li><strong>Google:</strong> server-side OAuth code exchange; verified Gmail or eligible Workspace identity.</li>
 <li><strong>Microsoft:</strong> single-page application authorization code with PKCE, redeemed in the browser; QRed Worker validates the signed ID token. No Microsoft client secret.</li>
-<li><strong>Facebook (Meta):</strong> standard server-side OAuth code exchange. The Worker verifies the resulting access token using Meta's <code>debug_token</code> endpoint, checks that the token is valid and bound to QRed's App ID and user, and fetches a matching name/email profile. A signed OIDC identity token is not required. Live provider approval and real-account verification remain necessary.</li>
 <li><strong>Amazon:</strong> server-side authorization code exchange, token validation, and authenticated account profile lookup.</li>
 </ul>
-<p>The Worker binds identity and the ordered page commitments to a short-lived session. QRed does not independently verify legal identity or organizational signing authority from profile names. For Microsoft, Meta and Amazon, a provider-reported email must not be interpreted as QRed independently verifying ownership of that mailbox.</p></section>
+<p>The Worker binds identity and the ordered page commitments to a short-lived session. QRed does not independently verify legal identity or organizational signing authority from profile names. For Microsoft and Amazon, a provider-reported email must not be interpreted as QRed independently verifying ownership of that mailbox.</p></section>
 <section aria-labelledby="s4"><h2 id="s4">4. Limits of authentication and document evidence</h2>
 <p>Signatures authenticate the bytes actually covered by their signed QRed payload, not necessarily every aspect of the visible printed or scanned document. QR recovery, OCR, image quantization, camera quality, layout changes, and later physical alterations can affect detection. Original pages may include graphics, form marks, or fine details that lossy visual evidence does not fully preserve.</p>
 <p>Recipients should compare recovered signed text and visual evidence with the document and verify the trustworthiness of the relevant public key. Public account trust anchors are bundled with the application; an offline copy cannot learn that a trust anchor was revoked until updated. A local public key received from an untrusted party is not proof of issuer identity.</p>

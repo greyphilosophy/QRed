@@ -7,41 +7,31 @@ export const TOKEN_MAX_AGE = 300;
 export const CLOCK_SKEW = 30;
 const googleKeys = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
 const microsoftKeys = createRemoteJWKSet(new URL("https://login.microsoftonline.com/common/discovery/v2.0/keys"));
-const metaKeys = createRemoteJWKSet(new URL("https://www.facebook.com/.well-known/oauth/openid/jwks/"));
 const TENANT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function providerConfiguration(provider, env) {
   if (!authProvider(provider)) return null;
-  const prefix = "QRED_" + (provider === "meta" ? "META_APP" : provider.toUpperCase() + "_CLIENT");
+  const prefix = "QRED_" + provider.toUpperCase() + "_CLIENT";
   const clientId = env[prefix + "_ID"]?.trim(), clientSecret = env[prefix + "_SECRET"]?.trim();
   // Microsoft is a public SPA client; its browser PKCE flow must not require a secret.
   if (!clientId || (provider !== "microsoft" && !clientSecret)) return null;
-  const graphVersion = env.QRED_META_GRAPH_VERSION || "v26.0";
-  if (provider === "meta" && !/^v\d{1,2}\.\d{1,2}$/.test(graphVersion)) return null;
-  return { clientId, clientSecret, graphVersion };
+  return { clientId, clientSecret };
 }
 
 export function authorizationUrl(provider, config, { origin, id, nonce, challenge }) {
   const urls = {
     google: "https://accounts.google.com/o/oauth2/v2/auth",
     microsoft: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-    meta: "https://www.facebook.com/" + config.graphVersion + "/dialog/oauth",
     amazon: "https://www.amazon.com/ap/oa",
   };
   const auth = new URL(urls[provider]);
   auth.search = new URLSearchParams({
     client_id: config.clientId, redirect_uri: origin + "/api/auth/" + provider + "/callback",
     response_type: "code", state: id,
-    // Meta's standard confidential web OAuth flow is state-bound but does not
-    // document PKCE or OIDC nonce support. Do not send unsupported extensions.
-    ...(provider === "meta" ? {} : { code_challenge: challenge, code_challenge_method: "S256" }),
-    scope: provider === "amazon" ? "profile" : provider === "meta" ? "public_profile,email" : "openid email profile",
+    code_challenge: challenge, code_challenge_method: "S256",
+    scope: provider === "amazon" ? "profile" : "openid email profile",
     ...(["google", "microsoft"].includes(provider) ? { nonce } : {}),
     ...(["google", "microsoft"].includes(provider) ? { prompt: "select_account" } : {}),
-    // Standard Meta OAuth supports browser-chosen presentation. Forcing the
-    // desktop "popup" dialog on Android can interrupt top-level redirects.
-    // A manual "rerequest" is unnecessary for the initial email permission;
-    // absent fields already fail closed during QRed's verified profile lookup.
   }).toString();
   return auth.href;
 }
@@ -95,9 +85,6 @@ async function verifyIdToken(token, clientId, now, keys, issuer, provider, requi
 export const verifyGoogleIdToken = (token, clientId, now, keys = googleKeys) =>
   verifyIdToken(token, clientId, now, keys, ["https://accounts.google.com", "accounts.google.com"], "google");
 
-export const verifyMetaIdToken = (token, clientId, now, keys = metaKeys) =>
-  verifyIdToken(token, clientId, now, keys, "https://www.facebook.com", "meta");
-
 export async function verifyMicrosoftIdToken(token, clientId, now, keys = microsoftKeys) {
   // Untrusted claims only select the expected issuer. Signature and every
   // security claim are then verified against Microsoft's fixed JWKS endpoint.
@@ -127,25 +114,7 @@ export async function validateMicrosoftSpaToken(token, config, pending, now, ver
   return { identity: providerIdentity("microsoft", payload), provider_iat: payload.iat };
 }
 
-const tokenVerifiers = { google: verifyGoogleIdToken, meta: verifyMetaIdToken };
-
-// Meta returns machine-readable error numbers. Expose ONLY bounded integers,
-// never provider error messages, URLs, OAuth codes, tokens, or secret values.
-// Some Meta errors include submitted credentials in free-form messages.
-export function safeMetaErrorDetails(responseStatus, data) {
-  const status = Number.isSafeInteger(responseStatus) && responseStatus >= 400 &&
-    responseStatus <= 599 ? responseStatus : null;
-  const error = data && typeof data === "object" && !Array.isArray(data) ? data.error : null;
-  const safeInt = value => Number.isSafeInteger(value) && value >= 1 && value <= 999999 ? value : null;
-  const code = safeInt(error?.code);
-  const subcode = safeInt(error?.error_subcode);
-  const details = [
-    ...(status ? ["HTTP " + status] : []),
-    ...(code ? ["Meta error " + code] : []),
-    ...(subcode ? ["subcode " + subcode] : []),
-  ];
-  return details.length ? " (" + details.join("; ") + ")" : "";
-}
+const tokenVerifiers = { google: verifyGoogleIdToken };
 
 // Google returns a standard OAuth error on a rejected code exchange. Only
 // fixed, documented protocol identifiers may reach the browser; the provider's
@@ -207,16 +176,14 @@ async function providerJson(fetchImpl, url, options = {},
   }
   if (!response.ok) {
     let details = "";
-    if (diagnosticsProvider === "google" || diagnosticsProvider === "meta") {
+    if (diagnosticsProvider === "google") {
       let data = null;
       try {
         // Never echo untrusted provider error descriptions or trace IDs.
         const text = await response.text();
         if (text.length <= 4096) data = JSON.parse(text);
       } catch { /* Ignore malformed or unreadable provider error bodies. */ }
-      details = diagnosticsProvider === "meta"
-        ? safeMetaErrorDetails(response.status, data)
-        : safeGoogleTokenErrorDetails(response.status, data);
+      details = safeGoogleTokenErrorDetails(response.status, data);
     }
     throw new RequestError(failureMessage + details, 403);
   }
@@ -227,73 +194,24 @@ async function providerJson(fetchImpl, url, options = {},
   }
 }
 
-// Standard Facebook Login returns an opaque OAuth access token, not an OIDC
-// identity token. Treat the Graph token debugger as an independent, app-bound
-// authorization check and require a matching user profile before sealing.
-export async function verifyMetaAccessToken(tokens, config, fetchImpl, now) {
-  if (typeof tokens?.access_token !== "string" || !tokens.access_token ||
-      tokens.access_token.length > 2048 ||
-      (tokens.token_type != null && (typeof tokens.token_type !== "string" || tokens.token_type.toLowerCase() !== "bearer")) ||
-      !Number.isFinite(tokens.expires_in) || tokens.expires_in <= 0) {
-    throw new RequestError("Facebook did not return a usable account token. Please try again.", 403);
-  }
-  const base = "https://graph.facebook.com/" + config.graphVersion;
-  // The debug_token API requires an app-scoped inspector credential. Both the
-  // inspected token and app secret go only to Meta, over TLS, never to the QRed
-  // frontend or an attestation cookie.
-  const debug = await providerJson(fetchImpl, base + "/debug_token?" +
-    new URLSearchParams({ input_token: tokens.access_token,
-      access_token: config.clientId + "|" + config.clientSecret }),
-    {}, "Facebook could not validate the QRed account token. Please try again.");
-  const data = debug?.data;
-  const seconds = Math.floor(now() / 1000);
-  if (data?.is_valid !== true || String(data?.app_id) !== config.clientId ||
-      data?.type !== "USER" || typeof data.user_id !== "string" ||
-      !/^[0-9]+$/.test(data.user_id) || !Number.isSafeInteger(data.expires_at) ||
-      data.expires_at <= seconds || !Array.isArray(data.scopes)) {
-    throw new RequestError("Facebook returned an invalid, expired, or unrelated account token.", 403);
-  }
-  if (!data.scopes.includes("email")) {
-    throw new RequestError("Allow QRed to access your Facebook email address and try again.", 403);
-  }
-  // appsecret_proof binds use of the user token to QRed's server secret.
-  const hmacKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(config.clientSecret),
-    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const proof = Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", hmacKey,
-    new TextEncoder().encode(tokens.access_token))), b => b.toString(16).padStart(2, "0")).join("");
-  const profile = await providerJson(fetchImpl, base + "/me?" +
-    new URLSearchParams({ fields: "id,name,email", appsecret_proof: proof }),
-    { headers: { Authorization: "Bearer " + tokens.access_token } },
-    "Facebook could not provide your name and email to QRed. Please check your permissions.");
-  if (profile?.id !== data.user_id) {
-    throw new RequestError("Facebook profile did not match the authenticated account.", 403);
-  }
-  return { identity: providerIdentity("meta",
-    { sub: data.user_id, name: profile.name, email: profile.email }) };
-}
-
 export async function exchangeIdentity(provider, config, { code, origin, pending, fetchImpl, now, verifyTokens = {} }) {
   // A Microsoft SPA redirect cannot redeem a code server-side or use a client secret.
   if (provider === "microsoft") throw new RequestError("Microsoft requires browser PKCE", 403);
   const endpoints = {
     google: "https://oauth2.googleapis.com/token",
-    meta: "https://graph.facebook.com/" + config.graphVersion + "/oauth/access_token",
     amazon: "https://api.amazon.com/auth/o2/token",
   };
   const parameters = new URLSearchParams({
     code, client_id: config.clientId, client_secret: config.clientSecret,
-    ...(provider === "meta" ? {} : { code_verifier: pending.pkce }),
+    code_verifier: pending.pkce,
     redirect_uri: origin + "/api/auth/" + provider + "/callback",
-    ...(provider === "meta" ? {} : { grant_type: "authorization_code" }),
+    grant_type: "authorization_code",
   });
-  // Meta documents GET for its code exchange; other providers use form POST.
-  const tokens = await providerJson(fetchImpl, provider === "meta" ? endpoints.meta + "?" + parameters : endpoints[provider],
-    provider === "meta" ? {} : { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: parameters },
-    provider === "meta" ? "Facebook rejected QRed's login code exchange. Check the app credentials and callback URI." :
-      provider === "google" ? "Google declined QRed's authorization code exchange." :
+  const tokens = await providerJson(fetchImpl, endpoints[provider],
+    { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: parameters },
+    provider === "google" ? "Google declined QRed's authorization code exchange." :
       "The sign-in service could not complete this request. Please try again.",
-    provider === "google" || provider === "meta" ? provider : null);
-  if (provider === "meta") return verifyMetaAccessToken(tokens, config, fetchImpl, now);
+    provider === "google" ? "google" : null);
   if (provider !== "amazon") {
     if (typeof tokens.id_token !== "string" || tokens.id_token.length > 16384) throw new RequestError("The sign-in service did not return an identity token", 403);
     let payload;

@@ -88,24 +88,15 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
     const escapeHtml = value => String(value).slice(0, 500).replace(/[&<>"']/g, char =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
     const message = successful
-      ? (provider === "meta"
-        ? "<p role=\"status\">Facebook sign-in was verified by QRed in this tab.</p>" +
-          "<p>Switch back to the <strong>original QRed tab</strong> to finish sealing the PDF. Do not reload it.</p>" +
-          "<p>If QRed still reports a pending sign-in after you return, its session cookie may not have reached the original tab. " +
-          "Use <strong>Check sign-in status</strong> there and report that result; this page alone does not mean the PDF was sealed.</p>"
-        : "<p>Sign-in completed. Return to your original QRed tab to finish sealing your PDF.</p>")
-      : "<p role=\"alert\">Sign-in could not be completed.</p>" +
-        (error ? "<p>" + escapeHtml(error) + "</p>" : "") +
-        "<p>Return to your original QRed tab to retry or cancel sealing. Keep that original tab open.</p>";
-    // Facebook's Android popup can close before the original tab receives its
-    // receipt cookie. Leave its successful callback visible for diagnosis and
-    // explicit return. Failed callbacks already remain visible.
-    // Other providers retain the existing successful-popup auto-close flow.
-    const script = successful && provider !== "meta"
-      ? "<script nonce=\"" + nonce + "\">if(window.opener){window.opener.postMessage(" +
-        JSON.stringify({ type: "qred-account-complete", id }) + "," + JSON.stringify(origin) +
-        ");window.close();}</script>"
-      : "";
+      ? '<p>Sign-in completed. Return to your original QRed tab to finish sealing your PDF.</p>'
+      : '<p role="alert">Sign-in could not be completed.</p>' +
+        (error ? '<p>' + escapeHtml(error) + '</p>' : '') +
+        '<p>Return to your original QRed tab to retry or cancel sealing. Keep that original tab open.</p>';
+    const script = successful
+      ? '<script nonce="' + nonce + '">if(window.opener){window.opener.postMessage(' +
+        JSON.stringify({ type: "qred-account-complete", id }) + ',' + JSON.stringify(origin) +
+        ');window.close();}</script>'
+      : '';
     return new Response("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">" +
       "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
       "<title>QRed sign-in</title></head><body><h1>QRed sign-in</h1>" +

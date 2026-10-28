@@ -187,7 +187,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       else if (result.status === "failed") setMessage("Account sign-in failed: " +
         (result.error || "The provider did not complete the request. Cancel and prepare the PDF again."));
       else setMessage("QRed has not received a completed sign-in from the provider. " +
-        "If the Facebook tab closed, review any message it showed or cancel and prepare a new sign-in.");
+        "If the provider tab closed, review any message it showed or cancel and prepare a new sign-in.");
     } catch (error) {
       if (activeRequest.current === request && !request.controller.signal.aborted)
         setMessage("Could not confirm account sign-in: " + error.message +
