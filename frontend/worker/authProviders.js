@@ -187,6 +187,26 @@ export function safeGoogleTokenErrorDetails(responseStatus, data) {
   return details.length ? " (" + details.join("; ") + ")" : "";
 }
 
+// Amazon's authorization-code endpoint uses OAuth protocol errors, but the
+// provider's error_description may contain a code, redirect or other secrets.
+// Only bounded status codes and these fixed protocol identifiers are surfaced.
+const AMAZON_OAUTH_ERRORS = new Set([
+  "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
+  "unsupported_grant_type", "invalid_scope", "access_denied",
+  "server_error", "temporarily_unavailable",
+]);
+export function safeAmazonTokenErrorDetails(responseStatus, data) {
+  const status = Number.isSafeInteger(responseStatus) && responseStatus >= 400 &&
+    responseStatus <= 599 ? responseStatus : null;
+  const value = data && typeof data === "object" && !Array.isArray(data) ? data.error : null;
+  const code = typeof value === "string" && AMAZON_OAUTH_ERRORS.has(value) ? value : null;
+  const details = [
+    ...(status ? ["HTTP " + status] : []),
+    ...(code ? ["OAuth " + code] : []),
+  ];
+  return details.length ? " (" + details.join("; ") + ")" : "";
+}
+
 const GOOGLE_ID_TOKEN_ERRORS = Object.freeze({
   ERR_JWKS_TIMEOUT: "Google signing keys temporarily unavailable",
   ERR_JWKS_NO_MATCHING_KEY: "Google signing key not found",
@@ -227,14 +247,16 @@ async function providerJson(fetchImpl, url, options = {},
   }
   if (!response.ok) {
     let details = "";
-    if (diagnosticsProvider === "google") {
+    if (diagnosticsProvider === "google" || diagnosticsProvider === "amazon") {
       let data = null;
       try {
-        // Never echo untrusted provider error descriptions or trace IDs.
-        const text = await response.text();
-        if (text.length <= 4096) data = JSON.parse(text);
+        // Never echo untrusted provider error descriptions, tokens or trace IDs.
+        const body = await response.text();
+        if (body.length <= 4096) data = JSON.parse(body);
       } catch { /* Ignore malformed or unreadable provider error bodies. */ }
-      details = safeGoogleTokenErrorDetails(response.status, data);
+      details = diagnosticsProvider === "google"
+        ? safeGoogleTokenErrorDetails(response.status, data)
+        : safeAmazonTokenErrorDetails(response.status, data);
     }
     throw new RequestError(failureMessage + details, 403);
   }
@@ -261,8 +283,8 @@ export async function exchangeIdentity(provider, config, { code, origin, pending
   const tokens = await providerJson(fetchImpl, endpoints[provider],
     { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: parameters },
     provider === "google" ? "Google declined QRed's authorization code exchange." :
-      "The sign-in service could not complete this request. Please try again.",
-    provider === "google" ? "google" : null);
+      "Amazon declined QRed's authorization code exchange.",
+    provider);
   if (provider !== "amazon") {
     if (typeof tokens.id_token !== "string" || tokens.id_token.length > 16384) throw new RequestError("The sign-in service did not return an identity token", 403);
     let payload;
@@ -282,19 +304,21 @@ export async function exchangeIdentity(provider, config, { code, origin, pending
     return { identity: providerIdentity(provider, payload), provider_iat: payload.iat };
   }
   if (typeof tokens.access_token !== "string" || !tokens.access_token || tokens.access_token.length > 2048 ||
-      tokens.token_type?.toLowerCase() !== "bearer" || !Number.isFinite(tokens.expires_in) || tokens.expires_in <= 0) {
+      (typeof tokens.token_type !== "string" || tokens.token_type.toLowerCase() !== "bearer") || !Number.isFinite(tokens.expires_in) || tokens.expires_in <= 0) {
     throw new RequestError("Amazon did not return a valid access token", 403);
   }
   // Amazon returns an opaque access token, not an OIDC ID token. Verify it with
   // Amazon before obtaining the profile. Neither token is stored in a cookie.
   const info = await providerJson(fetchImpl, "https://api.amazon.com/auth/o2/tokeninfo?" +
-    new URLSearchParams({ access_token: tokens.access_token }));
+    new URLSearchParams({ access_token: tokens.access_token }), {},
+    "Amazon could not verify the access token.", "amazon");
   if (info.aud !== config.clientId || info.iss !== "https://www.amazon.com" || typeof info.user_id !== "string" ||
       !Number.isFinite(info.exp) || info.exp <= 0) {
     throw new RequestError("Amazon token does not match this application or has expired", 403);
   }
   const profile = await providerJson(fetchImpl, "https://api.amazon.com/user/profile",
-    { headers: { Authorization: "Bearer " + tokens.access_token } });
+    { headers: { Authorization: "Bearer " + tokens.access_token } },
+    "Amazon could not retrieve the authenticated profile.", "amazon");
   if (profile.user_id !== info.user_id) throw new RequestError("Amazon profile does not match the authenticated account", 403);
   return { identity: providerIdentity(provider, profile) };
 }
