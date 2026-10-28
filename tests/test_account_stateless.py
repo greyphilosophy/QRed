@@ -83,7 +83,13 @@ def test_stateless_account_cookie_handoff_and_offline_verification(browser, play
         popup.wait_for_url(provider_origin + "/**")
         expect(popup.get_by_role("button", name="Continue")).to_be_visible()
         assert popup.evaluate("window.opener === null")
-        popup.get_by_role("button", name="Continue").click()
+        if provider in ("google", "amazon"):
+            # The real callback receives no window.opener due to noopener, yet
+            # should still close itself after issuing the authenticated cookie.
+            with popup.expect_event("close", timeout=15000):
+                popup.get_by_role("button", name="Continue").click()
+        else:
+            popup.get_by_role("button", name="Continue").click()
         expect(page.locator("output")).to_have_attribute("data-status", "valid", timeout=15000)
         results = json.loads(page.locator("output").text_content())
         assert [result["page_number"] for result in results] == [1, 2, 3]

@@ -213,15 +213,25 @@ describe.each(providers)("%s prepared native-link handoff", provider => {
   });
 });
 
-it.each(["google", "amazon"])("closes a successful %s popup only after sign-in completed", async provider => {
+it.each(["google", "amazon"])("closes an authenticated %s native-link tab even without window.opener", async provider => {
   const flow = fixture(provider);
   const session = await (await flow.post("/api/auth/" + provider + "/start", { commitments: [fingerprint] })).json();
   const callback = await flow.login(session);
   expect(callback.status).toBe(200);
   const html = await callback.text();
   expect(html).toContain("Sign-in completed.");
+  expect(html).toContain('role="status"');
   expect(html).not.toContain('role="alert"');
-  expect(html).toContain("window.close()");
+  expect(html).toContain('id="close-qred-sign-in"');
+  expect(html).toContain("switch back to your original QRed tab");
+  // The automatic close must run after the optional opener notification,
+  // not inside the opener conditional (noopener leaves it null).
+  expect(html).toMatch(/try\{if\(window\.opener\)\{window\.opener\.postMessage\(/);
+  expect(html).toMatch(/\}\}catch\(e\)\{\}window\.close\(\);/);
+  expect(html).toContain('closeButton.addEventListener("click",function(){window.close();})');
+  expect(html).not.toContain(session.secret);
+  expect(callback.headers.get("Cache-Control")).toBe("no-store");
+  expect(callback.headers.get("Referrer-Policy")).toBe("no-referrer");
 });
 
 it("HTML-escapes a provider-originated error before showing it in the callback", async () => {
@@ -242,6 +252,7 @@ it("HTML-escapes a provider-originated error before showing it in the callback",
   expect(html).toContain("&amp; &quot;quoted&quot;");
   expect(html).not.toContain("<img");
   expect(html).not.toContain("window.close()");
+  expect(html).not.toContain("close-qred-sign-in");
 });
 
 
