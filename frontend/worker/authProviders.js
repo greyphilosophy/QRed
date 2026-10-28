@@ -107,8 +107,13 @@ export async function verifyMicrosoftIdToken(token, clientId, now, keys = micros
 export async function validateMicrosoftSpaToken(token, config, pending, now, verifyTokens = {}) {
   if (typeof token !== "string" || !token || token.length > 16384) throw new RequestError("Invalid Microsoft identity token", 403);
   const payload = await (verifyTokens.microsoft || verifyMicrosoftIdToken)(token, config.clientId, now());
-  if (payload.nonce !== pending.nonce || payload.iat < pending.iat - CLOCK_SKEW) {
-    throw new RequestError("Microsoft identity did not match this document sign-in request", 403);
+  // The signed, exact-match nonce binds this ID token to the specific PDF
+  // session. Microsoft's iat may reflect an earlier SSO authentication, not
+  // the moment QRed created the document-bound request. Requiring iat to
+  // postdate preparation falsely rejects valid SSO without improving nonce
+  // protection. Keep the five-minute max token age and expiry checks.
+  if (payload.nonce !== pending.nonce) {
+    throw new RequestError("Microsoft identity nonce did not match this document sign-in request", 403);
   }
   checkTokenTime(payload, now(), "microsoft");
   return { identity: providerIdentity("microsoft", payload), provider_iat: payload.iat };
@@ -121,7 +126,7 @@ const MICROSOFT_REQUEST_DIAGNOSTICS = new Set([
   "Invalid Microsoft identity token",
   "Invalid Microsoft token issuer",
   "Microsoft signing key does not match the account tenant",
-  "Microsoft identity did not match this document sign-in request",
+  "Microsoft identity nonce did not match this document sign-in request",
   "Microsoft sign-in is too old or its clock differs from QRed. Please try again.",
   "Microsoft did not supply a profile name. Add a name to your Microsoft profile and try again, or use a private key file.",
   "Microsoft did not share an email address. Allow email access or choose another sealing method.",
