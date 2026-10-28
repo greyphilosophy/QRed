@@ -1,6 +1,6 @@
 # Google document attestations
 
-For Microsoft, Facebook (Meta), and Amazon setup and the shared account protocol, see [account attestations](ACCOUNT_ATTESTATION.md). This guide retains Google-specific eligibility and compatibility details.
+For Microsoft and Amazon setup and the shared account protocol, see [account attestations](ACCOUNT_ATTESTATION.md). This guide retains Google-specific eligibility and compatibility details.
 
 QRed can attest documents after Google sign-in, with no email/SMS service or paid authentication subscription. Local private-key sealing remains available and works offline. Google is disabled until this installation has a trusted authority key and the server configuration below.
 
