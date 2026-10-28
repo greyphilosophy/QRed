@@ -61,10 +61,10 @@ it("categorizes Microsoft verification failures without reflecting private token
 });
 
 it("requires Microsoft's signed document nonce but accepts a recent SSO token issued before preparation", async () => {
-  const check = change => validateMicrosoftSpaToken(
-    token({ ...claims("microsoft"), ...change }).then(value => value),
+  const check = async change => validateMicrosoftSpaToken(
+    await token({ ...claims("microsoft"), ...change }),
     { clientId: "test-client" }, { nonce: "nonce", iat: seconds }, () => now,
-    { microsoft: async (value, client, time) => verifyMicrosoftIdToken(await value, client, time, keys) });
+    { microsoft: (value, client, time) => verifyMicrosoftIdToken(value, client, time, keys) });
   await expect(check({ nonce: "different-request" })).rejects.toThrow("nonce did not match");
   await expect(check({ nonce: undefined })).rejects.toThrow();
   // Microsoft may reuse a recent SSO authentication time, even though
