@@ -36,18 +36,25 @@ jobs:
   e2e-tests:
     name: E2E (${{ matrix.shard }})
     runs-on: ubuntu-latest
-    # Browser tests can run beside the independent frontend lint/unit/build job.
-    # Printed-page/offline tests account for about half the test runtime.
-    # Sharding by file preserves all cases and automatically picks up newly
-    # added test files outside the printed-page suite.
+    # Six isolated runners retain every real-browser regression, with each
+    # of the two ~69s PDF verification cases on a separate worker.
+    # Newly added tests run automatically in the deployment/catch-all shard.
     strategy:
       fail-fast: false
       matrix:
         include:
-          - shard: printed-page-and-offline
-            pytest_args: tests/test_visual_page_seals.py
-          - shard: other-browser-tests
-            pytest_args: tests --ignore=tests/test_visual_page_seals.py
+          - shard: pdf-home
+            pytest_args: "tests/test_visual_page_seals.py::test_load_pdf_seals_on_both_verifiers_offline[chromium-/]"
+          - shard: pdf-standalone
+            pytest_args: "tests/test_visual_page_seals.py::test_load_pdf_seals_on_both_verifiers_offline[chromium-/verify.htm]"
+          - shard: printed-visual-other
+            pytest_args: "tests/test_visual_page_seals.py -k 'not test_load_pdf_seals_on_both_verifiers_offline'"
+          - shard: auth-and-corrupt
+            pytest_args: "tests/test_account_stateless.py tests/test_corrupt_pdf.py"
+          - shard: privacy-and-photo
+            pytest_args: "tests/test_network_privacy.py tests/test_photo_verification.py"
+          - shard: deployment-and-new-tests
+            pytest_args: "tests --ignore=tests/test_visual_page_seals.py --ignore=tests/test_account_stateless.py --ignore=tests/test_corrupt_pdf.py --ignore=tests/test_network_privacy.py --ignore=tests/test_photo_verification.py"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -63,11 +70,17 @@ jobs:
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
       - name: Install PDF rasterizer for browser regression tests
-        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+        run: |
+          if ! command -v pdftoppm >/dev/null; then
+            sudo apt-get install -y poppler-utils || {
+              sudo apt-get update
+              sudo apt-get install -y poppler-utils
+            }
+          fi
       - name: Install Python dependencies
         run: |
           python -m pip install -r requirements.txt
-          python -m playwright install chromium
+          python -m playwright install chromium-headless-shell
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
