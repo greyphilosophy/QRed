@@ -95,7 +95,14 @@ it.each(Object.entries(AUTH_PROVIDERS))("auto-prepares %s after file selection, 
   sealPdfInBrowser.mockImplementation(async options => {
     expect(options).not.toHaveProperty("privateKey"); expect(options).not.toHaveProperty("publicKey");
     await options.attestPages([]);
-    return { blob: new Blob(["pdf"]), sealResult: { version: "4", timestamp: "2026-10-20T00:00:00Z" } };
+    return {
+      blob: new Blob(["pdf"]), flattenedFieldCount: 2, footerPages: [1, 3],
+      sealResult: {
+        version: "4", timestamp: "2026-10-20T00:00:00Z",
+        encoding: "zlib", compression_savings_pct: 68,
+        estimated_qr_count: 1, document_id: "internal-test-document-id",
+      },
+    };
   });
   render(<PdfSealForm />);
   const signIn = await prepare(provider, details);
@@ -110,7 +117,14 @@ it.each(Object.entries(AUTH_PROVIDERS))("auto-prepares %s after file selection, 
   expect(signIn.getAttribute("rel")).toContain("noopener");
   expect(signIn.getAttribute("rel")).toContain("noreferrer");
   fireEvent.click(signIn);
-  await screen.findByText(/Sealed source.pdf in this browser/);
+  const resultMessage = await screen.findByText(/Sealed source.pdf in this browser/);
+  expect(resultMessage.textContent).toContain("Download started: source.qred-sealed.pdf");
+  expect(resultMessage.textContent).toContain("Clear footer added to page(s) 1, 3");
+  expect(resultMessage.textContent).toContain("Flattened 2 form field(s)");
+  for (const internal of ["zlib", "68%", "compression", "QR count", "page scaling",
+    "2026-10-20T00:00:00Z", "internal-test-document-id", "Document ID"]) {
+    expect(resultMessage.textContent).not.toContain(internal);
+  }
   expect(open).not.toHaveBeenCalled(); // No JavaScript popup is ever created.
   expect(attestPagesWithAccount).toHaveBeenCalledWith(provider, [], expect.objectContaining({
     popup: null, preparedSession: expect.objectContaining({ provider }), signal: expect.any(AbortSignal),
