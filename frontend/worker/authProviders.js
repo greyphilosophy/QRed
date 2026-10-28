@@ -5,9 +5,9 @@ import { RequestError } from "./authErrors.js";
 import { DEFAULT_ID_TOKEN_MAX_AGE_SECONDS } from "../src/accountAuthLimits.js";
 
 export const TOKEN_MAX_AGE = DEFAULT_ID_TOKEN_MAX_AGE_SECONDS;
-// Microsoft's signed ID token can carry an old SSO authentication time.
-// The matching one-time nonce and the absolute five-minute PDF session
-// establish freshness for Microsoft instead of maxTokenAge.
+// Token freshness stays capped at five minutes for Google and Microsoft.
+// Microsoft's timestamp failures are classified after signature verification
+// so they can be diagnosed without disclosing unverified JWT data.
 export const CLOCK_SKEW = 30;
 const googleKeys = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
 const microsoftKeys = createRemoteJWKSet(new URL("https://login.microsoftonline.com/common/discovery/v2.0/keys"));
@@ -120,12 +120,10 @@ export async function verifyMicrosoftIdToken(token, clientId, now, keys = micros
 export async function validateMicrosoftSpaToken(token, config, pending, now, verifyTokens = {}) {
   if (typeof token !== "string" || !token || token.length > 16384) throw new RequestError("Invalid Microsoft identity token", 403);
   const payload = await (verifyTokens.microsoft || verifyMicrosoftIdToken)(token, config.clientId, now());
-  // The signed, exact-match nonce binds this ID token to the specific PDF
-  // session. Microsoft's iat may reflect an earlier SSO authentication, not
-  // the moment QRed created the document-bound request. Requiring iat to
-  // postdate preparation falsely rejects valid SSO without improving nonce
-  // protection. Both the signed ID token's five-minute freshness and
-  // QRed's separate five-minute document session remain required.
+  // The signed, exact-match nonce binds this token to this document.
+  // A separate five-minute issued-at freshness check is enforced above,
+  // along with the absolute five-minute document session. The token does
+  // not need an iat after PDF preparation when it is otherwise fresh.
   if (payload.nonce !== pending.nonce) {
     throw new RequestError("Microsoft identity nonce did not match this document sign-in request", 403);
   }
