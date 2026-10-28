@@ -34,14 +34,28 @@ jobs:
         run: npm run build:pages
 
   e2e-tests:
+    name: E2E (${{ matrix.shard }})
     runs-on: ubuntu-latest
-    needs: [frontend-build]
+    # Browser tests can run beside the independent frontend lint/unit/build job.
+    # Printed-page/offline tests account for about half the test runtime.
+    # Sharding by file preserves all cases and automatically picks up newly
+    # added test files outside the printed-page suite.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: printed-page-and-offline
+            pytest_args: tests/test_visual_page_seals.py
+          - shard: other-browser-tests
+            pytest_args: tests --ignore=tests/test_visual_page_seals.py
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -52,8 +66,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - name: Install Python dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install -r requirements.txt
           python -m playwright install chromium
       - name: Install frontend dependencies
         working-directory: frontend
@@ -73,4 +86,4 @@ jobs:
       - name: Run E2E tests
         env:
           QRED_BASE_URL: "http://localhost:3000"
-        run: pytest -v --tb=short
+        run: pytest -v --tb=short --durations=10 ${{ matrix.pytest_args }}
