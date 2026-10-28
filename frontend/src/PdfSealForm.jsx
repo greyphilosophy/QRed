@@ -292,7 +292,8 @@ export function PdfSealForm({ onUsePublicKey }) {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
+      const outputName = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
+      link.download = outputName;
       link.click();
       saved = true;
       URL.revokeObjectURL(url);
@@ -300,19 +301,15 @@ export function PdfSealForm({ onUsePublicKey }) {
       const IS_TEST = typeof window !== "undefined" && window.__qredTestMode === true;
       if (IS_TEST) window.__lastSealResult = sealResult;
 
-      setMessage(
-        [
-          `Sealed ${file.name} in this browser.`,
-          ...(footerPages.length ? [`Used clear footers on page(s) ${footerPages.join(", ")} to keep seals readable.`] : []),
-          ...(flattenedFieldCount ? [`Flattened ${flattenedFieldCount} form field(s) before sealing.`] : []),
-          `Selected encoding: ${sealResult.encoding}`,
-          `Selected page scaling: ${pageScalingStrategy}`,
-          `Estimated QR count: ${sealResult.estimated_qr_count || sealResult.total_seals || 0}`,
-          `QR payload savings: ${sealResult.compression_savings_pct == null ? "not available" : `${sealResult.compression_savings_pct}%`}`,
-          `Seal time: ${sealResult.timestamp}`,
-          `Document ID: ${sealResult.document_id}`,
-        ].join("\n")
-      );
+      // Keep the confirmation focused on what the user receives. Encoding,
+      // QR capacity, timestamps and document IDs remain in the seal itself,
+      // not the ordinary success message.
+      setMessage([
+        `Sealed ${file.name} in this browser.`,
+        `Download started: ${outputName}`,
+        ...(footerPages.length ? [`Clear footer added to page(s) ${footerPages.join(", ")} to keep seals readable.`] : []),
+        ...(flattenedFieldCount ? [`Flattened ${flattenedFieldCount} form field(s). Check the values in your sealed copy.`] : []),
+      ].join("\n"));
     } catch (error) {
       setMessage(controller.signal.aborted ? "Account sealing cancelled." : `PDF sealing failed: ${error.message}`);
     } finally {
