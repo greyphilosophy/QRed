@@ -1,8 +1,9 @@
 import { EncryptJWT, jwtDecrypt } from "jose";
 import { decodeFixedBase64 } from "../src/attestation.js";
 import { utf8 } from "../src/sealFormat.js";
+import { ACCOUNT_SESSION_SECONDS } from "../src/accountAuthLimits.js";
 
-export const SESSION_SECONDS = 600;
+export const SESSION_SECONDS = ACCOUNT_SESSION_SECONDS;
 let cachedKey;
 
 async function encryptionKey(env, origin, provider, clientId) {

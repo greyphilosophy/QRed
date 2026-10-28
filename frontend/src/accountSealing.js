@@ -2,9 +2,10 @@ import { encodeIdentity, MAX_ATTESTATION_PAGES, pageCommitment } from "./attesta
 import { encodeBase64Url } from "./sealFormat.js";
 import { authProvider, allowedAuthorizationUrl } from "./authProviders.js";
 import trustedAuthorities from "./trustedAuthorities.json";
+import { ACCOUNT_SESSION_SECONDS } from "./accountAuthLimits.js";
 
 export const accountSealingAvailable = Object.keys(trustedAuthorities).length > 0;
-const SESSION_MILLISECONDS = 10 * 60 * 1000;
+const SESSION_MILLISECONDS = ACCOUNT_SESSION_SECONDS * 1000;
 const apiFetch = (...args) => fetch(...args);
 
 function delay(milliseconds, signal) {

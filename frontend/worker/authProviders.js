@@ -2,8 +2,12 @@ import { createRemoteJWKSet, decodeJwt, jwtVerify } from "jose";
 import { encodeIdentity } from "../src/attestation.js";
 import { authProvider } from "../src/authProviders.js";
 import { RequestError } from "./authErrors.js";
+import { DEFAULT_ID_TOKEN_MAX_AGE_SECONDS } from "../src/accountAuthLimits.js";
 
-export const TOKEN_MAX_AGE = 300;
+export const TOKEN_MAX_AGE = DEFAULT_ID_TOKEN_MAX_AGE_SECONDS;
+// Token freshness stays capped at five minutes for Google and Microsoft.
+// Microsoft's timestamp failures are classified after signature verification
+// so they can be diagnosed without disclosing unverified JWT data.
 export const CLOCK_SKEW = 30;
 const googleKeys = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
 const microsoftKeys = createRemoteJWKSet(new URL("https://login.microsoftonline.com/common/discovery/v2.0/keys"));
@@ -65,6 +69,15 @@ export const googleIdentity = payload => providerIdentity("google", payload);
 
 export function checkTokenTime(payload, now, provider) {
   const seconds = Math.floor(now / 1000);
+  // Check issuance only after cryptographic token verification. For
+  // Microsoft, distinguish the failure cause without echoing timestamps,
+  // provider responses, credentials or any raw JWT claim to the browser.
+  if (provider === "microsoft") {
+    if (!Number.isSafeInteger(payload.iat)) throw new RequestError("Microsoft identity token has an invalid issued-at timestamp.", 403);
+    if (payload.iat < seconds - TOKEN_MAX_AGE) throw new RequestError("Microsoft identity token was issued more than five minutes ago.", 403);
+    if (payload.iat > seconds + CLOCK_SKEW) throw new RequestError("Microsoft identity token timestamp is ahead of QRed's server clock.", 403);
+    return;
+  }
   // Token issuance is not evidence of when a person last entered a password.
   if (!Number.isSafeInteger(payload.iat) || payload.iat < seconds - TOKEN_MAX_AGE || payload.iat > seconds + CLOCK_SKEW) {
     throw new RequestError(authProvider(provider).label + " sign-in is too old or its clock differs from QRed. Please try again.", 403);
@@ -75,7 +88,7 @@ async function verifyIdToken(token, clientId, now, keys, issuer, provider, requi
   const { payload } = await jwtVerify(token, keys, {
     algorithms: ["RS256"], issuer, audience: clientId,
     requiredClaims: ["exp", "iat", "sub", "nonce", ...requiredClaims],
-    maxTokenAge: TOKEN_MAX_AGE, clockTolerance: CLOCK_SKEW, currentDate: new Date(now),
+    ...(provider === "microsoft" ? {} : { maxTokenAge: TOKEN_MAX_AGE }), clockTolerance: CLOCK_SKEW, currentDate: new Date(now),
   });
   checkTokenTime(payload, now, provider);
   if (payload.aud !== clientId || (payload.azp && payload.azp !== clientId)) throw new RequestError("Authentication failed", 403);
@@ -107,11 +120,10 @@ export async function verifyMicrosoftIdToken(token, clientId, now, keys = micros
 export async function validateMicrosoftSpaToken(token, config, pending, now, verifyTokens = {}) {
   if (typeof token !== "string" || !token || token.length > 16384) throw new RequestError("Invalid Microsoft identity token", 403);
   const payload = await (verifyTokens.microsoft || verifyMicrosoftIdToken)(token, config.clientId, now());
-  // The signed, exact-match nonce binds this ID token to the specific PDF
-  // session. Microsoft's iat may reflect an earlier SSO authentication, not
-  // the moment QRed created the document-bound request. Requiring iat to
-  // postdate preparation falsely rejects valid SSO without improving nonce
-  // protection. Keep the five-minute max token age and expiry checks.
+  // The signed, exact-match nonce binds this token to this document.
+  // A separate five-minute issued-at freshness check is enforced above,
+  // along with the absolute five-minute document session. The token does
+  // not need an iat after PDF preparation when it is otherwise fresh.
   if (payload.nonce !== pending.nonce) {
     throw new RequestError("Microsoft identity nonce did not match this document sign-in request", 403);
   }
@@ -127,7 +139,9 @@ const MICROSOFT_REQUEST_DIAGNOSTICS = new Set([
   "Invalid Microsoft token issuer",
   "Microsoft signing key does not match the account tenant",
   "Microsoft identity nonce did not match this document sign-in request",
-  "Microsoft sign-in is too old or its clock differs from QRed. Please try again.",
+  "Microsoft identity token has an invalid issued-at timestamp.",
+  "Microsoft identity token was issued more than five minutes ago.",
+  "Microsoft identity token timestamp is ahead of QRed's server clock.",
   "Microsoft did not supply a profile name. Add a name to your Microsoft profile and try again, or use a private key file.",
   "Microsoft did not share an email address. Allow email access or choose another sealing method.",
   "Invalid Microsoft account tenant",

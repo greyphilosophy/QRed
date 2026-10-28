@@ -213,7 +213,7 @@ describe("stateless document-bound Google attestation API", () => {
     // and document scope are enforced even after the original browser finishes.
     session.jar = copy;
     expect(await (await attest(session)).json()).toEqual(first);
-    clock = epoch + 600000;
+    clock = epoch + 300000;
     expect((await attest(session)).status).toBe(403);
   });
 
@@ -243,12 +243,12 @@ describe("stateless document-bound Google attestation API", () => {
 
   it("expires pending requests and rechecks expiry after Google's response arrives", async () => {
     const expired = await start();
-    clock += 600000;
+    clock += 300000;
     expect((await login(expired)).status).toBe(403);
     expect(exchange).not.toHaveBeenCalled();
     const session = await start();
     const originalExchange = exchange.getMockImplementation();
-    exchange.mockImplementation(async (...args) => { const response = await originalExchange(...args); clock += 600000; return response; });
+    exchange.mockImplementation(async (...args) => { const response = await originalExchange(...args); clock += 300000; return response; });
     await login(session);
     expect((await attest(session)).status).toBe(403);
   });

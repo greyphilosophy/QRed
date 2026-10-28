@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
 import { createAccountAuth } from "./accountAuth.js";
 import { beginAccountSignIn, attestPagesWithAccount } from "../src/accountSealing.js";
-import { cookieSessions } from "./accountSession.js";
+import { cookieSessions, SESSION_SECONDS } from "./accountSession.js";
 import { createQRedSeals } from "../src/qredSealer.js";
 import { verifyQRedSeals } from "../src/qredVerifier.js";
 import { decodeEnvelope, encodeBase64Url, encodeEnvelope, qrPayloadBytes, sealString, sha256, utf8 } from "../src/sealFormat.js";
@@ -166,6 +166,22 @@ it("rejects a status identity from another provider before requesting attestatio
   expect(popup.close).toHaveBeenCalledOnce();
 });
 
+
+it.each(["google", "microsoft", "amazon"])("enforces a five-minute absolute %s PDF sign-in expiry", async provider => {
+  const flow = fixture(provider);
+  const started = await (await flow.post("/api/auth/" + provider + "/start",
+    { commitments: [fingerprint] })).json();
+  const cookie = flow.cookie(), clientId = provider + "-client";
+  const readAt = async time => cookieSessions(env, origin, () => time, provider, clientId)
+    .read(new Request(origin, { headers: { Cookie: cookie } }), started.id, "request");
+  expect(SESSION_SECONDS).toBe(300);
+  const pending = await readAt(epoch);
+  expect(pending.exp - pending.iat).toBe(300);
+  await expect(readAt(epoch + 299_000)).resolves.toMatchObject({ status: "pending" });
+  await expect(readAt(epoch + 301_000)).rejects.toThrow();
+  // The encrypted cookie must not grant a fresh 5-minute window upon reread.
+  expect(pending.exp).toBe(Math.floor(epoch / 1000) + 300);
+});
 
 it("rejects Microsoft SPA completion without the authenticated pending cookie", async () => {
   const flow = fixture("microsoft");
