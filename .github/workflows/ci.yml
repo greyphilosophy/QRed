@@ -28,10 +28,44 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - name: Test frontend and rendered PDF seals
         working-directory: frontend
-        run: npm test
+        run: npm test -- --exclude src/pdfWatermark.test.js --exclude src/pdfClientSeal.test.js --exclude src/pdfInputIntegrity.test.js --exclude src/pdfVisualEvidence.test.js --exclude src/qr/scanQrImage.test.js --exclude src/verifier/scanPdf.test.js
       - name: Build frontend
         working-directory: frontend
         run: npm run build:pages
+
+  frontend-heavy-tests:
+    name: Frontend heavy (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: watermark
+            test_args: "src/pdfWatermark.test.js"
+          - shard: pdf-and-scanning
+            test_args: "src/pdfClientSeal.test.js src/pdfInputIntegrity.test.js src/pdfVisualEvidence.test.js src/qr/scanQrImage.test.js src/verifier/scanPdf.test.js"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Install PDF rasterizer for regression tests
+        run: |
+          if ! command -v pdftoppm >/dev/null; then
+            sudo apt-get install -y poppler-utils || {
+              sudo apt-get update
+              sudo apt-get install -y poppler-utils
+            }
+          fi
+      - name: Run heavy frontend regression tests
+        working-directory: frontend
+        run: npm test -- ${{ matrix.test_args }}
 
   e2e-tests:
     name: E2E (${{ matrix.shard }})
@@ -53,8 +87,10 @@ jobs:
             pytest_args: "tests/test_account_stateless.py tests/test_corrupt_pdf.py"
           - shard: privacy-and-photo
             pytest_args: "tests/test_network_privacy.py tests/test_photo_verification.py"
-          - shard: deployment-and-new-tests
-            pytest_args: "tests --ignore=tests/test_visual_page_seals.py --ignore=tests/test_account_stateless.py --ignore=tests/test_corrupt_pdf.py --ignore=tests/test_network_privacy.py --ignore=tests/test_photo_verification.py"
+          - shard: deployment-document
+            pytest_args: "tests/test_qred_deployment.py::TestPlainTextSealAndVerify tests/test_qred_deployment.py::TestMultiQrDocuments tests/test_qred_deployment.py::TestPdfTextSealing tests/test_qred_deployment.py::TestImageOnlyPdfs tests/test_qred_deployment.py::TestPdfExtractionIntegrity"
+          - shard: deployment-scanning-and-new-tests
+            pytest_args: "tests --ignore=tests/test_visual_page_seals.py --ignore=tests/test_account_stateless.py --ignore=tests/test_corrupt_pdf.py --ignore=tests/test_network_privacy.py --ignore=tests/test_photo_verification.py -k 'not (TestPlainTextSealAndVerify or TestMultiQrDocuments or TestPdfTextSealing or TestImageOnlyPdfs or TestPdfExtractionIntegrity)'"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
