@@ -40,7 +40,7 @@ describe.each(["microsoft"])("%s identity tokens", provider => {
 it("categorizes Microsoft verification failures without reflecting private tokens or provider errors", () => {
   expect(safeMicrosoftVerificationReason(new RequestError("Microsoft did not share an email address. Allow email access or choose another sealing method.")))
     .toContain("email address");
-  expect(safeMicrosoftVerificationReason(new RequestError("Microsoft identity did not match this document sign-in request")))
+  expect(safeMicrosoftVerificationReason(new RequestError("Microsoft identity nonce did not match this document sign-in request")))
     .toContain("did not match");
   expect(safeMicrosoftVerificationReason(Object.assign(new Error("id_token=private-secret"), {
     code: "ERR_JWS_SIGNATURE_VERIFICATION_FAILED",
@@ -60,13 +60,21 @@ it("categorizes Microsoft verification failures without reflecting private token
   }
 });
 
-it("binds Microsoft's signed ID token to the pending nonce and request time", async () => {
-  for (const change of [{ nonce: "different-request" }, { iat: seconds - 31 }]) {
-    const idToken = await token({ ...claims("microsoft"), ...change });
-    await expect(validateMicrosoftSpaToken(idToken, { clientId: "test-client" },
-      { nonce: "nonce", iat: seconds }, () => now,
-      { microsoft: (value, client, time) => verifyMicrosoftIdToken(value, client, time, keys) })).rejects.toThrow();
-  }
+it("requires Microsoft's signed document nonce but accepts a recent SSO token issued before preparation", async () => {
+  const check = change => validateMicrosoftSpaToken(
+    token({ ...claims("microsoft"), ...change }).then(value => value),
+    { clientId: "test-client" }, { nonce: "nonce", iat: seconds }, () => now,
+    { microsoft: async (value, client, time) => verifyMicrosoftIdToken(await value, client, time, keys) });
+  await expect(check({ nonce: "different-request" })).rejects.toThrow("nonce did not match");
+  await expect(check({ nonce: undefined })).rejects.toThrow();
+  // Microsoft may reuse a recent SSO authentication time, even though
+  // this particular signed ID token contains QRed's fresh document nonce.
+  const recent = await check({ iat: seconds - 120 });
+  expect(recent.identity.provider).toBe("microsoft");
+  expect(recent.provider_iat).toBe(seconds - 120);
+  // The maximum-five-minute age check still rejects stale tokens.
+  await expect(check({ iat: seconds - 301 })).rejects.toThrow();
+  await expect(check({ iat: seconds + 31 })).rejects.toThrow();
 });
 
 
