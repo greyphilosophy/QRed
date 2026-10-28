@@ -209,7 +209,7 @@ it("returns safe and actionable Microsoft failure categories without relaxing se
     {
       name: "nonce mismatch",
       verify: async () => ({ ...identity, nonce: "different-document" }),
-      expected: "Microsoft identity did not match this document sign-in request",
+      expected: "Microsoft identity nonce did not match this document sign-in request",
     },
     {
       name: "bad signature",
@@ -242,6 +242,43 @@ it("returns safe and actionable Microsoft failure categories without relaxing se
     expect(result.headers.get("Cache-Control")).toBe("no-store");
     expect(result.headers.getSetCookie().some(item => item.includes("microsoft-request-"))).toBe(true);
   }
+});
+
+it("accepts a recent SSO ID token with matching nonce and preserves PDF-bound receipt", async () => {
+  const flow = fixture("microsoft");
+  const session = await (await flow.post("/api/auth/microsoft/start", { commitments: [fingerprint] })).json();
+  const nonce = new URL(session.authorize_url).searchParams.get("nonce");
+  const handler = createAccountAuth({
+    trusted, now: () => epoch,
+    verifyTokens: { microsoft: async () => ({
+      name: "Microsoft Profile", email: "account@example.org", sub: "account-id", tid: tenant,
+      nonce, iat: epoch / 1000 - 120,
+    }) },
+  });
+  const result = await handler(new Request(origin + "/api/auth/microsoft/complete", {
+    method: "POST",
+    headers: { Origin: origin, "Content-Type": "application/json", Cookie: flow.cookie() },
+    body: JSON.stringify({ id: session.id, id_token: "synthetic-id-token" }),
+  }), env);
+  expect(result.status).toBe(200);
+  expect(await result.json()).toEqual({ status: "ready" });
+  const receiptCookie = result.headers.getSetCookie().find(value => value.includes("microsoft-receipt-"));
+  expect(receiptCookie).toBeTruthy();
+  expect(receiptCookie).toContain("HttpOnly");
+  expect(receiptCookie).toContain("SameSite=Lax");
+  expect(receiptCookie).not.toContain("synthetic-id-token");
+  // No independent identity or different document gets a receipt without
+  // this verified session cookie and matching randomized commitment.
+  const response = await handler(new Request(origin + "/api/auth/microsoft/status", {
+    method: "POST",
+    headers: { Origin: origin, "Content-Type": "application/json",
+      Cookie: receiptCookie.split(";")[0] },
+    body: JSON.stringify({ id: session.id, secret: session.secret }),
+  }), env);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    status: "ready", identity: { provider: "microsoft", email: "account@example.org" },
+  });
 });
 
 describe.each(providers)("%s prepared native-link handoff", provider => {
