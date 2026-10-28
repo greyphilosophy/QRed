@@ -446,7 +446,7 @@ class TestPdfExtractionIntegrity:
         pdf.save()
         sealed, seal_result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY)
         assert os.path.exists(sealed)
-        expect(page.locator("#stamp-result")).to_contain_text("Flattened 1 form field(s) before sealing.")
+        expect(page.locator("#stamp-result")).to_contain_text("Flattened 1 form field(s). Check the values in your sealed copy.")
         content = json.loads(seal_result["full_result"]["payload_json"])["content"]
         assert "12345.67 dollars" in content
         assert _verify_seal_with_seal_strings(page, seal_result, seal_result["document_id"], DEMO_PUBLIC_KEY)
