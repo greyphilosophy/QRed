@@ -114,6 +114,38 @@ export async function validateMicrosoftSpaToken(token, config, pending, now, ver
   return { identity: providerIdentity("microsoft", payload), provider_iat: payload.iat };
 }
 
+// The browser may show Microsoft sign-in verification diagnostics, but never
+// third-party prose, JWTs, key material, authorization codes, or exception text.
+// Only QRed-owned, fixed messages and known jose error codes are disclosed.
+const MICROSOFT_REQUEST_DIAGNOSTICS = new Set([
+  "Invalid Microsoft identity token",
+  "Invalid Microsoft token issuer",
+  "Microsoft signing key does not match the account tenant",
+  "Microsoft identity did not match this document sign-in request",
+  "Microsoft sign-in is too old or its clock differs from QRed. Please try again.",
+  "Microsoft did not supply a profile name. Add a name to your Microsoft profile and try again, or use a private key file.",
+  "Microsoft did not share an email address. Allow email access or choose another sealing method.",
+  "Invalid Microsoft account tenant",
+  "Invalid Microsoft account subject",
+  "Microsoft returned unsupported account details",
+]);
+const MICROSOFT_JOSE_DIAGNOSTICS = Object.freeze({
+  ERR_JWKS_TIMEOUT: "Microsoft signing keys temporarily unavailable",
+  ERR_JWKS_NO_MATCHING_KEY: "Microsoft signing key not found",
+  ERR_JWS_SIGNATURE_VERIFICATION_FAILED: "Microsoft identity signature is invalid",
+  ERR_JWT_CLAIM_VALIDATION_FAILED: "Microsoft identity token claims are invalid",
+  ERR_JWT_EXPIRED: "Microsoft identity token has expired",
+  ERR_JWS_INVALID: "Microsoft identity token is malformed",
+  ERR_JWT_INVALID: "Microsoft identity token is malformed",
+});
+export function safeMicrosoftVerificationReason(error) {
+  if (error instanceof RequestError && MICROSOFT_REQUEST_DIAGNOSTICS.has(error.message)) return error.message;
+  if (typeof error?.code === "string" && Object.hasOwn(MICROSOFT_JOSE_DIAGNOSTICS, error.code)) {
+    return MICROSOFT_JOSE_DIAGNOSTICS[error.code];
+  }
+  return "Microsoft identity token or signing keys could not be verified";
+}
+
 const tokenVerifiers = { google: verifyGoogleIdToken };
 
 // Google returns a standard OAuth error on a rejected code exchange. Only
