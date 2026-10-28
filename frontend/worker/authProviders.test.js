@@ -185,7 +185,7 @@ describe("sanitized Login with Amazon diagnostics", () => {
     const fetchImpl = async (url, options) => {
       expect(options.redirect).toBe("manual");
       expect(options.signal).toBeInstanceOf(AbortSignal);
-      if (stage === "exchange" || url === "https://api.amazon.com/auth/o2/token" && stage !== "exchange") {
+      if (url === "https://api.amazon.com/auth/o2/token") {
         if (stage === "exchange") return Response.json({ error: "invalid_grant", error_description:
           "private-client-secret private-authorization-code private-amazon-access-token" }, { status: 400 });
         return Response.json(tokens);
@@ -365,7 +365,7 @@ describe("Cloudflare Workers-compatible confidential OAuth subrequests", () => {
       fetchImpl, now: () => now,
     });
     if (provider === "google") await expect(authenticate).rejects.toThrow("HTTP 400; OAuth invalid_grant");
-    else await expect(authenticate).rejects.toThrow("The sign-in service could not complete this request");
+    else await expect(authenticate).rejects.toThrow("Amazon declined QRed's authorization code exchange. (HTTP 400; OAuth invalid_grant)");
     expect(seen).toHaveLength(1);
     expect(seen[0].init.redirect).toBe("manual");
   });
