@@ -37,9 +37,6 @@ const upload = () => fireEvent.change(screen.getByLabelText("Open PDF"), {
 async function prepare(provider, details = AUTH_PROVIDERS[provider]) {
   fireEvent.click(screen.getByRole("button", { name: details.button }));
   upload();
-  const prep = await screen.findByRole("button", { name: `Prepare PDF for ${details.label} sign-in` });
-  await waitFor(() => expect(prep.disabled).toBe(false));
-  fireEvent.click(prep);
   return screen.findByRole("link", { name: details.button });
 }
 
@@ -64,7 +61,7 @@ it("presents each account provider as a separate, consistently labelled, selecta
   expect(screen.getByRole("button", { name: AUTH_PROVIDERS.google.button }).getAttribute("aria-pressed")).toBe("true");
   expect(offline.getAttribute("aria-pressed")).toBe("false");
   expect(screen.queryByLabelText("Private Key")).toBeNull();
-  expect(screen.getByRole("button", { name: "Prepare PDF for Google sign-in" })).toBeTruthy();
+  expect(screen.getByText(/Choose a PDF to begin automatic preparation/)).toBeTruthy();
   fireEvent.click(offline);
   expect(offline.getAttribute("aria-pressed")).toBe("true");
   expect(screen.getByLabelText("Private Key")).toBeTruthy();
@@ -78,16 +75,16 @@ it("disables an unconfigured provider and recovers from a failed availability ch
   const open = vi.spyOn(window, "open");
   render(<PdfSealForm />);
   fireEvent.click(screen.getByRole("button", { name: AUTH_PROVIDERS.microsoft.button }));
-  expect(screen.getByRole("button", { name: /Prepare PDF for Microsoft sign-in/ }).disabled).toBe(true);
+  expect(screen.getByText(/Choose a PDF to begin automatic preparation/)).toBeTruthy();
   fireEvent.click(await screen.findByRole("button", { name: "Retry sign-in availability" }));
   await screen.findByText(/Microsoft sealing is not enabled/);
-  expect(screen.getByRole("button", { name: /Prepare PDF for Microsoft sign-in/ }).disabled).toBe(true);
+  expect(screen.getByRole("button", { name: AUTH_PROVIDERS.microsoft.button }).disabled).toBe(true);
   expect(open).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: AUTH_PROVIDERS.google.button }));
-  await waitFor(() => expect(screen.getByRole("button", { name: /Prepare PDF for Google sign-in/ }).disabled).toBe(false));
+  await waitFor(() => expect(screen.getByRole("button", { name: AUTH_PROVIDERS.google.button }).getAttribute("aria-pressed")).toBe("true"));
 });
 
-it.each(Object.entries(AUTH_PROVIDERS))("prepares %s first, then opens the real sign-in page on a fresh user gesture", async (provider, details) => {
+it.each(Object.entries(AUTH_PROVIDERS))("auto-prepares %s after file selection, then opens only on an explicit sign-in click", async (provider, details) => {
   const open = vi.spyOn(window, "open");
   URL.createObjectURL = vi.fn(() => "blob:sealed"); URL.revokeObjectURL = vi.fn();
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
@@ -122,7 +119,7 @@ it.each(Object.entries(AUTH_PROVIDERS))("prepares %s first, then opens the real 
     .toContain(details.label + " profile");
 });
 
-it("never opens a mobile popup during delayed PDF parsing; sign-in begins only on a second tap", async () => {
+it("automatically prepares during delayed mobile PDF parsing but opens no popup until sign-in is tapped", async () => {
   let parsed;
   const parsing = new Promise(resolve => { parsed = resolve; });
   const open = vi.spyOn(window, "open");
@@ -137,8 +134,7 @@ it("never opens a mobile popup during delayed PDF parsing; sign-in begins only o
   render(<PdfSealForm />);
   fireEvent.click(screen.getByRole("button", { name: AUTH_PROVIDERS.google.button }));
   upload();
-  await waitFor(() => expect(screen.getByRole("button", { name: "Prepare PDF for Google sign-in" }).disabled).toBe(false));
-  fireEvent.click(screen.getByRole("button", { name: "Prepare PDF for Google sign-in" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Preparing document..." })).toBeTruthy());
   expect(screen.getByRole("button", { name: "Preparing document..." })).toBeTruthy();
   expect(open).not.toHaveBeenCalled();
   parsed();
@@ -148,6 +144,22 @@ it("never opens a mobile popup during delayed PDF parsing; sign-in begins only o
   fireEvent.click(signIn);
   await screen.findByText(/Sealed source.pdf in this browser/);
   expect(open).not.toHaveBeenCalled();
+});
+
+it("auto-prepares an already selected PDF after choosing an account method", async () => {
+  sealPdfInBrowser.mockImplementation(options => options.attestPages([]));
+  const open = vi.spyOn(window, "open");
+  render(<PdfSealForm />);
+  upload();
+  expect(beginAccountSignIn).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: AUTH_PROVIDERS.google.button }));
+  const signIn = await screen.findByRole("link", { name: AUTH_PROVIDERS.google.button });
+  expect(signIn.getAttribute("href")).toBe(mockAuthUrl("google"));
+  expect(beginAccountSignIn).toHaveBeenCalledTimes(1);
+  expect(open).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel sealing" }));
+  await screen.findByText("Account sealing cancelled.");
+  expect(finishAccountSignIn).toHaveBeenCalledTimes(1);
 });
 
 it("cancels a prepared but unopened account session, clearing its cookies", async () => {

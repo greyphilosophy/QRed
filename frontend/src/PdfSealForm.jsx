@@ -45,6 +45,7 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [configAttempt, setConfigAttempt] = useState(0);
   const provider = authProvider(method);
   const usesAccount = Boolean(provider);
+  const accountAvailable = availability?.[method] === true;
   const activeRequest = useRef(null);
   const pendingAccountSignIn = useRef(null);
   const derivedFor = useRef("");
@@ -68,6 +69,18 @@ export function PdfSealForm({ onUsePublicKey }) {
       .finally(() => clearTimeout(timer));
     return () => { current = false; clearTimeout(timer); controller.abort(); };
   }, [usesAccount, configAttempt]);
+
+  // Selecting an account method and a PDF starts local preparation automatically.
+  // A real second click is still needed for browser-owned OAuth navigation:
+  // never open a blank popup while mobile PDF extraction is running.
+  useEffect(() => {
+    if (!file || !usesAccount || !accountSealingAvailable || !accountAvailable) return;
+    const timer = setTimeout(() => {
+      if (!activeRequest.current) void sealPdf();
+    }, 0);
+    return () => clearTimeout(timer);
+    // sealPdf intentionally reads the latest render when the input changes.
+  }, [file, method, pageScalingStrategy, accountAvailable]);
 
   useEffect(() => () => {
     activeRequest.current?.controller.abort();
@@ -259,7 +272,7 @@ export function PdfSealForm({ onUsePublicKey }) {
                 pendingAccountSignIn.current = { provider: method, session, resolve, reject };
                 setPreparedAuthorizeUrl(session.authorize_url);
                 setReadyForSignIn(true);
-                setMessage("PDF ready. Tap the " + provider.label + " sign-in button below. Once signed in, return to this QRed tab to finish sealing.");
+                setMessage("PDF prepared on this device. Tap the " + provider.label + " sign-in button below. Return to this QRed tab after signing in to finish sealing.");
               });
               handedOff = true;
               return await attestPagesWithAccount(method, pages, { popup, preparedSession: session,
@@ -330,7 +343,7 @@ export function PdfSealForm({ onUsePublicKey }) {
           ? <p className="sealing-method-selected">Sealing method: {method === "private-key" ? "Private key (offline)" : provider.label + " login"}</p>
           : <fieldset className="sealing-methods">
             <legend>Sealing method</legend>
-            <p className="key-help">Choose how to seal your PDF. Account methods prepare the PDF locally before opening the login page.</p>
+            <p className="key-help">Choose how to seal your PDF. For account methods, selecting a PDF starts local preparation automatically. Sign-in opens only after you tap the provider button.</p>
             <div className="sealing-method-grid">
               <button type="button" aria-pressed={method === "private-key"}
                 onClick={() => { setMethod("private-key"); setMessage(""); setSigningIdentity(null); }}
@@ -434,19 +447,23 @@ export function PdfSealForm({ onUsePublicKey }) {
       {usesAccount ? readyForSignIn
         ? <ProviderSignInButton provider={method} onClick={openPreparedSignIn}
           href={preparedAuthorizeUrl}
-          disabled={loadingKeys || !accountSealingAvailable || availability?.[method] !== true}
+          disabled={loadingKeys || !accountSealingAvailable || !accountAvailable}
           aria-describedby="account-sealing-action" style={{ marginTop: "1rem" }} />
-        : <button type="button" onClick={sealPdf}
-          disabled={loading || loadingKeys || !accountSealingAvailable || availability?.[method] !== true}
-          aria-busy={loading} style={{ marginTop: "1rem" }}>
-          {loading ? (authenticating ? "Completing sign-in..." : "Preparing document...") : `Prepare PDF for ${provider.label} sign-in`}
-        </button>
+        : loading
+          ? <button type="button" disabled aria-busy="true" style={{ marginTop: "1rem" }}>
+            {authenticating ? "Completing sign-in..." : "Preparing document..."}
+          </button>
+          : file
+            ? <button type="button" onClick={sealPdf}
+              disabled={loadingKeys || !accountSealingAvailable || !accountAvailable}
+              style={{ marginTop: "1rem" }}>Prepare again</button>
+            : <p className="key-help">Choose a PDF to begin automatic preparation.</p>
         : <button type="button" onClick={sealPdf} disabled={loading || loadingKeys} aria-busy={loading} style={{ marginTop: "1rem" }}>
           {loading ? "Sealing..." : "Stamp and save PDF"}
         </button>}
       {usesAccount && <p id="account-sealing-action" className="key-help">
         {readyForSignIn ? "Your PDF is prepared. Tap Authenticate to open the provider's login page directly. On a phone, return to this QRed tab afterward."
-          : "First prepare your PDF on this device, then authenticate with your selected login. Your document is not sent to the provider."}
+          : "After you choose a PDF, QRed prepares it automatically on this device. Sign-in never opens without your tap, and the document is not sent to the provider."}
       </p>}
       {loading && usesAccount && authenticating && <button type="button"
         onClick={checkSignInStatus} disabled={checkingAccount}>
