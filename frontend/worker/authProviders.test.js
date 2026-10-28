@@ -60,7 +60,7 @@ it("categorizes Microsoft verification failures without reflecting private token
   }
 });
 
-it("requires Microsoft's signed document nonce but accepts a recent SSO token issued before preparation", async () => {
+it("requires a signed document nonce and a five-minute Microsoft token freshness limit", async () => {
   const check = async change => validateMicrosoftSpaToken(
     await token({ ...claims("microsoft"), ...change }),
     { clientId: "test-client" }, { nonce: "nonce", iat: seconds }, () => now,
@@ -72,22 +72,30 @@ it("requires Microsoft's signed document nonce but accepts a recent SSO token is
   const recent = await check({ iat: seconds - 120 });
   expect(recent.identity.provider).toBe("microsoft");
   expect(recent.provider_iat).toBe(seconds - 120);
-  // Microsoft may reuse a pre-existing SSO authentication time. The
-  // request-specific signed nonce, not iat, binds it to QRed's five-minute
-  // document session. Even an older iat is not a substitute for a nonce.
-  const sso = await check({ iat: seconds - 35 * 60 });
-  expect(sso.identity.provider).toBe("microsoft");
-  // The actual token must still be unexpired and cannot be future-issued.
-  await expect(check({ iat: seconds - 35 * 60, exp: seconds - 31 })).rejects.toThrow();
-  await expect(check({ iat: seconds + 31 })).rejects.toThrow();
+  // The signed nonce is necessary but cannot replace token freshness.
+  await expect(check({ iat: seconds - 301 })).rejects.toThrow("more than five minutes ago");
+  await expect(check({ iat: seconds - 35 * 60 })).rejects.toThrow("more than five minutes ago");
+  // The actual token also must be unexpired and cannot be future-issued.
+  await expect(check({ exp: seconds - 31 })).rejects.toThrow();
+  await expect(check({ iat: seconds + 31 })).rejects.toThrow("ahead of QRed");
+  await expect(check({ iat: seconds + 0.5 })).rejects.toThrow("invalid issued-at");
 });
 
 
-it("keeps Google's five-minute token freshness, while Microsoft freshness uses the signed nonce and session", () => {
+it("enforces five-minute signed token freshness and safely distinguishes Microsoft clock errors", () => {
   expect(() => checkTokenTime({ iat: seconds - 301 }, now, "google")).toThrow("too old");
-  expect(() => checkTokenTime({ iat: seconds - 35 * 60 }, now, "microsoft")).not.toThrow();
-  expect(() => checkTokenTime({ iat: seconds + 31 }, now, "microsoft")).toThrow("clock");
-  expect(() => checkTokenTime({ iat: undefined }, now, "microsoft")).toThrow();
+  expect(() => checkTokenTime({ iat: seconds - 300 }, now, "microsoft")).not.toThrow();
+  expect(() => checkTokenTime({ iat: seconds - 301 }, now, "microsoft")).toThrow("more than five minutes ago");
+  expect(() => checkTokenTime({ iat: seconds + 31 }, now, "microsoft")).toThrow("ahead of QRed");
+  expect(() => checkTokenTime({ iat: "wrong" }, now, "microsoft")).toThrow("invalid issued-at");
+  expect(() => checkTokenTime({ iat: seconds * 1000 }, now, "microsoft")).toThrow("ahead of QRed");
+  for (const message of [
+    "Microsoft identity token has an invalid issued-at timestamp.",
+    "Microsoft identity token was issued more than five minutes ago.",
+    "Microsoft identity token timestamp is ahead of QRed's server clock.",
+  ]) {
+    expect(safeMicrosoftVerificationReason(new RequestError(message))).toBe(message);
+  }
 });
 
 it("checks the Microsoft signing key's tenant scope, not just the token issuer", async () => {
