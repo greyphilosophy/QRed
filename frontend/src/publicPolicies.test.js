@@ -31,10 +31,10 @@ describe("public QRed policy and security pages", () => {
     expect(html).toContain("hosting infrastructure");
   });
 
-  it("makes Meta data deletion instructions public and actionable", () => {
+  it("makes account data deletion instructions public and actionable", () => {
     const html = readProjectFile("../public/data-deletion.html");
     expect(html).toContain("QRed data deletion request");
-    expect(html).toContain("Apps and Websites");
+    expect(html).toContain("identity provider");
     expect(html).toContain("cannot remotely erase or revoke every copy");
   });
 
