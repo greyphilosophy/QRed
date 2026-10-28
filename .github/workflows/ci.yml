@@ -28,26 +28,75 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - name: Test frontend and rendered PDF seals
         working-directory: frontend
-        run: npm test
+        run: npm test -- --exclude '**/{pdfWatermark,pdfClientSeal,pdfInputIntegrity,pdfVisualEvidence,scanQrImage,scanPdf}.test.js'
       - name: Build frontend
         working-directory: frontend
         run: npm run build:pages
 
-  e2e-tests:
-    name: E2E (${{ matrix.shard }})
+  frontend-heavy-tests:
+    name: Frontend heavy (${{ matrix.shard }})
     runs-on: ubuntu-latest
-    # Browser tests can run beside the independent frontend lint/unit/build job.
-    # Printed-page/offline tests account for about half the test runtime.
-    # Sharding by file preserves all cases and automatically picks up newly
-    # added test files outside the printed-page suite.
     strategy:
       fail-fast: false
       matrix:
         include:
-          - shard: printed-page-and-offline
-            pytest_args: tests/test_visual_page_seals.py
-          - shard: other-browser-tests
-            pytest_args: tests --ignore=tests/test_visual_page_seals.py
+          - shard: watermark-layout
+            test_args: "src/pdfWatermark.test.js -t 'analyzes logos|defaults to watermarks'"
+          - shard: watermark-render
+            test_args: "src/pdfWatermark.test.js -t 'keeps two pages|keeps rotated|fits and verifies both parts|recognizes only entry'"
+          - shard: watermark-footer
+            test_args: "src/pdfWatermark.test.js -t 'Automatic uses a readable footer'"
+          - shard: pdf-and-scanning
+            test_args: "src/pdfClientSeal.test.js src/pdfInputIntegrity.test.js src/pdfVisualEvidence.test.js src/qr/scanQrImage.test.js src/verifier/scanPdf.test.js"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Install PDF rasterizer for regression tests
+        run: |
+          if ! command -v pdftoppm >/dev/null; then
+            sudo apt-get install -y poppler-utils || {
+              sudo apt-get update
+              sudo apt-get install -y poppler-utils
+            }
+          fi
+      - name: Run heavy frontend regression tests
+        working-directory: frontend
+        run: npm test -- ${{ matrix.test_args }}
+
+  e2e-tests:
+    name: E2E (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    # Eight isolated runners retain every real-browser regression, with each
+    # of the two ~69s PDF verification cases on a separate worker.
+    # Newly added tests run automatically in the deployment/catch-all shard.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: pdf-home
+            pytest_args: "tests/test_visual_page_seals.py::test_load_pdf_seals_on_both_verifiers_offline[chromium-/]"
+          - shard: pdf-standalone
+            pytest_args: "tests/test_visual_page_seals.py::test_load_pdf_seals_on_both_verifiers_offline[chromium-/verify.htm]"
+          - shard: printed-visual-other
+            pytest_args: "tests/test_visual_page_seals.py -k 'not test_load_pdf_seals_on_both_verifiers_offline'"
+          - shard: auth-and-corrupt
+            pytest_args: "tests/test_account_stateless.py tests/test_corrupt_pdf.py"
+          - shard: network-privacy
+            pytest_args: "tests/test_network_privacy.py"
+          - shard: photo-verification
+            pytest_args: "tests/test_photo_verification.py"
+          - shard: deployment-document
+            pytest_args: "tests/test_qred_deployment.py::TestPlainTextSealAndVerify tests/test_qred_deployment.py::TestMultiQrDocuments tests/test_qred_deployment.py::TestPdfTextSealing tests/test_qred_deployment.py::TestImageOnlyPdfs tests/test_qred_deployment.py::TestPdfExtractionIntegrity"
+          - shard: deployment-scanning-and-new-tests
+            pytest_args: "tests --ignore=tests/test_visual_page_seals.py --ignore=tests/test_account_stateless.py --ignore=tests/test_corrupt_pdf.py --ignore=tests/test_network_privacy.py --ignore=tests/test_photo_verification.py -k 'not (TestPlainTextSealAndVerify or TestMultiQrDocuments or TestPdfTextSealing or TestImageOnlyPdfs or TestPdfExtractionIntegrity)'"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -62,18 +111,34 @@ jobs:
           node-version: "24"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
-      - name: Install PDF rasterizer for browser regression tests
-        run: sudo apt-get update && sudo apt-get install -y poppler-utils
-      - name: Install Python dependencies
+      - name: Install Python/browser, Poppler, and build frontend concurrently
+        shell: bash
         run: |
-          python -m pip install -r requirements.txt
-          python -m playwright install chromium
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
-      - name: Build frontend
-        working-directory: frontend
-        run: npm run build
+          set -euo pipefail
+          (
+            if ! command -v pdftoppm >/dev/null; then
+              sudo apt-get install -y poppler-utils || {
+                sudo apt-get update
+                sudo apt-get install -y poppler-utils
+              }
+            fi
+          ) &
+          poppler_pid=$!
+          (
+            python -m pip install -r requirements.txt
+            python -m playwright install chromium-headless-shell
+          ) &
+          python_pid=$!
+          (
+            cd frontend
+            npm ci
+            npm run build
+          ) &
+          frontend_pid=$!
+          # Every independent prerequisite must succeed before starting Vite.
+          wait "$poppler_pid"
+          wait "$python_pid"
+          wait "$frontend_pid"
       - name: Start production frontend preview
         working-directory: frontend
         run: |
