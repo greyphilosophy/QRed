@@ -2,8 +2,11 @@ import { createRemoteJWKSet, decodeJwt, jwtVerify } from "jose";
 import { encodeIdentity } from "../src/attestation.js";
 import { authProvider } from "../src/authProviders.js";
 import { RequestError } from "./authErrors.js";
+import { DEFAULT_ID_TOKEN_MAX_AGE_SECONDS, MICROSOFT_ID_TOKEN_MAX_AGE_SECONDS } from "../src/accountAuthLimits.js";
 
-export const TOKEN_MAX_AGE = 300;
+export const TOKEN_MAX_AGE = DEFAULT_ID_TOKEN_MAX_AGE_SECONDS;
+export const MICROSOFT_TOKEN_MAX_AGE = MICROSOFT_ID_TOKEN_MAX_AGE_SECONDS;
+const tokenMaxAge = provider => provider === "microsoft" ? MICROSOFT_TOKEN_MAX_AGE : TOKEN_MAX_AGE;
 export const CLOCK_SKEW = 30;
 const googleKeys = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
 const microsoftKeys = createRemoteJWKSet(new URL("https://login.microsoftonline.com/common/discovery/v2.0/keys"));
@@ -66,7 +69,7 @@ export const googleIdentity = payload => providerIdentity("google", payload);
 export function checkTokenTime(payload, now, provider) {
   const seconds = Math.floor(now / 1000);
   // Token issuance is not evidence of when a person last entered a password.
-  if (!Number.isSafeInteger(payload.iat) || payload.iat < seconds - TOKEN_MAX_AGE || payload.iat > seconds + CLOCK_SKEW) {
+  if (!Number.isSafeInteger(payload.iat) || payload.iat < seconds - tokenMaxAge(provider) || payload.iat > seconds + CLOCK_SKEW) {
     throw new RequestError(authProvider(provider).label + " sign-in is too old or its clock differs from QRed. Please try again.", 403);
   }
 }
@@ -75,7 +78,7 @@ async function verifyIdToken(token, clientId, now, keys, issuer, provider, requi
   const { payload } = await jwtVerify(token, keys, {
     algorithms: ["RS256"], issuer, audience: clientId,
     requiredClaims: ["exp", "iat", "sub", "nonce", ...requiredClaims],
-    maxTokenAge: TOKEN_MAX_AGE, clockTolerance: CLOCK_SKEW, currentDate: new Date(now),
+    maxTokenAge: tokenMaxAge(provider), clockTolerance: CLOCK_SKEW, currentDate: new Date(now),
   });
   checkTokenTime(payload, now, provider);
   if (payload.aud !== clientId || (payload.azp && payload.azp !== clientId)) throw new RequestError("Authentication failed", 403);
@@ -111,7 +114,7 @@ export async function validateMicrosoftSpaToken(token, config, pending, now, ver
   // session. Microsoft's iat may reflect an earlier SSO authentication, not
   // the moment QRed created the document-bound request. Requiring iat to
   // postdate preparation falsely rejects valid SSO without improving nonce
-  // protection. Keep the five-minute max token age and expiry checks.
+  // protection. Keep provider-specific maximum token age and expiry checks.
   if (payload.nonce !== pending.nonce) {
     throw new RequestError("Microsoft identity nonce did not match this document sign-in request", 403);
   }
