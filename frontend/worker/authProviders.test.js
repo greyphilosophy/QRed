@@ -1,8 +1,9 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
-import { authorizationUrl, exchangeIdentity, providerConfiguration, providerIdentity, validateMicrosoftSpaToken, safeGoogleTokenErrorDetails, safeGoogleIdTokenErrorReason, verifyMicrosoftIdToken } from "./authProviders.js";
+import { authorizationUrl, exchangeIdentity, providerConfiguration, providerIdentity, validateMicrosoftSpaToken, safeMicrosoftVerificationReason, safeGoogleTokenErrorDetails, safeGoogleIdTokenErrorReason, verifyMicrosoftIdToken } from "./authProviders.js";
 import { allowedAuthorizationUrl } from "../src/authProviders.js";
+import { RequestError } from "./authErrors.js";
 
 const now = Date.parse("2026-10-25T12:00:00Z"), seconds = now / 1000;
 const tenant = "11111111-2222-3333-4444-555555555555";
@@ -33,6 +34,30 @@ describe.each(["microsoft"])("%s identity tokens", provider => {
     forged[2] = (forged[2][0] === "A" ? "B" : "A") + forged[2].slice(1);
     await expect(verify[provider](forged.join("."), "test-client", now, keys)).rejects.toThrow();
   });
+});
+
+
+it("categorizes Microsoft verification failures without reflecting private tokens or provider errors", () => {
+  expect(safeMicrosoftVerificationReason(new RequestError("Microsoft did not share an email address. Allow email access or choose another sealing method.")))
+    .toContain("email address");
+  expect(safeMicrosoftVerificationReason(new RequestError("Microsoft identity did not match this document sign-in request")))
+    .toContain("did not match");
+  expect(safeMicrosoftVerificationReason(Object.assign(new Error("id_token=private-secret"), {
+    code: "ERR_JWS_SIGNATURE_VERIFICATION_FAILED",
+  }))).toBe("Microsoft identity signature is invalid");
+  expect(safeMicrosoftVerificationReason(Object.assign(new Error("private authorisation code"), {
+    code: "ERR_JWKS_NO_MATCHING_KEY",
+  }))).toBe("Microsoft signing key not found");
+  for (const malicious of [
+    new Error("ID token: top-secret, client_secret: private"),
+    new RequestError("Microsoft returned secret token=private"),
+    Object.assign(new Error("private"), { code: "ERR_UNTRUSTED_private_secret" }),
+  ]) {
+    const safe = safeMicrosoftVerificationReason(malicious);
+    expect(safe).toBe("Microsoft identity token or signing keys could not be verified");
+    expect(safe).not.toContain("secret");
+    expect(safe).not.toContain("token=");
+  }
 });
 
 it("binds Microsoft's signed ID token to the pending nonce and request time", async () => {

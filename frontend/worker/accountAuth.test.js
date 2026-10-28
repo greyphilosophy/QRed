@@ -188,6 +188,62 @@ it("rejects Microsoft SPA completion without the authenticated pending cookie", 
 });
 
 
+
+it("returns safe and actionable Microsoft failure categories without relaxing session checks", async () => {
+  const flow = fixture("microsoft");
+  const started = await (await flow.post("/api/auth/microsoft/start", { commitments: [fingerprint] })).json();
+  const nonce = new URL(started.authorize_url).searchParams.get("nonce");
+  const identity = { name: "Account Name", email: "account@example.org",
+    sub: "account-user", tid: tenant, nonce, iat: epoch / 1000 };
+  const callback = await flow.handle(new Request(origin + "/api/auth/microsoft/callback?state=" +
+    started.id + "&code=synthetic-code", { headers: { Cookie: flow.cookie() } }));
+  expect(callback.status).toBe(200);
+  expect(await callback.text()).toContain("login.microsoftonline.com/common/oauth2/v2.0/token");
+
+  const cases = [
+    {
+      name: "missing email",
+      verify: async () => ({ ...identity, email: undefined }),
+      expected: "Microsoft did not share an email address",
+    },
+    {
+      name: "nonce mismatch",
+      verify: async () => ({ ...identity, nonce: "different-document" }),
+      expected: "Microsoft identity did not match this document sign-in request",
+    },
+    {
+      name: "bad signature",
+      verify: async () => { throw Object.assign(new Error("secret=id-token-PRIVATE"), { code: "ERR_JWS_SIGNATURE_VERIFICATION_FAILED" }); },
+      expected: "Microsoft identity signature is invalid",
+    },
+    {
+      name: "no signing key",
+      verify: async () => { throw Object.assign(new Error("secret=PRIVATE"), { code: "ERR_JWKS_NO_MATCHING_KEY" }); },
+      expected: "Microsoft signing key not found",
+    },
+    {
+      name: "unrecognized provider error",
+      verify: async () => { throw new Error("secret=id-token-PRIVATE"); },
+      expected: "Microsoft identity token or signing keys could not be verified",
+    },
+  ];
+  for (const scenario of cases) {
+    const handler = createAccountAuth({ trusted, now: () => epoch, verifyTokens: { microsoft: scenario.verify } });
+    const result = await handler(new Request(origin + "/api/auth/microsoft/complete", {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json", Cookie: flow.cookie() },
+      body: JSON.stringify({ id: started.id, id_token: "private-test-id-token" }),
+    }), env);
+    expect(result.status, scenario.name).toBe(403);
+    const body = await result.json();
+    expect(body.error, scenario.name).toContain(scenario.expected);
+    expect(JSON.stringify(body)).not.toContain("PRIVATE");
+    expect(JSON.stringify(body)).not.toContain("private-test-id-token");
+    expect(result.headers.get("Cache-Control")).toBe("no-store");
+    expect(result.headers.getSetCookie().some(item => item.includes("microsoft-request-"))).toBe(true);
+  }
+});
+
 describe.each(providers)("%s prepared native-link handoff", provider => {
   it("verifies and attests a prepared session without a popup handle", async () => {
     const flow = fixture(provider);
