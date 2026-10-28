@@ -15,7 +15,6 @@ vi.mock("./accountSealing.js", () => ({
 const mockAuthUrl = provider => ({
   google: "https://accounts.google.com/o/oauth2/v2/auth",
   microsoft: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-  meta: "https://www.facebook.com/v26.0/dialog/oauth",
   amazon: "https://www.amazon.com/ap/oa",
 })[provider];
 const session = provider => ({
@@ -24,7 +23,7 @@ const session = provider => ({
 });
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async () => ({
-    ok: true, json: async () => ({ google: true, microsoft: true, meta: true, amazon: true }),
+    ok: true, json: async () => ({ google: true, microsoft: true, amazon: true }),
   })));
   beginAccountSignIn.mockImplementation(async provider => session(provider));
   finishAccountSignIn.mockResolvedValue();
@@ -57,15 +56,15 @@ it("presents each account provider as a separate, consistently labelled, selecta
   const offline = screen.getByRole("button", { name: "Private key (offline)" });
   expect(offline.getAttribute("aria-pressed")).toBe("true");
   for (const details of Object.values(AUTH_PROVIDERS)) {
-    expect(details.button).toMatch(/^Authenticate with (Google|Microsoft|Facebook|Amazon) login$/);
+    expect(details.button).toMatch(/^Authenticate with (Google|Microsoft|Amazon) login$/);
     const selection = screen.getByRole("button", { name: details.button });
     expect(selection.getAttribute("aria-pressed")).toBe("false");
   }
-  fireEvent.click(screen.getByRole("button", { name: AUTH_PROVIDERS.meta.button }));
-  expect(screen.getByRole("button", { name: AUTH_PROVIDERS.meta.button }).getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(screen.getByRole("button", { name: AUTH_PROVIDERS.google.button }));
+  expect(screen.getByRole("button", { name: AUTH_PROVIDERS.google.button }).getAttribute("aria-pressed")).toBe("true");
   expect(offline.getAttribute("aria-pressed")).toBe("false");
   expect(screen.queryByLabelText("Private Key")).toBeNull();
-  expect(screen.getByRole("button", { name: "Prepare PDF for Facebook (Meta) sign-in" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Prepare PDF for Google sign-in" })).toBeTruthy();
   fireEvent.click(offline);
   expect(offline.getAttribute("aria-pressed")).toBe("true");
   expect(screen.getByLabelText("Private Key")).toBeTruthy();
@@ -74,7 +73,7 @@ it("presents each account provider as a separate, consistently labelled, selecta
 it("disables an unconfigured provider and recovers from a failed availability check", async () => {
   fetch.mockRejectedValueOnce(new Error("offline"));
   fetch.mockResolvedValueOnce({
-    ok: true, json: async () => ({ google: true, microsoft: false, meta: false, amazon: false }),
+    ok: true, json: async () => ({ google: true, microsoft: false, amazon: false }),
   });
   const open = vi.spyOn(window, "open");
   render(<PdfSealForm />);
@@ -136,16 +135,16 @@ it("never opens a mobile popup during delayed PDF parsing; sign-in begins only o
   });
   attestPagesWithAccount.mockResolvedValue([]);
   render(<PdfSealForm />);
-  fireEvent.click(screen.getByRole("button", { name: AUTH_PROVIDERS.meta.button }));
+  fireEvent.click(screen.getByRole("button", { name: AUTH_PROVIDERS.google.button }));
   upload();
-  await waitFor(() => expect(screen.getByRole("button", { name: "Prepare PDF for Facebook (Meta) sign-in" }).disabled).toBe(false));
-  fireEvent.click(screen.getByRole("button", { name: "Prepare PDF for Facebook (Meta) sign-in" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Prepare PDF for Google sign-in" }).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: "Prepare PDF for Google sign-in" }));
   expect(screen.getByRole("button", { name: "Preparing document..." })).toBeTruthy();
   expect(open).not.toHaveBeenCalled();
   parsed();
-  const signIn = await screen.findByRole("link", { name: AUTH_PROVIDERS.meta.button });
+  const signIn = await screen.findByRole("link", { name: AUTH_PROVIDERS.google.button });
   expect(open).not.toHaveBeenCalled();
-  expect(signIn.getAttribute("href")).toBe(mockAuthUrl("meta"));
+  expect(signIn.getAttribute("href")).toBe(mockAuthUrl("google"));
   fireEvent.click(signIn);
   await screen.findByText(/Sealed source.pdf in this browser/);
   expect(open).not.toHaveBeenCalled();
@@ -155,11 +154,11 @@ it("cancels a prepared but unopened account session, clearing its cookies", asyn
   const open = vi.spyOn(window, "open");
   sealPdfInBrowser.mockImplementation(options => options.attestPages([]));
   render(<PdfSealForm />);
-  await prepare("meta");
+  await prepare("google");
   expect(open).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Cancel sealing" }));
   await screen.findByText("Account sealing cancelled.");
-  expect(finishAccountSignIn).toHaveBeenCalledWith("meta", expect.objectContaining({ provider: "meta" }));
+  expect(finishAccountSignIn).toHaveBeenCalledWith("google", expect.objectContaining({ provider: "google" }));
   expect(open).not.toHaveBeenCalled();
 });
 
@@ -184,28 +183,28 @@ it("cancels an in-progress account request without saving a document", async () 
 });
 
 
-it("lets a phone user recheck pending, rejected and completed provider status without reopening Facebook", async () => {
+it("lets a phone user recheck pending, rejected and completed provider status without reopening provider", async () => {
   const open = vi.spyOn(window, "open");
   // Keep the original QRed account flow waiting after the popup closes; a
   // status recheck must not issue a new authorization or upload the PDF.
   attestPagesWithAccount.mockImplementation(() => new Promise(() => {}));
   sealPdfInBrowser.mockImplementation(options => options.attestPages([]));
   render(<PdfSealForm />);
-  const signIn = await prepare("meta");
+  const signIn = await prepare("google");
   fireEvent.click(signIn);
   const check = await screen.findByRole("button", { name: "Check sign-in status" });
   fireEvent.click(check);
   await screen.findByText(/QRed has not received a completed sign-in from the provider/);
-  expect(checkAccountSignInStatus).toHaveBeenCalledWith("meta", expect.objectContaining({
-    id: "test-auth-id", secret: "test-secret", provider: "meta",
+  expect(checkAccountSignInStatus).toHaveBeenCalledWith("google", expect.objectContaining({
+    id: "test-auth-id", secret: "test-secret", provider: "google",
   }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
   expect(open).not.toHaveBeenCalled();
   expect(beginAccountSignIn).toHaveBeenCalledTimes(1);
 
   checkAccountSignInStatus.mockResolvedValueOnce({ status: "failed",
-    error: "Facebook rejected QRed's login code exchange (HTTP 400; Meta error 100)" });
+    error: "Google declined QRed's authorization code exchange (HTTP 400; OAuth invalid_grant)" });
   fireEvent.click(check);
-  await screen.findByText(/Account sign-in failed: Facebook rejected QRed's login code exchange/);
+  await screen.findByText(/Account sign-in failed: Google declined QRed's authorization code exchange/);
 
   checkAccountSignInStatus.mockResolvedValueOnce({ status: "ready" });
   fireEvent.click(check);
@@ -220,7 +219,7 @@ it("reports missing or expired browser session on an explicit status check witho
   sealPdfInBrowser.mockImplementation(options => options.attestPages([]));
   checkAccountSignInStatus.mockRejectedValue(new Error("Sign-in request expired or belongs to another browser"));
   render(<PdfSealForm />);
-  fireEvent.click(await prepare("meta"));
+  fireEvent.click(await prepare("google"));
   fireEvent.click(await screen.findByRole("button", { name: "Check sign-in status" }));
   const message = await screen.findByText(/Could not confirm account sign-in:/);
   expect(message.textContent).toContain("Sign-in request expired or belongs to another browser");
@@ -232,12 +231,12 @@ it("reports missing or expired browser session on an explicit status check witho
 
 it("leaves the provider tab visible after a failed OAuth exchange, rather than silently closing it", async () => {
   const open = vi.spyOn(window, "open");
-  attestPagesWithAccount.mockRejectedValue(new Error("Facebook rejected QRed's login code exchange (HTTP 400; Meta error 100)"));
+  attestPagesWithAccount.mockRejectedValue(new Error("Google declined QRed's authorization code exchange (HTTP 400; OAuth invalid_grant)"));
   sealPdfInBrowser.mockImplementation(options => options.attestPages([]));
   render(<PdfSealForm />);
-  fireEvent.click(await prepare("meta"));
-  const message = await screen.findByText(/PDF sealing failed: Facebook rejected QRed's login code exchange/);
-  expect(message.textContent).toContain("Meta error 100");
+  fireEvent.click(await prepare("google"));
+  const message = await screen.findByText(/PDF sealing failed: Google declined QRed's authorization code exchange/);
+  expect(message.textContent).toContain("OAuth invalid_grant");
   expect(open).not.toHaveBeenCalled();
   expect(screen.queryByRole("button", { name: "Check sign-in status" })).toBeNull();
 });
