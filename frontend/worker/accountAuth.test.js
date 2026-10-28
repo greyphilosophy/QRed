@@ -11,11 +11,10 @@ const origin = "https://qred.test", epoch = Date.parse("2026-10-25T12:00:00Z");
 const tenant = "11111111-2222-3333-4444-555555555555";
 const seed = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", keyId = "da522162396ab2d0";
 const trusted = { [keyId]: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q" };
-const providers = ["google", "microsoft", "meta", "amazon"];
+const providers = ["google", "microsoft", "amazon"];
 const env = { QRED_ORIGIN: origin, QRED_ATTESTATION_PRIVATE_KEY: seed, QRED_ATTESTATION_KEY_ID: keyId,
   QRED_GOOGLE_CLIENT_ID: "google-client", QRED_GOOGLE_CLIENT_SECRET: "google-secret",
   QRED_MICROSOFT_CLIENT_ID: "microsoft-client",
-  QRED_META_APP_ID: "meta-client", QRED_META_APP_SECRET: "meta-secret",
   QRED_AMAZON_CLIENT_ID: "amazon-client", QRED_AMAZON_CLIENT_SECRET: "amazon-secret" };
 const fingerprint = encodeBase64Url(new Uint8Array(32).fill(1));
 beforeAll(() => vi.stubGlobal("crypto", webcrypto));
@@ -33,36 +32,18 @@ function fixture(provider) {
   };
   const cookie = () => [...jar].map(([key, value]) => key + "=" + value).join("; ");
   const exchange = vi.fn(async (url, options) => {
-    if (provider === "meta" && url.startsWith("https://graph.facebook.com/v26.0/debug_token?")) {
-      const query = new URL(url).searchParams;
-      expect(query.get("input_token")).toBe("opaque-meta-token");
-      expect(query.get("access_token")).toBe("meta-client|meta-secret");
-      return Response.json({ data: { app_id: "meta-client", user_id: "1234567890",
-        is_valid: true, type: "USER", expires_at: epoch / 1000 + 3600, scopes: ["email"] } });
-    }
-    if (provider === "meta" && url.startsWith("https://graph.facebook.com/v26.0/me?")) {
-      expect(options.headers.Authorization).toBe("Bearer opaque-meta-token");
-      expect(new URL(url).searchParams.get("appsecret_proof")).toMatch(/^[0-9a-f]{64}$/);
-      return Response.json({ id: "1234567890", name: "Profile Name", email: "user@gmail.com" });
-    }
     if (url.startsWith("https://api.amazon.com/auth/o2/tokeninfo?")) return Response.json({
       iss: "https://www.amazon.com", aud: "amazon-client", user_id: "amazon-user", exp: 3599 });
     if (url === "https://api.amazon.com/user/profile") return Response.json({ user_id: "amazon-user", name: "Amazon Profile", email: "user@example.org" });
-    const params = provider === "meta" ? new URL(url).searchParams : options.body;
+    const params = options.body;
     expect(params.get("client_id")).toBe(provider + "-client");
     expect(params.get("client_secret")).toBe(provider + "-secret");
     expect(params.get("redirect_uri")).toBe(origin + "/api/auth/" + provider + "/callback");
-    if (provider === "meta") {
-      expect(params.has("code_verifier")).toBe(false);
-      expect(authorization.searchParams.has("code_challenge")).toBe(false);
-    } else {
-      expect(encodeBase64Url(await sha256(utf8.encode(params.get("code_verifier")))))
-        .toBe(authorization.searchParams.get("code_challenge"));
-    }
+    expect(encodeBase64Url(await sha256(utf8.encode(params.get("code_verifier")))))
+      .toBe(authorization.searchParams.get("code_challenge"));
     idTokenClaims = { name: "Profile Name", email: "user@gmail.com", email_verified: true, sub: "account-user", tid: tenant,
       nonce: authorization.searchParams.get("nonce"), iat: epoch / 1000 };
     return Response.json(provider === "amazon" ? { access_token: "opaque-amazon-token", token_type: "bearer", expires_in: 3600 } :
-      provider === "meta" ? { access_token: "opaque-meta-token", token_type: "bearer", expires_in: 3600 } :
       { id_token: "synthetic-id-token" });
   });
   const handle = (request, config = env) => createAccountAuth({ fetchImpl: exchange, trusted, now: () => epoch,
@@ -134,16 +115,16 @@ describe.each(providers)("%s document attestations", provider => {
     const ownCookie = flow.cookie();
     for (const other of providers.filter(name => name !== provider)) {
       // Renaming the cookie cannot defeat the cryptographic provider binding.
-      const fakeCookie = ownCookie.replace(/__Host-qred-(?:microsoft-|meta-|amazon-)?receipt-/, "__Host-qred-" + (other === "google" ? "" : other + "-") + "receipt-");
+      const fakeCookie = ownCookie.replace(/__Host-qred-(?:microsoft-|amazon-)?receipt-/, "__Host-qred-" + (other === "google" ? "" : other + "-") + "receipt-");
       const response = await flow.handle(new Request(origin + "/api/attest/" + other, {
         method: "POST", headers: { Origin: origin, "Content-Type": "application/json", Cookie: fakeCookie },
         body: JSON.stringify({ ...credentials, commitments: [fingerprint], index: 0 }),
-      }), { ...env, [other === "meta" ? "QRED_META_APP_ID" : "QRED_" + other.toUpperCase() + "_CLIENT_ID"]: provider + "-client" });
+      }), { ...env, ["QRED_" + other.toUpperCase() + "_CLIENT_ID"]: provider + "-client" });
       expect(response.status).toBe(403);
       await flow.post("/api/auth/" + other + "/finish", credentials);
       expect(flow.cookie()).toBe(ownCookie);
     }
-    const clientField = provider === "meta" ? "QRED_META_APP_ID" : "QRED_" + provider.toUpperCase() + "_CLIENT_ID";
+    const clientField = "QRED_" + provider.toUpperCase() + "_CLIENT_ID";
     expect((await flow.post("/api/auth/" + provider + "/status", credentials, { ...env, [clientField]: "changed-client" })).status).toBe(403);
     const response = await flow.post("/api/auth/" + provider + "/status", credentials);
     expect((await response.json()).identity.provider).toBe(provider);
@@ -166,9 +147,10 @@ describe.each(providers)("%s document attestations", provider => {
 
 it("advertises providers independently and rejects unknown routes", async () => {
   const { handle } = fixture("google");
-  const response = await handle(new Request(origin + "/api/auth/config"), { ...env, QRED_META_APP_SECRET: "" });
-  expect(await response.json()).toEqual({ google: true, microsoft: true, meta: false, amazon: true });
+  const response = await handle(new Request(origin + "/api/auth/config"), env);
+  expect(await response.json()).toEqual({ google: true, microsoft: true, amazon: true });
   expect((await handle(new Request(origin + "/api/auth/unknown/start"))).status).toBe(404);
+  expect((await handle(new Request(origin + "/api/auth/meta/start"))).status).toBe(404);
   expect((await handle(new Request(origin + "/api/auth/google/extra/path"))).status).toBe(404);
 });
 
@@ -206,37 +188,6 @@ it("rejects Microsoft SPA completion without the authenticated pending cookie", 
 });
 
 
-it("does not expose Facebook Graph access tokens in authenticated session status", async () => {
-  const flow = fixture("meta");
-  // This check exercises callback error propagation without disclosing the
-  // OAuth code or Graph access token to the browser response.
-  const started = await (await flow.post("/api/auth/meta/start", { commitments: [fingerprint] })).json();
-  const result = await flow.login(started);
-  expect(result.status).toBe(200); // Error callback page is intentionally HTTP 200.
-  const status = await (await flow.post("/api/auth/meta/status", { id: started.id, secret: started.secret })).json();
-  expect(status.status).toBe("ready");
-  expect(JSON.stringify(status)).not.toContain("opaque-meta-token");
-  expect(JSON.stringify(status)).not.toContain("one-use-code");
-});
-
-it("rejects Facebook callbacks that cannot access the originating session cookie", async () => {
-  const flow = fixture("meta");
-  const session = await (await flow.post("/api/auth/meta/start", { commitments: [fingerprint] })).json();
-  const response = await flow.handle(new Request(origin + "/api/auth/meta/callback?state=" +
-    session.id + "&code=one-use-code"));
-  expect(response.status).toBe(403);
-  const json = await response.json();
-  expect(json.error).toContain("encrypted sign-in session cookie");
-  expect(json.error).toContain("original QRed tab");
-  expect(json.error).not.toContain(session.id);
-  expect(json.error).not.toContain(session.secret);
-  expect(flow.exchange).not.toHaveBeenCalled();
-  const status = await (await flow.post("/api/auth/meta/status", {
-    id: session.id, secret: session.secret,
-  })).json();
-  expect(status.status).toBe("pending"); // Missing cookies never create a signed receipt.
-});
-
 describe.each(providers)("%s prepared native-link handoff", provider => {
   it("verifies and attests a prepared session without a popup handle", async () => {
     const flow = fixture(provider);
@@ -262,40 +213,6 @@ describe.each(providers)("%s prepared native-link handoff", provider => {
   });
 });
 
-it("keeps a rejected Facebook callback open with sanitized error details instead of silently closing", async () => {
-  const flow = fixture("meta");
-  const session = await (await flow.post("/api/auth/meta/start", { commitments: [fingerprint] })).json();
-  const upstream = createAccountAuth({
-    trusted, now: () => epoch,
-    fetchImpl: async () => Response.json({ error: {
-      code: 100, error_subcode: 36008,
-      message: "Hidden OAuth code one-use-code, secret meta-secret, <script>alert(1)</script>",
-    } }, { status: 400 }),
-  });
-  const callback = await upstream(new Request(origin + "/api/auth/meta/callback?state=" +
-    session.id + "&code=one-use-code", { headers: { Cookie: flow.cookie() } }), env);
-  expect(callback.status).toBe(200);
-  const html = await callback.text();
-  expect(html).toContain('role="alert"');
-  expect(html).toContain("Sign-in could not be completed.");
-  expect(html).toContain("Meta error 100; subcode 36008");
-  expect(html).not.toContain("one-use-code");
-  expect(html).not.toContain("meta-secret");
-  expect(html).not.toContain("<script>");
-  expect(html).not.toContain("window.close()");
-  expect(callback.headers.get("Cache-Control")).toBe("no-store");
-  expect(callback.headers.get("Referrer-Policy")).toBe("no-referrer");
-  const failedCookie = callback.headers.getSetCookie()[0].split(";")[0];
-  const status = await flow.handle(new Request(origin + "/api/auth/meta/status", {
-    method: "POST",
-    headers: { Origin: origin, "Content-Type": "application/json", Cookie: failedCookie },
-    body: JSON.stringify({ id: session.id, secret: session.secret }),
-  }));
-  expect(status.status).toBe(200);
-  expect(await status.json()).toMatchObject({ status: "failed",
-    error: expect.stringContaining("Meta error 100") });
-});
-
 it.each(["google", "amazon"])("closes a successful %s popup only after sign-in completed", async provider => {
   const flow = fixture(provider);
   const session = await (await flow.post("/api/auth/" + provider + "/start", { commitments: [fingerprint] })).json();
@@ -305,35 +222,6 @@ it.each(["google", "amazon"])("closes a successful %s popup only after sign-in c
   expect(html).toContain("Sign-in completed.");
   expect(html).not.toContain('role="alert"');
   expect(html).toContain("window.close()");
-});
-
-it("keeps successful Facebook callback visible so mobile users can verify handoff to the original tab", async () => {
-  const flow = fixture("meta");
-  const session = await (await flow.post("/api/auth/meta/start", { commitments: [fingerprint] })).json();
-  const callback = await flow.login(session);
-  expect(callback.status).toBe(200);
-  const html = await callback.text();
-  expect(html).toContain("Facebook sign-in was verified by QRed in this tab.");
-  expect(html).toContain("original QRed tab");
-  expect(html).toContain("Check sign-in status");
-  expect(html).not.toContain("window.close()");
-  expect(html).not.toContain("one-use-code");
-  expect(html).not.toContain("opaque-meta-token");
-  expect(html).not.toContain("meta-secret");
-  expect(html).not.toContain(session.secret);
-  expect(html).not.toContain('role="alert"');
-  expect(callback.headers.get("Cache-Control")).toBe("no-store");
-  expect(callback.headers.get("Referrer-Policy")).toBe("no-referrer");
-  const status = await flow.post("/api/auth/meta/status", {
-    id: session.id, secret: session.secret,
-  });
-  expect(await status.json()).toMatchObject({ status: "ready", identity: { provider: "meta" } });
-  // Replaying an already-completed callback must still display its safe result
-  // without closing the tab or renewing the session.
-  const replay = await flow.handle(new Request(origin + "/api/auth/meta/callback?state=" +
-    session.id + "&code=duplicate", { headers: { Cookie: flow.cookie() } }));
-  expect(replay.status).toBe(200);
-  expect(await replay.text()).not.toContain("window.close()");
 });
 
 it("HTML-escapes a provider-originated error before showing it in the callback", async () => {
@@ -357,23 +245,3 @@ it("HTML-escapes a provider-originated error before showing it in the callback",
 });
 
 
-it("does not close a failed provider window from the client protocol cleanup", async () => {
-  const popup = { location: {}, close: vi.fn() }, paths = [];
-  const fetchImpl = async path => {
-    paths.push(path);
-    if (path.endsWith("/start")) return Response.json({
-      id: "synthetic-session", secret: "synthetic-secret",
-      authorize_url: "https://www.facebook.com/v26.0/dialog/oauth",
-    });
-    if (path.endsWith("/status")) return Response.json({
-      status: "failed", error: "Facebook rejected QRed's login code exchange (HTTP 400; Meta error 100)",
-    });
-    if (path.endsWith("/finish")) return Response.json({ finished: true });
-    throw new Error("Unexpected request path " + path);
-  };
-  await expect(attestPagesWithAccount("meta", [{ content: "Synthetic text", metadata: {} }],
-    { popup, fetchImpl, trusted })).rejects.toThrow("Facebook rejected");
-  expect(popup.close).not.toHaveBeenCalled();
-  expect(popup.location.href).toBe("https://www.facebook.com/v26.0/dialog/oauth");
-  expect(paths).toEqual(["/api/auth/meta/start", "/api/auth/meta/status", "/api/auth/meta/finish"]);
-});
