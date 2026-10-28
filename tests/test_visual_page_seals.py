@@ -65,7 +65,7 @@ def test_load_pdf_seals_on_both_verifiers_offline(browser, tmp_path, path):
         expect(page.get_by_label("Page layout", exact=True)).to_have_value("automatic")
         stamped = tmp_path / "pdf-input-sealed.pdf"
         seal(page, buffer.getvalue(), stamped)
-        expect(page.locator("#stamp-result")).not_to_contain_text("Used clear footers")
+        expect(page.locator("#stamp-result")).not_to_contain_text("Clear footer added")
         page.goto(base + path, wait_until="networkidle")
         picker = page.get_by_label("Open PDF to verify", exact=True)
         status = page.locator(".pdf-seal-input [role=status]")
@@ -126,7 +126,7 @@ def test_text_invoice_with_raster_logos_keeps_watermarks(page, tmp_path, logo_lo
     stamped = tmp_path / "invoice-sealed.pdf"
     result = seal(page, buffer.getvalue(), stamped)
     assert result["total_seals"] == 1
-    expect(page.locator("#stamp-result")).not_to_contain_text("Used clear footers")
+    expect(page.locator("#stamp-result")).not_to_contain_text("Clear footer added")
     subprocess.run(["pdftoppm", "-png", "-r", "144", str(stamped), str(tmp_path / "invoice")], check=True, capture_output=True)
     for number in (2, 1):
         printed = tmp_path / f"invoice-{number}.png"
@@ -164,7 +164,7 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
         assert result["total_seals"] == 1
         assert result["evidence"]["blank"] == blank
         assert result["evidence"]["text"] == ""
-        expect(page.get_by_text("Used clear footers on page(s) 1", exact=False)).to_be_visible()
+        expect(page.get_by_text("Clear footer added to page(s) 1", exact=False)).to_be_visible()
         # Each sealing run creates a fresh PDF worker. Wait for the real
         # offline cache to contain it; an earlier download alone isn't enough.
         wait_for_offline_resources(page, pdf=True)
