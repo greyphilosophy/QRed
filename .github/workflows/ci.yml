@@ -111,24 +111,34 @@ jobs:
           node-version: "24"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
-      - name: Install PDF rasterizer for browser regression tests
+      - name: Install Python/browser, Poppler, and build frontend concurrently
+        shell: bash
         run: |
-          if ! command -v pdftoppm >/dev/null; then
-            sudo apt-get install -y poppler-utils || {
-              sudo apt-get update
-              sudo apt-get install -y poppler-utils
-            }
-          fi
-      - name: Install Python dependencies
-        run: |
-          python -m pip install -r requirements.txt
-          python -m playwright install chromium-headless-shell
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
-      - name: Build frontend
-        working-directory: frontend
-        run: npm run build
+          set -euo pipefail
+          (
+            if ! command -v pdftoppm >/dev/null; then
+              sudo apt-get install -y poppler-utils || {
+                sudo apt-get update
+                sudo apt-get install -y poppler-utils
+              }
+            fi
+          ) &
+          poppler_pid=$!
+          (
+            python -m pip install -r requirements.txt
+            python -m playwright install chromium-headless-shell
+          ) &
+          python_pid=$!
+          (
+            cd frontend
+            npm ci
+            npm run build
+          ) &
+          frontend_pid=$!
+          # Every independent prerequisite must succeed before starting Vite.
+          wait "$poppler_pid"
+          wait "$python_pid"
+          wait "$frontend_pid"
       - name: Start production frontend preview
         working-directory: frontend
         run: |
