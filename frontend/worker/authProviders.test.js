@@ -116,7 +116,7 @@ describe("standard Facebook Login access-token verification", () => {
     expect(result).toEqual({ identity: { provider: "meta", name_source: "meta", name: "Facebook Profile",
       email: "person@example.org", subject: "1234567890" } });
     expect(requests).toHaveLength(3);
-    expect(requests.every(({ options }) => options.redirect === "error")).toBe(true);
+    expect(requests.every(({ options }) => options.redirect === "manual")).toBe(true);
     expect(JSON.stringify(result)).not.toContain("opaque-user-token");
     expect(JSON.stringify(result)).not.toContain("server-only-secret");
   });
@@ -164,7 +164,7 @@ describe("Login with Amazon", () => {
     const { result, requests } = await exchange();
     expect(result).toEqual({ identity: { provider: "amazon", name_source: "amazon", subject: "amazon-account", name: "Amazon Name", email: "profile@example.org" } });
     expect(requests).toHaveLength(3);
-    expect(requests.every(request => request.options.redirect === "error")).toBe(true);
+    expect(requests.every(request => request.options.redirect === "manual")).toBe(true);
   });
   it.each([
     { token: { token_type: "MAC" } }, { token: { expires_in: 0 } }, { token: { access_token: "" } },
@@ -225,7 +225,7 @@ describe("redacted Google token-exchange and verification diagnostics", () => {
     const fetchImpl = async (url, options) => {
       expect(url).toBe("https://oauth2.googleapis.com/token");
       expect(options.method).toBe("POST");
-      expect(options.redirect).toBe("error");
+      expect(options.redirect).toBe("manual");
       expect(options.body.get("client_secret")).toBe(config.clientSecret);
       expect(options.body.get("code")).toBe(context.code);
       expect(options.body.get("redirect_uri")).toBe("https://qred.test/api/auth/google/callback");
@@ -333,5 +333,71 @@ describe("redacted Meta token-exchange diagnostics", () => {
         expect(error.message).not.toContain("private token");
       }
     }
+  });
+});
+
+
+describe("Cloudflare Workers-compatible confidential OAuth subrequests", () => {
+  // Cloudflare Workers does not implement the Fetch redirect mode "error": it
+  // throws TypeError before contacting OAuth providers. This regression would
+  // have caught the shared Google/Facebook/Amazon exchange failure.
+  it.each(["google", "meta", "amazon"])("uses supported manual redirect handling for %s token exchanges", async provider => {
+    const config = { clientId: "app-id", clientSecret: "private-client-secret", graphVersion: "v26.0" };
+    const seen = [];
+    const fetchImpl = async (url, init) => {
+      seen.push({ url, init });
+      if (init.redirect === "error") throw new TypeError("Cloudflare does not implement redirect mode error");
+      expect(init.redirect).toBe("manual");
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      // A real provider's OAuth error should be received and categorized as
+      // an HTTP response, never swallowed as an unreachable endpoint.
+      return Response.json(provider === "meta"
+        ? { error: { code: 190, error_subcode: 463, message: "private-client-secret" } }
+        : { error: "invalid_grant", error_description: "private-client-secret" }, { status: 400 });
+    };
+    const authenticate = exchangeIdentity(provider, config, {
+      code: "private-one-use-code", origin: "https://qred.test",
+      pending: { nonce: "nonce", pkce: "verifier", iat: seconds },
+      fetchImpl, now: () => now,
+    });
+    if (provider === "meta") await expect(authenticate).rejects.toThrow("Meta error 190; subcode 463");
+    else if (provider === "google") await expect(authenticate).rejects.toThrow("HTTP 400; OAuth invalid_grant");
+    else await expect(authenticate).rejects.toThrow("The sign-in service could not complete this request");
+    expect(seen).toHaveLength(1);
+    expect(seen[0].init.redirect).toBe("manual");
+  });
+
+  it.each(["google", "meta", "amazon"])("rejects unexpected 3xx redirects for %s without following or leaking credentials", async provider => {
+    const config = { clientId: "app-id", clientSecret: "private-client-secret", graphVersion: "v26.0" };
+    const fetchImpl = vi.fn(async (url, init) => {
+      expect(init.redirect).toBe("manual");
+      return Response.redirect("https://untrusted.invalid/steal?code=private-one-use-code&secret=private-client-secret", 302);
+    });
+    let message;
+    try {
+      await exchangeIdentity(provider, config, {
+        code: "private-one-use-code", origin: "https://qred.test",
+        pending: { nonce: "nonce", pkce: "verifier", iat: seconds },
+        fetchImpl, now: () => now,
+      });
+      throw new Error("Expected the provider's HTTP redirect to be rejected");
+    } catch (error) { message = error.message; }
+    expect(message).toContain("unexpected provider redirect");
+    expect(message).not.toContain("private-one-use-code");
+    expect(message).not.toContain("private-client-secret");
+    expect(message).not.toContain("untrusted.invalid");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([301, 302, 303, 307, 308])("does not follow HTTP %i even when a provider includes a Location header", async httpStatus => {
+    const fetchImpl = vi.fn(async (_url, options) => {
+      expect(options.redirect).toBe("manual");
+      return Response.redirect("https://untrusted.invalid/attacker", httpStatus);
+    });
+    await expect(exchangeIdentity("google", { clientId: "app", clientSecret: "server-only-secret" }, {
+      code: "single-use-code", origin: "https://qred.test",
+      pending: { pkce: "verifier", nonce: "nonce", iat: seconds }, now: () => now, fetchImpl,
+    })).rejects.toThrow("unexpected provider redirect");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });

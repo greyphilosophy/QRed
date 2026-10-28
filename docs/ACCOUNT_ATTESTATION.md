@@ -52,6 +52,14 @@ Meta also uses `QRED_META_GRAPH_VERSION`, initially `v26.0`. Match it to a versi
 
 References: [app registration](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app), [authorization code flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow), [ID-token claims](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference), and [issuer and signing-key validation](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#validate-the-issuer).
 
+### Cloudflare Worker outbound OAuth requests
+
+QRed's Worker uses Cloudflare-supported `redirect: "manual"` when exchanging a provider authorization code. **Cloudflare Workers does not implement the browser Fetch API's `redirect: "error"` mode**: that option throws `TypeError` before Google, Facebook/Meta or Amazon receives any request. In the previous implementation, QRed caught this as a supposed network timeout, making every confidential code exchange fail.
+
+Manual mode **does not** mean QRed trusts or follows provider redirects: every HTTP 3xx code-exchange response is explicitly rejected, and its `Location` header is never followed, returned, or logged. OAuth codes and application secrets are transmitted only to their fixed allowlisted provider token endpoint in the initial request. Cloudflare documents the supported modes in its [Request runtime reference](https://developers.cloudflare.com/workers/runtime-apis/request/).
+
+The bundled tests cover the supported mode, all three confidential providers, HTTP code errors, and rejecting 301/302/303/307/308 without forwarding credentials. Re-test a live provider account only after deploying the Worker; no synthetic test substitutes for verifying actual provider access.
+
 ### Google and Facebook callback diagnostics
 
 If an account login reaches `/api/auth/google/callback` or `/api/auth/meta/callback` but the seal fails, the callback now distinguishes the following stages without displaying codes, tokens, raw provider error messages or secrets:

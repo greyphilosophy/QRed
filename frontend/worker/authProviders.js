@@ -187,12 +187,23 @@ async function providerJson(fetchImpl, url, options = {},
   diagnosticsProvider = null) {
   let response;
   try {
-    response = await fetchImpl(url, { ...options, redirect: "error", signal: AbortSignal.timeout(10000) });
+    // Cloudflare Workers supports "manual" but NOT redirect: "error":
+    // https://developers.cloudflare.com/workers/runtime-apis/request/
+    // "error" throws TypeError before a network request is sent, preventing
+    // every confidential Google, Meta and Amazon authorization-code exchange.
+    // Never follow an OAuth redirect (it can leak codes, tokens or secrets).
+    response = await fetchImpl(url, { ...options, redirect: "manual", signal: AbortSignal.timeout(10000) });
   } catch {
     // Fetch exceptions can include the OAuth code and client secret in the
     // request URL. Never copy the raw exception or request URL into a response.
     throw new RequestError(failureMessage +
       (diagnosticsProvider ? " (could not contact the provider or request timed out)" : ""), 403);
+  }
+  // Cloudflare's "manual" mode returns a 3xx response. Treat ANY such
+  // response as an authentication failure; do not fetch its Location URL,
+  // include it in an error, or accept a redirected token response.
+  if (response.status >= 300 && response.status < 400) {
+    throw new RequestError(failureMessage + " (unexpected provider redirect)", 403);
   }
   if (!response.ok) {
     let details = "";
