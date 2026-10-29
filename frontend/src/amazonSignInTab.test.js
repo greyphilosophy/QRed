@@ -8,7 +8,8 @@ describe("Amazon's direct prepared-URL tab handoff", () => {
     const tab = { opener: { location: "private-pdf-window" }, close: vi.fn() };
     const open = vi.fn(() => tab);
     expect(openAmazonSignInTab(authorizeUrl, open)).toBe(true);
-    expect(open).toHaveBeenCalledExactlyOnceWith(authorizeUrl);
+    expect(open).toHaveBeenCalledOnce();
+    expect(open).toHaveBeenCalledWith(authorizeUrl);
     expect(tab.opener).toBeNull();
     expect(tab.close).not.toHaveBeenCalled();
   });
