@@ -1,0 +1,45 @@
+name: Temporary Live Amazon Provider Check
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  live-provider-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Read only QRed public provider availability endpoint
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.error
+          import urllib.request
+          import time
+
+          url = "https://qred.org/api/auth/config"
+          error = None
+          for attempt in range(3):
+              try:
+                  request = urllib.request.Request(url, headers={"Accept":"application/json","User-Agent":"QRed-live-config-check/1.0"}, method="GET")
+                  with urllib.request.urlopen(request, timeout=10) as response:
+                      status = response.status
+                      data = json.load(response)
+                  if status != 200 or not isinstance(data, dict):
+                      raise RuntimeError("Unexpected configuration response")
+                  providers = {k: data.get(k) is True for k in ("google", "microsoft", "amazon")}
+                  print("Live QRed provider availability:", json.dumps(providers, sort_keys=True))
+                  if not providers["amazon"]:
+                      raise RuntimeError("Amazon is not currently enabled on live QRed")
+                  print("PASS: Amazon enabled at https://qred.org/api/auth/config")
+                  break
+              except (urllib.error.URLError, TimeoutError) as exc:
+                  error = type(exc).__name__
+                  if attempt == 2:
+                      raise RuntimeError("Cannot reach public QRed configuration endpoint: "+error) from None
+                  time.sleep(2)
+          PY
