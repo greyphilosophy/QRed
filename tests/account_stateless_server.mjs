@@ -86,11 +86,12 @@ const client = await compile({ platform: "browser", external: ["qrcode/lib/rende
   };
   continueLink.onclick = async event => {
     if (!prepared) { event.preventDefault(); return; }
-    // Native browser navigation is the default action of this real anchor.
-    // It does not require creating a blank tab through window.open().
+    // Google and Microsoft use native link navigation. Amazon attempts
+    // direct window.open(finalUrl) synchronously on this gesture to make its
+    // tab closable; if blocked, the native link still provides the fallback.
     const session = prepared;
     prepared = null;
-    if (${JSON.stringify(provider)}.toLowerCase() === "amazon" &&
+    if (${JSON.stringify(provider)} === "amazon" &&
         openAmazonSignInTab(session.authorize_url)) {
       event.preventDefault();
       window.__qredAmazonDirectOpen = true;
