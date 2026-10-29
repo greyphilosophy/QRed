@@ -5,8 +5,10 @@ import { PdfSealForm } from "./PdfSealForm.jsx";
 import { sealPdfInBrowser } from "./pdfClientSeal.js";
 import { beginAccountSignIn, finishAccountSignIn, checkAccountSignInStatus, attestPagesWithAccount } from "./accountSealing.js";
 import { AUTH_PROVIDERS } from "./authProviders.js";
+import { openAuthPendingTab } from "./authPendingTab.js";
 
 vi.mock("./pdfClientSeal.js", () => ({ sealPdfInBrowser: vi.fn() }));
+vi.mock("./authPendingTab.js", () => ({ openAuthPendingTab: vi.fn() }));
 vi.mock("./accountSealing.js", () => ({
   accountSealingAvailable: true,
   beginAccountSignIn: vi.fn(), finishAccountSignIn: vi.fn(), checkAccountSignInStatus: vi.fn(), attestPagesWithAccount: vi.fn(),
@@ -25,6 +27,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async () => ({
     ok: true, json: async () => ({ google: true, microsoft: true, amazon: true }),
   })));
+  openAuthPendingTab.mockReset().mockImplementation(() => popupTab());
   beginAccountSignIn.mockImplementation(async provider => session(provider));
   finishAccountSignIn.mockResolvedValue();
   checkAccountSignInStatus.mockReset().mockResolvedValue({ status: "pending" });
@@ -43,7 +46,8 @@ const upload = () => fireEvent.change(screen.getByLabelText("Open PDF"), {
   target: { files: [new File(["pdf"], "source.pdf")] },
 });
 function popupTab() {
-  return { location: { replace: vi.fn() }, opener: { document: "qred" }, closed: false, close: vi.fn() };
+  return { popup: { opener: null, closed: true, close: vi.fn() },
+    authorize: vi.fn().mockResolvedValue(true), cancel: vi.fn(), dispose: vi.fn() };
 }
 function startProvider(provider) {
   upload();
@@ -92,10 +96,10 @@ it.each(Object.entries(AUTH_PROVIDERS))(
   "one %s button click opens a visible preparation tab and automatically starts OAuth",
   async (provider, details) => {
     const tab = popupTab();
-    const open = vi.spyOn(window, "open").mockReturnValue(tab);
+    openAuthPendingTab.mockReturnValue(tab);
     attestPagesWithAccount.mockImplementation(async (_provider, _pages, options) => {
       expect(options.preparedSession.provider).toBe(provider);
-      expect(options.popup).toBe(tab);
+      expect(options.popup).toBe(tab.popup);
       options.onIdentity({ email: "test@example.com", name: "Profile", name_source: provider });
       return [];
     });
@@ -108,16 +112,16 @@ it.each(Object.entries(AUTH_PROVIDERS))(
 
     render(<PdfSealForm />);
     startProvider(provider);
-    expect(open).toHaveBeenCalledOnce();
-    expect(open).toHaveBeenCalledWith("/auth-pending.html", "_blank");
-    expect(tab.opener).toBeNull();
+    expect(openAuthPendingTab).toHaveBeenCalledOnce();
+    expect(openAuthPendingTab).toHaveBeenCalledOnce();
+    expect(tab.popup.opener).toBeNull();
     await waitFor(() => expect(tab.location.replace).toHaveBeenCalledWith(mockAuthUrl(provider)));
     expect(beginAccountSignIn).toHaveBeenCalledWith(provider, [], expect.objectContaining({ signal: expect.any(AbortSignal) }));
-    expect(tab.location.replace.mock.calls[0][0]).not.toContain("test-secret");
+    expect(tab.authorize.mock.calls[0][1]).not.toContain("test-secret");
     expect(attestPagesWithAccount).toHaveBeenCalledOnce();
     expect(await screen.findByText(/Sealed source.pdf in this browser/)).toBeTruthy();
     expect(screen.getByText(/Sealed source.pdf in this browser/).textContent).toContain("Flattened 2 form field(s)");
-    expect(tab.close).toHaveBeenCalledOnce();
+    expect(tab.popup.close).toHaveBeenCalledOnce();
     expect(screen.getByRole("button", { name: details.button })).toBeTruthy();
   },
 );
@@ -126,7 +130,7 @@ it("opens the preparation tab immediately even with slow PDF extraction", async 
   let continueParsing;
   const parsing = new Promise(resolve => { continueParsing = resolve; });
   const tab = popupTab();
-  vi.spyOn(window, "open").mockReturnValue(tab);
+  openAuthPendingTab.mockReturnValue(tab);
   sealPdfInBrowser.mockImplementation(async options => {
     await parsing;
     await options.attestPages([]);
@@ -135,22 +139,22 @@ it("opens the preparation tab immediately even with slow PDF extraction", async 
 
   render(<PdfSealForm />);
   startProvider("google");
-  expect(window.open).toHaveBeenCalledOnce();
-  expect(tab.location.replace).not.toHaveBeenCalled();
+  expect(openAuthPendingTab).toHaveBeenCalledOnce();
+  expect(tab.authorize).not.toHaveBeenCalled();
   expect(screen.getByText(/Preparing document/)).toBeTruthy();
   continueParsing();
   await waitFor(() => expect(tab.location.replace).toHaveBeenCalledWith(mockAuthUrl("google")));
   await screen.findByText(/Sealed source.pdf in this browser/);
-  expect(window.open).toHaveBeenCalledOnce();
+  expect(openAuthPendingTab).toHaveBeenCalledOnce();
 });
 
 it("falls back to a native provider link if a popup is blocked", async () => {
-  vi.spyOn(window, "open").mockReturnValue(null);
+  openAuthPendingTab.mockReturnValue(null);
   let finishSealing;
   attestPagesWithAccount.mockImplementation(() => new Promise(resolve => { finishSealing = resolve; }));
   render(<PdfSealForm />);
   startProvider("google");
-  expect(window.open).toHaveBeenCalledWith("/auth-pending.html", "_blank");
+  expect(openAuthPendingTab).toHaveBeenCalledOnce();
   const link = await screen.findByRole("link", { name: AUTH_PROVIDERS.google.button });
   expect(link.getAttribute("href")).toBe(mockAuthUrl("google"));
   expect(link.getAttribute("rel")).toContain("noopener");
@@ -166,20 +170,20 @@ it("falls back to a native provider link if a popup is blocked", async () => {
 
 it("reports an unavailable provider and closes its unused preparation tab", async () => {
   const tab = popupTab();
-  vi.spyOn(window, "open").mockReturnValue(tab);
+  openAuthPendingTab.mockReturnValue(tab);
   fetch.mockImplementation(async () => ({ ok: true, json: async () =>
     ({ google: false, microsoft: true, amazon: true }) }));
   render(<PdfSealForm />);
   startProvider("google");
   await screen.findByText(/Google sealing is not enabled/);
-  expect(tab.location.replace).not.toHaveBeenCalled();
-  expect(tab.close).toHaveBeenCalled();
+  expect(tab.authorize).not.toHaveBeenCalled();
+  expect(tab.cancel).toHaveBeenCalled();
   expect(beginAccountSignIn).not.toHaveBeenCalled();
 });
 
 it("cancels work before signing in and closes the temporary tab", async () => {
   const tab = popupTab();
-  vi.spyOn(window, "open").mockReturnValue(tab);
+  openAuthPendingTab.mockReturnValue(tab);
   let rejectParsing;
   sealPdfInBrowser.mockImplementation(() => new Promise((_resolve, reject) => { rejectParsing = reject; }));
   render(<PdfSealForm />);
@@ -188,13 +192,13 @@ it("cancels work before signing in and closes the temporary tab", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Cancel sealing" }));
   rejectParsing(new Error("Cancelled"));
   await screen.findByText("Account sealing cancelled.");
-  expect(tab.close).toHaveBeenCalled();
+  expect(tab.cancel).toHaveBeenCalled();
   expect(URL.createObjectURL).not.toHaveBeenCalled();
 });
 
 it("allows mobile account status checks while the prepared provider tab is open", async () => {
   const tab = popupTab();
-  vi.spyOn(window, "open").mockReturnValue(tab);
+  openAuthPendingTab.mockReturnValue(tab);
   attestPagesWithAccount.mockImplementation(() => new Promise(() => {}));
   render(<PdfSealForm />);
   startProvider("google");
@@ -212,16 +216,16 @@ it("allows mobile account status checks while the prepared provider tab is open"
   fireEvent.click(check);
   await screen.findByText(/Account sign-in verified by QRed/);
   fireEvent.click(screen.getByRole("button", { name: "Cancel sealing" }));
-  expect(tab.close).toHaveBeenCalled();
+  expect(tab.cancel).toHaveBeenCalled();
 });
 
 it("preserves the provider's error page when a sign-in fails", async () => {
   const tab = popupTab();
-  vi.spyOn(window, "open").mockReturnValue(tab);
+  openAuthPendingTab.mockReturnValue(tab);
   attestPagesWithAccount.mockRejectedValue(new Error("Google declined QRed's authorization code exchange"));
   render(<PdfSealForm />);
   startProvider("google");
   await waitFor(() => expect(tab.location.replace).toHaveBeenCalledOnce());
   await screen.findByText(/PDF sealing failed: Google declined QRed's authorization code exchange/);
-  expect(tab.close).not.toHaveBeenCalled();
+  expect(tab.popup.close).not.toHaveBeenCalled();
 });
