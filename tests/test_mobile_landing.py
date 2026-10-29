@@ -87,8 +87,6 @@ def test_stamp_tool_asks_for_pdf_and_layout_before_signing_method(page):
 
 def test_detached_preparation_tab_accepts_same_origin_handoff(page):
     """Real Chromium test: opener isolation must not strand an open tab."""
-    import re
-
     page.goto(BASE_URL)
     token = "a" * 32
     page.evaluate("""token => {
@@ -131,5 +129,5 @@ def test_detached_preparation_tab_accepts_same_origin_handoff(page):
       provider: "google",
       url: "https://accounts.google.com/o/oauth2/v2/auth?state=redacted"
     })""")
-    expect(pending).to_have_url(re.compile(r"https://accounts\\.google\\.com/o/oauth2/v2/auth"))
+    pending.wait_for_url("https://accounts.google.com/o/oauth2/v2/auth?state=redacted")
     expect(pending.get_by_role("heading", name="Provider test interception")).to_be_visible()
