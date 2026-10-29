@@ -40,7 +40,7 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [preparedAuthorizeUrl, setPreparedAuthorizeUrl] = useState("");
   const [authenticating, setAuthenticating] = useState(false);
   const [checkingAccount, setCheckingAccount] = useState(false);
-  const [method, setMethod] = useState("private-key");
+  const [method, setMethod] = useState(null);
   const [signingIdentity, setSigningIdentity] = useState(null);
   const [availability, setAvailability] = useState(null);
   const [configError, setConfigError] = useState("");
@@ -250,7 +250,7 @@ export function PdfSealForm({ onUsePublicKey }) {
   }
 
   async function sealPdf() {
-    if (!file || (method === "private-key" && !privateKey.trim())) {
+    if (!file || !method || (method === "private-key" && !privateKey.trim())) {
       setMessage("Choose a PDF and a sealing method. For local sealing, generate, open, or paste your private key.");
       return;
     }
@@ -342,21 +342,49 @@ export function PdfSealForm({ onUsePublicKey }) {
     <div className="card">
       <h2>Stamp a PDF</h2>
       <p style={{ color: "#64748b", marginBottom: "1rem" }}>
-        Seal a PDF’s extracted text and use spare QR capacity for line locations and a small grayscale visual reference. Image-only pages receive a visual reference; blank pages receive a signed blank-page marker. Visual references are approximate and can lose small details, including digits and faces. Supported form fields are flattened before sealing. Review the values in your saved copy.
+        Choose your PDF and page layout, then select how to sign it. Your PDF stays on your device; QRed never sends the document to a server.
       </p>
-      <p>Your PDF stays on your device. Stamping happens in this browser, and the file is not sent to a server.</p>
+      <div className="demo-grid">
+        <div className="demo-input">
+          <label htmlFor="pdf-to-stamp">Open PDF</label>
+          <input id="pdf-to-stamp" type="file" accept="application/pdf" disabled={loading} onChange={(e) => setFile(e.target.files?.[0] || null)} />
+        </div>
+        <div className="demo-input">
+          <label>Page layout</label>
+          <select
+            aria-label="Page layout"
+            value={pageScalingStrategy}
+            disabled={loading}
+            onChange={(e) => setPageScalingStrategy(e.target.value)}
+            title="Choose where to place the document seals."
+          >
+            <option value="automatic">Automatic (watermark first, footer fallback)</option>
+            <option value="watermark">Pale watermark (experimental, footer fallback)</option>
+            <option value="legal-footer">Expand letter pages to legal size (bottom 3-inch footer)</option>
+            <option value="shrink-footer">Shrink the document to create a footer</option>
+          </select>
+          <small style={{ color: "#64748b", display: "block", marginTop: "0.5rem" }}>
+            {pageScalingStrategy === "automatic" || pageScalingStrategy === "watermark"
+              ? "Tries pale watermarks first, analyzing each page to place seals around obstructing logos or pictures while keeping the original page size. Image-only pages, blank pages, and pages where a readable watermark cannot fit use a clear footer (legal size for letter pages; shrink otherwise). Use QRed's scanner and try a printed copy before sharing."
+              : pageScalingStrategy === "legal-footer"
+                ? "Adds a 3-inch footer below each page, preserving the original content size. Letter pages become legal size."
+                : "Shrinks each page's content to make room for a clear footer, keeping the original paper size."}
+          </small>
+        </div>
+      </div>
+
+      <p className="key-help">Visual references are approximate. Review small details and form-field values in your saved copy.</p>
+      <details className="stamp-method-details">
+        <summary>How PDF stamping works</summary>
+        <p>QRed seals extracted text and uses spare QR capacity for line locations and a small grayscale visual reference. Image-only pages receive a visual reference, while blank pages receive a signed blank-page marker. Visual references can lose details, including digits and faces. Supported form fields are flattened before sealing.</p>
+      </details>
       <div className="demo-input">
         {loading
           ? <p className="sealing-method-selected">Sealing method: {method === "private-key" ? "Private key (offline)" : provider.label + " login"}</p>
           : <fieldset className="sealing-methods">
-            <legend>Sealing method</legend>
-            <p className="key-help">Choose how to seal your PDF. For account methods, selecting a PDF starts local preparation automatically. Sign-in opens only after you tap the provider button.</p>
+            <legend>Authenticate and stamp</legend>
+            <p className="key-help">Choose a method after selecting your PDF and layout. Account methods prepare the PDF locally first, then ask you to tap again to open sign-in.</p>
             <div className="sealing-method-grid">
-              <button type="button" aria-pressed={method === "private-key"}
-                onClick={() => { setMethod("private-key"); setMessage(""); setSigningIdentity(null); }}
-                disabled={loadingKeys}>
-                Private key (offline)
-              </button>
               {Object.entries(AUTH_PROVIDERS).map(([id, account]) => <button
                 key={id} type="button" aria-pressed={method === id}
                 onClick={() => { setMethod(id); setMessage(""); setSigningIdentity(null); }}
@@ -364,6 +392,11 @@ export function PdfSealForm({ onUsePublicKey }) {
                 title={availability?.[id] === false ? "Not enabled on this QRed installation" : undefined}>
                 {account.button}
               </button>)}
+              <button type="button" aria-pressed={method === "private-key"}
+                onClick={() => { setMethod("private-key"); setMessage(""); setSigningIdentity(null); }}
+                disabled={loadingKeys}>
+                Private key (offline)
+              </button>
             </div>
           </fieldset>}
       </div>
@@ -392,12 +425,7 @@ export function PdfSealForm({ onUsePublicKey }) {
         <p>Save your private key to your device before closing this tool or reloading the page. QRed does not keep a copy. The saved file is unencrypted; keep it private. Open or paste a private key to reuse it; the matching public key is derived automatically.</p>
       </div>
       </>}
-      <div className="demo-grid">
-        <div className="demo-input">
-          <label htmlFor="pdf-to-stamp">Open PDF</label>
-          <input id="pdf-to-stamp" type="file" accept="application/pdf" disabled={loading} onChange={(e) => setFile(e.target.files?.[0] || null)} />
-        </div>
-        {method === "private-key" && <div className="demo-input">
+      {method === "private-key" && <div className="demo-input">
           <label htmlFor="signing-private-key">Private Key</label>
           <input
             id="signing-private-key"
@@ -427,31 +455,10 @@ export function PdfSealForm({ onUsePublicKey }) {
             {onUsePublicKey && <button type="button" onClick={usePublicKey} disabled={!publicKey.trim() || loadingKeys || loading}>Use public key to verify</button>}
           </div>
         </div>}
-        <div className="demo-input">
-          <label>Page layout</label>
-          <select
-            aria-label="Page layout"
-            value={pageScalingStrategy}
-            disabled={loading}
-            onChange={(e) => setPageScalingStrategy(e.target.value)}
-            title="Choose where to place the document seals."
-          >
-            <option value="automatic">Automatic (watermark first, footer fallback)</option>
-            <option value="watermark">Pale watermark (experimental, footer fallback)</option>
-            <option value="legal-footer">Expand letter pages to legal size (bottom 3-inch footer)</option>
-            <option value="shrink-footer">Shrink the document to create a footer</option>
-          </select>
-          <small style={{ color: "#64748b", display: "block", marginTop: "0.5rem" }}>
-            {pageScalingStrategy === "automatic" || pageScalingStrategy === "watermark"
-              ? "Tries pale watermarks first, analyzing each page to place seals around obstructing logos or pictures while keeping the original page size. Image-only pages, blank pages, and pages where a readable watermark cannot fit use a clear footer (legal size for letter pages; shrink otherwise). Use QRed's scanner and try a printed copy before sharing."
-              : pageScalingStrategy === "legal-footer"
-                ? "Adds a 3-inch footer below each page, preserving the original content size. Letter pages become legal size."
-                : "Shrinks each page's content to make room for a clear footer, keeping the original paper size."}
-          </small>
-        </div>
-      </div>
+
       <p id="signing-key-status" role="status" style={{ marginTop: "1rem", color: keyError ? "#ef4444" : "#64748b" }}>{keyStatus}</p>
-      {usesAccount ? readyForSignIn
+      {!method ? <p className="key-help">Choose a signing method to continue.</p>
+        : usesAccount ? readyForSignIn
         ? <ProviderSignInButton provider={method} onClick={openPreparedSignIn}
           href={preparedAuthorizeUrl}
           disabled={loadingKeys || !accountSealingAvailable || !accountAvailable}
