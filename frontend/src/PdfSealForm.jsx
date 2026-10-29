@@ -7,6 +7,7 @@ import { beginAccountSignIn, finishAccountSignIn, checkAccountSignInStatus, atte
 import { AUTH_PROVIDERS, authProvider } from "./authProviders.js";
 import { ProviderSignInButton } from "./ProviderSignInButton.jsx";
 import { openAmazonSignInTab } from "./amazonSignInTab.js";
+import { openAuthPendingTab } from "./authPendingTab.js";
 import { ACCOUNT_SESSION_SECONDS } from "./accountAuthLimits.js";
 
 const BOOTSTRAP_URL = "https://qred.org/";
@@ -76,6 +77,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     const waiting = pendingAccountSignIn.current;
     pendingAccountSignIn.current = null;
     waiting?.reject(new Error("Account sealing cancelled"));
+    activeRequest.current?.tab?.cancel();
     try { activeRequest.current?.popup?.close(); } catch { /* The provider may isolate the popup. */ }
   }, []);
 
@@ -171,6 +173,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     request?.controller.abort();
     // Close our preparation/provider tab immediately, even if async parsing
     // or the provider status poll is currently stalled in a background tab.
+    request?.tab?.cancel();
     try { request?.popup?.close(); } catch { /* The provider may isolate the tab. */ }
     const waiting = pendingAccountSignIn.current;
     pendingAccountSignIn.current = null;
@@ -245,18 +248,15 @@ export function PdfSealForm({ onUsePublicKey }) {
       if (!file) setMessage("Choose a PDF first, then select a sign-in provider.");
       return;
     }
-    // Browsers only allow new tabs during a real user gesture. Open QRed's
-    // informative preparation page now, rather than a blank about:blank tab
-    // after asynchronous PDF extraction or server session setup.
-    let popup = null;
-    try {
-      popup = window.open("/auth-pending.html", "_blank");
-      if (popup) popup.opener = null;
-    } catch { /* Popup blockers retain the manual sign-in fallback below. */ }
+    // Open a same-origin waiting page during the click, and send the
+    // authorization URL over BroadcastChannel once QRed has prepared it.
+    // Chrome may revoke a WindowProxy when opener is detached even though
+    // the tab is open, so never inspect .closed or navigate its .location.
+    const tab = openAuthPendingTab();
     setMethod(id);
     setMessage("");
     setSigningIdentity(null);
-    void sealPdf(id, popup);
+    void sealPdf(id, tab);
   }
 
   async function loadProviderAvailability(id, signal) {
@@ -269,7 +269,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     if (config[id] !== true) throw new Error(authProvider(id).label + " sealing is not enabled on this installation.");
   }
 
-  async function sealPdf(selectedMethod = method, popup = null) {
+  async function sealPdf(selectedMethod = method, tab = null) {
     const selectedProvider = authProvider(selectedMethod);
     const accountMode = Boolean(selectedProvider);
     if (!file || !selectedMethod || (selectedMethod === "private-key" && !privateKey.trim())) {
@@ -277,13 +277,13 @@ export function PdfSealForm({ onUsePublicKey }) {
       return;
     }
     if (accountMode && !accountSealingAvailable) {
-      try { popup?.close(); } catch { /* The tab may be isolated. */ }
+      tab?.cancel();
       setMessage("Account-based sealing is not available in this copy of QRed.");
       return;
     }
     if (activeRequest.current) return;
     const controller = new AbortController();
-    const request = { controller, popup, providerOpened: false };
+    const request = { controller, tab, popup: tab?.popup || null, providerOpened: false };
     activeRequest.current = request;
     let saved = false;
     setLoading(true);
@@ -306,35 +306,34 @@ export function PdfSealForm({ onUsePublicKey }) {
             let handedOff = false;
             try {
               if (controller.signal.aborted) throw new Error("Account sealing cancelled");
-              let signInPopup = request.popup;
-              if (signInPopup && !signInPopup.closed) {
+              let handoffSent = false;
+              if (request.tab) {
                 try {
-                  signInPopup.location.replace(session.authorize_url);
-                  request.providerOpened = true;
-                  setAuthenticating(true);
-                  setMessage("Opening " + selectedProvider.label + " sign-in. Return to this QRed tab afterward to finish sealing.");
-                } catch {
-                  try { signInPopup.close(); } catch { /* May already be isolated. */ }
+                  handoffSent = await request.tab.authorize(selectedMethod, session.authorize_url);
+                } catch { /* A failed handoff uses the native-link fallback. */ }
+                if (!handoffSent) {
+                  request.tab.cancel();
+                  request.tab = null;
                   request.popup = null;
-                  signInPopup = null;
                 }
-              } else {
-                request.popup = null;
-                signInPopup = null;
               }
-              if (!signInPopup) {
-                // Exceptional fallback only: a blocked/closed popup means the
-                // user must tap the prepared native link. No secrets in href.
+              if (handoffSent) {
+                request.providerOpened = true;
+                setAuthenticating(true);
+                setMessage("Sign-in sent to the " + selectedProvider.label + " tab. Return to QRed after signing in.");
+              } else {
+                // Popup blocking or failed same-origin handshake. Do not
+                // misreport an already-open tab as having been blocked.
                 await new Promise((resolve, reject) => {
                   pendingAccountSignIn.current = { provider: selectedMethod, session, resolve, reject };
                   setPreparedAuthorizeUrl(session.authorize_url);
                   setReadyForSignIn(true);
-                  setMessage("Your browser blocked the sign-in tab. Tap the sign-in link below to continue.");
+                  setMessage("Could not connect to the preparation tab. Tap the sign-in link below to continue.");
                 });
                 setAuthenticating(true);
               }
               handedOff = true;
-              return await attestPagesWithAccount(selectedMethod, pages, { popup: signInPopup, preparedSession: session,
+              return await attestPagesWithAccount(selectedMethod, pages, { popup: request.popup, preparedSession: session,
                 signal: controller.signal, onStatus: setMessage, onIdentity: setSigningIdentity });
             } finally {
               if (pendingAccountSignIn.current?.session === session) pendingAccountSignIn.current = null;
@@ -375,6 +374,11 @@ export function PdfSealForm({ onUsePublicKey }) {
       // If sign-in failed, leave the provider callback tab visible so its
       // sanitized error can be read. Never close it as a side effect of the
       // original document window reporting an error.
+      if (controller.signal.aborted || !request.providerOpened) {
+        request.tab?.cancel();
+      } else {
+        request.tab?.dispose();
+      }
       if (saved || controller.signal.aborted || !request.providerOpened) {
         try { request.popup?.close(); } catch { /* The provider may isolate the popup. */ }
       }
