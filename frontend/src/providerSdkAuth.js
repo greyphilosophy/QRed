@@ -33,7 +33,7 @@ export async function loadGoogleSdk() {
   await loadScript(GOOGLE_SRC, () => Boolean(window.google?.accounts?.id?.renderButton));
 }
 
-export async function renderGoogleButton(container, { clientId, nonce, onCredential }) {
+export async function renderGoogleButton(container, { clientId, nonce, onCredential, onClick }) {
   await loadGoogleSdk();
   if (!container.isConnected) return;
   window.google.accounts.id.initialize({
@@ -46,6 +46,7 @@ export async function renderGoogleButton(container, { clientId, nonce, onCredent
   window.google.accounts.id.renderButton(container, {
     type: "standard", theme: "outline", size: "large", text: "signin_with",
     shape: "rectangular", logo_alignment: "left", width: Math.max(200, Math.min(330, container.clientWidth || 300)),
+    click_listener: onClick,
   });
 }
 
