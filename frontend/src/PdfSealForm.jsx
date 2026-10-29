@@ -3,9 +3,10 @@ import React, { useEffect, useRef, useState } from "react";
 import { sealPdfInBrowser } from "./pdfClientSeal.js";
 import { decodeSigningKey, deriveSigningPublicKey, generateSigningKeyPair, readSigningKeyFile, validateSigningKeyPair } from "./signingKeys.js";
 import { encodeBase64Url } from "./sealSignature.js";
-import { beginAccountSignIn, finishAccountSignIn, checkAccountSignInStatus, attestPagesWithAccount, accountSealingAvailable } from "./accountSealing.js";
+import { beginAccountSignIn, finishAccountSignIn, checkAccountSignInStatus, attestPagesWithAccount, completeAccountSignIn, accountSealingAvailable } from "./accountSealing.js";
 import { AUTH_PROVIDERS, authProvider } from "./authProviders.js";
-import { ProviderSignInButton } from "./ProviderSignInButton.jsx";
+import { ProviderSdkButtons } from "./ProviderSdkButtons.jsx";
+import { createSdkNonce, loadMicrosoftSdk, loadAmazonSdk, prepareMicrosoft, prepareAmazon, microsoftPopup, amazonPopup } from "./providerSdkAuth.js";
 import { openAmazonSignInTab } from "./amazonSignInTab.js";
 import { ACCOUNT_SESSION_SECONDS } from "./accountAuthLimits.js";
 
@@ -41,6 +42,11 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [authenticating, setAuthenticating] = useState(false);
   const [checkingAccount, setCheckingAccount] = useState(false);
   const [method, setMethod] = useState(null);
+  const [loginNonce, setLoginNonce] = useState(() => createSdkNonce());
+  const [sdkClientIds, setSdkClientIds] = useState(null);
+  const [sdkReady, setSdkReady] = useState({ microsoft: false, amazon: false });
+  const microsoftApp = useRef(null);
+  const googlePending = useRef(null);
   const [signingIdentity, setSigningIdentity] = useState(null);
   const [availability, setAvailability] = useState(null);
   const [configError, setConfigError] = useState("");
@@ -70,6 +76,32 @@ export function PdfSealForm({ onUsePublicKey }) {
       .finally(() => clearTimeout(timer));
     return () => { current = false; clearTimeout(timer); controller.abort(); };
   }, [usesAccount, configAttempt]);
+
+  useEffect(() => {
+    // Only load third-party login libraries after the user has selected a PDF
+    // for account signing. Offline/private-key mode remains fully local.
+    if (!file || method === "private-key") return;
+    let current = true;
+    const controller = new AbortController();
+    fetch("/api/auth/client-config", { signal: controller.signal, credentials: "same-origin" })
+      .then(response => {
+        if (!response.ok) throw new Error("Account sign-in configuration unavailable");
+        return response.json();
+      })
+      .then(async ids => {
+        if (!current) return;
+        setSdkClientIds(ids);
+        if (ids?.microsoft) void loadMicrosoftSdk()
+          .then(() => prepareMicrosoft(ids.microsoft))
+          .then(app => { if (current) { microsoftApp.current = app; setSdkReady(state => ({ ...state, microsoft: true })); } })
+          .catch(() => { if (current) setMessage("Could not load Microsoft sign-in. You can still choose another provider."); });
+        if (ids?.amazon) void loadAmazonSdk()
+          .then(() => prepareAmazon(ids.amazon))
+          .then(() => { if (current) setSdkReady(state => ({ ...state, amazon: true })); })
+          .catch(() => { if (current) setMessage("Could not load Amazon sign-in. You can still choose another provider."); });
+      }).catch(() => { if (current) setMessage("Could not load account sign-in settings. Try again with an internet connection."); });
+    return () => { current = false; controller.abort(); };
+  }, [file, method === "private-key"]);
 
   useEffect(() => () => {
     activeRequest.current?.controller.abort();
@@ -240,23 +272,43 @@ export function PdfSealForm({ onUsePublicKey }) {
     }, 0);
   }
 
-  function beginProviderSealing(id) {
-    if (!file || loading || activeRequest.current) {
-      if (!file) setMessage("Choose a PDF first, then select a sign-in provider.");
+  function beginProviderSealing(id, credentialPromise) {
+    if (!file || loading || activeRequest.current) return;
+    if (!credentialPromise) {
+      setMessage("Could not start the provider's sign-in popup.");
       return;
     }
-    // Browsers only allow new tabs during a real user gesture. Open QRed's
-    // informative preparation page now, rather than a blank about:blank tab
-    // after asynchronous PDF extraction or server session setup.
-    let popup = null;
-    try {
-      popup = window.open("/auth-pending.html", "_blank");
-      if (popup) popup.opener = null;
-    } catch { /* Popup blockers retain the manual sign-in fallback below. */ }
     setMethod(id);
     setMessage("");
     setSigningIdentity(null);
-    void sealPdf(id, popup);
+    // This function is called synchronously from a real user gesture. The
+    // provider library owns its popup and reports the verified result.
+    void sealPdf(id, credentialPromise, loginNonce);
+  }
+
+  function startGoogleClick() {
+    let resolveCredential, rejectCredential;
+    const promise = new Promise((resolve, reject) => {
+      resolveCredential = resolve; rejectCredential = reject;
+    });
+    googlePending.current = { resolve: resolveCredential, reject: rejectCredential };
+    beginProviderSealing("google", promise);
+  }
+
+  function completeGoogleClick(credential) {
+    googlePending.current?.resolve(credential);
+    googlePending.current = null;
+  }
+
+  function startOtherProvider(id) {
+    try {
+      const credentialPromise = id === "microsoft"
+        ? microsoftPopup(microsoftApp.current, loginNonce)
+        : amazonPopup(loginNonce);
+      beginProviderSealing(id, credentialPromise);
+    } catch {
+      setMessage("Could not open the provider's sign-in popup.");
+    }
   }
 
   async function loadProviderAvailability(id, signal) {
@@ -269,7 +321,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     if (config[id] !== true) throw new Error(authProvider(id).label + " sealing is not enabled on this installation.");
   }
 
-  async function sealPdf(selectedMethod = method, popup = null) {
+  async function sealPdf(selectedMethod = method, credentialPromise = null, nonce = loginNonce) {
     const selectedProvider = authProvider(selectedMethod);
     const accountMode = Boolean(selectedProvider);
     if (!file || !selectedMethod || (selectedMethod === "private-key" && !privateKey.trim())) {
@@ -277,13 +329,13 @@ export function PdfSealForm({ onUsePublicKey }) {
       return;
     }
     if (accountMode && !accountSealingAvailable) {
-      try { popup?.close(); } catch { /* The tab may be isolated. */ }
+      setMessage("Account sign-in is not available. Select a different method.");
       setMessage("Account-based sealing is not available in this copy of QRed.");
       return;
     }
     if (activeRequest.current) return;
     const controller = new AbortController();
-    const request = { controller, popup, providerOpened: false };
+    const request = { controller, provider: selectedMethod, providerOpened: false };
     activeRequest.current = request;
     let saved = false;
     setLoading(true);
@@ -301,45 +353,25 @@ export function PdfSealForm({ onUsePublicKey }) {
         file,
         ...(selectedMethod === "private-key" ? { privateKey, publicKey: matchingPublicKey } : {
           attestPages: async pages => {
-            const session = await beginAccountSignIn(selectedMethod, pages, { signal: controller.signal });
-            request.session = session; request.provider = selectedMethod;
-            let handedOff = false;
+            if (!credentialPromise) throw new Error("Choose a provider to sign in.");
+            const session = await beginAccountSignIn(selectedMethod, pages,
+              { signal: controller.signal, nonce });
+            request.session = session;
             try {
+              // The provider SDK owns the window. No QRed preparation tab,
+              // blank tab, manual second click, or popup WindowProxy polling.
+              const credential = await credentialPromise;
               if (controller.signal.aborted) throw new Error("Account sealing cancelled");
-              let signInPopup = request.popup;
-              if (signInPopup && !signInPopup.closed) {
-                try {
-                  signInPopup.location.replace(session.authorize_url);
-                  request.providerOpened = true;
-                  setAuthenticating(true);
-                  setMessage("Opening " + selectedProvider.label + " sign-in. Return to this QRed tab afterward to finish sealing.");
-                } catch {
-                  try { signInPopup.close(); } catch { /* May already be isolated. */ }
-                  request.popup = null;
-                  signInPopup = null;
-                }
-              } else {
-                request.popup = null;
-                signInPopup = null;
-              }
-              if (!signInPopup) {
-                // Exceptional fallback only: a blocked/closed popup means the
-                // user must tap the prepared native link. No secrets in href.
-                await new Promise((resolve, reject) => {
-                  pendingAccountSignIn.current = { provider: selectedMethod, session, resolve, reject };
-                  setPreparedAuthorizeUrl(session.authorize_url);
-                  setReadyForSignIn(true);
-                  setMessage("Your browser blocked the sign-in tab. Tap the sign-in link below to continue.");
-                });
-                setAuthenticating(true);
-              }
-              handedOff = true;
-              return await attestPagesWithAccount(selectedMethod, pages, { popup: signInPopup, preparedSession: session,
-                signal: controller.signal, onStatus: setMessage, onIdentity: setSigningIdentity });
+              await completeAccountSignIn(selectedMethod, session, credential, { signal: controller.signal });
+              request.providerOpened = true;
+              return await attestPagesWithAccount(selectedMethod, pages, {
+                popup: null, preparedSession: session, signal: controller.signal,
+                onStatus: setMessage, onIdentity: setSigningIdentity,
+              });
             } finally {
-              if (pendingAccountSignIn.current?.session === session) pendingAccountSignIn.current = null;
-              setReadyForSignIn(false);
-              if (!handedOff) await finishAccountSignIn(selectedMethod, session);
+              // The successful attestation helper clears its own session;
+              // this also clears aborted or failed SDK flows.
+              await finishAccountSignIn(selectedMethod, session);
             }
           },
         }),
@@ -372,12 +404,8 @@ export function PdfSealForm({ onUsePublicKey }) {
     } catch (error) {
       setMessage(controller.signal.aborted ? "Account sealing cancelled." : `PDF sealing failed: ${error.message}`);
     } finally {
-      // If sign-in failed, leave the provider callback tab visible so its
-      // sanitized error can be read. Never close it as a side effect of the
-      // original document window reporting an error.
-      if (saved || controller.signal.aborted || !request.providerOpened) {
-        try { request.popup?.close(); } catch { /* The provider may isolate the popup. */ }
-      }
+      // Provider SDKs own and close their popup. QRed retains no tab handle.
+      setLoginNonce(createSdkNonce());
       if (activeRequest.current === request) activeRequest.current = null;
       setReadyForSignIn(false);
       setPreparedAuthorizeUrl("");
@@ -396,7 +424,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       <div className="demo-grid">
         <div className="demo-input">
           <label htmlFor="pdf-to-stamp">Open PDF</label>
-          <input id="pdf-to-stamp" type="file" accept="application/pdf" disabled={loading} onChange={(e) => setFile(e.target.files?.[0] || null)} />
+          <input id="pdf-to-stamp" type="file" accept="application/pdf" disabled={loading} onChange={(e) => { setFile(e.target.files?.[0] || null); setLoginNonce(createSdkNonce()); }} />
         </div>
         <div className="demo-input">
           <label>Page layout</label>
@@ -404,7 +432,7 @@ export function PdfSealForm({ onUsePublicKey }) {
             aria-label="Page layout"
             value={pageScalingStrategy}
             disabled={loading}
-            onChange={(e) => setPageScalingStrategy(e.target.value)}
+            onChange={(e) => { setPageScalingStrategy(e.target.value); setLoginNonce(createSdkNonce()); }}
             title="Choose where to place the document seals."
           >
             <option value="automatic">Automatic (watermark first, footer fallback)</option>
@@ -432,15 +460,19 @@ export function PdfSealForm({ onUsePublicKey }) {
           ? <p className="sealing-method-selected">Sealing method: {method === "private-key" ? "Private key (offline)" : provider.label + " login"}</p>
           : <fieldset className="sealing-methods">
             <legend>Authenticate and stamp</legend>
-            <p className="key-help">Choose a PDF and layout above, then tap a provider to prepare the document and open sign-in automatically.</p>
-            <div className="sealing-method-grid">
-              {Object.entries(AUTH_PROVIDERS).map(([id, account]) => <button
-                key={id} type="button" aria-pressed={method === id}
-                onClick={() => beginProviderSealing(id)}
-                disabled={!file || loading || loadingKeys || !accountSealingAvailable || availability?.[id] === false}
-                title={availability?.[id] === false ? "Not enabled on this QRed installation" : undefined}>
-                {account.button}
-              </button>)}
+            <p className="key-help">Choose a PDF and layout above, then use a provider’s official sign-in button. Your PDF stays on your device.</p>
+            <ProviderSdkButtons
+              clientIds={sdkClientIds}
+              sdkReady={sdkReady}
+              nonce={loginNonce}
+              busy={!file || loading || loadingKeys}
+              onGoogleClick={startGoogleClick}
+              onGoogleCredential={completeGoogleClick}
+              onMicrosoftClick={() => startOtherProvider("microsoft")}
+              onAmazonClick={() => startOtherProvider("amazon")}
+              onError={setMessage}
+            />
+            <div className="sealing-method-grid offline-signin-choice">
               <button type="button" aria-pressed={method === "private-key"}
                 onClick={() => { setMethod("private-key"); setMessage(""); setSigningIdentity(null); }}
                 disabled={loading || loadingKeys}>
@@ -506,24 +538,12 @@ export function PdfSealForm({ onUsePublicKey }) {
         </div>}
 
       <p id="signing-key-status" role="status" style={{ marginTop: "1rem", color: keyError ? "#ef4444" : "#64748b" }}>{keyStatus}</p>
-      {usesAccount && readyForSignIn && <ProviderSignInButton provider={method} onClick={openPreparedSignIn}
-        href={preparedAuthorizeUrl}
-        disabled={loadingKeys || !accountSealingAvailable}
-        aria-describedby="account-sealing-action" />}
-      {usesAccount && loading && !readyForSignIn && <p role="status" aria-live="polite">
-        {authenticating ? "Waiting for sign-in…" : "Preparing document…"}
+      {usesAccount && loading && <p role="status" aria-live="polite">
+        Preparing and sealing your document… Complete the provider's popup, then return here.
       </p>}
       {method === "private-key" && <button type="button" onClick={() => sealPdf()}
         disabled={loading || loadingKeys} aria-busy={loading} style={{ marginTop: "1rem" }}>
         {loading ? "Sealing..." : "Stamp and save PDF"}
-      </button>}
-      {usesAccount && <p id="account-sealing-action" className="key-help">
-        {readyForSignIn ? "Sign-in could not open automatically. Tap the provider link to continue."
-          : "QRed opens a sign-in tab when you choose a provider. Your PDF stays on this device."}
-      </p>}
-      {loading && usesAccount && authenticating && <button type="button"
-        onClick={checkSignInStatus} disabled={checkingAccount}>
-        {checkingAccount ? "Checking sign-in..." : "Check sign-in status"}
       </button>}
       {loading && usesAccount && <button type="button" onClick={cancelSealing}>Cancel sealing</button>}
       {message && (
