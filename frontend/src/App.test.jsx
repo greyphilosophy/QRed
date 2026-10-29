@@ -75,7 +75,7 @@ describe("App PDF signing keys", () => {
 
   it("keeps the scanner as the landing page with a stamping entry point", () => {
     render(React.createElement(App));
-    expect(screen.getByRole("heading", { name: "Point at a QRed seal" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Scan a QRed seal" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Start scanning" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open PDF stamping tool" })).toBeTruthy();
     expect(screen.queryByLabelText("Private Key")).toBeNull();
