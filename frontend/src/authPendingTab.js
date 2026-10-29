@@ -36,7 +36,7 @@ export function openAuthPendingTab({
     }
     // Isolate the authentication tab from the document and keys. The actual
     // authorization handoff uses BroadcastChannel, not a WindowProxy handle.
-    popup.opener = null;
+    try { popup.opener = null; } catch { /* WindowProxy may already be isolated. */ }
   } catch {
     channel.close();
     try { popup?.close(); } catch { /* Might be isolated already. */ }
