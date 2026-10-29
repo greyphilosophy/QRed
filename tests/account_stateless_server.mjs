@@ -53,6 +53,7 @@ async function exchange(url, options) {
 // The optional Node PNG renderer is not used by browser sealing/verification.
 const client = await compile({ platform: "browser", external: ["qrcode/lib/renderer/png"], stdin: { resolveDir: frontend, loader: "js", contents: `
   import { beginAccountSignIn, attestPagesWithAccount } from "./src/accountSealing.js";
+  import { openAmazonSignInTab } from "./src/amazonSignInTab.js";
   import { createQRedSeals } from "./src/qredSealer.js";
   import { encodePageEvidence } from "./src/pageEvidence.js";
   import { verifyQRedSeals } from "./src/qredVerifier.js";
@@ -89,6 +90,11 @@ const client = await compile({ platform: "browser", external: ["qrcode/lib/rende
     // It does not require creating a blank tab through window.open().
     const session = prepared;
     prepared = null;
+    if (${JSON.stringify(provider)}.toLowerCase() === "amazon" &&
+        openAmazonSignInTab(session.authorize_url)) {
+      event.preventDefault();
+      window.__qredAmazonDirectOpen = true;
+    }
     try {
       const receipts = await attestPagesWithAccount(${JSON.stringify(provider)}, pages,
         { preparedSession: session, trusted });
