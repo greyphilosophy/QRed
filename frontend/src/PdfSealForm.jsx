@@ -47,7 +47,6 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [configAttempt, setConfigAttempt] = useState(0);
   const provider = authProvider(method);
   const usesAccount = Boolean(provider);
-  const accountAvailable = availability?.[method] === true;
   const activeRequest = useRef(null);
   const pendingAccountSignIn = useRef(null);
   const derivedFor = useRef("");
@@ -277,7 +276,11 @@ export function PdfSealForm({ onUsePublicKey }) {
       setMessage("Choose a PDF and a sealing method. For local sealing, generate, open, or paste your private key.");
       return;
     }
-    if (accountMode && !accountSealingAvailable) return;
+    if (accountMode && !accountSealingAvailable) {
+      try { popup?.close(); } catch { /* The tab may be isolated. */ }
+      setMessage("Account-based sealing is not available in this copy of QRed.");
+      return;
+    }
     if (activeRequest.current) return;
     const controller = new AbortController();
     const request = { controller, popup, providerOpened: false };
