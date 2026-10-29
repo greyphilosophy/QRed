@@ -113,9 +113,8 @@ it.each(Object.entries(AUTH_PROVIDERS))(
     render(<PdfSealForm />);
     startProvider(provider);
     expect(openAuthPendingTab).toHaveBeenCalledOnce();
-    expect(openAuthPendingTab).toHaveBeenCalledOnce();
     expect(tab.popup.opener).toBeNull();
-    await waitFor(() => expect(tab.location.replace).toHaveBeenCalledWith(mockAuthUrl(provider)));
+    await waitFor(() => expect(tab.authorize).toHaveBeenCalledWith(provider, mockAuthUrl(provider)));
     expect(beginAccountSignIn).toHaveBeenCalledWith(provider, [], expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(tab.authorize.mock.calls[0][1]).not.toContain("test-secret");
     expect(attestPagesWithAccount).toHaveBeenCalledOnce();
@@ -143,7 +142,7 @@ it("opens the preparation tab immediately even with slow PDF extraction", async 
   expect(tab.authorize).not.toHaveBeenCalled();
   expect(screen.getByText(/Preparing document/)).toBeTruthy();
   continueParsing();
-  await waitFor(() => expect(tab.location.replace).toHaveBeenCalledWith(mockAuthUrl("google")));
+  await waitFor(() => expect(tab.authorize).toHaveBeenCalledWith("google", mockAuthUrl("google")));
   await screen.findByText(/Sealed source.pdf in this browser/);
   expect(openAuthPendingTab).toHaveBeenCalledOnce();
 });
@@ -202,7 +201,7 @@ it("allows mobile account status checks while the prepared provider tab is open"
   attestPagesWithAccount.mockImplementation(() => new Promise(() => {}));
   render(<PdfSealForm />);
   startProvider("google");
-  await waitFor(() => expect(tab.location.replace).toHaveBeenCalledOnce());
+  await waitFor(() => expect(tab.authorize).toHaveBeenCalledOnce());
   const check = await screen.findByRole("button", { name: "Check sign-in status" });
   fireEvent.click(check);
   await screen.findByText(/QRed has not received a completed sign-in from the provider/);
@@ -225,7 +224,7 @@ it("preserves the provider's error page when a sign-in fails", async () => {
   attestPagesWithAccount.mockRejectedValue(new Error("Google declined QRed's authorization code exchange"));
   render(<PdfSealForm />);
   startProvider("google");
-  await waitFor(() => expect(tab.location.replace).toHaveBeenCalledOnce());
+  await waitFor(() => expect(tab.authorize).toHaveBeenCalledOnce());
   await screen.findByText(/PDF sealing failed: Google declined QRed's authorization code exchange/);
   expect(tab.popup.close).not.toHaveBeenCalled();
 });
