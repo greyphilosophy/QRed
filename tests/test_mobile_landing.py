@@ -51,3 +51,36 @@ def test_desktop_keeps_scan_and_stamp_side_by_side(page):
     assert scan_box is not None and stamp_box is not None
     assert abs(scan_box["y"] - stamp_box["y"]) < 3
     assert stamp_box["x"] > scan_box["x"]
+
+def test_stamp_tool_asks_for_pdf_and_layout_before_signing_method(page):
+    page.set_viewport_size({"width": 393, "height": 700})
+    page.goto(BASE_URL)
+    page.get_by_role("button", name="Open PDF stamping tool").click()
+
+    pdf = page.get_by_label("Open PDF", exact=True)
+    layout = page.get_by_label("Page layout", exact=True)
+    choices = page.locator(".sealing-method-grid button")
+    expect(pdf).to_be_visible()
+    expect(layout).to_be_visible()
+    expect(layout).to_have_value("automatic")
+    expect(choices).to_have_count(4)
+    assert choices.all_text_contents() == [
+        "Authenticate with Google login",
+        "Authenticate with Microsoft login",
+        "Authenticate with Amazon login",
+        "Private key (offline)",
+    ]
+    assert page.evaluate("""() => {
+      const pdf = document.querySelector("#pdf-to-stamp");
+      const layout = document.querySelector("select[aria-label='Page layout']");
+      const auth = document.querySelector(".sealing-method-grid button");
+      return Boolean(pdf.compareDocumentPosition(layout) & Node.DOCUMENT_POSITION_FOLLOWING) &&
+             Boolean(layout.compareDocumentPosition(auth) & Node.DOCUMENT_POSITION_FOLLOWING);
+    }""")
+    assert all(button.get_attribute("aria-pressed") == "false" for button in choices.all())
+    expect(page.get_by_label("Private Key", exact=True)).to_have_count(0)
+    expect(page.get_by_role("button", name="Stamp and save PDF")).to_have_count(0)
+
+    choices.last.click()
+    expect(page.get_by_label("Private Key", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Stamp and save PDF")).to_be_visible()
