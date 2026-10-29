@@ -164,6 +164,7 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", layout: 
     """Open the real stamping UI and return its downloaded PDF and result."""
     page.goto(BASE_URL, wait_until="networkidle", timeout=30000)
     page.get_by_role("button", name="Open PDF stamping tool", exact=True).click()
+    page.get_by_role("button", name="Private key (offline)", exact=True).click()
     expect(page.get_by_role("button", name="Generate key pair", exact=True)).to_be_enabled()
     page.get_by_label("Private Key", exact=True).fill(private_key or DEMO_PRIVATE_KEY)
     expect(page.get_by_label("Encoding Strategy")).to_have_count(0)
@@ -471,6 +472,7 @@ class TestPdfExtractionIntegrity:
         base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
         page.goto(base_url, wait_until="networkidle")
         page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Private key (offline)", exact=True).click()
         expect(page.get_by_role("button", name="Generate key pair", exact=True)).to_be_enabled()
         page.get_by_label("Open PDF", exact=True).set_input_files(source)
         page.get_by_label("Private Key", exact=True).fill(DEMO_PRIVATE_KEY)
@@ -494,6 +496,7 @@ class TestKeyGenerationImportAndSignatureVerification:
         base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
         page.goto(base_url, wait_until="networkidle")
         page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Private key (offline)", exact=True).click()
         private_input = page.get_by_label("Private Key", exact=True)
         public_input = page.get_by_label("Public Key", exact=True)
         expect(private_input).to_have_value("")
@@ -526,6 +529,7 @@ class TestKeyGenerationImportAndSignatureVerification:
         # Closing clears the keys. The private download restores the same identity.
         page.get_by_role("button", name="Close", exact=True).click()
         page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Private key (offline)", exact=True).click()
         expect(private_input).to_have_value("")
         expect(public_input).to_have_count(0)
         page.get_by_label("Open private key file", exact=True).set_input_files(tmp_path / "qred-ed25519-private-key.txt")
