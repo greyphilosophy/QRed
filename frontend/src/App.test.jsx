@@ -119,6 +119,7 @@ describe("App PDF signing keys", () => {
 
   it("starts with empty signing keys and generates a matching pair without a network request", async () => {
     render(React.createElement(PdfSealForm));
+    chooseOfflineSealing();
     expect(screen.getByLabelText("Private Key").value).toBe("");
     expect(window.__qredPublicKeys).toBe("");
     expect(screen.queryByRole("button", { name: "Use Default Keys" })).toBeNull();
