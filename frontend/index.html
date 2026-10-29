@@ -391,6 +391,105 @@
         .demo-grid, .sealing-method-grid { grid-template-columns: 1fr; }
         .ar-controls { border-radius: 28px; flex-direction: column; }
         .ar-scan-feedback { bottom: calc(clamp(1rem, 3vw, 2rem) + 8.5rem); }
+
+        /* The idle screen must reserve real space for BOTH actions. A 100vh
+           hero with bottom-positioned stacked buttons hid Stamp PDF on phones. */
+        .homepage { padding: 0.5rem; }
+        .ar-display-idle {
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          gap: clamp(0.65rem, 2dvh, 1rem);
+          min-height: calc(100vh - 1rem); /* fallback for older browsers */
+          min-height: calc(100dvh - 1rem); /* visible area below browser chrome */
+          padding: clamp(0.75rem, 2dvh, 1.25rem) 1rem;
+        }
+        .ar-display-idle .ar-idle {
+          flex: 0 1 auto;
+          flex-direction: column;
+          gap: clamp(0.6rem, 2dvh, 1rem);
+          min-height: 0;
+        }
+        .ar-display-idle .ar-reticle {
+          flex: 0 0 auto;
+          height: clamp(96px, 19dvh, 150px);
+          left: auto;
+          position: relative;
+          top: auto;
+          transform: none;
+          width: clamp(96px, 19dvh, 150px);
+        }
+        .ar-display-idle .ar-reticle span { height: 32px; width: 32px; }
+        .ar-display-idle .ar-copy {
+          max-width: 30rem;
+          padding: 0;
+          width: 100%;
+        }
+        .ar-display-idle .eyebrow {
+          font-size: 0.7rem;
+          letter-spacing: 0.14em;
+          margin-bottom: 0.35rem;
+        }
+        .ar-display-idle .ar-copy h1 {
+          font-size: clamp(1.8rem, 7vw, 2.45rem);
+          letter-spacing: -0.045em;
+          line-height: 1.07;
+          margin-bottom: 0.65rem;
+        }
+        .ar-display-idle .ar-copy p:last-child {
+          font-size: clamp(0.9rem, 3.7vw, 1rem);
+          line-height: 1.42;
+        }
+        .ar-display-idle .ar-controls {
+          backdrop-filter: none;
+          background: none;
+          border: 0;
+          border-radius: 0;
+          bottom: auto;
+          flex: 0 0 auto;
+          gap: 0.65rem;
+          left: auto;
+          padding: 0;
+          position: static;
+          transform: none;
+          width: 100%;
+        }
+        .ar-display-idle .ar-button {
+          cursor: pointer;
+          flex: none;
+          font-size: 1rem;
+          font-weight: 600;
+          min-height: 3rem;
+          width: 100%;
+        }
+        .ar-display-idle .ar-button-primary {
+          background: #f8fafc;
+          border: 1px solid #f8fafc;
+          color: #0f172a;
+        }
+        .ar-display-idle .ar-button-secondary {
+          background: rgba(255, 255, 255, 0.1);
+          border: 1px solid rgba(147, 197, 253, 0.75);
+          color: #f8fafc;
+        }
+        .ar-display-idle .ar-button:focus-visible {
+          outline: 3px solid #93c5fd;
+          outline-offset: 2px;
+        }
+      }
+
+      @media (max-width: 640px) and (max-height: 620px) {
+        .ar-display-idle { gap: 0.5rem; padding: 0.65rem 0.85rem; }
+        .ar-display-idle .ar-idle { gap: 0.4rem; }
+        .ar-display-idle .ar-reticle { height: 78px; width: 78px; }
+        .ar-display-idle .ar-reticle span { height: 24px; width: 24px; }
+        .ar-display-idle .ar-copy h1 {
+          font-size: clamp(1.45rem, 6.3vw, 1.9rem);
+          margin-bottom: 0.4rem;
+        }
+        .ar-display-idle .ar-copy p:last-child { font-size: 0.875rem; line-height: 1.33; }
+        .ar-display-idle .ar-controls { gap: 0.5rem; }
+        .ar-display-idle .ar-button { min-height: 2.75rem; }
       }
 
       .policy-footer {
