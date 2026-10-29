@@ -332,12 +332,16 @@ it.each(["google", "amazon"])("closes an authenticated %s native-link tab even w
   expect(html).toContain('role="status"');
   expect(html).not.toContain('role="alert"');
   expect(html).toContain('id="close-qred-sign-in"');
-  expect(html).toContain("switch back to your original QRed tab");
-  // The automatic close must run after the optional opener notification,
-  // not inside the opener conditional (noopener leaves it null).
+  expect(html).toContain('id="close-qred-help"');
+  expect(html).toContain("tab switcher");
+  expect(html).toContain("Do not reload that tab");
+  expect(html).toContain("Try to close sign-in tab");
+  // A blocked close() must display a useful manual fallback. Native OAuth
+  // tabs deliberately have no opener, and their closing policy is browser-owned.
+  expect(html).toContain('closeButton.addEventListener("click",tryClose)');
+  expect(html).toContain('setTimeout(function(){closeHelp.hidden=false;},300)');
   expect(html).toMatch(/try\{if\(window\.opener\)\{window\.opener\.postMessage\(/);
-  expect(html).toMatch(/\}\}catch\(e\)\{\}window\.close\(\);/);
-  expect(html).toContain('closeButton.addEventListener("click",function(){window.close();})');
+  expect(html).toMatch(/\}\}catch\(e\)\{\}tryClose\(\);/);
   expect(html).not.toContain(session.secret);
   expect(callback.headers.get("Cache-Control")).toBe("no-store");
   expect(callback.headers.get("Referrer-Policy")).toBe("no-referrer");

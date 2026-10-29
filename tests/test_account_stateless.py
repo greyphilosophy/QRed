@@ -83,11 +83,26 @@ def test_stateless_account_cookie_handoff_and_offline_verification(browser, play
         popup.wait_for_url(provider_origin + "/**")
         expect(popup.get_by_role("button", name="Continue")).to_be_visible()
         assert popup.evaluate("window.opener === null")
+        # Simulate Android Chrome refusing window.close after an Amazon OAuth
+        # redirect. This must not disrupt the receipt or original PDF window.
+        close_blocked = provider == "amazon" and mobile
+        if close_blocked:
+            popup.add_init_script("""Object.defineProperty(window, 'close', {
+                configurable: true, value: () => { window.__closeAttempted = true; }
+            })""")
         if provider in ("google", "amazon"):
-            # The real callback receives no window.opener due to noopener, yet
-            # should still close itself after issuing the authenticated cookie.
-            with popup.expect_event("close", timeout=15000):
+            if close_blocked:
                 popup.get_by_role("button", name="Continue").click()
+                expect(popup.locator("#close-qred-help")).to_be_visible(timeout=7000)
+                expect(popup.locator("#close-qred-help")).to_contain_text("tab switcher")
+                assert popup.evaluate("window.__closeAttempted === true")
+                popup.get_by_role("button", name="Try to close sign-in tab").click()
+                expect(popup.locator("#close-qred-help")).to_be_visible()
+                assert not popup.is_closed()
+            else:
+                # Other supported browsers can close the OAuth tab themselves.
+                with popup.expect_event("close", timeout=15000):
+                    popup.get_by_role("button", name="Continue").click()
         else:
             popup.get_by_role("button", name="Continue").click()
         expect(page.locator("output")).to_have_attribute("data-status", "valid", timeout=15000)

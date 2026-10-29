@@ -88,25 +88,33 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
     const escapeHtml = value => String(value).slice(0, 500).replace(/[&<>"']/g, char =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
     const message = successful
-      ? '<p role="status">Sign-in completed. Your original QRed tab will finish sealing and save the PDF.</p>' +
-        '<p>If this tab stays open, switch back to your original QRed tab. Do not reload it. ' +
-        'You can also try closing this sign-in tab below.</p>' +
-        '<button type="button" id="close-qred-sign-in">Close sign-in tab</button>'
+      ? '<p role="status">Sign-in completed. Your original QRed tab can now finish sealing and save the PDF.</p>' +
+        '<p>If this tab stays open, use your browser\'s tab switcher (the numbered square in Chrome) ' +
+        'to select your original QRed tab. Do not reload that tab.</p>' +
+        '<button type="button" id="close-qred-sign-in">Try to close sign-in tab</button>' +
+        '<p id="close-qred-help" role="status" hidden>Your browser did not close this sign-in tab. ' +
+        'Switch to the original QRed tab using the tab switcher. You can close this tab manually later.</p>'
       : '<p role="alert">Sign-in could not be completed.</p>' +
         (error ? '<p>' + escapeHtml(error) + '</p>' : '') +
         '<p>Return to your original QRed tab to retry or cancel sealing. Keep that original tab open.</p>';
     // rel=noopener intentionally removes window.opener from native OAuth tabs.
-    // Closing the authenticated callback must NOT depend on having an opener.
-    // Web-content-created _blank tabs are usually script-closable; when a
-    // browser refuses to close, keep the page and its manual instructions.
+    // Browser-owned tabs are not always script-closable, particularly after an
+    // external identity provider redirects them. No JavaScript can force this:
+    // if close() is refused, show explicit tab-switcher instructions instead
+    // of leaving a button that appears to do nothing.
     const script = successful
       ? '<script nonce="' + nonce + '">(function(){' +
         'var closeButton=document.getElementById("close-qred-sign-in");' +
-        'closeButton.addEventListener("click",function(){window.close();});' +
+        'var closeHelp=document.getElementById("close-qred-help");' +
+        'function tryClose(){' +
+          'try{window.close();}catch(e){}' +
+          'setTimeout(function(){closeHelp.hidden=false;},300);' +
+        '}' +
+        'closeButton.addEventListener("click",tryClose);' +
         'try{if(window.opener){window.opener.postMessage(' +
         JSON.stringify({ type: "qred-account-complete", id }) + ',' + JSON.stringify(origin) +
         ');}}catch(e){}' +
-        'window.close();' +
+        'tryClose();' +
         '})();</script>'
       : '';
     return new Response("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">" +
