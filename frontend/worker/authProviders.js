@@ -131,6 +131,44 @@ export async function validateMicrosoftSpaToken(token, config, pending, now, ver
   return { identity: providerIdentity("microsoft", payload), provider_iat: payload.iat };
 }
 
+// SDK-rendered Google buttons return an ID token directly to QRed. Its
+// signature, audience, fresh issuance and document-specific nonce must all
+// be verified server-side before issuing an attestation receipt.
+export async function validateGoogleSdkToken(token, config, pending, now, verifyTokens = {}) {
+  if (typeof token !== "string" || !token || token.length > 16384) {
+    throw new RequestError("Invalid Google identity token", 403);
+  }
+  const payload = await (verifyTokens.google || verifyGoogleIdToken)(token, config.clientId, now());
+  if (payload.nonce !== pending.nonce || payload.iat < pending.iat - CLOCK_SKEW) {
+    throw new RequestError("Google sign-in did not match this document request", 403);
+  }
+  checkTokenTime(payload, now(), "google");
+  return { identity: providerIdentity("google", payload), provider_iat: payload.iat };
+}
+
+// Amazon's SDK exchanges a one-time PKCE code in the browser and returns an
+// opaque access token. Verify it with Amazon (not with a browser-supplied
+// profile), then get the profile directly from Amazon's server.
+export async function validateAmazonSdkToken(token, config, { fetchImpl, now }) {
+  if (typeof token !== "string" || !token || token.length > 2048) {
+    throw new RequestError("Invalid Amazon access token", 403);
+  }
+  const info = await providerJson(fetchImpl, "https://api.amazon.com/auth/o2/tokeninfo?" +
+    new URLSearchParams({ access_token: token }), {},
+    "Amazon could not verify the access token.", "amazon");
+  if (info.aud !== config.clientId || info.iss !== "https://www.amazon.com" ||
+      typeof info.user_id !== "string" || !Number.isFinite(info.exp) || info.exp <= 0) {
+    throw new RequestError("Amazon token does not match QRed or has expired", 403);
+  }
+  const profile = await providerJson(fetchImpl, "https://api.amazon.com/user/profile",
+    { headers: { Authorization: "Bearer " + token } },
+    "Amazon could not retrieve the authenticated profile.", "amazon");
+  if (profile.user_id !== info.user_id) {
+    throw new RequestError("Amazon profile does not match the authenticated account", 403);
+  }
+  return { identity: providerIdentity("amazon", profile) };
+}
+
 // The browser may show Microsoft sign-in verification diagnostics, but never
 // third-party prose, JWTs, key material, authorization codes, or exception text.
 // Only QRed-owned, fixed messages and known jose error codes are disclosed.
