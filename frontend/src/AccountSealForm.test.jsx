@@ -35,33 +35,47 @@ const upload = () => fireEvent.change(screen.getByLabelText("Open PDF"), {
   target: { files: [new File(["pdf"], "source.pdf")] },
 });
 async function prepare(provider, details = AUTH_PROVIDERS[provider]) {
-  fireEvent.click(screen.getByRole("button", { name: details.button }));
   upload();
+  fireEvent.click(screen.getByRole("button", { name: details.button }));
   return screen.findByRole("link", { name: details.button });
 }
 
-it("does not check account services during private-key/offline sealing", () => {
+it("starts with no signing method or network check, and only exposes offline keys when selected", () => {
   render(<PdfSealForm />);
   expect(fetch).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("Open PDF")).toBeTruthy();
+  expect(screen.getByLabelText("Page layout").value).toBe("automatic");
+  expect(screen.queryByLabelText("Private Key")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Stamp and save PDF" })).toBeNull();
+  const offline = screen.getByRole("button", { name: "Private key (offline)" });
+  expect(offline.getAttribute("aria-pressed")).toBe("false");
+  fireEvent.click(offline);
+  expect(fetch).not.toHaveBeenCalled();
+  expect(offline.getAttribute("aria-pressed")).toBe("true");
   expect(screen.getByLabelText("Private Key")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Stamp and save PDF" }).disabled).toBe(false);
 });
 
-it("presents each account provider as a separate, consistently labelled, selectable button", async () => {
-  render(<PdfSealForm />);
-  expect(screen.queryByLabelText("Sealing method")).toBeNull();
+it("orders PDF, layout, account methods, and private key without a selected default", async () => {
+  const { container } = render(<PdfSealForm />);
+  const pdf = screen.getByLabelText("Open PDF");
+  const layout = screen.getByLabelText("Page layout");
   const offline = screen.getByRole("button", { name: "Private key (offline)" });
-  expect(offline.getAttribute("aria-pressed")).toBe("true");
-  for (const details of Object.values(AUTH_PROVIDERS)) {
-    expect(details.button).toMatch(/^Authenticate with (Google|Microsoft|Amazon) login$/);
-    const selection = screen.getByRole("button", { name: details.button });
-    expect(selection.getAttribute("aria-pressed")).toBe("false");
-  }
+  const choices = [...container.querySelectorAll(".sealing-method-grid button")];
+  expect(choices.at(-1)).toBe(offline);
+  expect(choices.map(button => button.textContent.trim())).toEqual([
+    ...Object.values(AUTH_PROVIDERS).map(details => details.button),
+    "Private key (offline)",
+  ]);
+  expect(pdf.compareDocumentPosition(layout) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(layout.compareDocumentPosition(choices[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(choices.every(button => button.getAttribute("aria-pressed") === "false")).toBe(true);
+  upload();
+  expect(sealPdfInBrowser).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: AUTH_PROVIDERS.google.button }));
   expect(screen.getByRole("button", { name: AUTH_PROVIDERS.google.button }).getAttribute("aria-pressed")).toBe("true");
   expect(offline.getAttribute("aria-pressed")).toBe("false");
   expect(screen.queryByLabelText("Private Key")).toBeNull();
-  expect(screen.getByText(/Choose a PDF to begin automatic preparation/)).toBeTruthy();
   fireEvent.click(offline);
   expect(offline.getAttribute("aria-pressed")).toBe("true");
   expect(screen.getByLabelText("Private Key")).toBeTruthy();
