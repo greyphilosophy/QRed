@@ -24,7 +24,51 @@
   <div class="spinner" aria-hidden="true"></div>
   <h1>Preparing secure sign-in</h1>
   <p>QRed is preparing your document locally. This tab will open your sign-in provider automatically when ready.</p>
-  <p>If the page does not advance, return to your original QRed tab and keep it open while preparation finishes.</p>
+  <p>If this page does not advance, return to the original QRed tab and keep it open while preparation finishes.</p>
+  <p id="handoff-status"></p>
 </main>
+<script>
+  (() => {
+    // The channel identifier is random and appears only in the fragment,
+    // never in the HTTP request or in the eventual provider redirect.
+    const token = location.hash.slice(1);
+    const status = document.getElementById("handoff-status");
+    if (!/^[a-f0-9]{32}$/.test(token) || typeof BroadcastChannel !== "function") {
+      status.textContent = "Could not connect to QRed. Return to the original tab to continue sign-in.";
+      return;
+    }
+    const channel = new BroadcastChannel("qred-auth-pending-" + token);
+    const validProviderUrl = (provider, input) => {
+      let url;
+      try { url = new URL(input); } catch { return false; }
+      if (url.protocol !== "https:" || url.username || url.password || url.hash) return false;
+      if (provider === "google") return url.origin === "https://accounts.google.com" && url.pathname === "/o/oauth2/v2/auth";
+      if (provider === "microsoft") return url.origin === "https://login.microsoftonline.com" && url.pathname === "/common/oauth2/v2.0/authorize";
+      if (provider === "amazon") return url.origin === "https://www.amazon.com" && url.pathname === "/ap/oa";
+      return false;
+    };
+    channel.onmessage = ({ data }) => {
+      if (data?.type === "cancel") {
+        channel.close();
+        status.textContent = "Sign-in was cancelled in QRed. You can close this tab.";
+        try { window.close(); } catch { /* The browser may keep this tab open. */ }
+        return;
+      }
+      if (data?.type !== "authorize") return;
+      if (!validProviderUrl(data.provider, data.url)) {
+        status.textContent = "QRed rejected an unexpected sign-in address. Return to the original tab.";
+        return;
+      }
+      const url = data.url;
+      channel.close();
+      location.replace(url);
+    };
+    // A ready handshake guarantees that QRed never sends the provider URL
+    // before this tab has installed its listener. It also works with opener
+    // isolation and on Chrome when the original tab resumes from suspension.
+    channel.postMessage({ type: "ready" });
+    window.addEventListener("pageshow", () => channel.postMessage({ type: "ready" }));
+  })();
+</script>
 </body>
 </html>
