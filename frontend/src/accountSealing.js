@@ -37,7 +37,7 @@ async function postJson(path, body, fetchImpl, signal, label) {
 // Create a document-bound session only after local PDF extraction.
 // The UI can open a branded same-origin preparation tab from the first tap,
 // but OAuth navigation must wait for this server-issued, validated URL.
-export async function beginAccountSignIn(provider, pages, { signal, fetchImpl = apiFetch } = {}) {
+export async function beginAccountSignIn(provider, pages, { signal, nonce, fetchImpl = apiFetch } = {}) {
   const label = ensurePages(provider, pages);
   const salts = pages.map(() => crypto.getRandomValues(new Uint8Array(32)));
   const commitments = await Promise.all(pages.map(async (page, index) =>
@@ -45,8 +45,12 @@ export async function beginAccountSignIn(provider, pages, { signal, fetchImpl = 
   if (signal?.aborted) throw new Error("Account sealing cancelled");
   const startedAt = Date.now();
   const authPath = "/api/auth/" + provider;
-  const response = await postJson(authPath + "/start", { commitments }, fetchImpl, signal, label);
+  const response = await postJson(authPath + "/start", { commitments, ...(nonce ? { nonce } : {}) }, fetchImpl, signal, label);
   const session = { ...response, provider, salts, commitments, startedAt };
+  if (nonce && session.nonce !== nonce) {
+    await finishAccountSignIn(provider, session, { fetchImpl });
+    throw new Error("Document-bound authentication nonce mismatch");
+  }
   if (signal?.aborted || !allowedAuthorizationUrl(provider, response.authorize_url)) {
     await finishAccountSignIn(provider, session, { fetchImpl });
     throw new Error(signal?.aborted ? "Account sealing cancelled" : "Unexpected sign-in address");
@@ -64,6 +68,21 @@ export async function checkAccountSignInStatus(provider, session, { fetchImpl = 
   }
   return postJson("/api/auth/" + provider + "/status",
     { id: session.id, secret: session.secret }, fetchImpl, signal, label);
+}
+
+// Receive the provider SDK's token, never unverified name/email fields.
+// The server checks signature or tokeninfo, client ID, document nonce and
+// the pending session cookie before issuing a document-bound receipt.
+export async function completeAccountSignIn(provider, session, credential,
+  { signal, fetchImpl = apiFetch } = {}) {
+  if (!session?.id || session.provider !== provider || !credential) {
+    throw new Error("No matching provider sign-in result");
+  }
+  const body = provider === "amazon"
+    ? { id: session.id, state: credential.state, access_token: credential.access_token }
+    : { id: session.id, id_token: credential.id_token };
+  return postJson("/api/auth/" + provider + "/complete", body, fetchImpl, signal,
+    authProvider(provider).label);
 }
 
 export async function finishAccountSignIn(provider, session, { fetchImpl = apiFetch } = {}) {
