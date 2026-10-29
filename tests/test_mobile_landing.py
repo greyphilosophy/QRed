@@ -84,3 +84,52 @@ def test_stamp_tool_asks_for_pdf_and_layout_before_signing_method(page):
     choices.last.click()
     expect(page.get_by_label("Private Key", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Stamp and save PDF")).to_be_visible()
+
+def test_detached_preparation_tab_accepts_same_origin_handoff(page):
+    """Real Chromium test: opener isolation must not strand an open tab."""
+    import re
+
+    page.goto(BASE_URL)
+    token = "a" * 32
+    page.evaluate("""token => {
+        const channel = new BroadcastChannel("qred-auth-pending-" + token);
+        window.__testAuthChannel = channel;
+        window.__testAuthReady = false;
+        channel.onmessage = event => {
+          if (event.data?.type === "ready") window.__testAuthReady = true;
+        };
+        const button = document.createElement("button");
+        button.textContent = "Open test preparation tab";
+        button.onclick = () => {
+          const popup = window.open("/auth-pending.html#" + token, "_blank");
+          popup.opener = null;
+          window.__testPopupWasOpened = Boolean(popup);
+        };
+        document.body.appendChild(button);
+    }""", token)
+    with page.context.expect_page() as popup_event:
+        page.get_by_role("button", name="Open test preparation tab").click()
+    pending = popup_event.value
+    pending.wait_for_load_state("domcontentloaded")
+    expect(pending.get_by_role("heading", name="Preparing secure sign-in")).to_be_visible()
+    page.wait_for_function("window.__testAuthReady === true")
+
+    # A forged or unexpected destination must never be opened.
+    page.evaluate("""() => window.__testAuthChannel.postMessage({
+      type: "authorize", provider: "google", url: "https://malicious.example/login"
+    })""")
+    pending.wait_for_timeout(100)
+    assert "/auth-pending.html#" in pending.url
+
+    # The actual callback URL navigates in the child's own context, even
+    # though it cannot use the original tab's WindowProxy after isolation.
+    pending.route("https://accounts.google.com/**",
+                  lambda route: route.fulfill(status=200, content_type="text/html",
+                                              body="<h1>Provider test interception</h1>"))
+    page.evaluate("""() => window.__testAuthChannel.postMessage({
+      type: "authorize",
+      provider: "google",
+      url: "https://accounts.google.com/o/oauth2/v2/auth?state=redacted"
+    })""")
+    expect(pending).to_have_url(re.compile(r"https://accounts\\.google\\.com/o/oauth2/v2/auth"))
+    expect(pending.get_by_role("heading", name="Provider test interception")).to_be_visible()
