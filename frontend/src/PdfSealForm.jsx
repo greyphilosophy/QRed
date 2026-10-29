@@ -168,7 +168,11 @@ export function PdfSealForm({ onUsePublicKey }) {
   }
 
   function cancelSealing() {
-    activeRequest.current?.controller.abort();
+    const request = activeRequest.current;
+    request?.controller.abort();
+    // Close our preparation/provider tab immediately, even if async parsing
+    // or the provider status poll is currently stalled in a background tab.
+    try { request?.popup?.close(); } catch { /* The provider may isolate the tab. */ }
     const waiting = pendingAccountSignIn.current;
     pendingAccountSignIn.current = null;
     waiting?.reject(new Error("Account sealing cancelled"));
