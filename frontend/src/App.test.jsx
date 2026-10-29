@@ -18,6 +18,11 @@ const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 function openStampTool() {
   render(React.createElement(App));
   fireEvent.click(screen.getByRole("button", { name: "Open PDF stamping tool" }));
+  chooseOfflineSealing();
+}
+
+function chooseOfflineSealing() {
+  fireEvent.click(screen.getByRole("button", { name: "Private key (offline)" }));
 }
 
 async function generateKeys() {
@@ -114,6 +119,7 @@ describe("App PDF signing keys", () => {
 
   it("starts with empty signing keys and generates a matching pair without a network request", async () => {
     render(React.createElement(PdfSealForm));
+    chooseOfflineSealing();
     expect(screen.getByLabelText("Private Key").value).toBe("");
     expect(window.__qredPublicKeys).toBe("");
     expect(screen.queryByRole("button", { name: "Use Default Keys" })).toBeNull();
@@ -129,6 +135,7 @@ describe("App PDF signing keys", () => {
   it("defaults to Automatic layout and verifies the generated pair's real signature using the selected public key", async () => {
     const selectPublicKey = vi.fn();
     render(<PdfSealForm onUsePublicKey={selectPublicKey} />);
+    chooseOfflineSealing();
     const keys = await generateKeys();
     const pdf = new File(["%PDF-1.4"], "source.pdf", { type: "application/pdf" });
     fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [pdf] } });
@@ -174,12 +181,14 @@ describe("App PDF signing keys", () => {
 
   it("opens saved key files in a fresh tool and stamps with the same identity without networking", async () => {
     render(<PdfSealForm />);
+    chooseOfflineSealing();
     const keys = await generateKeys();
     fireEvent.click(screen.getByRole("button", { name: "Save private key" }));
     fireEvent.click(screen.getByRole("button", { name: "Save public key" }));
     const privateFile = keyFile(URL.createObjectURL.mock.calls[0][0], "qred-ed25519-private-key.txt");
     cleanup();
     render(<PdfSealForm />);
+    chooseOfflineSealing();
     fireEvent.click(screen.getByRole("button", { name: "Show private key" }));
     fireEvent.change(screen.getByLabelText("Open private key file"), { target: { files: [privateFile] } });
     await screen.findByText(/Private key opened\. Matching public key derived/);
@@ -200,6 +209,7 @@ describe("App PDF signing keys", () => {
     ["private", "x".repeat(4097), "document.txt", /4 KB or less/],
   ])("keeps the current pair when a %s file is invalid or mismatched (%#)", async (kind, text, name, error) => {
     render(<PdfSealForm />);
+    chooseOfflineSealing();
     const keys = await generateKeys();
     fireEvent.change(screen.getByLabelText(`Open ${kind} key file`), { target: { files: [keyFile(text, name)] } });
     await screen.findByText(error);
@@ -211,6 +221,7 @@ describe("App PDF signing keys", () => {
 
   it("keeps keys on a file read failure and allows retrying a cancelled replacement", async () => {
     render(<PdfSealForm />);
+    chooseOfflineSealing();
     const keys = await generateKeys();
     const broken = keyFile(privateKey, "key.txt");
     broken.text = () => Promise.reject(new Error("read failed"));
@@ -265,6 +276,8 @@ describe("App PDF signing keys", () => {
     expect(input.type).toBe("password");
     fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
     fireEvent.click(screen.getByRole("button", { name: "Open PDF stamping tool" }));
+    expect(screen.queryByLabelText("Private Key")).toBeNull();
+    chooseOfflineSealing();
     await waitFor(() => expect(screen.getByLabelText("Private Key").value).toBe(""));
     expect(window.__qredPublicKeys).toBe("");
   });

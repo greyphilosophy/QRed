@@ -34,9 +34,9 @@ async function postJson(path, body, fetchImpl, signal, label) {
   return result;
 }
 
-// Prepare the document-bound session while the original tab has the foreground.
-// No OAuth popup has been opened at this point. This is important on phones:
-// opening about:blank before CPU-intensive PDF parsing can suspend the opener.
+// Create a document-bound session only after local PDF extraction.
+// The UI can open a branded same-origin preparation tab from the first tap,
+// but OAuth navigation must wait for this server-issued, validated URL.
 export async function beginAccountSignIn(provider, pages, { signal, fetchImpl = apiFetch } = {}) {
   const label = ensurePages(provider, pages);
   const salts = pages.map(() => crypto.getRandomValues(new Uint8Array(32)));
@@ -81,9 +81,9 @@ export async function finishAccountSignIn(provider, session, { fetchImpl = apiFe
 export async function attestPagesWithAccount(provider, pages, { popup, signal, onStatus = () => {},
   onIdentity = () => {}, fetchImpl = apiFetch, trusted = trustedAuthorities, preparedSession = null } = {}) {
   const label = ensurePages(provider, pages);
-  // The UI now opens the prepared provider URL through a native, noopener link.
-  // No Window handle is available for that cross-origin tab. Poll the existing
-  // authenticated session instead. Legacy unprepared callers still need popup.
+  // The UI may already have opened a branded preparation tab and navigated it
+  // to this validated provider URL. Poll the server session rather than
+  // trusting tab messages. Blocked popups use a native noopener link instead.
   if (!popup && !preparedSession) throw new Error("Allow the " + label + " sign-in window, then try again.");
   const authPath = "/api/auth/" + provider;
   let session = preparedSession;
@@ -100,8 +100,8 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
       providerOpened = true;
       onStatus("Complete " + label + " sign-in, then return to QRed to finish sealing.");
     } else {
-      // Compatibility with callers that have not opted into the two-step mobile
-      // flow. The form itself uses beginAccountSignIn before opening a new tab.
+      // Compatibility for clients that have not yet prepared a document-bound
+      // account session.
       session = await beginAccountSignIn(provider, pages, { signal, fetchImpl });
       onStatus("Opening " + label + " sign-in. Your PDF and its text stay on this device.");
       popup.location.href = session.authorize_url;

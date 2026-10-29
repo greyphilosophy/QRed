@@ -40,14 +40,13 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [preparedAuthorizeUrl, setPreparedAuthorizeUrl] = useState("");
   const [authenticating, setAuthenticating] = useState(false);
   const [checkingAccount, setCheckingAccount] = useState(false);
-  const [method, setMethod] = useState("private-key");
+  const [method, setMethod] = useState(null);
   const [signingIdentity, setSigningIdentity] = useState(null);
   const [availability, setAvailability] = useState(null);
   const [configError, setConfigError] = useState("");
   const [configAttempt, setConfigAttempt] = useState(0);
   const provider = authProvider(method);
   const usesAccount = Boolean(provider);
-  const accountAvailable = availability?.[method] === true;
   const activeRequest = useRef(null);
   const pendingAccountSignIn = useRef(null);
   const derivedFor = useRef("");
@@ -71,18 +70,6 @@ export function PdfSealForm({ onUsePublicKey }) {
       .finally(() => clearTimeout(timer));
     return () => { current = false; clearTimeout(timer); controller.abort(); };
   }, [usesAccount, configAttempt]);
-
-  // Selecting an account method and a PDF starts local preparation automatically.
-  // A real second click is still needed for browser-owned OAuth navigation:
-  // never open a blank popup while mobile PDF extraction is running.
-  useEffect(() => {
-    if (!file || !usesAccount || !accountSealingAvailable || !accountAvailable) return;
-    const timer = setTimeout(() => {
-      if (!activeRequest.current) void sealPdf();
-    }, 0);
-    return () => clearTimeout(timer);
-    // sealPdf intentionally reads the latest render when the input changes.
-  }, [file, method, pageScalingStrategy, accountAvailable]);
 
   useEffect(() => () => {
     activeRequest.current?.controller.abort();
@@ -180,7 +167,11 @@ export function PdfSealForm({ onUsePublicKey }) {
   }
 
   function cancelSealing() {
-    activeRequest.current?.controller.abort();
+    const request = activeRequest.current;
+    request?.controller.abort();
+    // Close our preparation/provider tab immediately, even if async parsing
+    // or the provider status poll is currently stalled in a background tab.
+    try { request?.popup?.close(); } catch { /* The provider may isolate the tab. */ }
     const waiting = pendingAccountSignIn.current;
     pendingAccountSignIn.current = null;
     waiting?.reject(new Error("Account sealing cancelled"));
@@ -249,14 +240,50 @@ export function PdfSealForm({ onUsePublicKey }) {
     }, 0);
   }
 
-  async function sealPdf() {
-    if (!file || (method === "private-key" && !privateKey.trim())) {
+  function beginProviderSealing(id) {
+    if (!file || loading || activeRequest.current) {
+      if (!file) setMessage("Choose a PDF first, then select a sign-in provider.");
+      return;
+    }
+    // Browsers only allow new tabs during a real user gesture. Open QRed's
+    // informative preparation page now, rather than a blank about:blank tab
+    // after asynchronous PDF extraction or server session setup.
+    let popup = null;
+    try {
+      popup = window.open("/auth-pending.html", "_blank");
+      if (popup) popup.opener = null;
+    } catch { /* Popup blockers retain the manual sign-in fallback below. */ }
+    setMethod(id);
+    setMessage("");
+    setSigningIdentity(null);
+    void sealPdf(id, popup);
+  }
+
+  async function loadProviderAvailability(id, signal) {
+    if (availability?.[id] === true) return;
+    const response = await fetch("/api/auth/config", { credentials: "same-origin", signal });
+    if (!response.ok) throw new Error("Could not check sign-in availability. Check your connection and retry.");
+    const config = await response.json();
+    if (!config || typeof config !== "object") throw new Error("Invalid sign-in configuration");
+    setAvailability(config);
+    if (config[id] !== true) throw new Error(authProvider(id).label + " sealing is not enabled on this installation.");
+  }
+
+  async function sealPdf(selectedMethod = method, popup = null) {
+    const selectedProvider = authProvider(selectedMethod);
+    const accountMode = Boolean(selectedProvider);
+    if (!file || !selectedMethod || (selectedMethod === "private-key" && !privateKey.trim())) {
       setMessage("Choose a PDF and a sealing method. For local sealing, generate, open, or paste your private key.");
       return;
     }
-    if (usesAccount && (!accountSealingAvailable || availability?.[method] !== true)) return;
+    if (accountMode && !accountSealingAvailable) {
+      try { popup?.close(); } catch { /* The tab may be isolated. */ }
+      setMessage("Account-based sealing is not available in this copy of QRed.");
+      return;
+    }
+    if (activeRequest.current) return;
     const controller = new AbortController();
-    const request = { controller, popup: null };
+    const request = { controller, popup, providerOpened: false };
     activeRequest.current = request;
     let saved = false;
     setLoading(true);
@@ -265,32 +292,54 @@ export function PdfSealForm({ onUsePublicKey }) {
     setPreparedAuthorizeUrl("");
     setAuthenticating(false);
     try {
+      if (accountMode) await loadProviderAvailability(selectedMethod, controller.signal);
       // Validate before parsing a PDF so key errors are immediate and actionable.
-      const matchingPublicKey = method === "private-key" ? await deriveSigningPublicKey(privateKey) : null;
+      const matchingPublicKey = selectedMethod === "private-key" ? await deriveSigningPublicKey(privateKey) : null;
       if (matchingPublicKey) await validateSigningKeyPair({ privateKey, publicKey: matchingPublicKey });
-      setMessage(usesAccount ? "Preparing your PDF locally before opening " + provider.label + "…" : "Sealing in this browser…");
+      setMessage(accountMode ? "Preparing your PDF locally before opening " + selectedProvider.label + "…" : "Sealing in this browser…");
       const { blob, sealResult, flattenedFieldCount, footerPages = [] } = await sealPdfInBrowser({
         file,
-        ...(method === "private-key" ? { privateKey, publicKey: matchingPublicKey } : {
+        ...(selectedMethod === "private-key" ? { privateKey, publicKey: matchingPublicKey } : {
           attestPages: async pages => {
-            const session = await beginAccountSignIn(method, pages, { signal: controller.signal });
-            request.session = session; request.provider = method;
+            const session = await beginAccountSignIn(selectedMethod, pages, { signal: controller.signal });
+            request.session = session; request.provider = selectedMethod;
             let handedOff = false;
             try {
               if (controller.signal.aborted) throw new Error("Account sealing cancelled");
-              const popup = await new Promise((resolve, reject) => {
-                pendingAccountSignIn.current = { provider: method, session, resolve, reject };
-                setPreparedAuthorizeUrl(session.authorize_url);
-                setReadyForSignIn(true);
-                setMessage("PDF prepared on this device. Tap the " + provider.label + " sign-in button below. Return to this QRed tab after signing in to finish sealing.");
-              });
+              let signInPopup = request.popup;
+              if (signInPopup && !signInPopup.closed) {
+                try {
+                  signInPopup.location.replace(session.authorize_url);
+                  request.providerOpened = true;
+                  setAuthenticating(true);
+                  setMessage("Opening " + selectedProvider.label + " sign-in. Return to this QRed tab afterward to finish sealing.");
+                } catch {
+                  try { signInPopup.close(); } catch { /* May already be isolated. */ }
+                  request.popup = null;
+                  signInPopup = null;
+                }
+              } else {
+                request.popup = null;
+                signInPopup = null;
+              }
+              if (!signInPopup) {
+                // Exceptional fallback only: a blocked/closed popup means the
+                // user must tap the prepared native link. No secrets in href.
+                await new Promise((resolve, reject) => {
+                  pendingAccountSignIn.current = { provider: selectedMethod, session, resolve, reject };
+                  setPreparedAuthorizeUrl(session.authorize_url);
+                  setReadyForSignIn(true);
+                  setMessage("Your browser blocked the sign-in tab. Tap the sign-in link below to continue.");
+                });
+                setAuthenticating(true);
+              }
               handedOff = true;
-              return await attestPagesWithAccount(method, pages, { popup, preparedSession: session,
+              return await attestPagesWithAccount(selectedMethod, pages, { popup: signInPopup, preparedSession: session,
                 signal: controller.signal, onStatus: setMessage, onIdentity: setSigningIdentity });
             } finally {
               if (pendingAccountSignIn.current?.session === session) pendingAccountSignIn.current = null;
               setReadyForSignIn(false);
-              if (!handedOff) await finishAccountSignIn(method, session);
+              if (!handedOff) await finishAccountSignIn(selectedMethod, session);
             }
           },
         }),
@@ -326,7 +375,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       // If sign-in failed, leave the provider callback tab visible so its
       // sanitized error can be read. Never close it as a side effect of the
       // original document window reporting an error.
-      if (saved || controller.signal.aborted) {
+      if (saved || controller.signal.aborted || !request.providerOpened) {
         try { request.popup?.close(); } catch { /* The provider may isolate the popup. */ }
       }
       if (activeRequest.current === request) activeRequest.current = null;
@@ -342,28 +391,61 @@ export function PdfSealForm({ onUsePublicKey }) {
     <div className="card">
       <h2>Stamp a PDF</h2>
       <p style={{ color: "#64748b", marginBottom: "1rem" }}>
-        Seal a PDF’s extracted text and use spare QR capacity for line locations and a small grayscale visual reference. Image-only pages receive a visual reference; blank pages receive a signed blank-page marker. Visual references are approximate and can lose small details, including digits and faces. Supported form fields are flattened before sealing. Review the values in your saved copy.
+        Choose your PDF and page layout, then select how to sign it. Your PDF stays on your device; QRed never sends the document to a server.
       </p>
-      <p>Your PDF stays on your device. Stamping happens in this browser, and the file is not sent to a server.</p>
+      <div className="demo-grid">
+        <div className="demo-input">
+          <label htmlFor="pdf-to-stamp">Open PDF</label>
+          <input id="pdf-to-stamp" type="file" accept="application/pdf" disabled={loading} onChange={(e) => setFile(e.target.files?.[0] || null)} />
+        </div>
+        <div className="demo-input">
+          <label>Page layout</label>
+          <select
+            aria-label="Page layout"
+            value={pageScalingStrategy}
+            disabled={loading}
+            onChange={(e) => setPageScalingStrategy(e.target.value)}
+            title="Choose where to place the document seals."
+          >
+            <option value="automatic">Automatic (watermark first, footer fallback)</option>
+            <option value="watermark">Pale watermark (experimental, footer fallback)</option>
+            <option value="legal-footer">Expand letter pages to legal size (bottom 3-inch footer)</option>
+            <option value="shrink-footer">Shrink the document to create a footer</option>
+          </select>
+          <small style={{ color: "#64748b", display: "block", marginTop: "0.5rem" }}>
+            {pageScalingStrategy === "automatic" || pageScalingStrategy === "watermark"
+              ? "Tries pale watermarks first, analyzing each page to place seals around obstructing logos or pictures while keeping the original page size. Image-only pages, blank pages, and pages where a readable watermark cannot fit use a clear footer (legal size for letter pages; shrink otherwise). Use QRed's scanner and try a printed copy before sharing."
+              : pageScalingStrategy === "legal-footer"
+                ? "Adds a 3-inch footer below each page, preserving the original content size. Letter pages become legal size."
+                : "Shrinks each page's content to make room for a clear footer, keeping the original paper size."}
+          </small>
+        </div>
+      </div>
+
+      <p className="key-help">Visual references are approximate. Review small details and form-field values in your saved copy.</p>
+      <details className="stamp-method-details">
+        <summary>How PDF stamping works</summary>
+        <p>QRed seals extracted text and uses spare QR capacity for line locations and a small grayscale visual reference. Image-only pages receive a visual reference, while blank pages receive a signed blank-page marker. Visual references can lose details, including digits and faces. Supported form fields are flattened before sealing.</p>
+      </details>
       <div className="demo-input">
         {loading
           ? <p className="sealing-method-selected">Sealing method: {method === "private-key" ? "Private key (offline)" : provider.label + " login"}</p>
           : <fieldset className="sealing-methods">
-            <legend>Sealing method</legend>
-            <p className="key-help">Choose how to seal your PDF. For account methods, selecting a PDF starts local preparation automatically. Sign-in opens only after you tap the provider button.</p>
+            <legend>Authenticate and stamp</legend>
+            <p className="key-help">Choose a PDF and layout above, then tap a provider to prepare the document and open sign-in automatically.</p>
             <div className="sealing-method-grid">
-              <button type="button" aria-pressed={method === "private-key"}
-                onClick={() => { setMethod("private-key"); setMessage(""); setSigningIdentity(null); }}
-                disabled={loadingKeys}>
-                Private key (offline)
-              </button>
               {Object.entries(AUTH_PROVIDERS).map(([id, account]) => <button
                 key={id} type="button" aria-pressed={method === id}
-                onClick={() => { setMethod(id); setMessage(""); setSigningIdentity(null); }}
-                disabled={loadingKeys || !accountSealingAvailable || availability?.[id] === false}
+                onClick={() => beginProviderSealing(id)}
+                disabled={!file || loading || loadingKeys || !accountSealingAvailable || availability?.[id] === false}
                 title={availability?.[id] === false ? "Not enabled on this QRed installation" : undefined}>
                 {account.button}
               </button>)}
+              <button type="button" aria-pressed={method === "private-key"}
+                onClick={() => { setMethod("private-key"); setMessage(""); setSigningIdentity(null); }}
+                disabled={loading || loadingKeys}>
+                Private key (offline)
+              </button>
             </div>
           </fieldset>}
       </div>
@@ -392,12 +474,7 @@ export function PdfSealForm({ onUsePublicKey }) {
         <p>Save your private key to your device before closing this tool or reloading the page. QRed does not keep a copy. The saved file is unencrypted; keep it private. Open or paste a private key to reuse it; the matching public key is derived automatically.</p>
       </div>
       </>}
-      <div className="demo-grid">
-        <div className="demo-input">
-          <label htmlFor="pdf-to-stamp">Open PDF</label>
-          <input id="pdf-to-stamp" type="file" accept="application/pdf" disabled={loading} onChange={(e) => setFile(e.target.files?.[0] || null)} />
-        </div>
-        {method === "private-key" && <div className="demo-input">
+      {method === "private-key" && <div className="demo-input">
           <label htmlFor="signing-private-key">Private Key</label>
           <input
             id="signing-private-key"
@@ -427,50 +504,22 @@ export function PdfSealForm({ onUsePublicKey }) {
             {onUsePublicKey && <button type="button" onClick={usePublicKey} disabled={!publicKey.trim() || loadingKeys || loading}>Use public key to verify</button>}
           </div>
         </div>}
-        <div className="demo-input">
-          <label>Page layout</label>
-          <select
-            aria-label="Page layout"
-            value={pageScalingStrategy}
-            disabled={loading}
-            onChange={(e) => setPageScalingStrategy(e.target.value)}
-            title="Choose where to place the document seals."
-          >
-            <option value="automatic">Automatic (watermark first, footer fallback)</option>
-            <option value="watermark">Pale watermark (experimental, footer fallback)</option>
-            <option value="legal-footer">Expand letter pages to legal size (bottom 3-inch footer)</option>
-            <option value="shrink-footer">Shrink the document to create a footer</option>
-          </select>
-          <small style={{ color: "#64748b", display: "block", marginTop: "0.5rem" }}>
-            {pageScalingStrategy === "automatic" || pageScalingStrategy === "watermark"
-              ? "Tries pale watermarks first, analyzing each page to place seals around obstructing logos or pictures while keeping the original page size. Image-only pages, blank pages, and pages where a readable watermark cannot fit use a clear footer (legal size for letter pages; shrink otherwise). Use QRed's scanner and try a printed copy before sharing."
-              : pageScalingStrategy === "legal-footer"
-                ? "Adds a 3-inch footer below each page, preserving the original content size. Letter pages become legal size."
-                : "Shrinks each page's content to make room for a clear footer, keeping the original paper size."}
-          </small>
-        </div>
-      </div>
+
       <p id="signing-key-status" role="status" style={{ marginTop: "1rem", color: keyError ? "#ef4444" : "#64748b" }}>{keyStatus}</p>
-      {usesAccount ? readyForSignIn
-        ? <ProviderSignInButton provider={method} onClick={openPreparedSignIn}
-          href={preparedAuthorizeUrl}
-          disabled={loadingKeys || !accountSealingAvailable || !accountAvailable}
-          aria-describedby="account-sealing-action" style={{ marginTop: "1rem" }} />
-        : loading
-          ? <button type="button" disabled aria-busy="true" style={{ marginTop: "1rem" }}>
-            {authenticating ? "Completing sign-in..." : "Preparing document..."}
-          </button>
-          : file
-            ? <button type="button" onClick={sealPdf}
-              disabled={loadingKeys || !accountSealingAvailable || !accountAvailable}
-              style={{ marginTop: "1rem" }}>Prepare again</button>
-            : <p className="key-help">Choose a PDF to begin automatic preparation.</p>
-        : <button type="button" onClick={sealPdf} disabled={loading || loadingKeys} aria-busy={loading} style={{ marginTop: "1rem" }}>
-          {loading ? "Sealing..." : "Stamp and save PDF"}
-        </button>}
+      {usesAccount && readyForSignIn && <ProviderSignInButton provider={method} onClick={openPreparedSignIn}
+        href={preparedAuthorizeUrl}
+        disabled={loadingKeys || !accountSealingAvailable}
+        aria-describedby="account-sealing-action" />}
+      {usesAccount && loading && !readyForSignIn && <p role="status" aria-live="polite">
+        {authenticating ? "Waiting for sign-in…" : "Preparing document…"}
+      </p>}
+      {method === "private-key" && <button type="button" onClick={() => sealPdf()}
+        disabled={loading || loadingKeys} aria-busy={loading} style={{ marginTop: "1rem" }}>
+        {loading ? "Sealing..." : "Stamp and save PDF"}
+      </button>}
       {usesAccount && <p id="account-sealing-action" className="key-help">
-        {readyForSignIn ? "Your PDF is prepared. Tap Authenticate to open the provider's login page directly. On a phone, return to this QRed tab afterward."
-          : "After you choose a PDF, QRed prepares it automatically on this device. Sign-in never opens without your tap, and the document is not sent to the provider."}
+        {readyForSignIn ? "Sign-in could not open automatically. Tap the provider link to continue."
+          : "QRed opens a sign-in tab when you choose a provider. Your PDF stays on this device."}
       </p>}
       {loading && usesAccount && authenticating && <button type="button"
         onClick={checkSignInStatus} disabled={checkingAccount}>

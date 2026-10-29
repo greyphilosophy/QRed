@@ -61,6 +61,7 @@ def test_load_pdf_seals_on_both_verifiers_offline(browser, tmp_path, path):
         page.goto(base + "/", wait_until="networkidle")
         wait_for_offline_resources(page)
         page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Private key (offline)", exact=True).click()
         page.get_by_label("Private Key", exact=True).fill(PRIVATE_KEY)
         expect(page.get_by_label("Page layout", exact=True)).to_have_value("automatic")
         stamped = tmp_path / "pdf-input-sealed.pdf"
@@ -121,6 +122,7 @@ def test_text_invoice_with_raster_logos_keeps_watermarks(page, tmp_path, logo_lo
     page.add_init_script("window.__qredTestMode = true")
     page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000") + "/", wait_until="networkidle")
     page.get_by_role("button", name="Open PDF stamping tool").click()
+    page.get_by_role("button", name="Private key (offline)", exact=True).click()
     page.get_by_label("Private Key", exact=True).fill(PRIVATE_KEY)
     expect(page.get_by_label("Page layout", exact=True)).to_have_value("automatic")
     stamped = tmp_path / "invoice-sealed.pdf"
@@ -157,6 +159,7 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
         page.goto(base + "/", wait_until="networkidle")
         wait_for_offline_resources(page)
         page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Private key (offline)", exact=True).click()
         page.get_by_label("Private Key", exact=True).fill(PRIVATE_KEY)
         expect(page.get_by_label("Page layout", exact=True)).to_have_value("automatic")
         stamped = tmp_path / "sealed.pdf"

@@ -48,6 +48,7 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, la
         # Explicit online warm-up, using disposable data, loads the lazy
         # PDF module, worker and fonts through the actual stamping UI.
         page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Private key (offline)", exact=True).click()
         page.get_by_label("Page layout", exact=True).select_option(layout)
         page.get_by_role("button", name="Generate key pair", exact=True).click()
         expect(page.locator("#signing-key-status")).to_contain_text("Key pair generated.")
@@ -62,6 +63,7 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, la
         # Sensitive test data and fresh signing keys are introduced only
         # after the guard is active. No navigation or reload is needed.
         page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Private key (offline)", exact=True).click()
         page.get_by_role("button", name="Generate key pair", exact=True).click()
         expect(page.locator("#signing-key-status")).to_contain_text("Key pair generated.")
         private_key = page.get_by_label("Private Key", exact=True).input_value()
@@ -75,6 +77,7 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, la
             assert path.read_text().strip() == key
         page.get_by_role("button", name="Close", exact=True).click()
         page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Private key (offline)", exact=True).click()
         page.get_by_label("Open private key file", exact=True).set_input_files(tmp_path / "qred-ed25519-private-key.txt")
         expect(page.locator("#signing-key-status")).to_contain_text("Private key opened. Matching public key derived.")
         expect(page.get_by_label("Private Key", exact=True)).to_have_value(private_key)

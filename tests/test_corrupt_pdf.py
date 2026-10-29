@@ -146,6 +146,7 @@ def _open_stamp_tool(page: Page) -> Page:
         btn = page.locator("button").filter(has_text="Stamp PDF").first
     btn.wait_for(state="visible", timeout=10_000)
     btn.click()
+    page.get_by_role("button", name="Private key (offline)", exact=True).click()
 
     stamp_section = page.locator("#pdf-stamp-tool, .pdf-stamp-tool")
     stamp_section.wait_for(state="visible", timeout=STAMP_SECTION_TIMEOUT)
