@@ -5,7 +5,7 @@ import { cookieSessions, SESSION_SECONDS } from "./accountSession.js";
 
 import { AUTH_PROVIDERS, authProvider } from "../src/authProviders.js";
 import { RequestError } from "./authErrors.js";
-import { authorizationUrl, exchangeIdentity, providerConfiguration, safeMicrosoftVerificationReason, validateMicrosoftSpaToken } from "./authProviders.js";
+import { authorizationUrl, exchangeIdentity, providerConfiguration, safeMicrosoftVerificationReason, validateMicrosoftSpaToken, validateGoogleSdkToken, validateAmazonSdkToken } from "./authProviders.js";
 import { microsoftSpaCallbackPage } from "./microsoftSpaCallback.js";
 
 let cachedSigningKey;
@@ -129,6 +129,12 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
     if (path === "/api/auth/config" && request.method === "GET") {
       return json(Object.fromEntries(Object.keys(AUTH_PROVIDERS).map(provider => [provider, configured(provider, env)])));
     }
+    // Public OAuth client IDs are needed by each provider's own popup SDK;
+    // client secrets, authority keys and document hashes are NEVER returned.
+    if (path === "/api/auth/client-config" && request.method === "GET") {
+      return json(Object.fromEntries(Object.keys(AUTH_PROVIDERS).map(provider =>
+        [provider, configured(provider, env) ? providerConfiguration(provider, env).clientId : null])));
+    }
     const authRoute = path.match(/^\/api\/auth\/([a-z]+)\/(start|callback|status|finish|complete)$/);
     const attestRoute = path.match(/^\/api\/attest\/([a-z]+)$/);
     const provider = authRoute?.[1] || attestRoute?.[1];
@@ -195,55 +201,82 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
     const body = await readJson(request, action === "complete" ? 20480 : 16384);
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new RequestError("Invalid request");
     if (action === "complete") {
-      if (provider !== "microsoft") throw new RequestError("Unknown endpoint", 404);
-      onlyFields(body, ["id", "id_token", "error"]);
-      if (typeof body.id !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(body.id)) throw new RequestError("Invalid sign-in request", 403);
-      // An already completed session cannot be replaced or extended by a
-      // duplicate code callback, including a failure arriving out of order.
+      // The native provider SDKs return only tokens, never unverified profile
+      // fields. Bind their validated identity to this document's pending cookie.
+      onlyFields(body, ["id", "id_token", "access_token", "state", "error"]);
+      if (typeof body.id !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(body.id)) {
+        throw new RequestError("Invalid sign-in request", 403);
+      }
       const completed = await readSession(body.id, "receipt");
       if (completed?.status === "ready") return json({ status: "ready" });
       const pending = await readSession(body.id, "request");
-      if (!pending || pending.status !== "pending") throw new RequestError("Sign-in request expired or already completed", 403);
-      // Keep all diagnostics server-authored and bounded. Never return raw jose
-      // exceptions, an ID token, an Azure error description or request parameters.
-      const fail = async (message = "Microsoft sign-in could not be completed or verified. Please try again.") =>
-        json({ error: message }, 403, cookieHeaders([await sessions.write(body.id, "request", {
+      if (!pending || pending.status !== "pending") {
+        throw new RequestError("Sign-in request expired or already completed", 403);
+      }
+      const fail = async message => json({ error: message }, 403, cookieHeaders([
+        await sessions.write(body.id, "request", {
           status: "failed", secret_hash: pending.secret_hash, error: message,
           iat: pending.iat, exp: pending.exp,
-        })]));
+        }),
+      ]));
       if (body.error !== undefined) {
-        if (body.error !== "failed" || body.id_token !== undefined) throw new RequestError("Invalid sign-in response", 403);
-        return fail();
+        if (body.error !== "failed" || body.id_token !== undefined || body.access_token !== undefined) {
+          throw new RequestError("Invalid sign-in response", 403);
+        }
+        return fail(label + " sign-in was cancelled or could not be completed.");
       }
-      let validated = false;
+      if ((provider === "amazon" && (typeof body.access_token !== "string" ||
+          body.id_token !== undefined || body.state !== pending.nonce)) ||
+          (provider !== "amazon" && (typeof body.id_token !== "string" ||
+          body.access_token !== undefined || body.state !== undefined))) {
+        return fail("Sign-in response did not match this document.");
+      }
+      let authenticated;
       try {
-        const authenticated = await validateMicrosoftSpaToken(body.id_token, config, pending, now, verifyTokens);
-        validated = true;
-        const time = now();
-        if (Math.floor(time / 1000) >= pending.exp) return fail("Microsoft sign-in request expired. Prepare your PDF again.");
-        const receipt = { status: "ready", secret_hash: pending.secret_hash, commitments_hash: pending.commitments_hash,
+        authenticated = provider === "google"
+          ? await validateGoogleSdkToken(body.id_token, config, pending, now, verifyTokens)
+          : provider === "microsoft"
+            ? await validateMicrosoftSpaToken(body.id_token, config, pending, now, verifyTokens)
+            : await validateAmazonSdkToken(body.access_token, config, { fetchImpl, now });
+      } catch (error) {
+        const reason = provider === "microsoft" ? safeMicrosoftVerificationReason(error)
+          : error instanceof RequestError ? error.message
+          : label + " identity could not be verified.";
+        return fail(reason);
+      }
+      const time = now();
+      if (Math.floor(time / 1000) >= pending.exp) return fail("Sign-in request expired. Prepare your PDF again.");
+      try {
+        const receipt = {
+          status: "ready", secret_hash: pending.secret_hash, commitments_hash: pending.commitments_hash,
           identity: authenticated.identity, issued_at: new Date(time).toISOString(), provider_iat: authenticated.provider_iat,
-          iat: Math.floor(time / 1000), exp: pending.exp };
+          iat: Math.floor(time / 1000), exp: pending.exp,
+        };
         return json({ status: "ready" }, 200, cookieHeaders([
           await sessions.write(body.id, "receipt", receipt), sessions.clear(body.id, "request"),
         ]));
-      } catch (error) {
-        return fail(validated
-          ? "QRed could not save the verified Microsoft sign-in session. Please try again."
-          : safeMicrosoftVerificationReason(error));
+      } catch {
+        return fail("QRed could not save the verified sign-in session. Please try again.");
       }
     }
 
     if (action === "start") {
-      onlyFields(body, ["commitments"]);
+      onlyFields(body, ["commitments", "nonce"]);
       const commitmentsHash = await commitmentDigest(body.commitments);
       try { await signingKey(env, trusted); } catch { throw new RequestError("Account sealing is unavailable", 503); }
       const seconds = Math.floor(now() / 1000);
-      const id = random(), secret = random(), nonce = random(), pkce = random();
+      // SDK popups must start from the click event; their nonce is generated
+      // locally *before* that click and included in this server session.
+      // Legacy redirect callers still receive a server-created nonce.
+      if (body.nonce !== undefined && (typeof body.nonce !== "string" ||
+          !/^[A-Za-z0-9_-]{43}$/.test(body.nonce))) {
+        throw new RequestError("Invalid sign-in nonce", 403);
+      }
+      const id = random(), secret = random(), nonce = body.nonce || random(), pkce = random();
       const pending = { status: "pending", secret_hash: await hash(secret), commitments_hash: commitmentsHash, nonce, pkce,
         iat: seconds, exp: seconds + SESSION_SECONDS };
       const authorize_url = authorizationUrl(provider, config, { origin, id, nonce, challenge: await hash(pkce) });
-      return json({ id, secret, authorize_url }, 200, cookieHeaders([await sessions.write(id, "request", pending)]));
+      return json({ id, secret, nonce, client_id: config.clientId, authorize_url }, 200, cookieHeaders([await sessions.write(id, "request", pending)]));
     }
 
     onlyFields(body, action === "attest" ? ["id", "secret", "commitments", "index"] : ["id", "secret"]);
