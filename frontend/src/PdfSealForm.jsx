@@ -6,6 +6,8 @@ import { encodeBase64Url } from "./sealSignature.js";
 import { beginAccountSignIn, finishAccountSignIn, checkAccountSignInStatus, attestPagesWithAccount, accountSealingAvailable } from "./accountSealing.js";
 import { AUTH_PROVIDERS, authProvider } from "./authProviders.js";
 import { ProviderSignInButton } from "./ProviderSignInButton.jsx";
+import { openAmazonSignInTab } from "./amazonSignInTab.js";
+import { ACCOUNT_SESSION_SECONDS } from "./accountAuthLimits.js";
 
 const BOOTSTRAP_URL = "https://qred.org/";
 
@@ -216,7 +218,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       event.preventDefault();
       return;
     }
-    if (waiting.provider !== method || Date.now() >= waiting.session.startedAt + 9 * 60 * 1000) {
+    if (waiting.provider !== method || Date.now() >= waiting.session.startedAt + ACCOUNT_SESSION_SECONDS * 1000) {
       event.preventDefault();
       pendingAccountSignIn.current = null;
       waiting.reject(new Error("Sign-in preparation expired. Prepare the PDF again."));
@@ -224,10 +226,18 @@ export function PdfSealForm({ onUsePublicKey }) {
       setPreparedAuthorizeUrl("");
       return;
     }
-    // DO NOT call preventDefault: the browser follows the actual href on this
-    // user gesture. We do not create an about:blank popup or navigate it using
-    // delayed JavaScript. Leave the clicked link mounted until default
-    // navigation has started; otherwise some mobile browsers cancel it.
+    // For Amazon only, open the final, already-prepared URL synchronously on
+    // the user's click. Script-created tabs are more reliably closable after
+    // Amazon redirects back on mobile Chrome. Never open a blank placeholder.
+    // If opening fails or its opener cannot be severed, the native noopener
+    // link retains its default browser navigation. Google and Microsoft keep
+    // their proven native-link behavior unchanged.
+    if (method === "amazon" && !event.defaultPrevented &&
+        event.button === 0 && !event.ctrlKey && !event.metaKey &&
+        !event.shiftKey && !event.altKey &&
+        openAmazonSignInTab(waiting.session.authorize_url)) {
+      event.preventDefault();
+    }
     pendingAccountSignIn.current = null;
     waiting.resolve(null);
     setTimeout(() => {

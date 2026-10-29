@@ -53,6 +53,7 @@ async function exchange(url, options) {
 // The optional Node PNG renderer is not used by browser sealing/verification.
 const client = await compile({ platform: "browser", external: ["qrcode/lib/renderer/png"], stdin: { resolveDir: frontend, loader: "js", contents: `
   import { beginAccountSignIn, attestPagesWithAccount } from "./src/accountSealing.js";
+  import { openAmazonSignInTab } from "./src/amazonSignInTab.js";
   import { createQRedSeals } from "./src/qredSealer.js";
   import { encodePageEvidence } from "./src/pageEvidence.js";
   import { verifyQRedSeals } from "./src/qredVerifier.js";
@@ -85,10 +86,16 @@ const client = await compile({ platform: "browser", external: ["qrcode/lib/rende
   };
   continueLink.onclick = async event => {
     if (!prepared) { event.preventDefault(); return; }
-    // Native browser navigation is the default action of this real anchor.
-    // It does not require creating a blank tab through window.open().
+    // Google and Microsoft use native link navigation. Amazon attempts
+    // direct window.open(finalUrl) synchronously on this gesture to make its
+    // tab closable; if blocked, the native link still provides the fallback.
     const session = prepared;
     prepared = null;
+    if (${JSON.stringify(provider)} === "amazon" &&
+        openAmazonSignInTab(session.authorize_url)) {
+      event.preventDefault();
+      window.__qredAmazonDirectOpen = true;
+    }
     try {
       const receipts = await attestPagesWithAccount(${JSON.stringify(provider)}, pages,
         { preparedSession: session, trusted });

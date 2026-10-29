@@ -81,6 +81,13 @@ def test_stateless_account_cookie_handoff_and_offline_verification(browser, play
             page.get_by_role("link", name="Continue to provider").click()
         popup = opened.value
         popup.wait_for_url(provider_origin + "/**")
+        # A normal native link is still used for Google/Microsoft. Amazon's
+        # tab is opened directly by script on the same click so Android Chrome
+        # can treat its later callback as script-closable.
+        if provider == "amazon":
+            assert page.evaluate("window.__qredAmazonDirectOpen === true")
+        else:
+            assert page.evaluate("window.__qredAmazonDirectOpen === undefined")
         expect(popup.get_by_role("button", name="Continue")).to_be_visible()
         assert popup.evaluate("window.opener === null")
         # Simulate Android Chrome refusing window.close after an Amazon OAuth

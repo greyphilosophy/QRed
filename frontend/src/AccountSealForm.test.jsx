@@ -85,7 +85,8 @@ it("disables an unconfigured provider and recovers from a failed availability ch
 });
 
 it.each(Object.entries(AUTH_PROVIDERS))("auto-prepares %s after file selection, then opens only on an explicit sign-in click", async (provider, details) => {
-  const open = vi.spyOn(window, "open");
+  const openedTab = { opener: { document: "private" }, close: vi.fn() };
+  const open = vi.spyOn(window, "open").mockImplementation(() => openedTab);
   URL.createObjectURL = vi.fn(() => "blob:sealed"); URL.revokeObjectURL = vi.fn();
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
   attestPagesWithAccount.mockImplementation(async (_provider, _pages, options) => {
@@ -116,7 +117,17 @@ it.each(Object.entries(AUTH_PROVIDERS))("auto-prepares %s after file selection, 
   expect(signIn.getAttribute("target")).toBe("_blank");
   expect(signIn.getAttribute("rel")).toContain("noopener");
   expect(signIn.getAttribute("rel")).toContain("noreferrer");
-  fireEvent.click(signIn);
+  const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+  signIn.dispatchEvent(click);
+  if (provider === "amazon") {
+    expect(open).toHaveBeenCalledOnce();
+    expect(open).toHaveBeenCalledWith(mockAuthUrl(provider), "_blank");
+    expect(openedTab.opener).toBeNull();
+    expect(click.defaultPrevented).toBe(true);
+  } else {
+    expect(open).not.toHaveBeenCalled();
+    expect(click.defaultPrevented).toBe(false);
+  }
   const resultMessage = await screen.findByText(/Sealed source.pdf in this browser/);
   expect(resultMessage.textContent).toContain("Download started: source.qred-sealed.pdf");
   expect(resultMessage.textContent).toContain("Clear footer added to page(s) 1, 3");
@@ -125,12 +136,29 @@ it.each(Object.entries(AUTH_PROVIDERS))("auto-prepares %s after file selection, 
     "2026-10-20T00:00:00Z", "internal-test-document-id", "Document ID"]) {
     expect(resultMessage.textContent).not.toContain(internal);
   }
-  expect(open).not.toHaveBeenCalled(); // No JavaScript popup is ever created.
   expect(attestPagesWithAccount).toHaveBeenCalledWith(provider, [], expect.objectContaining({
     popup: null, preparedSession: expect.objectContaining({ provider }), signal: expect.any(AbortSignal),
   }));
   expect(screen.getByText(new RegExp(details.label.replace(/[()]/g, "\\$&") + " account: example@gmail.com")).textContent)
     .toContain(details.label + " profile");
+});
+
+it("keeps the native Amazon link when scripted opening is blocked", async () => {
+  const open = vi.spyOn(window, "open").mockReturnValue(null);
+  URL.createObjectURL = vi.fn(() => "blob:sealed"); URL.revokeObjectURL = vi.fn();
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  sealPdfInBrowser.mockImplementation(async options => {
+    await options.attestPages([]);
+    return { blob: new Blob(["pdf"]), sealResult: {} };
+  });
+  attestPagesWithAccount.mockResolvedValue([]);
+  render(<PdfSealForm />);
+  const link = await prepare("amazon");
+  const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+  link.dispatchEvent(event);
+  expect(open).toHaveBeenCalledWith(mockAuthUrl("amazon"), "_blank");
+  expect(event.defaultPrevented).toBe(false);
+  await screen.findByText(/Sealed source.pdf in this browser/);
 });
 
 it("automatically prepares during delayed mobile PDF parsing but opens no popup until sign-in is tapped", async () => {
