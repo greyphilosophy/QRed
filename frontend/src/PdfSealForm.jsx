@@ -502,7 +502,7 @@ export function PdfSealForm({ onUsePublicKey }) {
         </div>}
 
       <p id="signing-key-status" role="status" style={{ marginTop: "1rem", color: keyError ? "#ef4444" : "#64748b" }}>{keyStatus}</p>
-      {method === "private-key" && <button type="button" onClick={sealPdf}
+      {method === "private-key" && <button type="button" onClick={() => sealPdf()}
         disabled={loading || loadingKeys} aria-busy={loading} style={{ marginTop: "1rem" }}>
         {loading ? "Sealing..." : "Stamp and save PDF"}
       </button>}
