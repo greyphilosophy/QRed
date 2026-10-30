@@ -72,9 +72,9 @@ export async function createQRedSeals({
   };
   let signature;
   if (attestation) {
-    Object.assign(metadata, { identity: attestation.identity, salt: attestation.salt });
+    Object.assign(metadata, { identity: attestation.identity });
     signature = decodeFixedBase64(attestation.signature, 64);
-    const commitment = await pageCommitment(metadata, textBytes, metadata.salt);
+    const commitment = await pageCommitment(metadata, textBytes);
     if (await computeKeyId(attestation.public_key) !== metadata.key_id ||
         !await verifyAsync(signature, attestationMessage(metadata, commitment), decodeFixedBase64(attestation.public_key, 32))) {
       throw new Error("QRed attestation does not match this page");
