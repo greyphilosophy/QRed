@@ -148,17 +148,21 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
       if (!/^[A-Za-z0-9_-]{43}$/.test(id || "")) throw new RequestError("Invalid sign-in request", 403);
       // A duplicate callback with a completed cookie cannot renew the timestamp.
       const complete = await readSession(id, "receipt");
-      if (complete?.status === "ready") return callbackPage(provider, id, origin, true);
+      if (complete?.status === "ready") return complete.mode === "same-tab"
+        ? Response.redirect(origin + "/?qred_auth=returned", 303)
+        : callbackPage(provider, id, origin, true);
       const pending = await readSession(id, "request");
       if (!pending) throw new RequestError("QRed could not find its encrypted sign-in session cookie when your identity provider returned. Return to the original QRed tab, cancel this attempt, and retry using the same browser profile.", 403);
-      if (pending.status === "failed") return callbackPage(provider, id, origin, false, [], pending.error);
+      if (pending.status === "failed") return pending.mode === "same-tab"
+        ? Response.redirect(origin + "/?qred_auth=returned", 303)
+        : callbackPage(provider, id, origin, false, [], pending.error);
       if (pending.status !== "pending") throw new RequestError("Invalid sign-in request", 403);
       // The Microsoft SPA must redeem its PKCE code from the browser so Azure
       // sends an Origin header. A confidential Worker exchange is not supported
       // for a redirect URI registered as Single-page application.
       if (provider === "microsoft" && !url.searchParams.has("error")) {
         const code = url.searchParams.get("code");
-        if (code && code.length <= 4096) return microsoftSpaCallbackPage({ id, code, verifier: pending.pkce, clientId: config.clientId, origin });
+        if (code && code.length <= 4096) return microsoftSpaCallbackPage({ id, code, verifier: pending.pkce, clientId: config.clientId, origin, sameTab: pending.mode === "same-tab" });
       }
       let stage = "provider";
       try {
@@ -171,12 +175,18 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
         if (Math.floor(time / 1000) >= pending.exp) throw new RequestError("Sign-in request expired. Please try again.", 403);
         const receipt = { status: "ready", secret_hash: pending.secret_hash, commitments_hash: pending.commitments_hash,
           identity, issued_at: new Date(time).toISOString(), provider_iat: authenticated.provider_iat,
-          iat: Math.floor(time / 1000), exp: pending.exp };
+          iat: Math.floor(time / 1000), exp: pending.exp, mode: pending.mode };
         // Keep the success cookie separate: a concurrent failed code exchange
         // must not overwrite a successful result. The provider enforces code single-use.
-        return callbackPage(provider, id, origin, true, [
-          await sessions.write(id, "receipt", receipt), sessions.clear(id, "request"),
-        ]);
+        const cookies = [await sessions.write(id, "receipt", receipt), sessions.clear(id, "request")];
+        if (pending.mode === "same-tab") {
+          const headers = cookieHeaders(cookies);
+          headers.set("Location", origin + "/?qred_auth=returned");
+          headers.set("Cache-Control", "no-store");
+          headers.set("Referrer-Policy", "no-referrer");
+          return new Response(null, { status: 303, headers });
+        }
+        return callbackPage(provider, id, origin, true, cookies);
       } catch (error) {
         // Distinguish unexpected provider/token-processing failures from
         // failures creating a signed-in browser session. Never emit the raw
@@ -185,9 +195,17 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
           stage === "receipt"
             ? "QRed could not save the verified sign-in session. Please try again."
             : label + " sign-in failed during provider validation. Please try again.";
-        return callbackPage(provider, id, origin, false, [await sessions.write(id, "request", {
-          status: "failed", secret_hash: pending.secret_hash, error: message, iat: pending.iat, exp: pending.exp,
-        })], message);
+        const failureCookie = await sessions.write(id, "request", {
+          status: "failed", secret_hash: pending.secret_hash, error: message, iat: pending.iat, exp: pending.exp, mode: pending.mode,
+        });
+        if (pending.mode === "same-tab") {
+          const headers = cookieHeaders([failureCookie]);
+          headers.set("Location", origin + "/?qred_auth=returned");
+          headers.set("Cache-Control", "no-store");
+          headers.set("Referrer-Policy", "no-referrer");
+          return new Response(null, { status: 303, headers });
+        }
+        return callbackPage(provider, id, origin, false, [failureCookie], message);
       }
     }
     if (request.method !== "POST") throw new RequestError("Method not allowed", 405);
@@ -235,12 +253,14 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
     }
 
     if (action === "start") {
-      onlyFields(body, ["commitments"]);
+      onlyFields(body, ["commitments", "mode"]);
       const commitmentsHash = await commitmentDigest(body.commitments);
       try { await signingKey(env, trusted); } catch { throw new RequestError("Account sealing is unavailable", 503); }
       const seconds = Math.floor(now() / 1000);
       const id = random(), secret = random(), nonce = random(), pkce = random();
+      if (body.mode !== undefined && body.mode !== "same-tab") throw new RequestError("Invalid sign-in mode", 403);
       const pending = { status: "pending", secret_hash: await hash(secret), commitments_hash: commitmentsHash, nonce, pkce,
+        ...(body.mode ? { mode: body.mode } : {}),
         iat: seconds, exp: seconds + SESSION_SECONDS };
       const authorize_url = authorizationUrl(provider, config, { origin, id, nonce, challenge: await hash(pkce) });
       return json({ id, secret, authorize_url }, 200, cookieHeaders([await sessions.write(id, "request", pending)]));
