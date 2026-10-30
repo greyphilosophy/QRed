@@ -17,6 +17,7 @@ export function savePendingAuth(session, pageScalingStrategy, storage = sessionS
       !Array.isArray(session.commitments) ||
       session.salts.length !== session.commitments.length ||
       !validBase64Url(session.id) || !validBase64Url(session.secret) ||
+      !allowedAuthorizationUrl(session.provider, session.authorize_url) ||
       !Number.isSafeInteger(session.startedAt) ||
       session.salts.some(salt => !(salt instanceof Uint8Array) || salt.length !== 32) ||
       session.commitments.some(value => !validBase64Url(value))) {
@@ -24,6 +25,7 @@ export function savePendingAuth(session, pageScalingStrategy, storage = sessionS
   }
   const data = {
     provider: session.provider, id: session.id, secret: session.secret,
+    authorize_url: session.authorize_url,
     startedAt: session.startedAt, commitments: session.commitments,
     salts: session.salts.map(salt => Array.from(salt)),
     pageScalingStrategy,
@@ -39,6 +41,7 @@ export function readPendingAuth(storage = sessionStorage, now = Date.now()) {
     const data = JSON.parse(raw);
     if (!data || !["google", "microsoft", "amazon"].includes(data.provider) ||
         !validBase64Url(data.id) || !validBase64Url(data.secret) ||
+        !allowedAuthorizationUrl(data.provider, data.authorize_url) ||
         !Number.isSafeInteger(data.startedAt) ||
         data.startedAt > now || now - data.startedAt >= PENDING_MAX_MS ||
         !Array.isArray(data.salts) || !data.salts.length ||
