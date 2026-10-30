@@ -62,6 +62,10 @@ def test_stamp_tool_asks_for_pdf_and_layout_before_signing_method(page):
     expect(pdf).to_be_visible()
     expect(layout).to_be_visible()
     expect(layout).to_have_value("automatic")
+    expect(page.locator(".sdk-signin-provider")).to_have_count(0)
+    pdf.set_input_files({
+        "name": "example.pdf", "mimeType": "application/pdf", "buffer": b"%PDF-1.4",
+    })
     expect(page.locator(".sdk-signin-provider")).to_have_count(3)
     offline = page.get_by_role("button", name="Private key (offline)", exact=True)
     expect(offline).to_be_visible()
