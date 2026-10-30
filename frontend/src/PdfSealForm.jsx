@@ -280,7 +280,7 @@ export function PdfSealForm({ onUsePublicKey }) {
           onIdentity: setSigningIdentity, onStatus: setMessage,
         });
         if (request.controller.signal.aborted) return;
-        const { blob, sealResult, flattenedFieldCount, footerPages = [] } =
+        const { blob, sealResult, flattenedFieldCount, footerPages = [], footerReasons = {} } =
           await prepared.prepared.finish(receipts);
         if (request.controller.signal.aborted) return;
         const url = URL.createObjectURL(blob);
@@ -297,7 +297,8 @@ export function PdfSealForm({ onUsePublicKey }) {
         setMessage([
           "Sealed " + file.name + " in this browser.",
           "Download started: " + outputName,
-          ...(footerPages.length ? ["Clear footer added to page(s) " + footerPages.join(", ") + " to keep seals readable."] : []),
+          ...(footerPages.length ? ["Clear footer added to page(s) " + footerPages.join(", ") + " to keep seals readable.",
+            ...footerPages.filter(page => footerReasons[page]).map(page => "Page " + page + ": " + footerReasons[page])] : []),
           ...(flattenedFieldCount ? ["Flattened " + flattenedFieldCount + " form field(s). Check the values in your sealed copy."] : []),
         ].join("\n"));
       } catch (error) {
@@ -338,7 +339,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       const matchingPublicKey = selectedMethod === "private-key" ? await deriveSigningPublicKey(privateKey) : null;
       if (matchingPublicKey) await validateSigningKeyPair({ privateKey, publicKey: matchingPublicKey });
       setMessage(accountMode ? "Preparing your PDF locally before opening " + selectedProvider.label + "…" : "Sealing in this browser…");
-      const { blob, sealResult, flattenedFieldCount, footerPages = [] } = await sealPdfInBrowser({
+      const { blob, sealResult, flattenedFieldCount, footerPages = [], footerReasons = {} } = await sealPdfInBrowser({
         file, privateKey, publicKey: matchingPublicKey, bootstrapUrl: BOOTSTRAP_URL,
         encodingStrategy: "automatic", pageScalingStrategy,
       });
@@ -361,7 +362,8 @@ export function PdfSealForm({ onUsePublicKey }) {
       setMessage([
         `Sealed ${file.name} in this browser.`,
         `Download started: ${outputName}`,
-        ...(footerPages.length ? [`Clear footer added to page(s) ${footerPages.join(", ")} to keep seals readable.`] : []),
+        ...(footerPages.length ? [`Clear footer added to page(s) ${footerPages.join(", ")} to keep seals readable.`,
+          ...footerPages.filter(page => footerReasons[page]).map(page => `Page ${page}: ${footerReasons[page]}`)] : []),
         ...(flattenedFieldCount ? [`Flattened ${flattenedFieldCount} form field(s). Check the values in your sealed copy.`] : []),
       ].join("\n"));
     } catch (error) {
