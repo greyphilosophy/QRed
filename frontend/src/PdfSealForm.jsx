@@ -400,7 +400,21 @@ export function PdfSealForm({ onUsePublicKey }) {
                 onClick={() => beginProviderSealing(id)}
                 disabled={!file || loading || loadingKeys || !accountSealingAvailable || availability?.[id] === false}
                 title={availability?.[id] === false ? "Not enabled on this QRed installation" : undefined}>
-                {account.button}
+                <span className={"provider-mark provider-mark-" + id} aria-hidden="true">
+                  {id === "google" ? <svg viewBox="0 0 48 48" width="22" height="22" focusable="false">
+                    <path fill="#4285F4" d="M43.6 24.5c0-1.4-.1-2.8-.4-4H24v7.6h11a9.4 9.4 0 0 1-4.1 6.2v5h6.6c3.9-3.6 6.1-8.9 6.1-14.8z"/>
+                    <path fill="#34A853" d="M24 44c5.5 0 10.1-1.8 13.5-4.9l-6.6-5c-1.8 1.2-4.1 1.9-6.9 1.9-5.3 0-9.8-3.6-11.4-8.4H5.9v5.2C9.3 39.5 16.2 44 24 44z"/>
+                    <path fill="#FBBC05" d="M12.6 27.6a12.1 12.1 0 0 1 0-7.2v-5.2H5.9A20 20 0 0 0 3.8 24c0 3.2.8 6.2 2.1 8.8l6.7-5.2z"/>
+                    <path fill="#EA4335" d="M24 12c3 0 5.6 1 7.6 3l5.8-5.8C34.1 6 29.5 4 24 4 16.2 4 9.3 8.5 5.9 15.2l6.7 5.2C14.2 15.6 18.7 12 24 12z"/>
+                  </svg> : id === "microsoft" ? <svg viewBox="0 0 24 24" width="21" height="21" focusable="false">
+                    <path fill="#F25022" d="M1 1h10v10H1z"/><path fill="#7FBA00" d="M13 1h10v10H13z"/>
+                    <path fill="#00A4EF" d="M1 13h10v10H1z"/><path fill="#FFB900" d="M13 13h10v10H13z"/>
+                  </svg> : <svg viewBox="0 0 24 24" width="22" height="22" focusable="false">
+                    <text x="5" y="16" fill="#202B3A" fontSize="17" fontWeight="bold">a</text>
+                    <path d="M4 18Q12 23 21 17" fill="none" stroke="#FF9900" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>}
+                </span>
+                <span>{account.button}</span>
               </button>)}
               <button type="button" aria-pressed={method === "private-key"}
                 onClick={() => { setMethod("private-key"); setMessage(""); setSigningIdentity(null); }}
