@@ -26,7 +26,10 @@ index d341eb7..d37cb9e 100644
 diff --git a/node_modules/jsqr/dist/jsQR.js b/node_modules/jsqr/dist/jsQR.js
 --- a/node_modules/jsqr/dist/jsQR.js
 +++ b/node_modules/jsqr/dist/jsQR.js
-@@ -333,6 +333,19 @@
+@@ -331,1 +331,1 @@
+-function scan(matrix) {
++function scan(matrix, moduleSampler) {
+@@ -333,6 +333,23 @@
      if (!locations) {
          return null;
      }
@@ -46,7 +49,11 @@ diff --git a/node_modules/jsqr/dist/jsQR.js b/node_modules/jsqr/dist/jsQR.js
      for (var _i = 0, locations_1 = locations; _i < locations_1.length; _i++) {
          var location_1 = locations_1[_i];
          var extracted = extractor_1.extract(matrix, location_1);
-@@ -340,6 +353,7 @@
++        if (moduleSampler) {
++            var sampled = moduleSampler(extracted.matrix, extracted.mappingFunction, location_1.dimension);
++            if (sampled) extracted.matrix = sampled;
++        }
+@@ -340,6 +357,7 @@
          if (decoded) {
              return {
                  binaryData: decoded.bytes,
@@ -54,7 +61,13 @@ diff --git a/node_modules/jsqr/dist/jsQR.js b/node_modules/jsqr/dist/jsQR.js
                  data: decoded.text,
                  chunks: decoded.chunks,
                  version: decoded.version,
-@@ -788,7 +802,11 @@
+@@ -380,1 +398,1 @@
+-    var result = scan(tryInvertedFirst ? inverted : binarized);
++    var result = scan(tryInvertedFirst ? inverted : binarized, providedOptions.moduleSampler);
+@@ -382,1 +400,1 @@
+-        result = scan(tryInvertedFirst ? binarized : inverted);
++        result = scan(tryInvertedFirst ? binarized : inverted, providedOptions.moduleSampler);
+@@ -788,7 +806,11 @@
          }
      }
      try {
@@ -67,7 +80,7 @@ diff --git a/node_modules/jsqr/dist/jsQR.js b/node_modules/jsqr/dist/jsQR.js
      }
      catch (_a) {
          return null;
-@@ -8962,7 +8979,7 @@
+@@ -8962,7 +8983,7 @@
      {
          infoBits: 0x177EC,
          versionNumber: 23,
