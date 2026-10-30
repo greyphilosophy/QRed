@@ -59,28 +59,23 @@ def test_stamp_tool_asks_for_pdf_and_layout_before_signing_method(page):
 
     pdf = page.get_by_label("Open PDF", exact=True)
     layout = page.get_by_label("Page layout", exact=True)
-    choices = page.locator(".sealing-method-grid button")
     expect(pdf).to_be_visible()
     expect(layout).to_be_visible()
     expect(layout).to_have_value("automatic")
-    expect(choices).to_have_count(4)
-    assert choices.all_text_contents() == [
-        "Authenticate with Google login",
-        "Authenticate with Microsoft login",
-        "Authenticate with Amazon login",
-        "Private key (offline)",
-    ]
+    expect(page.locator(".sdk-signin-provider")).to_have_count(3)
+    offline = page.get_by_role("button", name="Private key (offline)", exact=True)
+    expect(offline).to_be_visible()
     assert page.evaluate("""() => {
       const pdf = document.querySelector("#pdf-to-stamp");
       const layout = document.querySelector("select[aria-label='Page layout']");
-      const auth = document.querySelector(".sealing-method-grid button");
+      const auth = document.querySelector(".sdk-signin-provider");
+      const offline = document.querySelector(".offline-signin-choice button");
       return Boolean(pdf.compareDocumentPosition(layout) & Node.DOCUMENT_POSITION_FOLLOWING) &&
-             Boolean(layout.compareDocumentPosition(auth) & Node.DOCUMENT_POSITION_FOLLOWING);
+             Boolean(layout.compareDocumentPosition(auth) & Node.DOCUMENT_POSITION_FOLLOWING) &&
+             Boolean(auth.compareDocumentPosition(offline) & Node.DOCUMENT_POSITION_FOLLOWING);
     }""")
-    assert all(button.get_attribute("aria-pressed") == "false" for button in choices.all())
     expect(page.get_by_label("Private Key", exact=True)).to_have_count(0)
     expect(page.get_by_role("button", name="Stamp and save PDF")).to_have_count(0)
-
-    choices.last.click()
+    offline.click()
     expect(page.get_by_label("Private Key", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Stamp and save PDF")).to_be_visible()
