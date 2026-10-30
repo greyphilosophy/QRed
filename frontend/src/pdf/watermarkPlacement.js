@@ -137,7 +137,7 @@ function axis(start, end, step) {
   return values;
 }
 
-export function planWatermarks(image, symbols, entry = null) {
+export function planWatermarks(image, symbols, entry = null, { excludeBoxes = null } = {}) {
   const map = analyzeWatermarkPage(image), { bounds } = image;
   const area = { x: bounds.x + MARGIN, y: bounds.y + MARGIN,
     width: bounds.width - 2 * MARGIN, height: bounds.height - 2 * MARGIN };
@@ -155,6 +155,14 @@ export function planWatermarks(image, symbols, entry = null) {
     const boxes = symbols.map((_, index) => ({ x: x + (index % columns) * (size + GAP),
       y: y + (rows - 1 - Math.floor(index / columns)) * (size + GAP), width: size, height: size }));
     if (keepout && boxes.some(box => overlaps(box, keepout))) return;
+    // A failed first attempt should not retry nearly identical geometry.
+    // Reject candidates overlapping >70% of each previous symbol's footprint.
+    if (excludeBoxes?.length === boxes.length && boxes.every((box, index) => {
+      const prior = excludeBoxes[index];
+      const overlapWidth = Math.max(0, Math.min(box.x + box.width, prior.x + prior.width) - Math.max(box.x, prior.x));
+      const overlapHeight = Math.max(0, Math.min(box.y + box.height, prior.y + prior.height) - Math.max(box.y, prior.y));
+      return overlapWidth * overlapHeight / Math.min(box.width * box.height, prior.width * prior.height) > 0.7;
+    })) return;
     const scores = boxes.map((box, index) => symbolCost(map, box, symbols[index].modules.size));
     if (scores.some(score => !Number.isFinite(score))) return;
     // Do not trade one unreadable part for a very clean neighboring part.
