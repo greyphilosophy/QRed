@@ -100,12 +100,11 @@ describe("signed binary page references", () => {
     const metadata = { pdf: true, page_number: 1, page_count: 1, page_evidence: true,
       timestamp: "2026-10-23T12:00:00.000Z", key_id, identity };
     const body = encodePageEvidence({ width: 612, height: 792, visual });
-    const salt = crypto.getRandomValues(new Uint8Array(32));
-    const commitment = await pageCommitment(metadata, body, salt);
-    expect(commitment).not.toEqual(await pageCommitment({ ...metadata, page_evidence: false }, body, salt));
+    const commitment = await pageCommitment(metadata, body);
+    expect(commitment).not.toEqual(await pageCommitment({ ...metadata, page_evidence: false }, body));
     const signature = await signAsync(attestationMessage(metadata, commitment), decodeBase64Url(privateKey));
     const sealed = await createQRedSeals({ content: "", pageEvidence: body, pageContext,
-      attestation: { ...metadata, salt, signature: encodeBase64Url(signature), public_key: publicKey } });
+      attestation: { ...metadata, signature: encodeBase64Url(signature), public_key: publicKey } });
     const verified = await verifyQRedSeals(sealed.seals, "", { [key_id]: publicKey });
     expect(verified).toMatchObject({ status: "VALID", content: "", identity_authenticated: true, evidence: { visual } });
   });
@@ -115,7 +114,7 @@ describe("optional evidence budget", () => {
   it("never increases the text's QR count, including unknown Google identity sizes", () => {
     const count = size => size <= 2945 ? 1 : Math.ceil(size / 2905);
     for (const attested of [false, true]) for (const multiple of [false, true]) {
-      const baseHeader = 85 + (multiple ? 36 : 0) + (attested ? 32 : 0);
+      const baseHeader = 85 + (multiple ? 36 : 0);
       for (let length = 1; length < 5800; length += 13) {
         const budget = evidenceBodyBudget(length, { attested, multiple });
         if (!budget) continue;
