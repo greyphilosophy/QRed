@@ -419,7 +419,7 @@ export function PdfSealForm({ onUsePublicKey }) {
             <div className="sealing-method-grid">
               {Object.entries(AUTH_PROVIDERS).map(([id, account]) => {
                 const session = preparedProviders?.sessions?.[id];
-                const usable = file && !loading && !loadingKeys && session &&
+                const usable = method !== "private-key" && file && !loading && !loadingKeys && session &&
                   Date.now() < session.startedAt + ACCOUNT_SESSION_SECONDS * 1000 - 10000;
                 const label = account.button;
                 return usable ? <a key={id} href={session.authorize_url}
