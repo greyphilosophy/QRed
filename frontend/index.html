@@ -307,6 +307,36 @@
       }
       .stamp-method-details summary { cursor: pointer; font-weight: 600; }
       .stamp-method-details p { line-height: 1.5; margin-top: 0.65rem; }
+      .sdk-signin-grid { align-items: center; }
+      .pdf-stamp-tool .sdk-signin-provider {
+        align-items: center;
+        background: #fff;
+        border: 1px solid #cbd5e1;
+        border-radius: 9px;
+        display: flex;
+        justify-content: center;
+        min-height: 3.5rem;
+        overflow: hidden;
+        padding: 0.5rem;
+        width: 100%;
+      }
+      .pdf-stamp-tool .sdk-signin-provider:disabled { opacity: 0.6; }
+      .pdf-stamp-tool .sdk-signin-provider img {
+        display: block;
+        height: auto;
+        max-height: 46px;
+        max-width: min(100%, 320px);
+        object-fit: contain;
+        width: auto;
+      }
+      .google-signin-rendered {
+        display: flex;
+        justify-content: center;
+        min-height: 44px;
+        width: 100%;
+      }
+      .offline-signin-choice { margin-top: 0.65rem; }
+      .offline-signin-choice button { width: 100%; }
       .sealing-method-selected { font-weight: 700; color: #334155; margin: 0 0 1rem; }
       /* All provider login actions use the same appearance; no sign-in SDK runs on this page. */
       .pdf-stamp-tool .account-signin-button {
