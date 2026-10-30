@@ -109,7 +109,12 @@ function symbolCost(map, box, moduleCount) {
   const body = region(4, 4, moduleCount, moduleCount);
   // Protect finder patterns, separators and their adjacent format bits. An
   // obstructed locator cannot be rescued by ordinary payload error correction.
-  const finders = Math.max(region(3, 3, 10, 10), region(moduleCount - 7, 3, 12, 10), region(3, moduleCount - 7, 10, 12));
+  const finderRegions = [[3, 3, 10, 10], [moduleCount - 7, 3, 12, 10], [3, moduleCount - 7, 10, 12]];
+  const finders = Math.max(...finderRegions.map(([x, y, w, h]) => region(x, y, w, h)));
+  // Thin printed text was previously ignored by the broad-graphic risk map.
+  // Do not place a finder over enough original ink to make alignment unreliable.
+  const finderInk = Math.max(...finderRegions.map(([x, y, w, h]) => region(x, y, w, h, map.ink)));
+  if (finderInk > 0.08) return Infinity;
   const timing = Math.max(region(12, 10, moduleCount - 16, 1), region(10, 12, 1, moduleCount - 16));
   const alignment = moduleCount > 21 ? region(moduleCount - 6, moduleCount - 6, 7, 7) : 0;
   const quiet = Math.max(region(0, 0, moduleCount + 8, 4), region(0, moduleCount + 4, moduleCount + 8, 4),
@@ -117,7 +122,7 @@ function symbolCost(map, box, moduleCount) {
   const ink = region(0, 0, moduleCount + 8, moduleCount + 8, map.ink);
   // These are ranking weights, not probabilities or error-correction budgets.
   // The size term favors larger printed modules when obstruction is similar.
-  return 8 * body + 8 * finders + 2 * timing + 2 * alignment + 2 * quiet + 0.03 * ink
+  return 8 * body + 8 * finders + 18 * finderInk + 2 * timing + 2 * alignment + 2 * quiet + 0.03 * ink
     + 0.35 * (MIN_WATERMARK_MODULE_SIZE / unit) ** 2;
 }
 
@@ -151,6 +156,7 @@ export function planWatermarks(image, symbols, entry = null) {
       y: y + (rows - 1 - Math.floor(index / columns)) * (size + GAP), width: size, height: size }));
     if (keepout && boxes.some(box => overlaps(box, keepout))) return;
     const scores = boxes.map((box, index) => symbolCost(map, box, symbols[index].modules.size));
+    if (scores.some(score => !Number.isFinite(score))) return;
     // Do not trade one unreadable part for a very clean neighboring part.
     const score = Math.max(...scores) + scores.reduce((sum, value) => sum + value, 0) / scores.length * 0.1;
     if (!best || score < best.score - 1e-9 || (Math.abs(score - best.score) < 1e-9 && size > best.size)) {
