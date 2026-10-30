@@ -105,10 +105,12 @@ function scanAtSize(data, width, height, [targetWidth, targetHeight, radius]) {
 /** Return QR geometry in the original image's coordinates, even after a retry.
  * Hidden-payload recovery and camera overlays must use the same coordinate frame.
  */
-export function scanQrImage(data, width, height, { tryRescaling = true, tryWatermark = true } = {}) {
+export function scanQrImage(data, width, height, { tryRescaling = true, tryWatermark = true, maxAttempts = Infinity } = {}) {
   if (!isValidImage(data, width, height)) return null;
   let entryLink = null;
+  let attempts = 0;
   for (const size of scanAttempts(width, height, tryRescaling, tryWatermark)) {
+    if (++attempts > maxAttempts) break;
     const code = scanAtSize(data, width, height, size);
     if (usableResult(code)) return code;
     if (code?.data) entryLink ??= code;
