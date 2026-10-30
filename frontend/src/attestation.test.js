@@ -22,10 +22,9 @@ const metadata = { version: "4", pdf: true, page_number: 2, page_count: 3, docum
   } };
 beforeAll(() => { vi.stubGlobal("crypto", webcrypto); });
 async function attested(content, extra = {}) {
-  const salt = crypto.getRandomValues(new Uint8Array(32));
-  const signature = await signAsync(attestationMessage(metadata, await pageCommitment(metadata, content, salt)), decodeBase64Url(privateKey));
+  const signature = await signAsync(attestationMessage(metadata, await pageCommitment(metadata, content)), decodeBase64Url(privateKey));
   return createQRedSeals({ content, pageContext: context, ...extra,
-    attestation: { ...metadata, salt, signature: encodeBase64Url(signature), public_key: publicKey } });
+    attestation: { ...metadata, signature: encodeBase64Url(signature), public_key: publicKey } });
 }
 describe("compact document-specific attestations", () => {
   it("preserves the issued Google signing format and reuses the provider byte for new methods", () => {
@@ -52,12 +51,12 @@ describe("compact document-specific attestations", () => {
     });
     await expect(verifyQRedSeals(sealed.seals, publicKey, {})).resolves.toMatchObject({ status: "UNVERIFIED", identity_authenticated: false });
   });
-  it("binds recovered text, page order/count/root, salt, email, name/source, account and server time", async () => {
+  it("binds recovered text, page order/count/root, email, name/source, account and server time", async () => {
     const sealed = await attested("Invoice 42", { encodingStrategy: "plaintext" });
     const original = decodeEnvelope(qrPayloadBytes(sealed.seals[0]));
     const modifications = [
       { timestamp: "2025-01-01T00:00:00.000Z" }, { page_number: 1 }, { page_count: 4 },
-      { document_root: "cd".repeat(32) }, { salt: new Uint8Array(32) },
+      { document_root: "cd".repeat(32) },
       ...Object.entries({ email: "other@gmail.com", name: "Changed", name_source: "self", subject: "5678" })
         .map(([key, value]) => ({ identity: { ...original.identity, [key]: value } })),
       { data: new TextEncoder().encode("Invoice 43") },
@@ -68,13 +67,29 @@ describe("compact document-specific attestations", () => {
       await expect(verifyQRedSeals([sealString(record)], "", trusted)).resolves.toMatchObject({ status: "INVALID", identity_authenticated: false });
     }
   });
-  it("uses unpredictable fingerprints and rejects substituted server receipts before stamping", async () => {
-    const first = crypto.getRandomValues(new Uint8Array(32));
-    const second = crypto.getRandomValues(new Uint8Array(32));
-    expect(await pageCommitment(metadata, "yes", first)).not.toEqual(await pageCommitment(metadata, "yes", second));
-    const signature = await signAsync(attestationMessage(metadata, await pageCommitment(metadata, "First document", first)), decodeBase64Url(privateKey));
+  it("derives deterministic fingerprints but rejects substituted server receipts before stamping", async () => {
+    const first = await pageCommitment(metadata, "yes");
+    expect(await pageCommitment(metadata, "yes")).toEqual(first);
+    expect(await pageCommitment(metadata, "different")).not.toEqual(first);
+    expect(await pageCommitment({ ...metadata, page_number: 1 }, "yes")).not.toEqual(first);
+    const signature = await signAsync(attestationMessage(metadata, await pageCommitment(metadata, "First document")), decodeBase64Url(privateKey));
     await expect(createQRedSeals({ content: "Changed document", pageContext: context,
-      attestation: { ...metadata, salt: first, signature: encodeBase64Url(signature), public_key: publicKey } })).rejects.toThrow("does not match");
+      attestation: { ...metadata, signature: encodeBase64Url(signature), public_key: publicKey } })).rejects.toThrow("does not match");
+  });
+  it("omits the former 32-byte salt from every QRS4 seal without weakening verification", async () => {
+    const content = "Compact account attestation.";
+    const sealed = await attested(content, { encodingStrategy: "plaintext" });
+    const record = decodeEnvelope(qrPayloadBytes(sealed.seals[0]));
+    expect(Object.hasOwn(record, "salt")).toBe(false);
+    const wireBytes = qrPayloadBytes(sealed.seals[0]);
+    // Four magic bytes, 53 bytes of multipage metadata, encoded identity,
+    // 64-byte Ed25519 signature and the uncompressed content. No salt field.
+    expect(wireBytes.length).toBe(4 + 53 + encodeIdentity(metadata.identity).length + 64 +
+      new TextEncoder().encode(content).length);
+    expect(sealed.seals.length).toBe(1);
+    await expect(verifyQRedSeals(sealed.seals, "", trusted)).resolves.toMatchObject({
+      status: "VALID", identity_authenticated: true, content,
+    });
   });
   it("recovers a real QR image and reassembles reversed multi-QR attestations", async () => {
     const small = await attested("Synthetic Google attestation QR test.");
