@@ -1,227 +1,110 @@
 /* @vitest-environment jsdom */
+import { webcrypto } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { PdfSealForm } from "./PdfSealForm.jsx";
 import { sealPdfInBrowser } from "./pdfClientSeal.js";
 import { beginAccountSignIn, finishAccountSignIn, checkAccountSignInStatus, attestPagesWithAccount } from "./accountSealing.js";
+import { navigateToProvider, readPendingAuth, clearPendingAuth } from "./sameTabAuth.js";
 import { AUTH_PROVIDERS } from "./authProviders.js";
 
 vi.mock("./pdfClientSeal.js", () => ({ sealPdfInBrowser: vi.fn() }));
 vi.mock("./accountSealing.js", () => ({
   accountSealingAvailable: true,
-  beginAccountSignIn: vi.fn(), finishAccountSignIn: vi.fn(), checkAccountSignInStatus: vi.fn(), attestPagesWithAccount: vi.fn(),
+  beginAccountSignIn: vi.fn(),
+  finishAccountSignIn: vi.fn(),
+  checkAccountSignInStatus: vi.fn(),
+  attestPagesWithAccount: vi.fn(),
 }));
-
-const mockAuthUrl = provider => ({
+vi.mock("./sameTabAuth.js", () => ({
+  readPendingAuth: vi.fn(),
+  navigateToProvider: vi.fn(),
+  clearPendingAuth: vi.fn(),
+}));
+const onePdf = () => new File(["%PDF-1.4"], "example.pdf", { type: "application/pdf" });
+const providerUrl = {
   google: "https://accounts.google.com/o/oauth2/v2/auth",
   microsoft: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
   amazon: "https://www.amazon.com/ap/oa",
-})[provider];
+};
 const session = provider => ({
-  id: "test-auth-id", secret: "test-secret", provider, authorize_url: mockAuthUrl(provider),
-  salts: [], commitments: [], startedAt: Date.now(),
+  provider, id: "a".repeat(43), secret: "b".repeat(43), authorize_url: providerUrl[provider],
+  startedAt: Date.now(), salts: [new Uint8Array(32)], commitments: ["c".repeat(43)],
+  pageScalingStrategy: "automatic",
 });
 beforeEach(() => {
+  vi.stubGlobal("crypto", webcrypto);
+  readPendingAuth.mockReset().mockReturnValue(null);
+  navigateToProvider.mockReset();
+  clearPendingAuth.mockReset();
+  finishAccountSignIn.mockReset().mockResolvedValue();
+  checkAccountSignInStatus.mockReset().mockResolvedValue({ status: "ready" });
+  attestPagesWithAccount.mockReset().mockResolvedValue([{ signature: "test" }]);
+  beginAccountSignIn.mockReset().mockImplementation(async provider => session(provider));
   vi.stubGlobal("fetch", vi.fn(async () => ({
     ok: true, json: async () => ({ google: true, microsoft: true, amazon: true }),
   })));
-  beginAccountSignIn.mockImplementation(async provider => session(provider));
-  finishAccountSignIn.mockResolvedValue();
-  checkAccountSignInStatus.mockReset().mockResolvedValue({ status: "pending" });
-  attestPagesWithAccount.mockReset().mockResolvedValue([]);
-  sealPdfInBrowser.mockReset().mockImplementation(async options => {
-    await options.attestPages([]);
-    return { blob: new Blob(["pdf"]), sealResult: {} };
+  sealPdfInBrowser.mockReset().mockImplementation(async ({ attestPages }) => {
+    if (attestPages) await attestPages([{ content: "confidential", metadata: { pdf: true } }]);
+    return { blob: new Blob(["sealed"]), sealResult: {} };
   });
   URL.createObjectURL = vi.fn(() => "blob:sealed");
   URL.revokeObjectURL = vi.fn();
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
-
 const upload = () => fireEvent.change(screen.getByLabelText("Open PDF"), {
-  target: { files: [new File(["pdf"], "source.pdf")] },
+  target: { files: [onePdf()] },
 });
-function popupTab() {
-  return { location: { replace: vi.fn() }, opener: { document: "qred" }, closed: false, close: vi.fn() };
-}
-function startProvider(provider) {
+
+it("starts with no provider preselected or third-party scripts", () => {
+  render(<PdfSealForm />);
+  expect(screen.getByLabelText("Page layout").value).toBe("automatic");
+  expect(readPendingAuth).toHaveBeenCalled();
+  expect(screen.queryByLabelText("Private Key")).toBeNull();
+  expect(fetch).not.toHaveBeenCalled();
+  expect(navigateToProvider).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Private key (offline)" })).toBeTruthy();
+});
+
+it.each(Object.keys(AUTH_PROVIDERS))("%s uses the current tab with no QRed popup", async provider => {
+  const windowOpen = vi.spyOn(window, "open");
+  render(<PdfSealForm />);
   upload();
   fireEvent.click(screen.getByRole("button", { name: AUTH_PROVIDERS[provider].button }));
-}
-
-
-it("starts with no signing method or network check, and only exposes offline keys when selected", () => {
-  render(<PdfSealForm />);
-  expect(fetch).not.toHaveBeenCalled();
-  expect(screen.getByLabelText("Open PDF")).toBeTruthy();
-  expect(screen.getByLabelText("Page layout").value).toBe("automatic");
-  expect(screen.queryByLabelText("Private Key")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Stamp and save PDF" })).toBeNull();
-  const offline = screen.getByRole("button", { name: "Private key (offline)" });
-  expect(offline.getAttribute("aria-pressed")).toBe("false");
-  fireEvent.click(offline);
-  expect(fetch).not.toHaveBeenCalled();
-  expect(offline.getAttribute("aria-pressed")).toBe("true");
-  expect(screen.getByLabelText("Private Key")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Stamp and save PDF" }).disabled).toBe(false);
+  await waitFor(() => expect(navigateToProvider).toHaveBeenCalledOnce());
+  expect(beginAccountSignIn).toHaveBeenCalledWith(provider, expect.any(Array),
+    expect.objectContaining({ mode: "same-tab", signal: expect.any(AbortSignal) }));
+  expect(navigateToProvider).toHaveBeenCalledWith(expect.objectContaining({ provider }), "automatic");
+  expect(windowOpen).not.toHaveBeenCalled();
+  expect(finishAccountSignIn).not.toHaveBeenCalled();
 });
 
-it("orders PDF, layout and providers, disabling account buttons until a PDF is selected", () => {
-  const { container } = render(<PdfSealForm />);
-  const pdf = screen.getByLabelText("Open PDF");
-  const layout = screen.getByLabelText("Page layout");
-  const offline = screen.getByRole("button", { name: "Private key (offline)" });
-  const choices = [...container.querySelectorAll(".sealing-method-grid button")];
-  expect(choices.at(-1)).toBe(offline);
-  expect(choices.map(button => button.textContent.trim())).toEqual([
-    ...Object.values(AUTH_PROVIDERS).map(details => details.button),
-    "Private key (offline)",
-  ]);
-  expect(pdf.compareDocumentPosition(layout) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(layout.compareDocumentPosition(choices[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(choices.every(button => button.getAttribute("aria-pressed") === "false")).toBe(true);
-  expect(choices.slice(0, -1).every(button => button.disabled)).toBe(true);
-  expect(offline.disabled).toBe(false);
+it("never stamps a substituted document after returning from login", async () => {
+  const pending = session("google");
+  readPendingAuth.mockReturnValue(pending);
+  render(<PdfSealForm />);
   upload();
-  expect(choices.slice(0, -1).every(button => !button.disabled)).toBe(true);
-  expect(sealPdfInBrowser).not.toHaveBeenCalled();
-});
-
-it.each(Object.entries(AUTH_PROVIDERS))(
-  "one %s button click opens a visible preparation tab and automatically starts OAuth",
-  async (provider, details) => {
-    const tab = popupTab();
-    const open = vi.spyOn(window, "open").mockReturnValue(tab);
-    attestPagesWithAccount.mockImplementation(async (_provider, _pages, options) => {
-      expect(options.preparedSession.provider).toBe(provider);
-      expect(options.popup).toBe(tab);
-      options.onIdentity({ email: "test@example.com", name: "Profile", name_source: provider });
-      return [];
-    });
-    sealPdfInBrowser.mockImplementation(async options => {
-      expect(options).not.toHaveProperty("privateKey");
-      expect(options).not.toHaveProperty("publicKey");
-      await options.attestPages([]);
-      return { blob: new Blob(["pdf"]), sealResult: {}, flattenedFieldCount: 2, footerPages: [1] };
-    });
-
-    render(<PdfSealForm />);
-    startProvider(provider);
-    expect(open).toHaveBeenCalledOnce();
-    expect(open).toHaveBeenCalledWith("/auth-pending.html", "_blank");
-    expect(tab.opener).toBeNull();
-    await waitFor(() => expect(tab.location.replace).toHaveBeenCalledWith(mockAuthUrl(provider)));
-    expect(beginAccountSignIn).toHaveBeenCalledWith(provider, [], expect.objectContaining({ signal: expect.any(AbortSignal) }));
-    expect(tab.location.replace.mock.calls[0][0]).not.toContain("test-secret");
-    expect(attestPagesWithAccount).toHaveBeenCalledOnce();
-    expect(await screen.findByText(/Sealed source.pdf in this browser/)).toBeTruthy();
-    expect(screen.getByText(/Sealed source.pdf in this browser/).textContent).toContain("Flattened 2 form field(s)");
-    expect(tab.close).toHaveBeenCalledOnce();
-    expect(screen.getByRole("button", { name: details.button })).toBeTruthy();
-  },
-);
-
-it("opens the preparation tab immediately even with slow PDF extraction", async () => {
-  let continueParsing;
-  const parsing = new Promise(resolve => { continueParsing = resolve; });
-  const tab = popupTab();
-  vi.spyOn(window, "open").mockReturnValue(tab);
-  sealPdfInBrowser.mockImplementation(async options => {
-    await parsing;
-    await options.attestPages([]);
-    return { blob: new Blob(["pdf"]), sealResult: {} };
-  });
-
-  render(<PdfSealForm />);
-  startProvider("google");
-  expect(window.open).toHaveBeenCalledOnce();
-  expect(tab.location.replace).not.toHaveBeenCalled();
-  expect(screen.getByText(/Preparing document/)).toBeTruthy();
-  continueParsing();
-  await waitFor(() => expect(tab.location.replace).toHaveBeenCalledWith(mockAuthUrl("google")));
-  await screen.findByText(/Sealed source.pdf in this browser/);
-  expect(window.open).toHaveBeenCalledOnce();
-});
-
-it("falls back to a native provider link if a popup is blocked", async () => {
-  vi.spyOn(window, "open").mockReturnValue(null);
-  let finishSealing;
-  attestPagesWithAccount.mockImplementation(() => new Promise(resolve => { finishSealing = resolve; }));
-  render(<PdfSealForm />);
-  startProvider("google");
-  expect(window.open).toHaveBeenCalledWith("/auth-pending.html", "_blank");
-  const link = await screen.findByRole("link", { name: AUTH_PROVIDERS.google.button });
-  expect(link.getAttribute("href")).toBe(mockAuthUrl("google"));
-  expect(link.getAttribute("rel")).toContain("noopener");
-  expect(link.getAttribute("rel")).toContain("noreferrer");
-  expect(link.getAttribute("href")).not.toContain("test-secret");
+  await screen.findByText(/does not match the authenticated document/);
   expect(attestPagesWithAccount).not.toHaveBeenCalled();
-  fireEvent.click(link);
-  await waitFor(() => expect(attestPagesWithAccount).toHaveBeenCalledOnce());
-  expect(attestPagesWithAccount.mock.calls[0][2].popup).toBeNull();
-  finishSealing([]);
-  await screen.findByText(/Sealed source.pdf in this browser/);
-});
-
-it("reports an unavailable provider and closes its unused preparation tab", async () => {
-  const tab = popupTab();
-  vi.spyOn(window, "open").mockReturnValue(tab);
-  fetch.mockImplementation(async () => ({ ok: true, json: async () =>
-    ({ google: false, microsoft: true, amazon: true }) }));
-  render(<PdfSealForm />);
-  startProvider("google");
-  await screen.findByText(/Google sealing is not enabled/);
-  expect(tab.location.replace).not.toHaveBeenCalled();
-  expect(tab.close).toHaveBeenCalled();
-  expect(beginAccountSignIn).not.toHaveBeenCalled();
-});
-
-it("cancels work before signing in and closes the temporary tab", async () => {
-  const tab = popupTab();
-  vi.spyOn(window, "open").mockReturnValue(tab);
-  let rejectParsing;
-  sealPdfInBrowser.mockImplementation(() => new Promise((_resolve, reject) => { rejectParsing = reject; }));
-  render(<PdfSealForm />);
-  startProvider("google");
-  await waitFor(() => expect(rejectParsing).toBeTypeOf("function"));
-  fireEvent.click(screen.getByRole("button", { name: "Cancel sealing" }));
-  rejectParsing(new Error("Cancelled"));
-  await screen.findByText("Account sealing cancelled.");
-  expect(tab.close).toHaveBeenCalled();
   expect(URL.createObjectURL).not.toHaveBeenCalled();
+  expect(clearPendingAuth).not.toHaveBeenCalled();
 });
 
-it("allows mobile account status checks while the prepared provider tab is open", async () => {
-  const tab = popupTab();
-  vi.spyOn(window, "open").mockReturnValue(tab);
-  attestPagesWithAccount.mockImplementation(() => new Promise(() => {}));
+it("checks authentication status and reports failures without stamping", async () => {
+  readPendingAuth.mockReturnValue(session("amazon"));
+  checkAccountSignInStatus.mockResolvedValue({ status: "failed", error: "provider rejected sign-in" });
   render(<PdfSealForm />);
-  startProvider("google");
-  await waitFor(() => expect(tab.location.replace).toHaveBeenCalledOnce());
-  const check = await screen.findByRole("button", { name: "Check sign-in status" });
-  fireEvent.click(check);
-  await screen.findByText(/QRed has not received a completed sign-in from the provider/);
-  expect(checkAccountSignInStatus).toHaveBeenCalledWith("google", expect.objectContaining({
-    id: "test-auth-id", secret: "test-secret",
-  }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
-  checkAccountSignInStatus.mockResolvedValueOnce({ status: "failed", error: "Google declined the code exchange" });
-  fireEvent.click(check);
-  await screen.findByText(/Account sign-in failed: Google declined/);
-  checkAccountSignInStatus.mockResolvedValueOnce({ status: "ready" });
-  fireEvent.click(check);
-  await screen.findByText(/Account sign-in verified by QRed/);
-  fireEvent.click(screen.getByRole("button", { name: "Cancel sealing" }));
-  expect(tab.close).toHaveBeenCalled();
+  upload();
+  await screen.findByText(/Sign-in failed: provider rejected sign-in/);
+  expect(sealPdfInBrowser).not.toHaveBeenCalled();
+  expect(clearPendingAuth).toHaveBeenCalled();
 });
 
-it("preserves the provider's error page when a sign-in fails", async () => {
-  const tab = popupTab();
-  vi.spyOn(window, "open").mockReturnValue(tab);
-  attestPagesWithAccount.mockRejectedValue(new Error("Google declined QRed's authorization code exchange"));
+it("can cancel a short-lived session without retaining any document", async () => {
+  readPendingAuth.mockReturnValue(session("microsoft"));
   render(<PdfSealForm />);
-  startProvider("google");
-  await waitFor(() => expect(tab.location.replace).toHaveBeenCalledOnce());
-  await screen.findByText(/PDF sealing failed: Google declined QRed's authorization code exchange/);
-  expect(tab.close).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel sign-in" }));
+  await waitFor(() => expect(finishAccountSignIn).toHaveBeenCalled());
+  expect(clearPendingAuth).toHaveBeenCalled();
 });
