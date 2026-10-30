@@ -56,6 +56,22 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+it("shows only essential pre-sign-in disclosures and keeps technical explanations collapsed", async () => {
+  render(<PdfSealForm />);
+  expect(screen.getByText(/Your PDF stays on this device\. Account sign-in sends page fingerprints/)).toBeTruthy();
+  expect(screen.getByText(/Account seals disclose your provider profile name and email/)).toBeTruthy();
+  const details = screen.getByText("About seals, privacy and page layouts").closest("details");
+  expect(details.open).toBe(false);
+  expect(details.textContent).toContain("These commitments are unsalted");
+  expect(details.textContent).toContain("does not establish legal identity");
+  expect(screen.getByRole("button", { name: "Sign in with Google" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Sign in with Microsoft" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Login with Amazon" })).toBeTruthy();
+  expect(screen.queryByText(/QRed prepares authentication securely/)).toBeNull();
+  expect(screen.getByText(/Uses a watermark when readable, otherwise a footer/)).toBeTruthy();
+  expect(screen.queryByText(/sign-in provider directly/)).toBeNull();
+});
+
 it("does not contact an account service or prepare account signing in offline mode", async () => {
   render(<PdfSealForm />);
   expect(fetch).not.toHaveBeenCalled();
