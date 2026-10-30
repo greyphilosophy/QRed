@@ -83,7 +83,7 @@ async function createPageSealResults({ file, privateKey, publicKey, bootstrapUrl
 }
 
 async function finishPdfSeal({ file, prepared, pageSealResults, plans, pageScalingStrategy }) {
-  const { blob, watermarkLayout, footerPages } = await renderSealedPdf({
+  const { blob, watermarkLayout, footerPages, footerReasons } = await renderSealedPdf({
     file, pageSealResults, pagesWithText: plans.map(page => Boolean(page.text)), pageScalingStrategy,
   });
   const pageSealStrings = pageSealResults.map(result => result.seals);
@@ -91,7 +91,7 @@ async function finishPdfSeal({ file, prepared, pageSealResults, plans, pageScali
   return {
     blob, sealResult: firstResult, stampedQrValues: firstResult?.seals ?? [],
     pageSealResults, pageSealStrings, flattenedFieldCount: prepared.flattenedFieldCount,
-    watermarkLayout, footerPages,
+    watermarkLayout, footerPages, footerReasons,
   };
 }
 
