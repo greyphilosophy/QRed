@@ -60,6 +60,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     let current = true;
     const controller = new AbortController();
     const createdSessions = [];
+    let refreshTimer;
     const currentPreparation = { controller, sessions: createdSessions };
     preparationRef.current = currentPreparation;
     preparedRef.current = null;
@@ -98,6 +99,13 @@ export function PdfSealForm({ onUsePublicKey }) {
       preparedRef.current = value;
       setPreparedProviders(value);
       setPreparingProviders(false);
+      // Refresh the short-lived, document-bound URLs before the user clicks.
+      // This does not re-open or copy the PDF; it only renews the session.
+      const remaining = Math.min(...Object.values(sessions).map(session =>
+        session.startedAt + ACCOUNT_SESSION_SECONDS * 1000 - Date.now() - 20000));
+      refreshTimer = setTimeout(() => {
+        if (current && !activeRequest.current) setPrepareRetry(value => value + 1);
+      }, Math.max(1000, remaining));
     };
     void work().catch(error => {
       if (current && !controller.signal.aborted) {
@@ -108,6 +116,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     });
     return () => {
       current = false;
+      clearTimeout(refreshTimer);
       controller.abort();
       if (preparationRef.current === currentPreparation) preparationRef.current = null;
       if (preparedRef.current?.file === file) preparedRef.current = null;
