@@ -40,18 +40,24 @@ function locallyNormalize(luminances, width, height) {
   return normalized;
 }
 
+// Reuse exactly the same local paper estimate for pixel- and module-level
+// recovery, so the two decoding strategies agree on what is background.
+export function normalizeWatermarkLuminance(data, width, height) {
+  const luminances = new Uint8Array(width * height);
+  for (let i = 0; i < luminances.length; i++) {
+    const offset = i * 4;
+    luminances[i] = Math.round((data[offset] + data[offset + 1] + data[offset + 2]) / 3);
+  }
+  return locallyNormalize(luminances, width, height);
+}
+
 // Integral images keep the neighborhood vote linear in the image size.
 export function filterWatermark(data, width, height, radius = 3) {
   const stride = width + 1;
   const known = new Uint32Array(stride * (height + 1));
   const gray = new Uint32Array(known.length);
   const histogram = new Uint32Array(256);
-  const source = new Uint8Array(width * height);
-  for (let i = 0; i < source.length; i++) {
-    const offset = i * 4;
-    source[i] = Math.round((data[offset] + data[offset + 1] + data[offset + 2]) / 3);
-  }
-  const luminances = locallyNormalize(source, width, height);
+  const luminances = normalizeWatermarkLuminance(data, width, height);
   for (const value of luminances) histogram[value]++;
   let white = 255, count = 0;
   while (white > 0 && count < width * height * 0.02) count += histogram[white--];
