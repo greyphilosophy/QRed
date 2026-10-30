@@ -1,3 +1,4 @@
+import { allowedAuthorizationUrl } from "./authProviders.js";
 // Only randomized commitments and the short-lived auth session are retained.
 // NEVER put PDF bytes, extracted text, page evidence, or private keys here.
 // sessionStorage is tab-scoped and survives a same-tab OAuth navigation.
@@ -52,5 +53,22 @@ export function readPendingAuth(storage = sessionStorage, now = Date.now()) {
   } catch {
     clearPendingAuth(storage);
     return null;
+  }
+}
+
+export function navigateToProvider(session, layout, {
+  storage = sessionStorage,
+  navigate = url => window.location.assign(url),
+} = {}) {
+  if (!allowedAuthorizationUrl(session.provider, session.authorize_url)) {
+    throw new Error("Unexpected provider authorization URL");
+  }
+  savePendingAuth(session, layout, storage);
+  try {
+    // No popup, no new tab and no third-party code in QRed.
+    navigate(session.authorize_url);
+  } catch (error) {
+    clearPendingAuth(storage);
+    throw error;
   }
 }
