@@ -45,7 +45,7 @@ beforeEach(() => {
     ok: true, json: async () => ({ google: true, microsoft: true, amazon: true }),
   })));
   sealPdfInBrowser.mockReset().mockImplementation(async ({ attestPages }) => {
-    if (attestPages) await attestPages([{ content: "confidential", metadata: { pdf: true } }]);
+    if (attestPages) await attestPages([{ content: "confidential", metadata: { pdf: true, page_number: 1, page_count: 1, document_root: null } }]);
     return { blob: new Blob(["sealed"]), sealResult: {} };
   });
   URL.createObjectURL = vi.fn(() => "blob:sealed");
