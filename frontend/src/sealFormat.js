@@ -7,10 +7,10 @@ export const MAX_SEAL_TEXT_BYTES = 8 * 1024 * 1024;
 export const MAX_COMPRESSED_BYTES = MAX_SEAL_TEXT_BYTES + 65536;
 export const MAX_ENVELOPE_BYTES = MAX_COMPRESSED_BYTES + 1024;
 export const MAX_QR_PAYLOAD_BYTES = 2945;
-export const CHUNK_HEADER_BYTES = 40;
+export const CHUNK_HEADER_BYTES = 24;
 export const MAX_CHUNKS = 4096;
 export const SIGNATURE_BYTES = 64;
-const metadataByteLength = multiple => 17 + (multiple ? 36 : 0);
+const metadataByteLength = multiple => 15 + (multiple ? 20 : 0);
 
 // Shared by the wire encoder and the optional-evidence budget planner.
 export function sealEnvelopeOverhead({ attested = false, multiple = false, identityBytes = 0 } = {}) {
@@ -75,7 +75,8 @@ export function decodeBase64Url(value) {
 export function encodeMetadata(metadata) {
   const { timestamp, key_id: keyId, pdf = false, page_number: pageNumber, page_count: pageCount } = metadata;
   const milliseconds = Date.parse(timestamp);
-  if (!Number.isSafeInteger(milliseconds) || milliseconds < 0) throw new Error("Invalid seal timestamp");
+  if (!Number.isSafeInteger(milliseconds) || milliseconds < 0 || milliseconds >= 2 ** 48)
+    throw new Error("Invalid seal timestamp (48-bit millisecond range)");
   if (pdf && (!Number.isInteger(pageCount) || pageCount < 1 || pageCount > 65535 ||
     !Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > pageCount)) throw new Error("Invalid PDF page position/count");
   const multiple = pdf && pageCount > 1;
@@ -83,12 +84,20 @@ export function encodeMetadata(metadata) {
   const view = new DataView(bytes.buffer);
   if (metadata.page_evidence && !pdf) throw new Error("Page evidence requires PDF page context");
   bytes[0] = (pdf ? 2 : 0) | (multiple ? 4 : 0) | (metadata.page_evidence ? 16 : 0);
-  view.setBigUint64(1, BigInt(milliseconds));
-  bytes.set(hexToBytes(keyId, 8), 9);
+  // 48-bit unsigned milliseconds support dates until around year 10889.
+  // Big-endian 32+16 split avoids BigInt and keeps all JS integers exact.
+  view.setUint32(1, Math.floor(milliseconds / 65536));
+  view.setUint16(5, milliseconds % 65536);
+  bytes.set(hexToBytes(keyId, 8), 7);
   if (multiple) {
-    view.setUint16(17, pageNumber - 1);
-    view.setUint16(19, pageCount);
-    bytes.set(hexToBytes(metadata.document_root, 32), 21);
+    view.setUint16(15, pageNumber - 1);
+    view.setUint16(17, pageCount);
+    // A 128-bit truncation of the 256-bit Merkle root gives 128-bit
+    // targeted second-preimage resistance, while freeing 16 bytes per page.
+    const root = metadata.document_root;
+    if (typeof root !== "string" || !/^[0-9a-f]{32}(?:[0-9a-f]{32})?$/.test(root))
+      throw new Error("Invalid 128/256-bit document root");
+    bytes.set(hexToBytes(root.slice(0, 32), 16), 19);
   }
   return bytes;
 }
@@ -125,20 +134,19 @@ export function decodeEnvelope(bytes) {
   const bodyOffset = signatureOffset + SIGNATURE_BYTES;
   if (bytes.length <= bodyOffset) throw new Error("Truncated seal record");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const milliseconds = view.getBigUint64(5);
-  if (milliseconds > 8640000000000000n) throw new Error("Invalid seal timestamp");
+  const milliseconds = view.getUint32(5) * 65536 + view.getUint16(9);
   const pdf = Boolean(flags & 2);
-  const pageNumber = multiple ? view.getUint16(21) + 1 : 1;
-  const pageCount = multiple ? view.getUint16(23) : 1;
+  const pageNumber = multiple ? view.getUint16(19) + 1 : 1;
+  const pageCount = multiple ? view.getUint16(21) : 1;
   if ((multiple && pageCount < 2) || pageNumber > pageCount) throw new Error("Invalid PDF page position/count");
   const encoding = flags & 8 ? "zlib" : flags & 1 ? "gzip" : "plaintext";
   const data = bytes.slice(bodyOffset);
   if (data.length > (encoding === "plaintext" ? MAX_SEAL_TEXT_BYTES : MAX_COMPRESSED_BYTES)) throw new Error("Seal text exceeds the 8 MiB limit");
   return {
-    version: attested ? "4" : "3", algorithm: "Ed25519", timestamp: new Date(Number(milliseconds)).toISOString(),
-    key_id: bytesToHex(bytes.subarray(13, 21)), pdf,
+    version: attested ? "4" : "3", algorithm: "Ed25519", timestamp: new Date(milliseconds).toISOString(),
+    key_id: bytesToHex(bytes.subarray(11, 19)), pdf,
     page_number: pdf ? pageNumber : null, page_count: pdf ? pageCount : null,
-    document_root: multiple ? bytesToHex(bytes.subarray(25, 57)) : null,
+    document_root: multiple ? bytesToHex(bytes.subarray(23, 39)) : null,
     signature: bytes.slice(signatureOffset, bodyOffset), encoding, data,
     ...(attested ? { identity } : {}),
     ...(flags & 16 ? { page_evidence: true } : {}),
@@ -146,13 +154,13 @@ export function decodeEnvelope(bytes) {
 }
 
 export function encodeChunk(digest, index, count, data, version = "3") {
-  if (digest.length !== 32 || !Number.isInteger(index) || !Number.isInteger(count) || count < 2 || count > MAX_CHUNKS || index < 0 || index >= count || !data.length) throw new Error("Invalid chunk index/count");
+  if (digest.length !== 16 || !Number.isInteger(index) || !Number.isInteger(count) || count < 2 || count > MAX_CHUNKS || index < 0 || index >= count || !data.length) throw new Error("Invalid chunk index/count");
   const header = new Uint8Array(CHUNK_HEADER_BYTES);
   header.set(version === "4" ? ATTESTED_CHUNK_MAGIC : CHUNK_MAGIC);
   header.set(digest, 4);
   const view = new DataView(header.buffer);
-  view.setUint16(36, index);
-  view.setUint16(38, count);
+  view.setUint16(20, index);
+  view.setUint16(22, count);
   return concatenate([header, data]);
 }
 
@@ -166,9 +174,9 @@ export function decodeTransport(bytes) {
   const attested = hasMagic(bytes, ATTESTED_CHUNK_MAGIC);
   if ((!attested && !hasMagic(bytes, CHUNK_MAGIC)) || bytes.length <= CHUNK_HEADER_BYTES) throw new Error("Unknown or truncated seal format");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const index = view.getUint16(36), count = view.getUint16(38);
+  const index = view.getUint16(20), count = view.getUint16(22);
   if (count < 2 || count > MAX_CHUNKS || index >= count) throw new Error("Invalid chunk index/count");
-  const digest = bytes.slice(4, 36);
+  const digest = bytes.slice(4, 20);
   return { format_id: attested ? "QRED4" : "QRED3", version: attested ? "4" : "3", document_id: `C-${bytesToHex(digest)}`,
     chunk_number: index, total_chunks: count, multipart: true, digest, data: bytes.slice(CHUNK_HEADER_BYTES), bytes };
 }
