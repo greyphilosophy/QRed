@@ -26,7 +26,8 @@ describe("public QRed policy and security pages", () => {
   it("describes locally held documents and potentially public seal evidence", () => {
     const html = readProjectFile("../public/privacy.html");
     expect(html).toContain("on the user's device");
-    expect(html).toContain("randomly salted page commitments");
+    expect(html).toContain("SHA-256 page commitments");
+    expect(html).toContain("could recognize identical page commitments");
     expect(html).toContain("anybody who receives a copy");
     expect(html).toContain("hosting infrastructure");
   });
@@ -53,7 +54,7 @@ describe("public QRed policy and security pages", () => {
     expect(html).toContain("Microsoft");
     expect(svg).toContain("<title");
     expect(svg).toContain("<desc");
-    expect(svg).toContain("Keeps PDFs, text, and salts local");
+    expect(svg).toContain("Keeps PDFs and page text local");
     expect(svg).not.toMatch(/<script\b/i);
     expect(svg).not.toMatch(/<foreignObject\b/i);
   });
