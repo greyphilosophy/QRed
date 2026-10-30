@@ -316,7 +316,7 @@ describe("stateless document-bound Google attestation API", () => {
       expect(receipts).toHaveLength(2);
       const wire = JSON.stringify(sent);
       for (const page of pages) { expect(wire).not.toContain(page.content); expect(wire).not.toContain(page.metadata.document_root); }
-      for (const receipt of receipts) expect(wire).not.toContain(encodeBase64Url(receipt.salt));
+      expect(receipts.every(receipt => !Object.hasOwn(receipt, "salt"))).toBe(true);
       expect(wire).not.toContain(seed);
       const seal = await createQRedSeals({ content: pages[1].content, pageContext: {
         pageNumber: 2, pageCount: 2, documentRoot: pages[1].metadata.document_root,
