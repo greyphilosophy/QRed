@@ -85,6 +85,51 @@ it("does not contact an account service or prepare account signing in offline mo
   expect(prepareAccountPdfSeal).not.toHaveBeenCalled();
 });
 
+it.each(Object.entries(AUTH_PROVIDERS))(
+  "can switch from an offline key to %s after selecting a PDF, with explicit account preparation",
+  async (provider, details) => {
+    const open = vi.spyOn(window, "open");
+    render(<PdfSealForm />);
+    fireEvent.click(screen.getByRole("button", { name: "Private key (offline)" }));
+    upload();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(beginAccountSignIn).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Private Key")).toBeTruthy();
+
+    const choice = screen.getByRole("button", { name: details.button });
+    expect(choice.disabled).toBe(false);
+    fireEvent.click(choice);
+
+    // Switching away from offline mode leaves the original File selected.
+    // Its now-explicit account choice starts preflight, but never auto-opens
+    // a popup outside a trusted user gesture.
+    expect(screen.queryByLabelText("Private Key")).toBeNull();
+    expect(screen.getByLabelText("Open PDF").files[0].name).toBe("source.pdf");
+    expect(open).not.toHaveBeenCalled();
+
+    const link = await screen.findByRole("link", { name: details.button });
+    expect(link.getAttribute("href")).toBe(urls[provider]);
+    expect(beginAccountSignIn).toHaveBeenCalledWith(provider, pages, expect.any(Object));
+    expect(open).not.toHaveBeenCalled();
+    expect(attestPagesWithAccount).not.toHaveBeenCalled();
+
+    fireEvent.click(link);
+    await screen.findByText(/Sealed source.pdf in this browser/);
+    expect(attestPagesWithAccount).toHaveBeenCalledOnce();
+  },
+);
+
+it("allows leaving offline signing before selecting a PDF, without any auth request", () => {
+  render(<PdfSealForm />);
+  fireEvent.click(screen.getByRole("button", { name: "Private key (offline)" }));
+  const choice = screen.getByRole("button", { name: AUTH_PROVIDERS.google.button });
+  expect(choice.disabled).toBe(false);
+  fireEvent.click(choice);
+  expect(screen.queryByLabelText("Private Key")).toBeNull();
+  expect(fetch).not.toHaveBeenCalled();
+  expect(prepareAccountPdfSeal).not.toHaveBeenCalled();
+});
+
 it("prepares provider authorization URLs after the PDF and layout, without opening tabs", async () => {
   const open = vi.spyOn(window, "open");
   const { container } = render(<PdfSealForm />);
