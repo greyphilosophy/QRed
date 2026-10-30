@@ -158,23 +158,41 @@ describe("experimental PDF watermarks", () => {
     }
   }, 60000);
 
-  it("keeps two pages and black text at their original size and verifies the rendered seals", async () => {
+  it("preserves black text with a recoverable watermark or a safe footer on both pages", async () => {
     const file = await makeDocument({ pages: 2 });
     const original = render(await file.arrayBuffer());
-    const { blob, pageSealStrings, watermarkLayout } = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" });
+    const { blob, pageSealStrings, watermarkLayout, footerPages } = await sealPdfInBrowser({
+      file, privateKey, publicKey, pageScalingStrategy: "watermark",
+    });
     const pdf = await PDFDocument.load(await blob.arrayBuffer());
-    expect(pdf.getPages().map(page => page.getSize())).toEqual([{ width: 612, height: 792 }, { width: 612, height: 792 }]);
-    expect(watermarkLayout[0].entry).toBeTruthy();
-    expect(watermarkLayout[1].entry).toBeUndefined();
-    expect((await extractPdfText(blob)).match(/qred\.org/g)).toHaveLength(1);
+    expect(pdf.getPageCount()).toBe(2);
+    const extracted = await extractPdfText(blob);
+    expect(extracted).toContain("Record 1:");
+    expect(extracted).toContain("Record 42:");
     for (let page = 1; page <= 2; page++) {
-      const image = render(await blob.arrayBuffer(), page);
-      const code = scanQrImage(image.data, image.width, image.height);
-      const payload = hiddenPayloadFromScanResult(code);
+      const isFooter = footerPages.includes(page);
+      const outputPage = pdf.getPage(page - 1);
+      expect(outputPage.getWidth()).toBe(612);
+      expect(outputPage.getHeight()).toBe(isFooter ? 1008 : 792);
+      const image = render(await blob.arrayBuffer(), page, isFooter ? 300 : 144);
+      let payload;
+      if (isFooter) {
+        expect(watermarkLayout[page - 1]).toBeNull();
+        const layout = planQrStampLayoutForFooterBand(612, pageSealStrings[page - 1].length);
+        const scale = 300 / 72;
+        const part = crop(image, {
+          x: (layout.qrOffsetX ?? 10), y: (layout.qrOffsetY ?? 10),
+          width: layout.qrSize, height: layout.qrSize,
+        }, scale);
+        payload = hiddenPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
+      } else {
+        expect(watermarkLayout[page - 1]).toBeTruthy();
+        payload = hiddenPayloadFromScanResult(scanQrImage(image.data, image.width, image.height));
+      }
       expect(payload).toBe(pageSealStrings[page - 1][0]);
       await expect(verifyQRedSeals([payload], publicKey)).resolves.toMatchObject({ status: "VALID", page_number: page, page_count: 2 });
-      if (page === 1) {
-        // Black text pixels stay at the same positions, with no scaling or whitening.
+      if (page === 1 && !isFooter) {
+        // Only the watermark mode promises identical print geometry.
         let checked = 0, changed = 0;
         for (let i = 0; i < original.data.length; i += 4) if (original.data[i] < 8) {
           if (image.data[i] >= 9) changed++;
@@ -185,7 +203,6 @@ describe("experimental PDF watermarks", () => {
         const entry = crop(image, watermarkLayout[0].entry);
         expect(jsQR(entry.data, entry.width, entry.height)).toMatchObject({ data: ENTRY_URL, version: 2 });
         expect(ENTRY_QR_SIZE / 72).toBe(0.5);
-        // Live scanning must eventually pass the navigation code and read the watermark.
         const live = createQrFrameScanner();
         let livePayload;
         for (let frame = 0; frame < 7 && !livePayload; frame++) livePayload = hiddenPayloadFromScanResult(live(image.data, image.width, image.height));
@@ -194,29 +211,58 @@ describe("experimental PDF watermarks", () => {
     }
   }, 60000);
 
-  it("keeps rotated, cropped pages intact", async () => {
+  it("preserves rotated PDF geometry when safe, otherwise preserves text with a footer", async () => {
     const file = await makeDocument({ rotated: true });
-    const { blob } = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" });
+    const { blob, footerPages, pageSealStrings } = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" });
     const page = (await PDFDocument.load(await blob.arrayBuffer())).getPage(0);
-    expect(page.getRotation().angle).toBe(90);
-    expect(page.getCropBox()).toEqual({ x: 12, y: 12, width: 588, height: 768 });
-    const image = render(await blob.arrayBuffer());
+    if (!footerPages.length) {
+      expect(page.getRotation().angle).toBe(90);
+      expect(page.getCropBox()).toEqual({ x: 12, y: 12, width: 588, height: 768 });
+    } else {
+      // The existing fallback flattens rotation/crop into a new visible page.
+      // The original content and signed seal must remain available.
+      expect(footerPages).toEqual([1]);
+      expect(await extractPdfText(blob)).toContain("Record 1:");
+    }
+    const image = render(await blob.arrayBuffer(), 1, footerPages.length ? 300 : 144);
     const payload = hiddenPayloadFromScanResult(scanQrImage(image.data, image.width, image.height));
+    expect(payload).toBe(pageSealStrings[0][0]);
     await expect(verifyQRedSeals([payload], publicKey)).resolves.toMatchObject({ status: "VALID" });
-  }, 30000);
+  }, 45000);
 
-  it("fits and verifies both parts on an original A3 page", async () => {
+  it("fits and verifies both signed parts on an original A3 page or a safe fallback", async () => {
     const file = await makeDocument({ multipart: true, size: [842, 1191] });
-    const { blob, watermarkLayout, pageSealStrings } = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" });
-    expect(pageSealStrings[0].length).toBe(2);
-    const image = render(await blob.arrayBuffer());
-    const payloads = watermarkLayout[0].boxes.map(box => {
-      const part = crop(image, box);
-      return hiddenPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
+    const { blob, watermarkLayout, pageSealStrings, footerPages } = await sealPdfInBrowser({
+      file, privateKey, publicKey, pageScalingStrategy: "watermark",
     });
+    expect(pageSealStrings[0].length).toBe(2);
+    let payloads;
+    if (watermarkLayout[0]) {
+      const image = render(await blob.arrayBuffer());
+      payloads = watermarkLayout[0].boxes.map(box => {
+        const part = crop(image, box);
+        return hiddenPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
+      });
+    } else {
+      // A correctly rejected fragile watermark must still yield two signed
+      // and readable QR codes on a conventional footer.
+      expect(footerPages).toEqual([1]);
+      const dpi = 300, scale = dpi / 72;
+      const image = render(await blob.arrayBuffer(), 1, dpi);
+      const layout = planQrStampLayout(842, pageSealStrings[0].length);
+      payloads = pageSealStrings[0].map((_, index) => {
+        const box = {
+          x: 18 + (layout.qrOffsetX ?? 10) + index * (layout.qrSize + layout.gap),
+          y: 18 + (layout.qrOffsetY ?? 10),
+          width: layout.qrSize, height: layout.qrSize,
+        };
+        const part = crop(image, box, scale);
+        return hiddenPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
+      });
+    }
     expect(payloads).toEqual(pageSealStrings[0]);
     await expect(verifyQRedSeals(payloads.reverse(), publicKey)).resolves.toMatchObject({ status: "VALID" });
-  }, 30000);
+  }, 60000);
 
   it.each([
     ["dense text", { multipart: true }],

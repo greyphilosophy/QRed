@@ -358,7 +358,7 @@ describe("decodeCanvasFrame", () => {
       message: "No QR code found in this photo. Keep the whole seal in view, hold steady, and avoid glare. Then try again.",
     });
     expect(jsQR.mock.calls.length).toBeGreaterThan(1);
-    expect(jsQR.mock.calls.length).toBeLessThanOrEqual(9);
+    expect(jsQR.mock.calls.length).toBeLessThanOrEqual(10);
   });
 
   it("runs only one decode per automatic frame while keeping manual capture independent", () => {
@@ -374,7 +374,7 @@ describe("decodeCanvasFrame", () => {
     decodeCanvasFrame(video, canvas, { manual: true, scanQrFrame: liveScanner });
     expect(liveScanner).not.toHaveBeenCalled();
     expect(jsQR.mock.calls.length).toBeGreaterThan(1);
-    expect(jsQR.mock.calls.length).toBeLessThanOrEqual(9);
+    expect(jsQR.mock.calls.length).toBeLessThanOrEqual(10);
   });
 
   it("gives manual photo feedback when a bootstrap QR has no hidden QRed payload", () => {

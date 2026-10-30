@@ -1,34 +1,80 @@
 // Separate pale QR ink from white paper and dark document text. Dark pixels
 // are unknown, not white: use the surrounding known pixels to bridge strokes.
+// Adjust each pixel against its local paper brightness before looking for ink.
+// This avoids treating shadows across a photographed sheet as QR modules.
+// The high local percentile is robust to pale modules and most printed text.
+function locallyNormalize(luminances, width, height) {
+  const tile = Math.max(32, Math.min(96, Math.round(Math.max(width, height) / 28)));
+  const columns = Math.ceil(width / tile), rows = Math.ceil(height / tile);
+  const histograms = new Uint32Array(columns * rows * 256);
+  for (let y = 0; y < height; y++) {
+    const rowBase = Math.floor(y / tile) * columns * 256;
+    for (let x = 0; x < width; x++) {
+      histograms[rowBase + Math.floor(x / tile) * 256 + luminances[y * width + x]]++;
+    }
+  }
+  const paper = new Uint8Array(columns * rows);
+  for (let row = 0; row < rows; row++) for (let col = 0; col < columns; col++) {
+    const pixels = Math.min(tile, width - col * tile) * Math.min(tile, height - row * tile);
+    const target = Math.max(1, Math.ceil(pixels * 0.08));
+    const start = (row * columns + col) * 256;
+    let count = 0;
+    for (let value = 255; value >= 0; value--) {
+      count += histograms[start + value];
+      if (count >= target) { paper[row * columns + col] = Math.max(1, value); break; }
+    }
+  }
+  const normalized = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    const gy = Math.max(0, Math.min(rows - 1, (y + 0.5) / tile - 0.5));
+    const top = Math.floor(gy), bottom = Math.min(rows - 1, top + 1), fy = gy - top;
+    for (let x = 0; x < width; x++) {
+      const gx = Math.max(0, Math.min(columns - 1, (x + 0.5) / tile - 0.5));
+      const left = Math.floor(gx), right = Math.min(columns - 1, left + 1), fx = gx - left;
+      const upper = paper[top * columns + left] * (1 - fx) + paper[top * columns + right] * fx;
+      const lower = paper[bottom * columns + left] * (1 - fx) + paper[bottom * columns + right] * fx;
+      const reference = upper * (1 - fy) + lower * fy;
+      normalized[y * width + x] = Math.min(255, Math.round(luminances[y * width + x] * 255 / reference));
+    }
+  }
+  return normalized;
+}
+
+// Reuse exactly the same local paper estimate for pixel- and module-level
+// recovery, so the two decoding strategies agree on what is background.
+export function normalizeWatermarkLuminance(data, width, height) {
+  const luminances = new Uint8Array(width * height);
+  for (let i = 0; i < luminances.length; i++) {
+    const offset = i * 4;
+    luminances[i] = Math.round((data[offset] + data[offset + 1] + data[offset + 2]) / 3);
+  }
+  return locallyNormalize(luminances, width, height);
+}
+
 // Integral images keep the neighborhood vote linear in the image size.
-export function filterWatermark(data, width, height, radius = 3) {
+export function filterWatermark(data, width, height, radius = 3, normalized = null) {
   const stride = width + 1;
   const known = new Uint32Array(stride * (height + 1));
   const gray = new Uint32Array(known.length);
   const histogram = new Uint32Array(256);
-  const luminances = new Uint8Array(width * height);
-  for (let i = 0; i < data.length; i += 4) {
-    const value = Math.round((data[i] + data[i + 1] + data[i + 2]) / 3);
-    luminances[i / 4] = value;
-    histogram[value]++;
-  }
+  // Reuse the same normalized image for module-aware fallback when supplied.
+  const luminances = normalized ?? normalizeWatermarkLuminance(data, width, height);
+  for (const value of luminances) histogram[value]++;
   let white = 255, count = 0;
   while (white > 0 && count < width * height * 0.02) count += histogram[white--];
   white++;
   const textThreshold = white * 0.7;
   const textCoreThreshold = white * 0.3;
-  let ink = Math.round(white * 0.88);
-  for (let value = Math.ceil(white * 0.75); value < white * 0.965; value++) {
-    if (histogram[value] > histogram[ink]) ink = value;
-  }
-  // Put the QR threshold halfway between its gray ink and the paper. A cutoff
-  // too close to white enlarges antialiased modules and corrupts finder ratios.
-  const paperThreshold = (white + ink) / 2;
+  // Normalize against nearby paper, then look for the pale 15%-black ink.
+  // A single document-wide ink histogram was easily confused by printed text
+  // and the camera's exposure gradient, especially on long full-page QR codes.
+  const paperThreshold = white * 0.94;
   for (let y = 0; y < height; y++) {
     let knownRow = 0, grayRow = 0;
     for (let x = 0; x < width; x++) {
       const luminance = luminances[y * width + x];
-      // Mask dark text itself, but grow the one-pixel fringe only from its
+      // Treat dark text as missing QR evidence. Neighboring unmasked pixels
+      // reconstruct its module values. Grow the one-pixel fringe only from its
       // black core. Growing from already antialiased edges discards nearby
       // watermark pixels, with different damage for different PDF renderers.
       let text = luminance < textThreshold;

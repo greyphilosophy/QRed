@@ -1,6 +1,7 @@
 import jsQR from "jsqr";
 import { hiddenPayloadFromScanResult, isQRedEntryLink } from "./hiddenPayload.js";
-import { filterWatermark } from "./watermarkFilter.js";
+import { filterWatermark, normalizeWatermarkLuminance } from "./watermarkFilter.js";
+import { scanModuleAwareQr } from "./moduleAwareScan.js";
 
 // Keep each decode bounded, including large photo uploads. Retry only when the
 // original scale fails: dense printed codes can land badly on the pixel grid.
@@ -86,11 +87,22 @@ function usableResult(code) {
   return Boolean(code?.data) && (!isQRedEntryLink(code.data) || Boolean(hiddenPayloadFromScanResult(code)));
 }
 
-function scanAtSize(data, width, height, [targetWidth, targetHeight, radius]) {
+// Prepare a resolution only once. The module-aware retry consumes the exact
+// same normalized ink and filtered pixels as ordinary watermark decoding.
+function prepareAtSize(data, width, height, [targetWidth, targetHeight, radius]) {
   const originalSize = targetWidth === width && targetHeight === height;
-  let pixels = originalSize ? data : resizeRgba(data, width, height, targetWidth, targetHeight);
-  if (radius) pixels = filterWatermark(pixels, targetWidth, targetHeight, radius);
-  const code = jsQR(pixels, targetWidth, targetHeight, { inversionAttempts: "attemptBoth" });
+  const observed = originalSize ? data : resizeRgba(data, width, height, targetWidth, targetHeight);
+  if (!radius) return { observed, pixels: observed, targetWidth, targetHeight, originalSize, radius };
+  const normalized = normalizeWatermarkLuminance(observed, targetWidth, targetHeight);
+  const pixels = filterWatermark(observed, targetWidth, targetHeight, radius, normalized);
+  return { observed, pixels, normalized, targetWidth, targetHeight, originalSize, radius };
+}
+
+function decodePrepared(prepared, width, height, moduleAware = false) {
+  const { observed, pixels, normalized, targetWidth, targetHeight, originalSize, radius } = prepared;
+  const code = moduleAware && radius
+    ? scanModuleAwareQr(observed, pixels, targetWidth, targetHeight, normalized)
+    : jsQR(pixels, targetWidth, targetHeight, { inversionAttempts: "attemptBoth" });
   if (code && radius) code.watermark = true;
   if (!code || originalSize || !code.location) return code;
   return {
@@ -102,14 +114,35 @@ function scanAtSize(data, width, height, [targetWidth, targetHeight, radius]) {
   };
 }
 
+function scanAtSize(data, width, height, size) {
+  return decodePrepared(prepareAtSize(data, width, height, size), width, height);
+}
+
 /** Return QR geometry in the original image's coordinates, even after a retry.
  * Hidden-payload recovery and camera overlays must use the same coordinate frame.
  */
-export function scanQrImage(data, width, height, { tryRescaling = true, tryWatermark = true } = {}) {
+export function scanQrImage(data, width, height, { tryRescaling = true, tryWatermark = true, maxAttempts = Infinity } = {}) {
   if (!isValidImage(data, width, height)) return null;
   let entryLink = null;
+  let preparedWatermark = null;
+  let attempts = 0;
+  // A bounded preflight should try raw, pixel-filtered, then module-aware
+  // rather than exhausting its budget on similar pixel-filter radii.
+  const regularBudget = tryWatermark && Number.isFinite(maxAttempts) && maxAttempts >= 3
+    ? maxAttempts - 1 : maxAttempts;
   for (const size of scanAttempts(width, height, tryRescaling, tryWatermark)) {
-    const code = scanAtSize(data, width, height, size);
+    if (attempts >= regularBudget) break;
+    const prepared = prepareAtSize(data, width, height, size);
+    if (prepared.radius && !preparedWatermark) preparedWatermark = prepared;
+    const code = decodePrepared(prepared, width, height);
+    attempts++;
+    if (usableResult(code)) return code;
+    if (code?.data) entryLink ??= code;
+  }
+  // Count the fallback against the same budget as ordinary scan attempts.
+  // Preflight callers can reserve one attempt by setting maxAttempts = 3.
+  if (preparedWatermark && attempts < maxAttempts) {
+    const code = decodePrepared(preparedWatermark, width, height, true);
     if (usableResult(code)) return code;
     if (code?.data) entryLink ??= code;
   }

@@ -5,6 +5,7 @@ import { scanQrImage } from "../qr/scanQrImage.js";
 import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
 import { renderPdfPage, withPdfDocument } from "./readPdfText.js";
 import { planWatermarks } from "./watermarkPlacement.js";
+import { scanAllSealsFromPage, simulatePrintPhoto } from "./watermarkPreflight.js";
 
 export { planWatermarks } from "./watermarkPlacement.js";
 
@@ -132,8 +133,10 @@ function crop(image, box) {
   return { data, width, height };
 }
 
-// Identify unreadable watermarks so the caller can rebuild those pages with
-// clear footers. Passing this check is not a printer/camera guarantee.
+// Preflight each watermark against exact-payload decoding, mild simulated
+// print/photo degradation and full-page discovery. Any failure uses a footer.
+// Physical printer/camera tests remain necessary; simulations cannot promise
+// compatibility with every device.
 export async function checkWatermarks(bytes, layouts, pageSealResults) {
   const failed = new Set();
   await withPdfDocument(new Blob([bytes], { type: "application/pdf" }), async (pdf) => {
@@ -142,10 +145,26 @@ export async function checkWatermarks(bytes, layouts, pageSealResults) {
       const image = await renderPdfPage(pdf, index + 1);
       for (let part = 0; part < layouts[index].boxes.length; part++) {
         const qr = crop(image, layouts[index].boxes[part]);
-        const code = scanQrImage(qr.data, qr.width, qr.height);
-        if (hiddenPayloadFromScanResult(code) !== pageSealResults[index].seals[part]) {
+        const code = scanQrImage(qr.data, qr.width, qr.height,
+          { tryRescaling: false, maxAttempts: 3 });
+        const expected = pageSealResults[index].seals[part];
+        if (hiddenPayloadFromScanResult(code) !== expected) {
           failed.add(index);
+          break;
         }
+        // A clean PDF render is too forgiving. Check a softened, slightly
+        // shaded print-like image and require the complete signed payload.
+        const photo = simulatePrintPhoto(qr);
+        if (hiddenPayloadFromScanResult(scanQrImage(photo.data, photo.width, photo.height,
+          { tryRescaling: false, maxAttempts: 3 })) !== expected) {
+          failed.add(index);
+          break;
+        }
+      }
+      // A known-position crop is easier to decode than a photographed sheet.
+      // Require the verifier to locate *every* seal on the full page as well.
+      if (!failed.has(index) && !scanAllSealsFromPage(image, pageSealResults[index].seals)) {
+        failed.add(index);
       }
       if (layouts[index].entry) {
         const qr = crop(image, layouts[index].entry);
