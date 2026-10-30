@@ -87,14 +87,15 @@ function usableResult(code) {
   return Boolean(code?.data) && (!isQRedEntryLink(code.data) || Boolean(hiddenPayloadFromScanResult(code)));
 }
 
-function scanAtSize(data, width, height, [targetWidth, targetHeight, radius]) {
+function scanAtSize(data, width, height, [targetWidth, targetHeight, radius], moduleAware = false) {
   const originalSize = targetWidth === width && targetHeight === height;
   const observed = originalSize ? data : resizeRgba(data, width, height, targetWidth, targetHeight);
   const pixels = radius ? filterWatermark(observed, targetWidth, targetHeight, radius) : observed;
-  // After the ordinary pixel-based recovery fails, classify each QR module
-  // from its unobstructed pixels. Keep this off the normal scanning fast path.
-  const code = jsQR(pixels, targetWidth, targetHeight, { inversionAttempts: "attemptBoth" })
-    ?? (radius ? scanModuleAwareQr(observed, pixels, targetWidth, targetHeight) : null);
+  // Reserve costly module classification for one last still-photo retry;
+  // live camera frames must remain one ordinary decode per frame.
+  const code = moduleAware && radius
+    ? scanModuleAwareQr(observed, pixels, targetWidth, targetHeight)
+    : jsQR(pixels, targetWidth, targetHeight, { inversionAttempts: "attemptBoth" });
   if (code && radius) code.watermark = true;
   if (!code || originalSize || !code.location) return code;
   return {
@@ -112,10 +113,19 @@ function scanAtSize(data, width, height, [targetWidth, targetHeight, radius]) {
 export function scanQrImage(data, width, height, { tryRescaling = true, tryWatermark = true, maxAttempts = Infinity } = {}) {
   if (!isValidImage(data, width, height)) return null;
   let entryLink = null;
+  const sizes = scanAttempts(width, height, tryRescaling, tryWatermark);
   let attempts = 0;
-  for (const size of scanAttempts(width, height, tryRescaling, tryWatermark)) {
+  for (const size of sizes) {
     if (++attempts > maxAttempts) break;
     const code = scanAtSize(data, width, height, size);
+    if (usableResult(code)) return code;
+    if (code?.data) entryLink ??= code;
+  }
+  // A single module-aware retry after standard attempts, not one per
+  // filtered resolution. This limits latency and preserves live-frame budgets.
+  const firstWatermark = sizes.find(size => size[2] && size[0] * size[1] <= MAX_WATERMARK_PIXELS);
+  if (tryWatermark && maxAttempts >= 2 && firstWatermark) {
+    const code = scanAtSize(data, width, height, firstWatermark, true);
     if (usableResult(code)) return code;
     if (code?.data) entryLink ??= code;
   }
