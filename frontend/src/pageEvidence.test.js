@@ -112,15 +112,15 @@ describe("signed binary page references", () => {
 
 describe("optional evidence budget", () => {
   it("never increases the text's QR count, including unknown Google identity sizes", () => {
-    const count = size => size <= 2945 ? 1 : Math.ceil(size / 2921);
+    const count = (size, attested) => size <= 2945 ? 1 : Math.ceil(size / (attested ? 2921 : 2905));
     for (const attested of [false, true]) for (const multiple of [false, true]) {
-      const baseHeader = 83 + (multiple ? 20 : 0);
+      const baseHeader = (attested ? 83 : 85) + (multiple ? (attested ? 20 : 36) : 0);
       for (let length = 1; length < 5800; length += 13) {
         const budget = evidenceBodyBudget(length, { attested, multiple });
         if (!budget) continue;
         for (const identitySize of attested ? [16, 150, 360, 673] : [0]) {
-          expect(count(budget + baseHeader + identitySize)).toBeLessThanOrEqual(count(length + baseHeader + identitySize));
-          expect(count(budget + baseHeader + identitySize)).toBeLessThanOrEqual(2);
+          expect(count(budget + baseHeader + identitySize, attested)).toBeLessThanOrEqual(count(length + baseHeader + identitySize, attested));
+          expect(count(budget + baseHeader + identitySize, attested)).toBeLessThanOrEqual(2);
         }
       }
     }
@@ -130,7 +130,7 @@ describe("optional evidence budget", () => {
     const evidence = decodePageEvidence(plan.body);
     expect(evidence.layout.mode).toBe(3);
     expect(evidence.visual.indices.length).toBeGreaterThan(1000);
-    expect(plan.body.length + 83).toBeLessThanOrEqual(2945);
+    expect(plan.body.length + 85).toBeLessThanOrEqual(2945);
     const sealed = await createQRedSeals({ content: base.text, pageEvidence: plan.body, pageContext, privateKey, publicKey, encodingStrategy: "plaintext" });
     expect(sealed.seals).toHaveLength(1);
   });
