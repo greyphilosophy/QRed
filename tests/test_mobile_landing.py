@@ -65,9 +65,9 @@ def test_stamp_tool_asks_for_pdf_and_layout_before_signing_method(page):
     expect(layout).to_have_value("automatic")
     expect(choices).to_have_count(4)
     assert choices.all_text_contents() == [
-        "Authenticate with Google login",
-        "Authenticate with Microsoft login",
-        "Authenticate with Amazon login",
+        "Sign in with Google",
+        "Sign in with Microsoft",
+        "Login with Amazon",
         "Private key (offline)",
     ]
     assert page.evaluate("""() => {
@@ -136,7 +136,7 @@ def test_prepared_provider_link_opens_direct_popup_without_losing_pdf(page, prov
     page.goto(BASE_URL)
     page.get_by_role("button", name="Open PDF stamping tool").click()
     page.get_by_label("Open PDF", exact=True).set_input_files(str(file_path))
-    link = page.get_by_role("link", name="Authenticate with " + provider + " login")
+    link = page.get_by_role("link", name={"Google": "Sign in with Google", "Microsoft": "Sign in with Microsoft", "Amazon": "Login with Amazon"}[provider])
     expect(link).to_be_visible(timeout=30000)
     assert link.get_attribute("href").startswith(provider_url)
     assert "noopener" in link.get_attribute("rel")
