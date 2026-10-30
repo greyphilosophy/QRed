@@ -368,7 +368,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       setMessage(controller.signal.aborted ? "Account sealing cancelled." : `PDF sealing failed: ${error.message}`);
     } finally {
       if (activeRequest.current === request) activeRequest.current = null;
-          setAuthenticating(false);
+      setAuthenticating(false);
       setLoading(false);
     }
   }
@@ -451,7 +451,7 @@ export function PdfSealForm({ onUsePublicKey }) {
         <p>{method === "google" ? "Use a Gmail or Google Workspace account. " : method === "microsoft" ? "Use a personal, work, or school Microsoft account. " : `Use your ${provider.label} account. `}
           After you choose a document, sign in to authorize QRed to attest its page contents, your account details, and the server time. Profile names are not independently verified identities.</p>
         {method !== "google" && <p>Your email is reported by {provider.label}; QRed does not separately verify control of that mailbox.</p>}
-        <p>This method needs a connection for each document. Only randomized page fingerprints and account details reach QRed; {provider.label} receives the sign-in request. Your PDF, text, and private keys stay on this device. The finished seals can be verified offline.</p>
+        <p>This method needs a connection for each document. Only SHA-256 page commitments and account details reach QRed; {provider.label} receives the sign-in request. Because those commitments are not salted, identical pages can be recognized and known page contents can be tested by QRed’s server. Your PDF, text, and private keys stay on this device. The finished seals can be verified offline.</p>
         <small>Your {provider.label} profile name and email will be readable by anyone who scans the seal.</small>
         {signingIdentity && <p>{provider.label} account: {signingIdentity.email}. Name: {signingIdentity.name} ({provider.label} profile).</p>}
 
