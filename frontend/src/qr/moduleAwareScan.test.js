@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import QRCode from "qrcode";
 import { filterWatermark } from "./watermarkFilter.js";
 import { scanModuleAwareQr } from "./moduleAwareScan.js";
+import { createQRedQrSymbol } from "../qredQr.js";
+import { hiddenPayloadFromScanResult } from "./hiddenPayload.js";
 
-function photographedQr({ text = true, blank = false } = {}) {
-  const qr = QRCode.create("QRED.ORG", { version: 10, errorCorrectionLevel: "L" });
+function photographedQr({ text = true, blank = false, symbol } = {}) {
+  const qr = symbol ?? QRCode.create("QRED.ORG", { version: 10, errorCorrectionLevel: "L" });
   const tile = 10, margin = 4;
   const width = (qr.modules.size + margin * 2) * tile;
   const height = width;
@@ -37,6 +39,16 @@ describe("module-aware watermark recovery", () => {
     expect(code?.data).toBe("QRED.ORG");
     expect(code?.moduleAware).toBe(true);
     expect(code?.location?.topLeftFinderPattern).toBeDefined();
+  });
+
+  it("preserves the complete hidden signed-seal payload, not just QRED.ORG", () => {
+    const payload = "signed-page-evidence-".repeat(30);
+    const symbol = createQRedQrSymbol(payload);
+    const { rgba, width, height } = photographedQr({ symbol });
+    const filtered = filterWatermark(rgba, width, height, 3);
+    const code = scanModuleAwareQr(rgba, filtered, width, height);
+    expect(code?.data).toBe("QRED.ORG");
+    expect(hiddenPayloadFromScanResult(code)).toBe(payload);
   });
 
   it("does not fabricate a QR from shadowed blank paper", () => {
