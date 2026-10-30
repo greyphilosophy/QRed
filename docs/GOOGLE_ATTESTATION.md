@@ -88,19 +88,18 @@ Request bodies are limited to 16 KiB, each document to 100 pages, and each signi
 
 Local signatures keep the existing v3 format. Google attestations use `QRS4`, multipart `QRC4`, and copyable `QRED4:` strings. Ordinary camera apps still see `QRED.ORG`. QR balancing, automatic zlib/plaintext selection (with gzip fallback), and fixed print dimensions use the same rules as local seals.
 
-The v4 record contains the existing timestamp/key-ID/page-context header, followed by:
+The v4 record contains a compact 48-bit millisecond timestamp, eight-byte key ID, and (for multipage PDFs) four bytes of page position/count and a 16-byte truncated SHA-256 document root, followed by:
 
 | Field | Encoding |
 | --- | --- |
-| Provider | One byte, `1` = Google |
-| Name source | One byte, `1` = Google profile; `0` remains readable for previously issued self-declared names |
-| Email, name, Google subject | Each is a two-byte big-endian UTF-8 byte length followed by its bytes; maximum 254/160/255 bytes respectively |
+| Provider and name source | One byte: low 4 bits are the provider ID (`1` for Google), bit 4 indicates provider-asserted (`1`) or self-declared (`0`) name source |
+| Email, name, Google subject | Each is one-byte UTF-8 byte length followed by its bytes; maximum 254/160/255 bytes respectively |
 | QRed signature | 64 Ed25519 bytes |
 | Text | Plain UTF-8 or one bounded zlib/gzip stream; compression flags match v3 |
 
-The page commitment is SHA-256 of `QRed page commitment v2` plus a zero byte, the PDF/context flag byte with compression cleared, conditional page-index/count/root bytes, and canonical UTF-8 text. Timestamp/key ID are omitted from this commitment because the server supplies them later. Page positions/counts and the unsalted full-document root are thus committed without exposing that root to the service.
+The page commitment is SHA-256 of `QRed page commitment v2` plus a zero byte, the PDF/context flag byte with compression cleared, conditional page-index/count/root bytes, and canonical UTF-8 text. Timestamp/key ID are omitted from this commitment because the server supplies them later. Page positions/counts and the first 128 bits of the full-document root are thus committed without exposing that root to the service. The truncated root has 128-bit targeted second-preimage resistance and about 64-bit generic collision resistance.
 
-The server signs `QRed Google document attestation v1` plus a zero byte, the eight-byte timestamp, eight-byte key ID, the encoded identity above, and the 32-byte commitment. Each page has its own signature so it can be authenticated independently without carrying a Merkle inclusion proof. All pages in a request share one server timestamp and identity. Identity fields cannot be changed or relabeled without breaking verification. For example, a 20-byte email, 20-byte name and 21-byte subject add 101 bytes per record before QR framing; real names/addresses vary. The signature is stored once per page record, even when that page uses several QR codes.
+The server signs `QRed Google document attestation v1` plus a zero byte, the eight-byte timestamp, eight-byte key ID, the encoded identity above, and the 32-byte commitment. Each page has its own signature so it can be authenticated independently without carrying a Merkle inclusion proof. All pages in a request share one server timestamp and identity. Identity fields cannot be changed or relabeled without breaking verification. For example, a 20-byte email, 20-byte name and 21-byte subject add 65 bytes per record before QR framing; real names/addresses vary. The signature is stored once per page record, even when that page uses several QR codes.
 
 Offline verifiers trust only keys bundled in `src/trustedAuthorities.json` for v4, selected automatically by the seal's key ID. The verifier has no public-key text field; its key-file import appears only after scanning a local v3 seal. Importing a key for local signatures cannot authorize an unknown Google attestation. Keep previous public keys during routine rotation; remove a compromised key through an app update. Offline copies cannot learn about new revocations until updated. Independent implementations can configure their own authority keys; there is no registry of every user's key.
 
