@@ -390,7 +390,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       </details>
       <div className="demo-input">
         {loading
-          ? <p className="sealing-method-selected">Sealing method: {method === "private-key" ? "Private key (offline)" : provider.label + " login"}</p>
+          ? <p className="sealing-method-selected">Sealing method: {method === "private-key" ? "Private key (offline)" : provider?.label ? provider.label + " login" : "Completing sign-in"}</p>
           : <fieldset className="sealing-methods">
             <legend>Authenticate and stamp</legend>
             <p className="key-help">Choose a PDF and layout, then sign in. QRed returns here in the same tab. Reselect the original PDF to finish without storing a copy.</p>
