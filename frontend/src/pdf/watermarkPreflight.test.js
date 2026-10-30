@@ -19,6 +19,31 @@ describe("watermark sealing preflight", () => {
     expect(scanAllSealsFromPage(photo(), ["signed-seal"])).toBe(true);
   });
 
+  it("ignores the first-page navigation QR without ignoring the signed watermark", () => {
+    const width = 80, height = 80;
+    const image = { width, height, scale: 1, bounds: { x: 0, y: 0, width, height },
+      data: new Uint8ClampedArray(width * height * 4).fill(255) };
+    const entry = { x: 55, y: 5, width: 15, height: 15 };
+    // The entry QR is at the lower right of the paper and is far darker than
+    // the large watermark. Simulate the decoder choosing it on every attempt.
+    for (let y = 60; y < 75; y++) for (let x = 55; x < 70; x++) {
+      const offset = (y * width + x) * 4;
+      image.data[offset] = image.data[offset + 1] = image.data[offset + 2] = 0;
+    }
+    const original = image.data.slice();
+    scanQrImage.mockImplementation(pixels => {
+      const entryPixel = (65 * width + 60) * 4;
+      return pixels[entryPixel] < 128
+        ? { data: "https://qred.org/", location: position }
+        : { data: "QRED.ORG", payload: "signed-watermark", location: position };
+    });
+    expect(scanAllSealsFromPage(image, ["signed-watermark"])).toBe(false);
+    expect(scanAllSealsFromPage(image, ["signed-watermark"], { entry })).toBe(true);
+    expect(image.data).toEqual(original); // Never modify the sealed image.
+    const scanned = vi.mocked(scanQrImage).mock.calls.at(-1)[0];
+    expect(scanned[(65 * width + 60) * 4]).toBe(255);
+  });
+
   it("requires every part of a multi-code page without using layout hints", () => {
     scanQrImage.mockReturnValueOnce({ payload: "part-a", location: position })
       .mockReturnValueOnce({ payload: "part-b", location: position });

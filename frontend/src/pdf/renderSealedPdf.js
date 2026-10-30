@@ -88,10 +88,27 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
     }
     return { sealedBytes, watermarkLayout, failed };
   }
+  // Give a failed watermark one distinct placement before sacrificing the
+  // original page size for a footer. Both candidates must pass every check.
+  const triedAlternative = new Set();
   let rendered;
   do {
     rendered = await renderAttempt();
-    for (const index of rendered.failed) if (!footerPages.includes(index + 1)) footerPages.push(index + 1);
+    const needAlternative = rendered.failed.filter(index => !triedAlternative.has(index));
+    for (const index of needAlternative) triedAlternative.add(index);
+    let alternatives = null;
+    if (needAlternative.length) {
+      const { planPdfWatermarks } = await import("./watermark.js");
+      alternatives = await planPdfWatermarks(file, pageSealResults, needAlternative,
+        { excludedLayouts: plannedWatermarkLayout });
+    }
+    for (const index of rendered.failed) {
+      if (alternatives?.[index]) {
+        plannedWatermarkLayout[index] = alternatives[index];
+      } else if (!footerPages.includes(index + 1)) {
+        footerPages.push(index + 1);
+      }
+    }
   } while (rendered.failed.length);
   const { sealedBytes, watermarkLayout } = rendered;
   footerPages.sort((a, b) => a - b);

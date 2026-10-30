@@ -50,6 +50,18 @@ describe("page-aware watermark placement", () => {
     }
   });
 
+  it("searches a genuinely different placement after a candidate fails decoding", () => {
+    const image = pageWithGraphic({ x: 260, y: 400, width: 90, height: 40 });
+    const first = planWatermarks(image, [symbol]);
+    const alternate = planWatermarks(image, [symbol], null, { excludeBoxes: first });
+    expect(alternate).toHaveLength(1);
+    const a = first[0], b = alternate[0];
+    const overlapWidth = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
+    const overlapHeight = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+    const overlapRatio = overlapWidth * overlapHeight / Math.min(a.width * a.height, b.width * b.height);
+    expect(overlapRatio).toBeLessThanOrEqual(0.7);
+  });
+
   it("rejects geometry that cannot meet minimum printed module size", () => {
     const image = pageWithGraphic(null, { bounds: { x: 0, y: 0, width: 200, height: 200 } });
     expect(() => planWatermarks(image, [symbol])).toThrow(/too dense/);
