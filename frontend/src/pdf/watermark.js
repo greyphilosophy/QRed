@@ -145,7 +145,8 @@ export async function checkWatermarks(bytes, layouts, pageSealResults) {
       const image = await renderPdfPage(pdf, index + 1);
       for (let part = 0; part < layouts[index].boxes.length; part++) {
         const qr = crop(image, layouts[index].boxes[part]);
-        const code = scanQrImage(qr.data, qr.width, qr.height);
+        const code = scanQrImage(qr.data, qr.width, qr.height,
+          { tryRescaling: false, maxAttempts: 2 });
         const expected = pageSealResults[index].seals[part];
         if (hiddenPayloadFromScanResult(code) !== expected) {
           failed.add(index);
@@ -154,7 +155,8 @@ export async function checkWatermarks(bytes, layouts, pageSealResults) {
         // A clean PDF render is too forgiving. Check a softened, slightly
         // shaded print-like image and require the complete signed payload.
         const photo = simulatePrintPhoto(qr);
-        if (hiddenPayloadFromScanResult(scanQrImage(photo.data, photo.width, photo.height)) !== expected) {
+        if (hiddenPayloadFromScanResult(scanQrImage(photo.data, photo.width, photo.height,
+          { tryRescaling: false, maxAttempts: 2 })) !== expected) {
           failed.add(index);
           break;
         }
