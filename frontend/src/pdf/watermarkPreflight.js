@@ -42,14 +42,38 @@ function obscureDetectedCode(image, location) {
   return true;
 }
 
+// The small "Verify at qred.org" navigation QR is deliberately NOT a seal.
+// The verifier recognizes it and guides the user to scan the pale watermark.
+// During sealing, mask that known navigation area before looking for signed
+// seals. Otherwise a high-contrast link can monopolize the limited full-page
+// decode attempts and cause a false footer fallback on page one.
+function hideEntryCode(image, entry) {
+  if (!entry) return true;
+  const { bounds, scale, width, height, data } = image;
+  if (!bounds || !Number.isFinite(scale) || scale <= 0) return false;
+  const left = Math.max(0, Math.floor((entry.x - bounds.x) * scale) - 2);
+  const right = Math.min(width, Math.ceil((entry.x + entry.width - bounds.x) * scale) + 2);
+  const top = Math.max(0, Math.floor((bounds.y + bounds.height - entry.y - entry.height) * scale) - 2);
+  const bottom = Math.min(height, Math.ceil((bounds.y + bounds.height - entry.y) * scale) + 2);
+  if (right <= left || bottom <= top) return false;
+  for (let y = top; y < bottom; y++) {
+    for (let x = left; x < right; x++) {
+      const offset = (y * width + x) * 4;
+      data[offset] = data[offset + 1] = data[offset + 2] = data[offset + 3] = 255;
+    }
+  }
+  return true;
+}
+
 // Verify the exact signed bytes by discovering symbols from the *whole page*.
 // A matching visible QRED.ORG string alone is never enough. An unrelated QR
 // may be skipped, but bounded attempts prevent excessive sealing time.
-export function scanAllSealsFromPage(image, expectedSeals) {
+export function scanAllSealsFromPage(image, expectedSeals, { entry = null } = {}) {
   if (!expectedSeals.length) return true;
   const remaining = new Set(expectedSeals);
   if (remaining.size !== expectedSeals.length) return false;
   const working = { ...image, data: new Uint8ClampedArray(image.data) };
+  if (!hideEntryCode(working, entry)) return false;
   for (let attempt = 0; attempt < Math.min(8, expectedSeals.length + 2); attempt++) {
     // Fast fail-closed pass: one raw decode and one local-watermark recovery.
     // The verifier can still try all of its normal camera recovery scales.
