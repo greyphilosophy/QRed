@@ -22,7 +22,7 @@ async function splitRecord(record, version) {
   // Keep the minimum code count. Balance only if every grid can be smaller
   // than version 40; otherwise retain the smaller final grid of a greedy split.
   const balance = balancedBody + CHUNK_HEADER_BYTES <= qredPayloadCapacity(39);
-  const digest = await sha256(record);
+  const digest = (await sha256(record)).subarray(0, 16);
   const chunks = [];
   let offset = 0;
   for (let index = 0; index < count; index += 1) {
