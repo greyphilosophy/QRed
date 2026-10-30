@@ -275,7 +275,7 @@ export function PdfSealForm({ onUsePublicKey }) {
           await prepared.prepared.finish(receipts);
         if (request.controller.signal.aborted) return;
         const url = URL.createObjectURL(blob);
-        const outputName = file.name.replace(/\\.pdf$/i, "") + ".qred-sealed.pdf";
+        const outputName = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
         try {
           const link = document.createElement("a");
           link.href = url;
@@ -290,7 +290,7 @@ export function PdfSealForm({ onUsePublicKey }) {
           "Download started: " + outputName,
           ...(footerPages.length ? ["Clear footer added to page(s) " + footerPages.join(", ") + " to keep seals readable."] : []),
           ...(flattenedFieldCount ? ["Flattened " + flattenedFieldCount + " form field(s). Check the values in your sealed copy."] : []),
-        ].join("\\n"));
+        ].join("\n"));
       } catch (error) {
         setMessage(request.controller.signal.aborted ? "Account sealing cancelled." :
           "PDF sealing failed: " + error.message);
