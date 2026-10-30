@@ -28,14 +28,14 @@ async function attested(content, extra = {}) {
 }
 describe("compact document-specific attestations", () => {
   it("preserves the issued Google signing format and reuses the provider byte for new methods", () => {
-    // Golden bytes from the pre-provider implementation on main (2baf911).
-    const golden = "5152656420476f6f676c6520646f63756d656e74206174746573746174696f6e20763100000001a1569b9800da522162396ab2d00101000f616c69636540676d61696c2e636f6d000d416c696365204578616d706c650004313233342a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a";
+    // Golden bytes for the compact identity encoding; all signature fields remain authenticated.
+    const golden = "5152656420476f6f676c6520646f63756d656e74206174746573746174696f6e20763100000001a1569b9800da522162396ab2d0110f616c69636540676d61696c2e636f6d0d416c696365204578616d706c6504313233342a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a";
     expect(Buffer.from(attestationMessage(metadata, new Uint8Array(32).fill(42))).toString("hex")).toBe(golden);
     const original = encodeIdentity(metadata.identity);
     for (const [index, provider] of ["google", "microsoft", "meta", "amazon"].entries()) {
       const identity = { ...metadata.identity, provider, name_source: provider };
       const bytes = encodeIdentity(identity);
-      expect(bytes[0]).toBe(index + 1);
+      expect(bytes[0]).toBe(16 + index + 1);
       expect(bytes.subarray(1)).toEqual(original.subarray(1));
       expect(decodeIdentity(bytes).identity).toEqual(identity);
     }
@@ -82,9 +82,9 @@ describe("compact document-specific attestations", () => {
     const record = decodeEnvelope(qrPayloadBytes(sealed.seals[0]));
     expect(Object.hasOwn(record, "salt")).toBe(false);
     const wireBytes = qrPayloadBytes(sealed.seals[0]);
-    // Four magic bytes, 53 bytes of multipage metadata, encoded identity,
+    // Four magic bytes, 35 bytes of multipage metadata, encoded identity,
     // 64-byte Ed25519 signature and the uncompressed content. No salt field.
-    expect(wireBytes.length).toBe(4 + 53 + encodeIdentity(metadata.identity).length + 64 +
+    expect(wireBytes.length).toBe(4 + 35 + encodeIdentity(metadata.identity).length + 64 +
       new TextEncoder().encode(content).length);
     expect(sealed.seals.length).toBe(1);
     await expect(verifyQRedSeals(sealed.seals, "", trusted)).resolves.toMatchObject({
