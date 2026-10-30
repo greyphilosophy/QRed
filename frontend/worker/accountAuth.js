@@ -241,7 +241,7 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
         if (Math.floor(time / 1000) >= pending.exp) return fail("Microsoft sign-in request expired. Prepare your PDF again.");
         const receipt = { status: "ready", secret_hash: pending.secret_hash, commitments_hash: pending.commitments_hash,
           identity: authenticated.identity, issued_at: new Date(time).toISOString(), provider_iat: authenticated.provider_iat,
-          iat: Math.floor(time / 1000), exp: pending.exp };
+          iat: Math.floor(time / 1000), exp: pending.exp, mode: pending.mode };
         return json({ status: "ready" }, 200, cookieHeaders([
           await sessions.write(body.id, "receipt", receipt), sessions.clear(body.id, "request"),
         ]));
