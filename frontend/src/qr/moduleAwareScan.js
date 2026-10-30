@@ -8,7 +8,7 @@ const OFFSETS = [0.15, 0.325, 0.5, 0.675, 0.85];
 const MIN_SAMPLES = 4;
 
 function moduleVote(matrix, mapping, normalized, width, height) {
-  let confident = 0;
+  const votes = [];
   for (let y = 0; y < matrix.height; y++) for (let x = 0; x < matrix.width; x++) {
     let light = 0, ink = 0;
     for (const dy of OFFSETS) for (const dx of OFFSETS) {
@@ -23,13 +23,12 @@ function moduleVote(matrix, mapping, normalized, width, height) {
     }
     const count = ink + light;
     const reliable = count >= MIN_SAMPLES && Math.abs(ink - light) >= 2;
-    if (reliable) {
-      confident++;
-      matrix.set(x, y, ink > light);
-    }
+    if (reliable) votes.push([x, y, ink > light]);
     // Fully hidden modules retain the existing local-filter estimate.
   }
-  return confident >= matrix.width * matrix.height * 0.25 ? matrix : null;
+  if (votes.length < matrix.width * matrix.height * 0.25) return null;
+  for (const [x, y, dark] of votes) matrix.set(x, y, dark);
+  return matrix;
 }
 
 export function scanModuleAwareQr(originalRgba, filteredRgba, width, height) {
