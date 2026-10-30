@@ -119,6 +119,16 @@ it.each(Object.entries(AUTH_PROVIDERS))(
   },
 );
 
+it("hides already-prepared OAuth links immediately when switching to an offline key", async () => {
+  render(<PdfSealForm />);
+  upload();
+  await screen.findByRole("link", { name: AUTH_PROVIDERS.google.button });
+  fireEvent.click(screen.getByRole("button", { name: "Private key (offline)" }));
+  expect(screen.queryByRole("link", { name: AUTH_PROVIDERS.google.button })).toBeNull();
+  expect(screen.getByRole("button", { name: AUTH_PROVIDERS.google.button }).disabled).toBe(false);
+  expect(screen.getByLabelText("Private Key")).toBeTruthy();
+});
+
 it("allows leaving offline signing before selecting a PDF, without any auth request", () => {
   render(<PdfSealForm />);
   fireEvent.click(screen.getByRole("button", { name: "Private key (offline)" }));
