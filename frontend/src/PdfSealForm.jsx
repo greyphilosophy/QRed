@@ -411,8 +411,8 @@ export function PdfSealForm({ onUsePublicKey }) {
           </fieldset>}
       </div>
       {resumeSession && <div className="signing-key-help" role="status">
-        <strong>Finish your authenticated PDF</strong>
-        <p>Sign-in returned to QRed. Choose the same PDF again above. QRed checks every page against the original fingerprints before stamping. No PDF was stored or uploaded.</p>
+        <strong>Return from provider sign-in</strong>
+        <p>Choose the original PDF again above. QRed checks your provider's sign-in result and verifies every page against the original fingerprints. No PDF was stored or uploaded.</p>
         <button type="button" onClick={cancelPendingSignIn}>Cancel sign-in</button>
       </div>}
       {usesAccount && !resumeSession && <div className="signing-key-help">
