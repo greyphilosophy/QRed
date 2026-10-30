@@ -249,6 +249,10 @@ export function PdfSealForm({ onUsePublicKey }) {
     } catch (error) {
       setMessage(error.message || "Could not resume PDF sealing.");
     } finally {
+      // Permit choosing the same local file again after a transient status
+      // failure or a mismatched selection; no File object is stored anywhere.
+      const input = document.getElementById("pdf-to-stamp");
+      if (input) input.value = "";
       setLoading(false);
     }
   }
