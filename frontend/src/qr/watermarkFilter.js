@@ -52,12 +52,13 @@ export function normalizeWatermarkLuminance(data, width, height) {
 }
 
 // Integral images keep the neighborhood vote linear in the image size.
-export function filterWatermark(data, width, height, radius = 3) {
+export function filterWatermark(data, width, height, radius = 3, normalized = null) {
   const stride = width + 1;
   const known = new Uint32Array(stride * (height + 1));
   const gray = new Uint32Array(known.length);
   const histogram = new Uint32Array(256);
-  const luminances = normalizeWatermarkLuminance(data, width, height);
+  // Reuse the same normalized image for module-aware fallback when supplied.
+  const luminances = normalized ?? normalizeWatermarkLuminance(data, width, height);
   for (const value of luminances) histogram[value]++;
   let white = 255, count = 0;
   while (white > 0 && count < width * height * 0.02) count += histogram[white--];
