@@ -126,8 +126,12 @@ export function scanQrImage(data, width, height, { tryRescaling = true, tryWater
   let entryLink = null;
   let preparedWatermark = null;
   let attempts = 0;
+  // A bounded preflight should try raw, pixel-filtered, then module-aware
+  // rather than exhausting its budget on similar pixel-filter radii.
+  const regularBudget = tryWatermark && Number.isFinite(maxAttempts) && maxAttempts >= 3
+    ? maxAttempts - 1 : maxAttempts;
   for (const size of scanAttempts(width, height, tryRescaling, tryWatermark)) {
-    if (attempts >= maxAttempts) break;
+    if (attempts >= regularBudget) break;
     const prepared = prepareAtSize(data, width, height, size);
     if (prepared.radius && !preparedWatermark) preparedWatermark = prepared;
     const code = decodePrepared(prepared, width, height);
