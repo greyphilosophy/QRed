@@ -51,7 +51,10 @@ export function scanAllSealsFromPage(image, expectedSeals) {
   if (remaining.size !== expectedSeals.length) return false;
   const working = { ...image, data: new Uint8ClampedArray(image.data) };
   for (let attempt = 0; attempt < Math.min(8, expectedSeals.length + 2); attempt++) {
-    const code = scanQrImage(working.data, working.width, working.height);
+    // Fast fail-closed pass: one raw decode and one local-watermark recovery.
+    // The verifier can still try all of its normal camera recovery scales.
+    const code = scanQrImage(working.data, working.width, working.height,
+      { tryRescaling: false, maxAttempts: 2 });
     if (!code?.location) return false;
     const payload = hiddenPayloadFromScanResult(code);
     if (remaining.has(payload)) remaining.delete(payload);
