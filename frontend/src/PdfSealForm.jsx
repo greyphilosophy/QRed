@@ -486,7 +486,7 @@ export function PdfSealForm({ onUsePublicKey }) {
             spellCheck={false}
             disabled={loadingKeys || loading}
           />
-          <small id="private-key-help" className="key-help">Keep secret. Use a 32-byte Ed25519 seed encoded as Base64 or Base64URL; PEM and hex are unsupported.</small>
+          <small id="private-key-help" className="key-help">Keep secret. Raw 32-byte Ed25519 seed in Base64 or Base64URL; PEM and hex are unsupported.</small>
           <label htmlFor="signing-private-key-file">Open private key file</label>
           <input id="signing-private-key-file" type="file" accept=".txt,text/plain" onChange={openKeyFile} disabled={loadingKeys || loading} />
           <div className="key-actions">
