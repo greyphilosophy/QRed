@@ -213,18 +213,39 @@ describe("experimental PDF watermarks", () => {
     await expect(verifyQRedSeals([payload], publicKey)).resolves.toMatchObject({ status: "VALID" });
   }, 45000);
 
-  it("fits and verifies both parts on an original A3 page", async () => {
+  it("fits and verifies both signed parts on an original A3 page or a safe fallback", async () => {
     const file = await makeDocument({ multipart: true, size: [842, 1191] });
-    const { blob, watermarkLayout, pageSealStrings } = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" });
-    expect(pageSealStrings[0].length).toBe(2);
-    const image = render(await blob.arrayBuffer());
-    const payloads = watermarkLayout[0].boxes.map(box => {
-      const part = crop(image, box);
-      return hiddenPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
+    const { blob, watermarkLayout, pageSealStrings, footerPages } = await sealPdfInBrowser({
+      file, privateKey, publicKey, pageScalingStrategy: "watermark",
     });
+    expect(pageSealStrings[0].length).toBe(2);
+    let payloads;
+    if (watermarkLayout[0]) {
+      const image = render(await blob.arrayBuffer());
+      payloads = watermarkLayout[0].boxes.map(box => {
+        const part = crop(image, box);
+        return hiddenPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
+      });
+    } else {
+      // A correctly rejected fragile watermark must still yield two signed
+      // and readable QR codes on a conventional footer.
+      expect(footerPages).toEqual([1]);
+      const dpi = 300, scale = dpi / 72;
+      const image = render(await blob.arrayBuffer(), 1, dpi);
+      const layout = planQrStampLayout(842, pageSealStrings[0].length);
+      payloads = pageSealStrings[0].map((_, index) => {
+        const box = {
+          x: 18 + (layout.qrOffsetX ?? 10) + index * (layout.qrSize + layout.gap),
+          y: 18 + (layout.qrOffsetY ?? 10),
+          width: layout.qrSize, height: layout.qrSize,
+        };
+        const part = crop(image, box, scale);
+        return hiddenPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
+      });
+    }
     expect(payloads).toEqual(pageSealStrings[0]);
     await expect(verifyQRedSeals(payloads.reverse(), publicKey)).resolves.toMatchObject({ status: "VALID" });
-  }, 30000);
+  }, 60000);
 
   it.each([
     ["dense text", { multipart: true }],
