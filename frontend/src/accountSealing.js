@@ -37,7 +37,7 @@ async function postJson(path, body, fetchImpl, signal, label) {
 // Create a document-bound session only after local PDF extraction.
 // The UI can open a branded same-origin preparation tab from the first tap,
 // but OAuth navigation must wait for this server-issued, validated URL.
-export async function beginAccountSignIn(provider, pages, { signal, fetchImpl = apiFetch } = {}) {
+export async function beginAccountSignIn(provider, pages, { signal, mode, fetchImpl = apiFetch } = {}) {
   const label = ensurePages(provider, pages);
   const salts = pages.map(() => crypto.getRandomValues(new Uint8Array(32)));
   const commitments = await Promise.all(pages.map(async (page, index) =>
@@ -45,7 +45,7 @@ export async function beginAccountSignIn(provider, pages, { signal, fetchImpl = 
   if (signal?.aborted) throw new Error("Account sealing cancelled");
   const startedAt = Date.now();
   const authPath = "/api/auth/" + provider;
-  const response = await postJson(authPath + "/start", { commitments }, fetchImpl, signal, label);
+  const response = await postJson(authPath + "/start", { commitments, ...(mode === "same-tab" ? { mode } : {}) }, fetchImpl, signal, label);
   const session = { ...response, provider, salts, commitments, startedAt };
   if (signal?.aborted || !allowedAuthorizationUrl(provider, response.authorize_url)) {
     await finishAccountSignIn(provider, session, { fetchImpl });
