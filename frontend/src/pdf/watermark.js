@@ -10,9 +10,9 @@ export { planWatermarks } from "./watermarkPlacement.js";
 
 export const ENTRY_URL = "https://qred.org/";
 export const ENTRY_QR_SIZE = 36;
-// Fifteen-percent black survives more printer gray-tone loss than the old 6%.
-// Keep it pale enough to preserve the readability of underlying black text.
-export const WATERMARK_GRAY = 0.85;
+// Twenty-five-percent black improves real-paper contrast after 15% proved too faint.
+// Multiply blending preserves black document text beneath the watermark.
+export const WATERMARK_GRAY = 0.75;
 const MARGIN = 18;
 const ENTRY_WIDTH = 70, ENTRY_HEIGHT = 52;
 
