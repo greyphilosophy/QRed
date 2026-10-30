@@ -200,7 +200,7 @@ export async function verifyQRedSeals(seals, publicKey, authorities = trustedAut
   let isValid = false;
   try {
     const message = metadata.version === "4"
-      ? attestationMessage(metadata, await pageCommitment(metadata, body, metadata.salt))
+      ? attestationMessage(metadata, await pageCommitment(metadata, body))
       : sealSignatureMessage(metadata, body);
     isValid = await computeKeyId(publicKey) === metadata.key_id &&
       await verifyEd25519(metadata.signature, message, decodeBase64Url(publicKey));
