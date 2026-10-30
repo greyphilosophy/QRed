@@ -41,9 +41,6 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [authenticating, setAuthenticating] = useState(false);
   const [checkingAccount, setCheckingAccount] = useState(false);
   const [signingIdentity, setSigningIdentity] = useState(null);
-  const [availability, setAvailability] = useState(null);
-  const [configError, setConfigError] = useState("");
-  const [configAttempt, setConfigAttempt] = useState(0);
   const provider = authProvider(method);
   const usesAccount = Boolean(provider);
   const activeRequest = useRef(null);
@@ -259,10 +256,14 @@ export function PdfSealForm({ onUsePublicKey }) {
     // within this gesture, without opening a QRed preparation page.
     const request = { controller: new AbortController(), provider: id, session };
     activeRequest.current = request;
-    setMethod(id);
-    setAuthenticating(true);
-    setLoading(true);
-    setMessage("Complete " + authProvider(id).label + " sign-in. Your PDF remains open in QRed.");
+    // Do not re-render or replace the <a> until the browser has performed its
+    // trusted native navigation. Chrome may otherwise cancel the link.
+    setTimeout(() => {
+      if (activeRequest.current !== request || request.controller.signal.aborted) return;
+      setMethod(id);
+      setAuthenticating(true);
+      setLoading(true);
+      setMessage("Complete " + authProvider(id).label + " sign-in. Your PDF remains open in QRed.");
     void (async () => {
       try {
         const receipts = await attestPagesWithAccount(id, prepared.prepared.pages, {
@@ -301,6 +302,7 @@ export function PdfSealForm({ onUsePublicKey }) {
         setPrepareRetry(value => value + 1);
       }
     })();
+    }, 0);
   }
 
   async function sealPdf(selectedMethod = method) {
@@ -443,9 +445,7 @@ export function PdfSealForm({ onUsePublicKey }) {
         <p>This method needs a connection for each document. Only randomized page fingerprints and account details reach QRed; {provider.label} receives the sign-in request. Your PDF, text, and private keys stay on this device. The finished seals can be verified offline.</p>
         <small>Your {provider.label} profile name and email will be readable by anyone who scans the seal.</small>
         {signingIdentity && <p>{provider.label} account: {signingIdentity.email}. Name: {signingIdentity.name} ({provider.label} profile).</p>}
-        {configError ? <p role="status">{configError} <button type="button" onClick={() => setConfigAttempt(value => value + 1)}>Retry sign-in availability</button></p>
-          : !availability ? <p role="status">Checking sign-in availability…</p>
-            : availability[method] !== true && <p role="status">{provider.label} sealing is not enabled on this installation. Choose another sealing method.</p>}
+
       </div>}
       {method === "private-key" && <><details>
         <summary>Optional: use airplane mode</summary>
