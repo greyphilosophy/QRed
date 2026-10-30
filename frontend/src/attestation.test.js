@@ -102,6 +102,10 @@ describe("compact document-specific attestations", () => {
     const large = await attested(content, { encodingStrategy: "plaintext" });
     expect(large.seals.length).toBeGreaterThan(1);
     await expect(verifyQRedSeals(large.seals.toReversed(), "", trusted)).resolves.toMatchObject({ status: "VALID", content });
+    const modifiedChunk = qrPayloadBytes(large.seals[1]);
+    modifiedChunk[24] ^= 1; // First payload byte beyond the compact v4 header.
+    await expect(verifyQRedSeals([large.seals[0], sealString(modifiedChunk)], "", trusted))
+      .resolves.toMatchObject({ status: "INVALID", error_message: "Seal set digest does not match its contents" });
     await expect(verifyQRedSeals(large.seals.slice(1), "", trusted)).resolves.toMatchObject({ status: "INCOMPLETE" });
   });
   it.each(["zlib", "gzip"])("verifies %s Google attestations offline in single and multiple QRs", async encodingStrategy => {
