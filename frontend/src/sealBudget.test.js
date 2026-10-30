@@ -15,7 +15,7 @@ it.each([false, true].flatMap(attested => [false, true].map(multiple => [atteste
     if (attested) {
       // QRS4 holds the identity directly followed by the signature: unlike
       // its pre-release predecessor, there are no 32 salt bytes per page.
-      expect(envelope.length - body.length).toBe(4 + (multiple ? 53 : 17) + encodeIdentity(identity).length + 64);
+      expect(envelope.length - body.length).toBe(4 + (multiple ? 35 : 15) + encodeIdentity(identity).length + 64);
     }
   });
 
