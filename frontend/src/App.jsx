@@ -7,7 +7,8 @@ import "./verification.css";
 import { readPendingAuth } from "./sameTabAuth.js";
 
 function App() {
-  const [showPdfStampTool, setShowPdfStampTool] = useState(() => Boolean(readPendingAuth()));
+  const [showPdfStampTool, setShowPdfStampTool] = useState(() =>
+    Boolean(readPendingAuth()) || new URLSearchParams(window.location.search).has("qred_auth"));
   const stampSection = useRef(null);
   const stampHeading = useRef(null);
   const verification = useSealVerification();
