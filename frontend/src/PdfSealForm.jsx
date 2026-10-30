@@ -8,6 +8,8 @@ import { AUTH_PROVIDERS, authProvider } from "./authProviders.js";
 import { ProviderSignInButton } from "./ProviderSignInButton.jsx";
 import { openAmazonSignInTab } from "./amazonSignInTab.js";
 import { ACCOUNT_SESSION_SECONDS } from "./accountAuthLimits.js";
+import { readPendingAuth, clearPendingAuth, navigateToProvider } from "./sameTabAuth.js";
+import { pageCommitment } from "./attestation.js";
 
 const BOOTSTRAP_URL = "https://qred.org/";
 
@@ -31,7 +33,8 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [keyStatus, setKeyStatus] = useState("");
   const [keyError, setKeyError] = useState(false);
   const [loadingKeys, setLoadingKeys] = useState(false);
-  const [pageScalingStrategy, setPageScalingStrategy] = useState("automatic");
+  const [pageScalingStrategy, setPageScalingStrategy] = useState(() =>
+    readPendingAuth()?.pageScalingStrategy || "automatic");
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [readyForSignIn, setReadyForSignIn] = useState(false);
@@ -40,7 +43,8 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [preparedAuthorizeUrl, setPreparedAuthorizeUrl] = useState("");
   const [authenticating, setAuthenticating] = useState(false);
   const [checkingAccount, setCheckingAccount] = useState(false);
-  const [method, setMethod] = useState(null);
+  const [method, setMethod] = useState(() => readPendingAuth()?.provider || null);
+  const [resumeSession, setResumeSession] = useState(() => readPendingAuth());
   const [signingIdentity, setSigningIdentity] = useState(null);
   const [availability, setAvailability] = useState(null);
   const [configError, setConfigError] = useState("");
@@ -241,22 +245,91 @@ export function PdfSealForm({ onUsePublicKey }) {
   }
 
   function beginProviderSealing(id) {
-    if (!file || loading || activeRequest.current) {
+    if (!file || loading || activeRequest.current || resumeSession) {
       if (!file) setMessage("Choose a PDF first, then select a sign-in provider.");
       return;
     }
-    // Browsers only allow new tabs during a real user gesture. Open QRed's
-    // informative preparation page now, rather than a blank about:blank tab
-    // after asynchronous PDF extraction or server session setup.
-    let popup = null;
-    try {
-      popup = window.open("/auth-pending.html", "_blank");
-      if (popup) popup.opener = null;
-    } catch { /* Popup blockers retain the manual sign-in fallback below. */ }
     setMethod(id);
     setMessage("");
     setSigningIdentity(null);
-    void sealPdf(id, popup);
+    // The original tab navigates directly to the provider after QRed has
+    // prepared and saved only cryptographic session metadata, never the PDF.
+    void sealPdf(id);
+  }
+
+  async function cancelPendingSignIn() {
+    const pending = readPendingAuth();
+    clearPendingAuth();
+    setResumeSession(null);
+    setMethod(null);
+    if (pending) await finishAccountSignIn(pending.provider, pending);
+    setMessage("Sign-in cancelled. Select a PDF to start again.");
+  }
+
+  async function resumePdf(selectedFile) {
+    const pending = readPendingAuth();
+    if (!pending) {
+      setResumeSession(null);
+      setMessage("Your sign-in session expired. Choose an authentication method to begin again.");
+      return;
+    }
+    if (!selectedFile) return;
+    setLoading(true);
+    setMessage("Verifying the selected PDF against the signed-in document…");
+    try {
+      const status = await checkAccountSignInStatus(pending.provider, pending);
+      if (status.status !== "ready") {
+        if (status.status === "failed") {
+          clearPendingAuth();
+          setResumeSession(null);
+          setMethod(null);
+          throw new Error("Sign-in failed: " + (status.error || "Please try again."));
+        }
+        throw new Error("Authentication is not completed yet. Return after signing in.");
+      }
+      const result = await sealPdfInBrowser({
+        file: selectedFile,
+        bootstrapUrl: BOOTSTRAP_URL,
+        encodingStrategy: "automatic",
+        pageScalingStrategy: pending.pageScalingStrategy,
+        attestPages: async pages => {
+          if (pages.length !== pending.commitments.length) {
+            throw new Error("This PDF has a different number of pages. Select the original document.");
+          }
+          const actual = await Promise.all(pages.map((page, index) =>
+            pageCommitment(page.metadata, page.content, pending.salts[index])
+              .then(digest => encodeBase64Url(digest))));
+          // Exact committed page metadata and contents must match the document
+          // authenticated earlier. Never stamp a substituted PDF.
+          if (actual.some((value, index) => value !== pending.commitments[index])) {
+            throw new Error("This PDF does not match the authenticated document. Select the original.");
+          }
+          return attestPagesWithAccount(pending.provider, pages, {
+            popup: null, preparedSession: pending, onStatus: setMessage,
+            onIdentity: setSigningIdentity,
+          });
+        },
+      });
+      const outputName = selectedFile.name.replace(/\\.pdf$/i, "") + ".qred-sealed.pdf";
+      const url = URL.createObjectURL(result.blob);
+      try {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = outputName;
+        link.click();
+      } finally { URL.revokeObjectURL(url); }
+      if (typeof window !== "undefined" && window.__qredTestMode === true)
+        window.__lastSealResult = result.sealResult;
+      clearPendingAuth();
+      setResumeSession(null);
+      setMethod(null);
+      setFile(null);
+      setMessage("Sealed " + selectedFile.name + " in this browser. Download started: " + outputName);
+    } catch (error) {
+      setMessage(error.message || "Could not resume PDF sealing.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function loadProviderAvailability(id, signal) {
@@ -269,7 +342,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     if (config[id] !== true) throw new Error(authProvider(id).label + " sealing is not enabled on this installation.");
   }
 
-  async function sealPdf(selectedMethod = method, popup = null) {
+  async function sealPdf(selectedMethod = method) {
     const selectedProvider = authProvider(selectedMethod);
     const accountMode = Boolean(selectedProvider);
     if (!file || !selectedMethod || (selectedMethod === "private-key" && !privateKey.trim())) {
@@ -277,13 +350,13 @@ export function PdfSealForm({ onUsePublicKey }) {
       return;
     }
     if (accountMode && !accountSealingAvailable) {
-      try { popup?.close(); } catch { /* The tab may be isolated. */ }
+      
       setMessage("Account-based sealing is not available in this copy of QRed.");
       return;
     }
     if (activeRequest.current) return;
     const controller = new AbortController();
-    const request = { controller, popup, providerOpened: false };
+    const request = { controller, providerOpened: false };
     activeRequest.current = request;
     let saved = false;
     setLoading(true);
@@ -301,45 +374,21 @@ export function PdfSealForm({ onUsePublicKey }) {
         file,
         ...(selectedMethod === "private-key" ? { privateKey, publicKey: matchingPublicKey } : {
           attestPages: async pages => {
-            const session = await beginAccountSignIn(selectedMethod, pages, { signal: controller.signal });
-            request.session = session; request.provider = selectedMethod;
-            let handedOff = false;
+            const session = await beginAccountSignIn(selectedMethod, pages, {
+              signal: controller.signal, mode: "same-tab",
+            });
+            request.session = session;
             try {
               if (controller.signal.aborted) throw new Error("Account sealing cancelled");
-              let signInPopup = request.popup;
-              if (signInPopup && !signInPopup.closed) {
-                try {
-                  signInPopup.location.replace(session.authorize_url);
-                  request.providerOpened = true;
-                  setAuthenticating(true);
-                  setMessage("Opening " + selectedProvider.label + " sign-in. Return to this QRed tab afterward to finish sealing.");
-                } catch {
-                  try { signInPopup.close(); } catch { /* May already be isolated. */ }
-                  request.popup = null;
-                  signInPopup = null;
-                }
-              } else {
-                request.popup = null;
-                signInPopup = null;
-              }
-              if (!signInPopup) {
-                // Exceptional fallback only: a blocked/closed popup means the
-                // user must tap the prepared native link. No secrets in href.
-                await new Promise((resolve, reject) => {
-                  pendingAccountSignIn.current = { provider: selectedMethod, session, resolve, reject };
-                  setPreparedAuthorizeUrl(session.authorize_url);
-                  setReadyForSignIn(true);
-                  setMessage("Your browser blocked the sign-in tab. Tap the sign-in link below to continue.");
-                });
-                setAuthenticating(true);
-              }
-              handedOff = true;
-              return await attestPagesWithAccount(selectedMethod, pages, { popup: signInPopup, preparedSession: session,
-                signal: controller.signal, onStatus: setMessage, onIdentity: setSigningIdentity });
-            } finally {
-              if (pendingAccountSignIn.current?.session === session) pendingAccountSignIn.current = null;
-              setReadyForSignIn(false);
-              if (!handedOff) await finishAccountSignIn(selectedMethod, session);
+              navigateToProvider(session, pageScalingStrategy);
+              request.providerOpened = true;
+              setMessage("Opening " + selectedProvider.label + " in this tab…");
+              // A navigation destroys the in-memory PDF intentionally. Do not
+              // render a sealed PDF until the user reselects the original.
+              return await new Promise(() => {});
+            } catch (error) {
+              await finishAccountSignIn(selectedMethod, session);
+              throw error;
             }
           },
         }),
@@ -375,9 +424,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       // If sign-in failed, leave the provider callback tab visible so its
       // sanitized error can be read. Never close it as a side effect of the
       // original document window reporting an error.
-      if (saved || controller.signal.aborted || !request.providerOpened) {
-        try { request.popup?.close(); } catch { /* The provider may isolate the popup. */ }
-      }
+      // No popup exists in the same-tab flow.
       if (activeRequest.current === request) activeRequest.current = null;
       setReadyForSignIn(false);
       setPreparedAuthorizeUrl("");
@@ -396,7 +443,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       <div className="demo-grid">
         <div className="demo-input">
           <label htmlFor="pdf-to-stamp">Open PDF</label>
-          <input id="pdf-to-stamp" type="file" accept="application/pdf" disabled={loading} onChange={(e) => setFile(e.target.files?.[0] || null)} />
+          <input id="pdf-to-stamp" type="file" accept="application/pdf" disabled={loading} onChange={(e) => { const selected = e.target.files?.[0] || null; setFile(selected); if (resumeSession && selected) void resumePdf(selected); }} />
         </div>
         <div className="demo-input">
           <label>Page layout</label>
@@ -432,8 +479,8 @@ export function PdfSealForm({ onUsePublicKey }) {
           ? <p className="sealing-method-selected">Sealing method: {method === "private-key" ? "Private key (offline)" : provider.label + " login"}</p>
           : <fieldset className="sealing-methods">
             <legend>Authenticate and stamp</legend>
-            <p className="key-help">Choose a PDF and layout above, then tap a provider to prepare the document and open sign-in automatically.</p>
-            <div className="sealing-method-grid">
+            <p className="key-help">Choose a PDF and layout, then sign in. QRed returns here in the same tab. You will reselect the original PDF to finish without storing a copy.</p>
+            {!resumeSession && <div className="sealing-method-grid">
               {Object.entries(AUTH_PROVIDERS).map(([id, account]) => <button
                 key={id} type="button" aria-pressed={method === id}
                 onClick={() => beginProviderSealing(id)}
@@ -446,10 +493,15 @@ export function PdfSealForm({ onUsePublicKey }) {
                 disabled={loading || loadingKeys}>
                 Private key (offline)
               </button>
-            </div>
+            </div>}
           </fieldset>}
       </div>
-      {usesAccount && <div className="signing-key-help">
+      {resumeSession && <div className="signing-key-help" role="status">
+        <strong>Finish your authenticated PDF</strong>
+        <p>Sign-in returned to QRed. Choose the same PDF again above. QRed checks every page against the original fingerprints before stamping. No PDF was stored or uploaded.</p>
+        <button type="button" onClick={cancelPendingSignIn}>Cancel sign-in</button>
+      </div>}
+      {usesAccount && !resumeSession && <div className="signing-key-help">
         <p>{method === "google" ? "Use a Gmail or Google Workspace account. " : method === "microsoft" ? "Use a personal, work, or school Microsoft account. " : `Use your ${provider.label} account. `}
           After you choose a document, sign in to authorize QRed to attest its page contents, your account details, and the server time. Profile names are not independently verified identities.</p>
         {method !== "google" && <p>Your email is reported by {provider.label}; QRed does not separately verify control of that mailbox.</p>}
@@ -506,26 +558,26 @@ export function PdfSealForm({ onUsePublicKey }) {
         </div>}
 
       <p id="signing-key-status" role="status" style={{ marginTop: "1rem", color: keyError ? "#ef4444" : "#64748b" }}>{keyStatus}</p>
-      {usesAccount && readyForSignIn && <ProviderSignInButton provider={method} onClick={openPreparedSignIn}
+      {usesAccount && !resumeSession && readyForSignIn && <ProviderSignInButton provider={method} onClick={openPreparedSignIn}
         href={preparedAuthorizeUrl}
         disabled={loadingKeys || !accountSealingAvailable}
         aria-describedby="account-sealing-action" />}
-      {usesAccount && loading && !readyForSignIn && <p role="status" aria-live="polite">
+      {usesAccount && !resumeSession && loading && !readyForSignIn && <p role="status" aria-live="polite">
         {authenticating ? "Waiting for sign-in…" : "Preparing document…"}
       </p>}
       {method === "private-key" && <button type="button" onClick={() => sealPdf()}
         disabled={loading || loadingKeys} aria-busy={loading} style={{ marginTop: "1rem" }}>
         {loading ? "Sealing..." : "Stamp and save PDF"}
       </button>}
-      {usesAccount && <p id="account-sealing-action" className="key-help">
+      {usesAccount && !resumeSession && <p id="account-sealing-action" className="key-help">
         {readyForSignIn ? "Sign-in could not open automatically. Tap the provider link to continue."
           : "QRed opens a sign-in tab when you choose a provider. Your PDF stays on this device."}
       </p>}
-      {loading && usesAccount && authenticating && <button type="button"
+      {loading && usesAccount && !resumeSession && authenticating && <button type="button"
         onClick={checkSignInStatus} disabled={checkingAccount}>
         {checkingAccount ? "Checking sign-in..." : "Check sign-in status"}
       </button>}
-      {loading && usesAccount && <button type="button" onClick={cancelSealing}>Cancel sealing</button>}
+      {loading && usesAccount && !resumeSession && <button type="button" onClick={cancelSealing}>Cancel sealing</button>}
       {message && (
         <p id="stamp-result" role="status" style={{ marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155", whiteSpace: "pre-wrap" }}>
           {message}
