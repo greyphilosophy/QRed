@@ -75,7 +75,8 @@ function fixture(provider) {
     if (path.endsWith("/start")) await login(await response.clone().json());
     return response;
   };
-  return { jar, sent, post, handle, login, clientFetch, exchange, cookie };
+  return { jar, sent, post, handle, login, clientFetch, exchange, cookie,
+    setClaims: claims => { idTokenClaims = claims; } };
 }
 
 describe.each(providers)("%s document attestations", provider => {
@@ -369,3 +370,67 @@ it("HTML-escapes a provider-originated error before showing it in the callback",
 });
 
 
+
+
+describe.each(providers)("%s provider SDK completion", provider => {
+  it("binds an SDK response to a fresh document nonce and issues an attestation", async () => {
+    const flow = fixture(provider);
+    const nonce = "Z".repeat(43);
+    const start = await flow.post("/api/auth/" + provider + "/start", {
+      commitments: [fingerprint], nonce,
+    });
+    expect(start.status).toBe(200);
+    const session = await start.json();
+    expect(session.nonce).toBe(nonce);
+    expect(session.client_id).toBe(provider + "-client");
+    flow.setClaims({
+      name: "Provider User", email: "user@gmail.com", email_verified: true,
+      sub: "account-user", tid: tenant, nonce, iat: epoch / 1000,
+    });
+    const credential = provider === "amazon"
+      ? { id: session.id, access_token: "opaque-amazon-token", state: nonce }
+      : { id: session.id, id_token: "provider-id-token" };
+    const complete = await flow.post("/api/auth/" + provider + "/complete", credential);
+    expect(complete.status).toBe(200);
+    expect(await complete.json()).toEqual({ status: "ready" });
+    const receipt = await flow.post("/api/attest/" + provider, {
+      id: session.id, secret: session.secret, commitments: [fingerprint], index: 0,
+    });
+    expect(receipt.status).toBe(200);
+    const seal = await receipt.json();
+    expect(seal.identity.provider).toBe(provider);
+    expect(typeof seal.signature).toBe("string");
+    expect(JSON.stringify(seal)).not.toContain("opaque-amazon-token");
+  });
+
+  it("rejects a mismatched SDK document identity without signing", async () => {
+    const flow = fixture(provider);
+    const nonce = "Y".repeat(43);
+    const session = await (await flow.post("/api/auth/" + provider + "/start", {
+      commitments: [fingerprint], nonce,
+    })).json();
+    flow.setClaims({
+      name: "Provider User", email: "user@gmail.com", email_verified: true,
+      sub: "account-user", tid: tenant, nonce: "X".repeat(43), iat: epoch / 1000,
+    });
+    const body = provider === "amazon"
+      ? { id: session.id, access_token: "opaque-amazon-token", state: "X".repeat(43) }
+      : { id: session.id, id_token: "provider-id-token" };
+    const complete = await flow.post("/api/auth/" + provider + "/complete", body);
+    expect(complete.status).toBe(403);
+    const attest = await flow.post("/api/attest/" + provider, {
+      id: session.id, secret: session.secret, commitments: [fingerprint], index: 0,
+    });
+    expect(attest.status).toBe(403);
+  });
+});
+
+it("exposes only configured public client IDs, never client secrets", async () => {
+  const { handle } = fixture("google");
+  const response = await handle(new Request(origin + "/api/auth/client-config"), env);
+  expect(await response.json()).toEqual({
+    google: "google-client", microsoft: "microsoft-client", amazon: "amazon-client",
+  });
+  expect(JSON.stringify(await (await handle(new Request(origin + "/api/auth/client-config"), env)).json()))
+    .not.toContain("secret");
+});
