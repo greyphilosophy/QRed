@@ -461,7 +461,7 @@ export function PdfSealForm({ onUsePublicKey }) {
           : <fieldset className="sealing-methods">
             <legend>Authenticate and stamp</legend>
             <p className="key-help">Choose a PDF and layout above, then use a provider’s official sign-in button. Your PDF stays on your device.</p>
-            <ProviderSdkButtons
+            {file && method !== "private-key" && <ProviderSdkButtons
               clientIds={sdkClientIds}
               sdkReady={sdkReady}
               nonce={loginNonce}
@@ -471,7 +471,7 @@ export function PdfSealForm({ onUsePublicKey }) {
               onMicrosoftClick={() => startOtherProvider("microsoft")}
               onAmazonClick={() => startOtherProvider("amazon")}
               onError={setMessage}
-            />
+            />}
             <div className="sealing-method-grid offline-signin-choice">
               <button type="button" aria-pressed={method === "private-key"}
                 onClick={() => { setMethod("private-key"); setMessage(""); setSigningIdentity(null); }}
