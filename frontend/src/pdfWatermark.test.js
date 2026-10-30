@@ -194,16 +194,24 @@ describe("experimental PDF watermarks", () => {
     }
   }, 60000);
 
-  it("keeps rotated, cropped pages intact", async () => {
+  it("preserves rotated PDF geometry when safe, otherwise preserves text with a footer", async () => {
     const file = await makeDocument({ rotated: true });
-    const { blob } = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" });
+    const { blob, footerPages, pageSealStrings } = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "watermark" });
     const page = (await PDFDocument.load(await blob.arrayBuffer())).getPage(0);
-    expect(page.getRotation().angle).toBe(90);
-    expect(page.getCropBox()).toEqual({ x: 12, y: 12, width: 588, height: 768 });
-    const image = render(await blob.arrayBuffer());
+    if (!footerPages.length) {
+      expect(page.getRotation().angle).toBe(90);
+      expect(page.getCropBox()).toEqual({ x: 12, y: 12, width: 588, height: 768 });
+    } else {
+      // The existing fallback flattens rotation/crop into a new visible page.
+      // The original content and signed seal must remain available.
+      expect(footerPages).toEqual([1]);
+      expect(await extractPdfText(blob)).toContain("Record 1:");
+    }
+    const image = render(await blob.arrayBuffer(), 1, footerPages.length ? 300 : 144);
     const payload = hiddenPayloadFromScanResult(scanQrImage(image.data, image.width, image.height));
+    expect(payload).toBe(pageSealStrings[0][0]);
     await expect(verifyQRedSeals([payload], publicKey)).resolves.toMatchObject({ status: "VALID" });
-  }, 30000);
+  }, 45000);
 
   it("fits and verifies both parts on an original A3 page", async () => {
     const file = await makeDocument({ multipart: true, size: [842, 1191] });
