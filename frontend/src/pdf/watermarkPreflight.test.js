@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { scanQrImage } from "../qr/scanQrImage.js";
-import { simulatePrintPhoto, scanAllSealsFromPage } from "./watermarkPreflight.js";
+import { simulatePrintPhoto, scanAllSealsFromPage, scanFramedSealFromPage } from "./watermarkPreflight.js";
 
 vi.mock("../qr/scanQrImage.js", () => ({ scanQrImage: vi.fn() }));
 vi.mock("../qr/hiddenPayload.js", () => ({ hiddenPayloadFromScanResult: result => result?.payload ?? null }));
@@ -42,6 +42,37 @@ describe("watermark sealing preflight", () => {
     expect(image.data).toEqual(original); // Never modify the sealed image.
     const scanned = vi.mocked(scanQrImage).mock.calls.at(-1)[0];
     expect(scanned[(65 * width + 60) * 4]).toBe(255);
+  });
+
+  it("accepts a camera-framed signed watermark that a full-page scan misses", () => {
+    const width = 220, height = 220, scale = 2;
+    const image = { width, height, scale, bounds: { x: 0, y: 0, width: 110, height: 110 },
+      data: new Uint8ClampedArray(width * height * 4).fill(255) };
+    const box = { x: 30, y: 25, width: 55, height: 55 };
+    const entry = { x: 78, y: 20, width: 18, height: 18 };
+    // Paint only the navigation QR black; it overlaps the expanded view.
+    for (let y = 144; y < 180; y++) for (let x = 156; x < 192; x++) {
+      const i = (y * width + x) * 4;
+      image.data[i] = image.data[i + 1] = image.data[i + 2] = 0;
+    }
+    const untouched = image.data.slice();
+    scanQrImage.mockImplementation((pixels, w, h) => {
+      if (w === width && h === height) return null; // Whole-sheet locator fails.
+      // The camera view has wider borders than the QR symbol, and the
+      // competing navigation QR has been masked in this temporary copy.
+      const cx = Math.floor(w * 0.79), cy = Math.floor(h * 0.75);
+      return pixels[(cy * w + cx) * 4] > 240
+        ? { data: "QRED.ORG", payload: "signed-evidence" }
+        : { data: "https://qred.org/" };
+    });
+    expect(scanAllSealsFromPage(image, ["signed-evidence"], { entry })).toBe(false);
+    expect(scanFramedSealFromPage(image, box, "signed-evidence", { entry })).toBe(true);
+    expect(scanFramedSealFromPage(image, box, "other-evidence", { entry })).toBe(false);
+    expect(image.data).toEqual(untouched);
+    const [, w, h, options] = scanQrImage.mock.calls.at(-1);
+    expect(w).toBeGreaterThan(box.width * scale);
+    expect(h).toBeGreaterThan(box.height * scale);
+    expect(options).toMatchObject({ tryRescaling: false, maxAttempts: 3 });
   });
 
   it("requires every part of a multi-code page without using layout hints", () => {
