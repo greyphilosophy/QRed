@@ -368,4 +368,35 @@ it("HTML-escapes a provider-originated error before showing it in the callback",
   expect(html).not.toContain("close-qred-sign-in");
 });
 
+describe.each(["google", "amazon"])("%s same-tab OAuth callback", provider => {
+  it("redirects the original tab back to QRed after the one-time code is redeemed", async () => {
+    const flow = fixture(provider);
+    const start = await flow.post("/api/auth/" + provider + "/start", {
+      commitments: [fingerprint], mode: "same-tab",
+    });
+    expect(start.status).toBe(200);
+    const session = await start.json();
+    const callback = await flow.login(session);
+    expect(callback.status).toBe(303);
+    expect(callback.headers.get("Location")).toBe(origin + "/?qred_auth=returned");
+    const result = await flow.post("/api/auth/" + provider + "/status", {
+      id: session.id, secret: session.secret,
+    });
+    expect((await result.json()).status).toBe("ready");
+  });
+});
 
+it("Microsoft SPA callback includes a same-tab return after code redemption", async () => {
+  const flow = fixture("microsoft");
+  const start = await flow.post("/api/auth/microsoft/start", {
+    commitments: [fingerprint], mode: "same-tab",
+  });
+  const session = await start.json();
+  const callback = await flow.login(session);
+  const page = await callback.text();
+  expect(page).toContain('location.replace("/?qred_auth=returned")');
+  const result = await flow.post("/api/auth/microsoft/status", {
+    id: session.id, secret: session.secret,
+  });
+  expect((await result.json()).status).toBe("ready");
+});
