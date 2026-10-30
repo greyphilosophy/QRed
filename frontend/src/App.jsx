@@ -4,9 +4,10 @@ import { QrScanner } from "./QrScanner.jsx";
 import { PdfSealForm } from "./PdfSealForm.jsx";
 import { SealVerification, useSealVerification } from "./SealVerification.jsx";
 import "./verification.css";
+import { readPendingAuth } from "./sameTabAuth.js";
 
 function App() {
-  const [showPdfStampTool, setShowPdfStampTool] = useState(false);
+  const [showPdfStampTool, setShowPdfStampTool] = useState(() => Boolean(readPendingAuth()));
   const stampSection = useRef(null);
   const stampHeading = useRef(null);
   const verification = useSealVerification();
