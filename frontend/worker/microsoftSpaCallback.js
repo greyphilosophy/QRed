@@ -8,12 +8,12 @@ const escapeScriptJson = value => JSON.stringify(value)
   .replace(/</g, "\\u003c").replace(/>/g, "\\u003e")
   .replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 
-export function microsoftSpaCallbackPage({ id, code, verifier, clientId }) {
+export function microsoftSpaCallbackPage({ id, code, verifier, clientId, sameTab = false }) {
   const nonceBytes = crypto.getRandomValues(new Uint8Array(18));
   const nonce = Array.from(nonceBytes, byte => byte.toString(16).padStart(2, "0")).join("");
-  const settings = escapeScriptJson({ id, code, verifier, clientId });
+  const settings = escapeScriptJson({ id, code, verifier, clientId, sameTab });
   const script = `(async () => {
-    const { id, code, verifier, clientId } = ${settings};
+    const { id, code, verifier, clientId, sameTab } = ${settings};
     const status = document.getElementById("status");
     // Remove the one-time authorization code from the browser address bar.
     history.replaceState(null, "", "/api/auth/microsoft/callback");
@@ -41,6 +41,10 @@ export function microsoftSpaCallbackPage({ id, code, verifier, clientId }) {
         const message = await result.json();
         throw new Error(message.error || "QRed could not verify the Microsoft identity.");
       }
+      if (sameTab) {
+        location.replace("/?qred_auth=returned");
+        return;
+      }
       status.textContent = "Microsoft sign-in completed. Return to the QRed document window.";
       if (window.opener) window.opener.postMessage({ type: "qred-account-complete", id }, location.origin);
       window.close();
@@ -48,6 +52,10 @@ export function microsoftSpaCallbackPage({ id, code, verifier, clientId }) {
       // End the document-bound session promptly instead of leaving the main
       // window polling for ten minutes. The server chooses the error message.
       await complete({ error: "failed" }).catch(() => {});
+      if (sameTab) {
+        location.replace("/?qred_auth=returned");
+        return;
+      }
       status.textContent = error instanceof Error ? error.message : "Microsoft sign-in failed. Return to QRed and try again.";
     }
   })();`;
