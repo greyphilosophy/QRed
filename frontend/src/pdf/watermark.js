@@ -5,7 +5,7 @@ import { scanQrImage } from "../qr/scanQrImage.js";
 import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
 import { renderPdfPage, withPdfDocument } from "./readPdfText.js";
 import { planWatermarks } from "./watermarkPlacement.js";
-import { scanAllSealsFromPage, simulatePrintPhoto } from "./watermarkPreflight.js";
+import { scanAllSealsFromPage, scanFramedSealFromPage, simulatePrintPhoto } from "./watermarkPreflight.js";
 
 export { planWatermarks } from "./watermarkPlacement.js";
 
@@ -167,7 +167,14 @@ export async function checkWatermarks(bytes, layouts, pageSealResults) {
       // Require the verifier to locate *every* seal on the full page as well.
       if (!failed.has(index) && !scanAllSealsFromPage(image, pageSealResults[index].seals,
         { entry: layouts[index].entry })) {
-        failed.add(index);
+        // Full-page discovery is useful, but not mandatory: a person can
+        // frame the pale watermark more closely with a phone camera.
+        // A 40%-wider field of view still requires independent QR location,
+        // and every code must yield its *exact* signed hidden payload.
+        const framedReadable = layouts[index].boxes.every((box, part) =>
+          scanFramedSealFromPage(image, box, pageSealResults[index].seals[part],
+            { entry: layouts[index].entry }));
+        if (!framedReadable) failed.add(index);
       }
       if (layouts[index].entry) {
         const qr = crop(image, layouts[index].entry);
