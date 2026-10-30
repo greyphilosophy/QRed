@@ -151,7 +151,23 @@ export function createAccountAuth({ fetchImpl = (...args) => fetch(...args), ver
     };
     if (action === "callback" && request.method === "GET") {
       const id = url.searchParams.get("state");
-      if (!/^[A-Za-z0-9_-]{43}$/.test(id || "")) throw new RequestError("Invalid sign-in request", 403);
+      if (!/^[A-Za-z0-9_-]{43}$/.test(id || "")) {
+        // MSAL's popup owns its own OAuth state and reads the authorization
+        // response from this existing registered SPA redirect URI. Do not
+        // attempt to redeem or record that code through the legacy callback.
+        if (provider === "microsoft" &&
+            (url.searchParams.has("code") || url.searchParams.has("error")) &&
+            typeof id === "string" && id.length <= 2048) {
+          return new Response("<!doctype html><title>Microsoft sign-in</title>", {
+            headers: {
+              "Content-Type": "text/html;charset=utf-8", "Cache-Control": "no-store",
+              "Referrer-Policy": "no-referrer",
+              "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+            },
+          });
+        }
+        throw new RequestError("Invalid sign-in request", 403);
+      }
       // A duplicate callback with a completed cookie cannot renew the timestamp.
       const complete = await readSession(id, "receipt");
       if (complete?.status === "ready") return callbackPage(provider, id, origin, true);
