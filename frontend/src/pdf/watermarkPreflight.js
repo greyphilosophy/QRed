@@ -55,7 +55,9 @@ function hideEntryCode(image, entry) {
   const right = Math.min(width, Math.ceil((entry.x + entry.width - bounds.x) * scale) + 2);
   const top = Math.max(0, Math.floor((bounds.y + bounds.height - entry.y - entry.height) * scale) - 2);
   const bottom = Math.min(height, Math.ceil((bounds.y + bounds.height - entry.y) * scale) + 2);
-  if (right <= left || bottom <= top) return false;
+  // When a camera frames the watermark, the navigation QR is usually outside
+  // its field of view. Nothing needs masking in that case.
+  if (right <= left || bottom <= top) return true;
   for (let y = top; y < bottom; y++) {
     for (let x = left; x < right; x++) {
       const offset = (y * width + x) * 4;
