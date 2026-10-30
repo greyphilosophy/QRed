@@ -65,6 +65,43 @@ function hideEntryCode(image, entry) {
   return true;
 }
 
+// A human can aim the phone at a watermark instead of photographing the
+// entire sheet. Reproduce that *framed camera view*, with substantial space
+// around the code, rather than accepting a perfectly trimmed known-position
+// QR crop. The scanner receives pixels only; it must still locate and decode
+// the exact hidden signed payload independently.
+export function scanFramedSealFromPage(image, box, expectedSeal, { entry = null } = {}) {
+  const { data, width, height, scale, bounds } = image;
+  if (!bounds || !Number.isFinite(scale) || scale <= 0 ||
+      !box || !Number.isFinite(box.width) || box.width <= 0) return false;
+  const margin = Math.min(72, Math.max(18, box.width * 0.2));
+  const x0 = Math.max(0, Math.floor((box.x - margin - bounds.x) * scale));
+  const x1 = Math.min(width, Math.ceil((box.x + box.width + margin - bounds.x) * scale));
+  const y0 = Math.max(0, Math.floor((bounds.y + bounds.height - box.y - box.height - margin) * scale));
+  const y1 = Math.min(height, Math.ceil((bounds.y + bounds.height - box.y + margin) * scale));
+  if (x1 <= x0 || y1 <= y0) return false;
+  const framedWidth = x1 - x0, framedHeight = y1 - y0;
+  const pixels = new Uint8ClampedArray(framedWidth * framedHeight * 4);
+  for (let y = 0; y < framedHeight; y++) {
+    const offset = ((y + y0) * width + x0) * 4;
+    pixels.set(data.subarray(offset, offset + framedWidth * 4), y * framedWidth * 4);
+  }
+  const framed = {
+    width: framedWidth, height: framedHeight, data: pixels, scale,
+    bounds: {
+      x: bounds.x + x0 / scale,
+      y: bounds.y + bounds.height - y1 / scale,
+      width: framedWidth / scale, height: framedHeight / scale,
+    },
+  };
+  // The entry QR is a navigation link, not part of the signed seal. Mask it
+  // only on this disposable view, as we do for full-page discovery.
+  if (!hideEntryCode(framed, entry)) return false;
+  const code = scanQrImage(framed.data, framed.width, framed.height,
+    { tryRescaling: false, maxAttempts: 3 });
+  return hiddenPayloadFromScanResult(code) === expectedSeal;
+}
+
 // Verify the exact signed bytes by discovering symbols from the *whole page*.
 // A matching visible QRED.ORG string alone is never enough. An unrelated QR
 // may be skipped, but bounded attempts prevent excessive sealing time.
