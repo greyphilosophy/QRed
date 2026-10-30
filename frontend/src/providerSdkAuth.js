@@ -14,8 +14,7 @@ function loadScript(src, isReady, { integrity, prepare } = {}) {
     const script = document.createElement("script");
     script.src = src;
     script.async = true;
-    script.crossOrigin = "anonymous";
-    if (integrity) script.integrity = integrity;
+    if (integrity) { script.integrity = integrity; script.crossOrigin = "anonymous"; }
     script.onload = () => isReady() ? resolve() : reject(new Error("Provider SDK did not initialize"));
     script.onerror = () => reject(new Error("Could not load the provider sign-in service"));
     document.head.appendChild(script);
