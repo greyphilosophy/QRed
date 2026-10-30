@@ -4,7 +4,7 @@ import { IDENTITY_PROVIDERS } from "./authProviders.js";
 export const MAX_ATTESTATION_PAGES = 100;
 const IDENTITY_LIMITS = { email: 254, name: 160, subject: 255 };
 export const MAX_ENCODED_IDENTITY_BYTES = 8 + Object.values(IDENTITY_LIMITS).reduce((sum, size) => sum + size, 0);
-const COMMITMENT_DOMAIN = new TextEncoder().encode("QRed private page commitment v1\0");
+const COMMITMENT_DOMAIN = new TextEncoder().encode("QRed page commitment v2\0");
 const SIGNATURE_DOMAIN = new TextEncoder().encode("QRed Google document attestation v1\0");
 const ACCOUNT_SIGNATURE_DOMAIN = new TextEncoder().encode("QRed account document attestation v1\0");
 
@@ -45,12 +45,14 @@ export function decodeIdentity(bytes, offset = 0) {
   return { identity, offset };
 }
 
-export async function pageCommitment(metadata, content, salt) {
-  if (!(salt instanceof Uint8Array) || salt.length !== 32) throw new Error("Invalid commitment salt");
-  // The server never receives the salt, text/visual page body, or unsalted root.
-  // Page position/count and the complete-document root are inside this hash.
+export async function pageCommitment(metadata, content) {
+  // The server receives this deterministic SHA-256 commitment, but never
+  // receives the page text, visual evidence, or raw complete-document root.
+  // Because it is not salted, a server operator could test guessed content
+  // or correlate identical single-page documents across signing sessions.
+  // The authenticated identity and authoritative timestamp are signed later.
   const context = encodeMetadata({ ...metadata, timestamp: "1970-01-01T00:00:00.000Z", key_id: "0000000000000000" });
-  return sha256(concatenate([COMMITMENT_DOMAIN, salt, context.subarray(0, 1), context.subarray(17), signedContentBytes(content)]));
+  return sha256(concatenate([COMMITMENT_DOMAIN, context.subarray(0, 1), context.subarray(17), signedContentBytes(content)]));
 }
 
 export function attestationMessage({ timestamp, key_id, identity }, commitment) {
