@@ -274,7 +274,7 @@
       }
       .sealing-methods .key-help { margin: 0.35rem 0 0.8rem; }
       .sealing-method-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem; }
-      .pdf-stamp-tool .sealing-method-grid button {
+      .pdf-stamp-tool .sealing-method-grid button, .pdf-stamp-tool .sealing-method-grid a.account-provider-choice {
         align-items: center;
         background: white;
         border: 2px solid #cbd5e1;
@@ -287,6 +287,19 @@
         padding: 0.65rem 0.9rem;
         text-align: center;
         width: 100%;
+      }
+      .pdf-stamp-tool .sealing-method-grid a.account-provider-choice {
+        color: #0f172a;
+        gap: 0.65rem;
+        text-decoration: none;
+      }
+      .pdf-stamp-tool .sealing-method-grid button.account-provider-choice { gap: 0.65rem; }
+      .pdf-stamp-tool .sealing-method-grid .account-provider-choice svg {
+        display: block; flex: 0 0 24px;
+      }
+      .pdf-stamp-tool .sealing-method-grid a.account-provider-choice:hover,
+      .pdf-stamp-tool .sealing-method-grid a.account-provider-choice:focus-visible {
+        background: #eff6ff; border-color: #2563eb; outline-offset: 2px;
       }
       .pdf-stamp-tool .sealing-method-grid button[aria-pressed="true"] {
         background: #eff6ff;
