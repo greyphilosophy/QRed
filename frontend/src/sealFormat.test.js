@@ -17,6 +17,36 @@ it("uses fixed binary metadata with exact millisecond time and raw key bytes", (
   expect(strictUtf8.decode(parsed.data)).toBe("A");
 });
 
+it("encodes 48-bit millisecond timestamps and a 128-bit multipage root", () => {
+  const context = { ...metadata, pdf: true, page_number: 2, page_count: 3, document_root: "a1".repeat(32) };
+  const encoded = encodeMetadata(context);
+  expect(encoded).toHaveLength(35);
+  const view = new DataView(encoded.buffer, encoded.byteOffset, encoded.byteLength);
+  const decodedTime = view.getUint32(1) * 65536 + view.getUint16(5);
+  expect(decodedTime).toBe(Date.parse(metadata.timestamp));
+  expect(Buffer.from(encoded.subarray(19, 35)).toString("hex")).toBe("a1".repeat(16));
+  const full = encodeEnvelope({ ...context, version: "3" }, new Uint8Array(64),
+    new Uint8Array([65]), "plaintext");
+  const parsed = decodeEnvelope(full);
+  expect(parsed.document_root).toBe("a1".repeat(16));
+  expect(parsed.timestamp).toBe(metadata.timestamp);
+});
+
+it("uses 128-bit multipart set identifiers but still requires an authentic complete record", async () => {
+  const content = "multipart chunk fidelity test: ".repeat(150);
+  const sealed = await createQRedSeals({ ...keys, content, encodingStrategy: "plaintext" });
+  expect(sealed.seals.length).toBeGreaterThan(1);
+  const decoded = sealed.seals.map(seal => decodeTransport(qrPayloadBytes(seal)));
+  expect(decoded[0].digest).toHaveLength(16);
+  expect(decoded[0].bytes.subarray(0, 4)).toEqual(new Uint8Array([81, 82, 67, 51]));
+  expect(decoded[0].bytes.slice(4, 20)).toEqual(decoded[1].bytes.slice(4, 20));
+  await expect(verifyQRedSeals(sealed.seals, keys.publicKey)).resolves.toMatchObject({ status: "VALID", content });
+  const altered = qrPayloadBytes(sealed.seals[1]);
+  altered[24] ^= 1;
+  await expect(verifyQRedSeals([sealed.seals[0], sealString(altered)], keys.publicKey))
+    .resolves.toMatchObject({ status: "INVALID", error_message: "Seal set digest does not match its contents" });
+});
+
 it.each([0, 3, 4, 18, 19, 82, 83])("rejects a record truncated to %i bytes", length => {
   const record = encodeEnvelope(metadata, new Uint8Array(64), new Uint8Array([65]), "plaintext");
   expect(() => decodeEnvelope(record.slice(0, length))).toThrow();
