@@ -429,7 +429,7 @@ export function PdfSealForm({ onUsePublicKey }) {
                   target="_blank" rel="noopener noreferrer" className="account-provider-choice"
                   aria-label={label} onClick={event => startPreparedProvider(event, id)}>
                   <ProviderMark provider={id} /><span>{label}</span>
-                </a> : <button key={id} type="button" disabled aria-label={label}
+                </a> : <button key={id} type="button" disabled aria-pressed="false" aria-label={label}
                   className="account-provider-choice" aria-busy={Boolean(preparingProviders && file && method !== "private-key")}>
                   <ProviderMark provider={id} /><span>{label}</span>
                 </button>;
