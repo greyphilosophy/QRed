@@ -53,8 +53,10 @@ export async function pageCommitment(metadata, content) {
   // Because it is not salted, a server operator could test guessed content
   // or correlate identical single-page documents across signing sessions.
   // The authenticated identity and authoritative timestamp are signed later.
-  const context = encodeMetadata({ ...metadata, timestamp: "1970-01-01T00:00:00.000Z", key_id: "0000000000000000" });
-  return sha256(concatenate([COMMITMENT_DOMAIN, context.subarray(0, 1), context.subarray(17), signedContentBytes(content)]));
+  const context = encodeMetadata({ ...metadata, version: "4", timestamp: "1970-01-01T00:00:00.000Z", key_id: "0000000000000000" });
+  // The QRS4 context starts its optional page index/count/root at byte 15.
+  // Dropping bytes 1..14 removes ONLY the server-issued timestamp/key ID.
+  return sha256(concatenate([COMMITMENT_DOMAIN, context.subarray(0, 1), context.subarray(15), signedContentBytes(content)]));
 }
 
 export function attestationMessage({ timestamp, key_id, identity }, commitment) {
