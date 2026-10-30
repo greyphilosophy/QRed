@@ -22,21 +22,20 @@ const metadata = { version: "4", pdf: true, page_number: 2, page_count: 3, docum
   } };
 beforeAll(() => { vi.stubGlobal("crypto", webcrypto); });
 async function attested(content, extra = {}) {
-  const salt = crypto.getRandomValues(new Uint8Array(32));
-  const signature = await signAsync(attestationMessage(metadata, await pageCommitment(metadata, content, salt)), decodeBase64Url(privateKey));
+  const signature = await signAsync(attestationMessage(metadata, await pageCommitment(metadata, content)), decodeBase64Url(privateKey));
   return createQRedSeals({ content, pageContext: context, ...extra,
-    attestation: { ...metadata, salt, signature: encodeBase64Url(signature), public_key: publicKey } });
+    attestation: { ...metadata, signature: encodeBase64Url(signature), public_key: publicKey } });
 }
 describe("compact document-specific attestations", () => {
   it("preserves the issued Google signing format and reuses the provider byte for new methods", () => {
-    // Golden bytes from the pre-provider implementation on main (2baf911).
-    const golden = "5152656420476f6f676c6520646f63756d656e74206174746573746174696f6e20763100000001a1569b9800da522162396ab2d00101000f616c69636540676d61696c2e636f6d000d416c696365204578616d706c650004313233342a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a";
+    // Golden bytes for the compact identity encoding; all signature fields remain authenticated.
+    const golden = "5152656420476f6f676c6520646f63756d656e74206174746573746174696f6e20763100000001a1569b9800da522162396ab2d0110f616c69636540676d61696c2e636f6d0d416c696365204578616d706c6504313233342a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a";
     expect(Buffer.from(attestationMessage(metadata, new Uint8Array(32).fill(42))).toString("hex")).toBe(golden);
     const original = encodeIdentity(metadata.identity);
     for (const [index, provider] of ["google", "microsoft", "meta", "amazon"].entries()) {
       const identity = { ...metadata.identity, provider, name_source: provider };
       const bytes = encodeIdentity(identity);
-      expect(bytes[0]).toBe(index + 1);
+      expect(bytes[0]).toBe(16 + index + 1);
       expect(bytes.subarray(1)).toEqual(original.subarray(1));
       expect(decodeIdentity(bytes).identity).toEqual(identity);
     }
@@ -52,12 +51,12 @@ describe("compact document-specific attestations", () => {
     });
     await expect(verifyQRedSeals(sealed.seals, publicKey, {})).resolves.toMatchObject({ status: "UNVERIFIED", identity_authenticated: false });
   });
-  it("binds recovered text, page order/count/root, salt, email, name/source, account and server time", async () => {
+  it("binds recovered text, page order/count/root, email, name/source, account and server time", async () => {
     const sealed = await attested("Invoice 42", { encodingStrategy: "plaintext" });
     const original = decodeEnvelope(qrPayloadBytes(sealed.seals[0]));
     const modifications = [
       { timestamp: "2025-01-01T00:00:00.000Z" }, { page_number: 1 }, { page_count: 4 },
-      { document_root: "cd".repeat(32) }, { salt: new Uint8Array(32) },
+      { document_root: "cd".repeat(32) },
       ...Object.entries({ email: "other@gmail.com", name: "Changed", name_source: "self", subject: "5678" })
         .map(([key, value]) => ({ identity: { ...original.identity, [key]: value } })),
       { data: new TextEncoder().encode("Invoice 43") },
@@ -68,13 +67,29 @@ describe("compact document-specific attestations", () => {
       await expect(verifyQRedSeals([sealString(record)], "", trusted)).resolves.toMatchObject({ status: "INVALID", identity_authenticated: false });
     }
   });
-  it("uses unpredictable fingerprints and rejects substituted server receipts before stamping", async () => {
-    const first = crypto.getRandomValues(new Uint8Array(32));
-    const second = crypto.getRandomValues(new Uint8Array(32));
-    expect(await pageCommitment(metadata, "yes", first)).not.toEqual(await pageCommitment(metadata, "yes", second));
-    const signature = await signAsync(attestationMessage(metadata, await pageCommitment(metadata, "First document", first)), decodeBase64Url(privateKey));
+  it("derives deterministic fingerprints but rejects substituted server receipts before stamping", async () => {
+    const first = await pageCommitment(metadata, "yes");
+    expect(await pageCommitment(metadata, "yes")).toEqual(first);
+    expect(await pageCommitment(metadata, "different")).not.toEqual(first);
+    expect(await pageCommitment({ ...metadata, page_number: 1 }, "yes")).not.toEqual(first);
+    const signature = await signAsync(attestationMessage(metadata, await pageCommitment(metadata, "First document")), decodeBase64Url(privateKey));
     await expect(createQRedSeals({ content: "Changed document", pageContext: context,
-      attestation: { ...metadata, salt: first, signature: encodeBase64Url(signature), public_key: publicKey } })).rejects.toThrow("does not match");
+      attestation: { ...metadata, signature: encodeBase64Url(signature), public_key: publicKey } })).rejects.toThrow("does not match");
+  });
+  it("omits the former 32-byte salt from every QRS4 seal without weakening verification", async () => {
+    const content = "Compact account attestation.";
+    const sealed = await attested(content, { encodingStrategy: "plaintext" });
+    const record = decodeEnvelope(qrPayloadBytes(sealed.seals[0]));
+    expect(Object.hasOwn(record, "salt")).toBe(false);
+    const wireBytes = qrPayloadBytes(sealed.seals[0]);
+    // Four magic bytes, 35 bytes of multipage metadata, encoded identity,
+    // 64-byte Ed25519 signature and the uncompressed content. No salt field.
+    expect(wireBytes.length).toBe(4 + 35 + encodeIdentity(metadata.identity).length + 64 +
+      new TextEncoder().encode(content).length);
+    expect(sealed.seals.length).toBe(1);
+    await expect(verifyQRedSeals(sealed.seals, "", trusted)).resolves.toMatchObject({
+      status: "VALID", identity_authenticated: true, content,
+    });
   });
   it("recovers a real QR image and reassembles reversed multi-QR attestations", async () => {
     const small = await attested("Synthetic Google attestation QR test.");
@@ -87,6 +102,10 @@ describe("compact document-specific attestations", () => {
     const large = await attested(content, { encodingStrategy: "plaintext" });
     expect(large.seals.length).toBeGreaterThan(1);
     await expect(verifyQRedSeals(large.seals.toReversed(), "", trusted)).resolves.toMatchObject({ status: "VALID", content });
+    const modifiedChunk = qrPayloadBytes(large.seals[1]);
+    modifiedChunk[24] ^= 1; // First payload byte beyond the compact v4 header.
+    await expect(verifyQRedSeals([large.seals[0], sealString(modifiedChunk)], "", trusted))
+      .resolves.toMatchObject({ status: "INVALID", error_message: "Seal set digest does not match its contents" });
     await expect(verifyQRedSeals(large.seals.slice(1), "", trusted)).resolves.toMatchObject({ status: "INCOMPLETE" });
   });
   it.each(["zlib", "gzip"])("verifies %s Google attestations offline in single and multiple QRs", async encodingStrategy => {

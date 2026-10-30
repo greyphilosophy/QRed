@@ -114,10 +114,9 @@ it.each(Object.keys(AUTH_PROVIDERS))("verifies %s seals offline without asking f
   const content = "Synthetic Google document. ".repeat(180).trimEnd();
   const metadata = { pdf: false, key_id: "da522162396ab2d0", timestamp: "2026-10-20T12:00:00Z",
     identity: { provider, email: "alice@gmail.com", subject: "123", name: "Alice", name_source: provider } };
-  const salt = crypto.getRandomValues(new Uint8Array(32));
-  const signature = await signAsync(attestationMessage(metadata, await pageCommitment(metadata, content, salt)), decodeBase64Url(privateKey));
+  const signature = await signAsync(attestationMessage(metadata, await pageCommitment(metadata, content)), decodeBase64Url(privateKey));
   const { seals } = await createQRedSeals({ content, encodingStrategy: "plaintext",
-    attestation: { ...metadata, salt, public_key: publicKey.replace(/=$/, ""), signature: encodeBase64Url(signature) } });
+    attestation: { ...metadata, public_key: publicKey.replace(/=$/, ""), signature: encodeBase64Url(signature) } });
   expect(seals.length).toBeGreaterThan(1);
   render(<App />);
   await act(async () => scanner.props.onSealDetected(seals.at(-1)));

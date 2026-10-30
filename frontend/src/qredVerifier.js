@@ -176,7 +176,7 @@ export async function verifyQRedSeals(seals, publicKey, authorities = trustedAut
   try {
     if (first.multipart) {
       const record = concatenate(Array.from({ length: first.total_chunks }, (_, index) => chunks.get(index).data));
-      if (!bytesEqual(await sha256(record), first.digest)) return { status: "INVALID", error_message: "Seal set digest does not match its contents" };
+      if (!bytesEqual((await sha256(record)).subarray(0, first.digest.length), first.digest)) return { status: "INVALID", error_message: "Seal set digest does not match its contents" };
       metadata = decodeEnvelope(record);
       if (metadata.version !== first.version) throw new Error("Seal version does not match its chunks");
     }
@@ -200,7 +200,7 @@ export async function verifyQRedSeals(seals, publicKey, authorities = trustedAut
   let isValid = false;
   try {
     const message = metadata.version === "4"
-      ? attestationMessage(metadata, await pageCommitment(metadata, body, metadata.salt))
+      ? attestationMessage(metadata, await pageCommitment(metadata, body))
       : sealSignatureMessage(metadata, body);
     isValid = await computeKeyId(publicKey) === metadata.key_id &&
       await verifyEd25519(metadata.signature, message, decodeBase64Url(publicKey));

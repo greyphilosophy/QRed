@@ -98,7 +98,7 @@ describe.each(providers)("%s document attestations", provider => {
         await expect(verifyQRedSeals([sealString(record)], "", trusted)).resolves.toMatchObject({ status: "INVALID", identity_authenticated: false });
       }
       const wire = JSON.stringify(flow.sent);
-      for (const hidden of [page.content, page.metadata.document_root, encodeBase64Url(receipt.salt), seed]) expect(wire).not.toContain(hidden);
+      for (const hidden of [page.content, page.metadata.document_root, seed]) expect(wire).not.toContain(hidden);
     }
   });
 

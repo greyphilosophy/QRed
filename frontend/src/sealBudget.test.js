@@ -8,10 +8,15 @@ it.each([false, true].flatMap(attested => [false, true].map(multiple => [atteste
     const identity = { provider: "google", email: "test@example.org", subject: "123", name: "Test signer", name_source: "google" };
     const metadata = { version: attested ? "4" : "3", timestamp: "2026-10-23T12:00:00Z", key_id: "0011223344556677",
       pdf: true, page_number: 1, page_count: multiple ? 2 : 1, document_root: multiple ? "a1".repeat(32) : null,
-      identity, salt: new Uint8Array(32) };
+      identity };
     const body = new Uint8Array([1, 2, 3]);
     const envelope = encodeEnvelope(metadata, new Uint8Array(64), body, "plaintext");
     expect(envelope.length - body.length).toBe(sealEnvelopeOverhead({ attested, multiple, identityBytes: encodeIdentity(identity).length }));
+    if (attested) {
+      // QRS4 holds the identity directly followed by the signature: unlike
+      // its pre-release predecessor, there are no 32 salt bytes per page.
+      expect(envelope.length - body.length).toBe(4 + (multiple ? 35 : 15) + encodeIdentity(identity).length + 64);
+    }
   });
 
 it("agrees with the QR encoder at the single and multipart capacity boundaries", () => {

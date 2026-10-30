@@ -1,12 +1,12 @@
 import { MAX_ENCODED_IDENTITY_BYTES } from "./attestation.js";
-import { CHUNK_HEADER_BYTES, MAX_QR_PAYLOAD_BYTES, sealEnvelopeOverhead } from "./sealFormat.js";
+import { chunkHeaderBytes, MAX_QR_PAYLOAD_BYTES, sealEnvelopeOverhead } from "./sealFormat.js";
 
 export const MAX_PDF_SEALS = 2;
-export function recordCapacity(count) {
-  return count === 1 ? MAX_QR_PAYLOAD_BYTES : count * (MAX_QR_PAYLOAD_BYTES - CHUNK_HEADER_BYTES);
+export function recordCapacity(count, attested = false) {
+  return count === 1 ? MAX_QR_PAYLOAD_BYTES : count * (MAX_QR_PAYLOAD_BYTES - chunkHeaderBytes(attested ? "4" : "3"));
 }
-export function recordQrCount(length) {
-  return length <= MAX_QR_PAYLOAD_BYTES ? 1 : Math.ceil(length / (MAX_QR_PAYLOAD_BYTES - CHUNK_HEADER_BYTES));
+export function recordQrCount(length, version = "3") {
+  return length <= MAX_QR_PAYLOAD_BYTES ? 1 : Math.ceil(length / (MAX_QR_PAYLOAD_BYTES - chunkHeaderBytes(version)));
 }
 
 // The account identity is unknown when the page commitment is bound. Reserve
@@ -16,6 +16,6 @@ export function evidenceBodyBudget(baseLength, { attested = false, multiple = fa
   const maximum = sealEnvelopeOverhead({ attested, multiple, identityBytes: MAX_ENCODED_IDENTITY_BYTES });
   if (baseLength + maximum <= recordCapacity(1)) return recordCapacity(1) - maximum;
   if (baseLength + minimum <= recordCapacity(1)) return 0;
-  const limit = recordCapacity(MAX_PDF_SEALS) - maximum;
+  const limit = recordCapacity(MAX_PDF_SEALS, attested) - maximum;
   return baseLength <= limit ? limit : 0;
 }
