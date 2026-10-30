@@ -419,14 +419,27 @@ export function PdfSealForm({ onUsePublicKey }) {
             <div className="sealing-method-grid">
               {Object.entries(AUTH_PROVIDERS).map(([id, account]) => {
                 const session = preparedProviders?.sessions?.[id];
-                const usable = file && !loading && !loadingKeys && session &&
+                const usable = method !== "private-key" && file && !loading && !loadingKeys && session &&
                   Date.now() < session.startedAt + ACCOUNT_SESSION_SECONDS * 1000 - 10000;
                 const label = account.button;
                 return usable ? <a key={id} href={session.authorize_url}
                   target="_blank" rel="noopener noreferrer" className="account-provider-choice"
                   aria-label={label} onClick={event => startPreparedProvider(event, id)}>
                   <ProviderMark provider={id} /><span>{label}</span>
-                </a> : <button key={id} type="button" disabled aria-pressed="false" aria-label={label}
+                </a> : <button key={id} type="button"
+                  disabled={method !== "private-key" || loading || loadingKeys}
+                  onClick={() => {
+                    // Explicitly choosing an account method exits offline mode.
+                    // No account request is made until this click (and a PDF is
+                    // selected). The final OAuth URL must still be prepared
+                    // before the user clicks its link in a second gesture.
+                    setMethod(null);
+                    setSigningIdentity(null);
+                    setMessage(file
+                      ? `Preparing ${account.label} sign-in. Tap ${account.label} again when ready.`
+                      : "Open a PDF, then choose an account provider.");
+                  }}
+                  aria-pressed="false" aria-label={label}
                   className="account-provider-choice" aria-busy={Boolean(preparingProviders && file && method !== "private-key")}>
                   <ProviderMark provider={id} /><span>{label}</span>
                 </button>;
