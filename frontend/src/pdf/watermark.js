@@ -163,7 +163,8 @@ export async function checkWatermarks(bytes, layouts, pageSealResults) {
       }
       // A known-position crop is easier to decode than a photographed sheet.
       // Require the verifier to locate *every* seal on the full page as well.
-      if (!failed.has(index) && !scanAllSealsFromPage(image, pageSealResults[index].seals)) {
+      if (!failed.has(index) && !scanAllSealsFromPage(image, pageSealResults[index].seals,
+        { entry: layouts[index].entry })) {
         failed.add(index);
       }
       if (layouts[index].entry) {
