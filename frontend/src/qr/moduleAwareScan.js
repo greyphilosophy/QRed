@@ -31,12 +31,12 @@ function moduleVote(matrix, mapping, normalized, width, height) {
   return matrix;
 }
 
-export function scanModuleAwareQr(originalRgba, filteredRgba, width, height) {
+export function scanModuleAwareQr(originalRgba, filteredRgba, width, height, normalizedImage = null) {
   if (!width || !height || width * height > 2_500_000 ||
       originalRgba.length !== width * height * 4 ||
       filteredRgba.length !== width * height * 4) return null;
 
-  const normalized = normalizeWatermarkLuminance(originalRgba, width, height);
+  const normalized = normalizedImage ?? normalizeWatermarkLuminance(originalRgba, width, height);
   // jsQR has already been patched for QRed to retain corrected hidden bytes.
   // Extend that same tested decoder with a synchronous per-module callback;
   // no second QR implementation, and no dependence on the original PDF.
