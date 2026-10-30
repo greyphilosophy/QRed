@@ -70,7 +70,8 @@ function drawSymbol(page, symbol, box, gray, multiply = false) {
     scale: unit, color: rgb(gray, gray, gray), blendMode: multiply ? BlendMode.Multiply : BlendMode.Normal });
 }
 
-export async function planPdfWatermarks(file, pageSealResults, pageIndices = pageSealResults.map((_, index) => index)) {
+export async function planPdfWatermarks(file, pageSealResults, pageIndices = pageSealResults.map((_, index) => index),
+  { excludedLayouts = null } = {}) {
   const layouts = new Array(pageSealResults.length).fill(null);
   await withPdfDocument(file, async (source) => {
     let entry = null;
@@ -87,7 +88,8 @@ export async function planPdfWatermarks(file, pageSealResults, pageIndices = pag
       }
       const symbols = seals.map(value => createQRedQrSymbol(value));
       let boxes;
-      try { boxes = planWatermarks(image, symbols, index === 0 ? entry : null); }
+      try { boxes = planWatermarks(image, symbols, index === 0 ? entry : null,
+        { excludeBoxes: excludedLayouts?.[index]?.boxes ?? null }); }
       catch { sourcePage.cleanup(); continue; }
       layouts[index] = { boxes, ...(index === 0 ? { entry } : {}) };
       sourcePage.cleanup();
