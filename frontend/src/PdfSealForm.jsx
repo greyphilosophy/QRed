@@ -26,7 +26,10 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [file, setFile] = useState(null);
   const [privateKey, setPrivateKey] = useState("");
   const [publicKey, setPublicKey] = useState("");
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(() =>
+    new URLSearchParams(window.location.search).has("qred_auth") && !readPendingAuth()
+      ? "Your sign-in session has expired or could not be restored. Please start again."
+      : "");
   const [keyStatus, setKeyStatus] = useState("");
   const [keyError, setKeyError] = useState(false);
   const [loadingKeys, setLoadingKeys] = useState(false);
@@ -200,6 +203,7 @@ export function PdfSealForm({ onUsePublicKey }) {
           clearPendingAuth();
           setResumeSession(null);
           setMethod(null);
+          await finishAccountSignIn(pending.provider, pending);
           throw new Error("Sign-in failed: " + (status.error || "Please try again."));
         }
         throw new Error("Authentication is not completed yet. Return after signing in.");
@@ -360,7 +364,7 @@ export function PdfSealForm({ onUsePublicKey }) {
           <select
             aria-label="Page layout"
             value={pageScalingStrategy}
-            disabled={loading}
+            disabled={loading || Boolean(resumeSession)}
             onChange={(e) => setPageScalingStrategy(e.target.value)}
             title="Choose where to place the document seals."
           >
@@ -389,7 +393,7 @@ export function PdfSealForm({ onUsePublicKey }) {
           ? <p className="sealing-method-selected">Sealing method: {method === "private-key" ? "Private key (offline)" : provider.label + " login"}</p>
           : <fieldset className="sealing-methods">
             <legend>Authenticate and stamp</legend>
-            <p className="key-help">Choose a PDF and layout, then sign in. QRed returns here in the same tab. You will reselect the original PDF to finish without storing a copy.</p>
+            <p className="key-help">Choose a PDF and layout, then sign in. QRed returns here in the same tab. Reselect the original PDF to finish without storing a copy.</p>
             {!resumeSession && <div className="sealing-method-grid">
               {Object.entries(AUTH_PROVIDERS).map(([id, account]) => <button
                 key={id} type="button" aria-pressed={method === id}
