@@ -9,15 +9,15 @@ const metadata = { timestamp: "2026-10-20T17:55:14.123Z", key_id: "0011223344556
 
 it("uses fixed binary metadata with exact millisecond time and raw key bytes", () => {
   const bytes = encodeMetadata(metadata);
-  expect(bytes.length).toBe(17);
-  expect(Buffer.from(bytes.subarray(9)).toString("hex")).toBe(metadata.key_id);
+  expect(bytes.length).toBe(15);
+  expect(Buffer.from(bytes.subarray(7)).toString("hex")).toBe(metadata.key_id);
   const record = encodeEnvelope(metadata, new Uint8Array(64), new Uint8Array([65]), "plaintext");
   const parsed = decodeEnvelope(record);
   expect(parsed).toMatchObject({ timestamp: metadata.timestamp, key_id: metadata.key_id, pdf: false, page_number: null, page_count: null });
   expect(strictUtf8.decode(parsed.data)).toBe("A");
 });
 
-it.each([0, 3, 4, 20, 21, 84, 85])("rejects a record truncated to %i bytes", length => {
+it.each([0, 3, 4, 18, 19, 82, 83])("rejects a record truncated to %i bytes", length => {
   const record = encodeEnvelope(metadata, new Uint8Array(64), new Uint8Array([65]), "plaintext");
   expect(() => decodeEnvelope(record.slice(0, length))).toThrow();
 });
@@ -28,28 +28,32 @@ it.each([4, 9, 11, 12, 15, 16, 128, 255])("rejects unsupported or inconsistent f
   expect(() => decodeEnvelope(record)).toThrow();
 });
 
-it("rejects timestamps outside the representable date range", () => {
+it("rejects timestamps outside the 48-bit representable millisecond range", () => {
+  expect(() => encodeMetadata({ ...metadata, timestamp: "12000-01-01T00:00:00.000Z" }))
+    .toThrow(/timestamp/);
+  // The maximum encodable 48-bit time remains a valid JS Date, so there
+  // cannot be a bad-timestamp marker in any fully formed 6-byte record.
   const record = encodeEnvelope(metadata, new Uint8Array(64), new Uint8Array([65]), "plaintext");
-  record.fill(255, 5, 13);
-  expect(() => decodeEnvelope(record)).toThrow(/timestamp/);
+  record.fill(255, 5, 11);
+  expect(() => decodeEnvelope(record)).not.toThrow();
 });
 
 it.each([[0, 0], [0, 1], [2, 2], [0, 4097]])("rejects malformed chunk index %i / count %i", (index, count) => {
-  const bytes = encodeChunk(new Uint8Array(32), 0, 2, new Uint8Array([65]));
+  const bytes = encodeChunk(new Uint8Array(16), 0, 2, new Uint8Array([65]));
   const view = new DataView(bytes.buffer);
-  view.setUint16(36, index); view.setUint16(38, count);
+  view.setUint16(20, index); view.setUint16(22, count);
   expect(() => decodeTransport(bytes)).toThrow(/index\/count/);
 });
 
 it("rejects noncanonical or appended copyable data and invalid UTF-8", async () => {
   const { seals } = await createQRedSeals({ ...keys, content: "Valid", encodingStrategy: "plaintext" });
   for (const seal of [seals[0] + "=", seals[0] + "&ts=bad", "QRED3:%%%", "QRED3:A".repeat(4000)]) expect(decodeSeal(seal)).toBeNull();
-  const bytes = qrPayloadBytes(seals[0]); bytes[85] = 255;
+  const bytes = qrPayloadBytes(seals[0]); bytes[83] = 255;
   expect(await verifyQRedSeals([sealString(bytes)], keys.publicKey)).toMatchObject({ status: "ERROR" });
 });
 
 describe("signed multipage context", () => {
-  it.each([22, 24, 25])("rejects alterations to page number, count, or root at byte %i", async offset => {
+  it.each([20, 22, 23])("rejects alterations to page number, count, or root at byte %i", async offset => {
     const { seals } = await createQRedSeals({ ...keys, content: "Page body", encodingStrategy: "plaintext",
       pageContext: { pageNumber: 1, pageCount: 3, documentRoot: "a1".repeat(32) } });
     const bytes = qrPayloadBytes(seals[0]); bytes[offset] ^= 1;
@@ -71,8 +75,8 @@ describe("signed multipage context", () => {
       pageContext: { pageNumber, pageCount: 2, documentRoot: "a1".repeat(32) } })));
     expect(pages[0].document_id).not.toBe(pages[1].document_id);
     for (const [index, page] of pages.entries()) {
-      expect(qrPayloadBytes(page.seals[0]).length - qrPayloadBytes(single.seals[0]).length).toBe(36);
-      expect(await verifyQRedSeals(page.seals, keys.publicKey)).toMatchObject({ status: "VALID", content: text, page_number: index + 1, page_count: 2, document_root: "a1".repeat(32) });
+      expect(qrPayloadBytes(page.seals[0]).length - qrPayloadBytes(single.seals[0]).length).toBe(20);
+      expect(await verifyQRedSeals(page.seals, keys.publicKey)).toMatchObject({ status: "VALID", content: text, page_number: index + 1, page_count: 2, document_root: "a1".repeat(16) });
     }
   });
 });
