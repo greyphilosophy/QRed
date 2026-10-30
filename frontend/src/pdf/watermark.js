@@ -146,7 +146,7 @@ export async function checkWatermarks(bytes, layouts, pageSealResults) {
       for (let part = 0; part < layouts[index].boxes.length; part++) {
         const qr = crop(image, layouts[index].boxes[part]);
         const code = scanQrImage(qr.data, qr.width, qr.height,
-          { tryRescaling: false, maxAttempts: 2 });
+          { tryRescaling: false, maxAttempts: 3 });
         const expected = pageSealResults[index].seals[part];
         if (hiddenPayloadFromScanResult(code) !== expected) {
           failed.add(index);
@@ -156,7 +156,7 @@ export async function checkWatermarks(bytes, layouts, pageSealResults) {
         // shaded print-like image and require the complete signed payload.
         const photo = simulatePrintPhoto(qr);
         if (hiddenPayloadFromScanResult(scanQrImage(photo.data, photo.width, photo.height,
-          { tryRescaling: false, maxAttempts: 2 })) !== expected) {
+          { tryRescaling: false, maxAttempts: 3 })) !== expected) {
           failed.add(index);
           break;
         }
