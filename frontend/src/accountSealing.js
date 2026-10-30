@@ -39,14 +39,13 @@ async function postJson(path, body, fetchImpl, signal, label) {
 // but OAuth navigation must wait for this server-issued, validated URL.
 export async function beginAccountSignIn(provider, pages, { signal, fetchImpl = apiFetch } = {}) {
   const label = ensurePages(provider, pages);
-  const salts = pages.map(() => crypto.getRandomValues(new Uint8Array(32)));
-  const commitments = await Promise.all(pages.map(async (page, index) =>
-    encodeBase64Url(await pageCommitment(page.metadata, page.content, salts[index]))));
+  const commitments = await Promise.all(pages.map(async page =>
+    encodeBase64Url(await pageCommitment(page.metadata, page.content))));
   if (signal?.aborted) throw new Error("Account sealing cancelled");
   const startedAt = Date.now();
   const authPath = "/api/auth/" + provider;
   const response = await postJson(authPath + "/start", { commitments }, fetchImpl, signal, label);
-  const session = { ...response, provider, salts, commitments, startedAt };
+  const session = { ...response, provider, commitments, startedAt };
   if (signal?.aborted || !allowedAuthorizationUrl(provider, response.authorize_url)) {
     await finishAccountSignIn(provider, session, { fetchImpl });
     throw new Error(signal?.aborted ? "Account sealing cancelled" : "Unexpected sign-in address");
@@ -91,8 +90,7 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
   const post = (path, body) => postJson(path, body, fetchImpl, signal, label);
   try {
     if (session) {
-      if (session.provider !== provider || !Array.isArray(session.salts) ||
-          session.salts.length !== pages.length || !Array.isArray(session.commitments) ||
+      if (session.provider !== provider || !Array.isArray(session.commitments) ||
           session.commitments.length !== pages.length ||
           !allowedAuthorizationUrl(provider, session.authorize_url)) {
         throw new Error("The prepared account sign-in does not match this document.");
@@ -107,7 +105,7 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
       popup.location.href = session.authorize_url;
       providerOpened = true;
     }
-    const { salts, commitments } = session;
+    const { commitments } = session;
     const credentials = { id: session.id, secret: session.secret };
     const deadline = session.startedAt + SESSION_MILLISECONDS;
     let identity, timestamp;
@@ -131,7 +129,7 @@ export async function attestPagesWithAccount(provider, pages, { popup, signal, o
       if (!trusted[receipt.key_id]) throw new Error("This QRed authority key is not trusted by this copy of the app. Reload QRed and try again.");
       if (JSON.stringify(receipt.identity) !== JSON.stringify(identity) ||
           receipt.timestamp !== timestamp) throw new Error("Inconsistent document attestation");
-      receipts.push({ ...receipt, public_key: trusted[receipt.key_id], salt: salts[index] });
+      receipts.push({ ...receipt, public_key: trusted[receipt.key_id] });
     }
     return receipts;
   } finally {
