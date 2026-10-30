@@ -3,7 +3,7 @@
 Version 3 removes issuer names and URL-formatted metadata from printed seals.
 It keeps a signed timestamp with millisecond precision, an 8-byte key ID, the
 full 64-byte Ed25519 signature, and the canonical document text. Multipage PDFs
-also carry their signed page position/count and 128-bit truncated document Merkle root.
+also carry their signed page position/count and full document Merkle root.
 
 The timestamp comes from the signing device's clock. It helps distinguish
 iterations; it is not an independently certified time. Key IDs help select a
@@ -19,16 +19,16 @@ The hidden payload is a binary record. Integers are unsigned, big endian.
 | --- | ---: | --- |
 | Magic/version | 4 | ASCII `QRS3`; signature algorithm is Ed25519 |
 | Flags | 1 | Bit 0: gzip; bit 1: PDF; bit 2: multipage PDF; bit 3: zlib; bit 4: binary page evidence; other bits rejected; gzip and zlib are mutually exclusive |
-| Timestamp | 6 | Unsigned 48-bit Unix milliseconds; retains 1 ms precision through ~year 10889 |
+| Timestamp | 8 | Unix milliseconds; must be representable as a JavaScript date |
 | Key ID | 8 | First eight bytes of SHA-256 of the raw 32-byte public key |
 | Page index, if multipage | 2 | Zero based |
 | Page count, if multipage | 2 | 2–65,535; index must be below count |
-| Document root, if multipage | 16 | First 128 bits of SHA-256 Merkle root |
+| Document root, if multipage | 32 | Full SHA-256 Merkle root |
 | Signature | 64 | Raw Ed25519 bytes |
 | Content | Remaining | UTF-8 text or binary page evidence, optionally one complete zlib/gzip stream |
 
-A text-only or single-page PDF record has **83 bytes** before its content.
-Multipage context adds **20 bytes**, for 103 bytes per page record. Single-page
+A text-only or single-page PDF record has **85 bytes** before its content.
+Multipage context adds **36 bytes**, for 121 bytes per page record. Single-page
 PDFs imply index zero/count one and derive the document root from the uncompressed
 page body. Page hashes are computed from that body instead of stored. Human-readable
 integrity labels are never prepended to the document content.
@@ -49,7 +49,7 @@ Ed25519 signs this unambiguous byte sequence:
 
 1. UTF-8 `QRed signed document v3` followed by one zero byte.
 2. The record's flags **with bits 0 and 3 cleared**, timestamp, key ID, and conditional
-   multipage fields, in exactly the layout above (15 or 35 bytes).
+   multipage fields, in exactly the layout above (17 or 53 bytes).
 3. The complete uncompressed content: canonical UTF-8 text, or the binary page
    body when bit 4 is set.
 
@@ -71,15 +71,14 @@ Every chunk has this header:
 | Field | Bytes | Meaning |
 | --- | ---: | --- |
 | Magic/version | 4 | ASCII `QRC3` |
-| Set digest | 16 | First 128 bits of SHA-256 of the complete encoded record |
+| Set digest | 32 | SHA-256 of the complete encoded record |
 | Chunk index | 2 | Zero based |
 | Chunk count | 2 | 2–4,096; index must be below count |
 | Data | Remaining | Nonempty slice of the record |
 
-The header is **24 bytes per QR**. Page metadata and the signature appear only
-once in the reassembled record, not in every QR. The truncated digest distinguishes
-iterations, keys, page positions, and encoding choices; the complete
-record still requires an authentic 64-byte Ed25519 signature. Missing chunks return
+The header is **40 bytes per QR**. Page metadata and the signature appear only
+once in the reassembled record, not in every QR. The digest distinguishes
+iterations, keys, page positions, and encoding choices. Missing chunks return
 `INCOMPLETE`; mixed sets/counts and conflicting duplicates are rejected. Scan
 order is irrelevant; identical repeated scans are harmless. Check the digest
 before interpreting or decompressing the reconstructed record, then verify its
@@ -115,7 +114,7 @@ the canonical default link; its binary payload is identical. Bare
 Canonical text is limited to 8 MiB per page. Compressed input is limited to that
 size plus 64 KiB. Enforce decompression output bounds while streaming, validate
 the zlib Adler-32 or gzip CRC32/length, and reject malformed UTF-8, framing, flags, or indices.
-The largest full record is the compressed limit plus its 103-byte header.
+The largest full record is the compressed limit plus its 121-byte header.
 Automatic encoding compares plaintext and zlib by QR count, then actual hidden
 payload bytes; plaintext wins a tie. Zlib adds 6 container bytes once per page,
 12 fewer than gzip's 18 bytes. The native browser compressor chooses the level.
@@ -123,12 +122,12 @@ If zlib compression fails, automatic encoding tries gzip; if neither is availabl
 it uses plaintext. Explicit compression requests fail clearly when unavailable.
 Processing remains local and makes no network requests.
 
-For the original text-only gzip sample invoice (before optional evidence), compressed text is 318 bytes, giving a 401-byte hidden
-record (83 + 318). With QRed framing, non-text overhead is 111 bytes: 83 record
+For the original text-only gzip sample invoice (before optional evidence), compressed text is 318 bytes, giving a 403-byte hidden
+record (85 + 318). With QRed framing, non-text overhead is 113 bytes: 85 record
 bytes + 18 gzip bytes + 10 QRed framing bytes. It fits QR version 13 at the same
 2.75-inch printed footprint. The prior format used 418 non-text bytes and
 version 18 for this fixture. With the same DEFLATE body, zlib reduces the hidden
-record to 389 bytes and non-text overhead to 99 bytes. A 12-byte saving does not
+record to 391 bytes and non-text overhead to 101 bytes. A 12-byte saving does not
 necessarily reduce the QR version. Stored gzip image fixtures remain readable.
 
 Deploy the stamper and every verifier route together. Current verifiers still
