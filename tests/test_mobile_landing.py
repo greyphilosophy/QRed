@@ -64,7 +64,7 @@ def test_stamp_tool_asks_for_pdf_and_layout_before_signing_method(page):
     expect(layout).to_be_visible()
     expect(layout).to_have_value("automatic")
     expect(choices).to_have_count(4)
-    assert choices.all_text_contents() == [
+    assert [button.get_attribute("aria-label") or button.inner_text() for button in choices.all()] == [
         "Authenticate with Google login",
         "Authenticate with Microsoft login",
         "Authenticate with Amazon login",
