@@ -1,6 +1,7 @@
 import jsQR from "jsqr";
 import { hiddenPayloadFromScanResult, isQRedEntryLink } from "./hiddenPayload.js";
 import { filterWatermark } from "./watermarkFilter.js";
+import { scanModuleAwareQr } from "./moduleAwareScan.js";
 
 // Keep each decode bounded, including large photo uploads. Retry only when the
 // original scale fails: dense printed codes can land badly on the pixel grid.
@@ -88,9 +89,12 @@ function usableResult(code) {
 
 function scanAtSize(data, width, height, [targetWidth, targetHeight, radius]) {
   const originalSize = targetWidth === width && targetHeight === height;
-  let pixels = originalSize ? data : resizeRgba(data, width, height, targetWidth, targetHeight);
-  if (radius) pixels = filterWatermark(pixels, targetWidth, targetHeight, radius);
-  const code = jsQR(pixels, targetWidth, targetHeight, { inversionAttempts: "attemptBoth" });
+  const observed = originalSize ? data : resizeRgba(data, width, height, targetWidth, targetHeight);
+  const pixels = radius ? filterWatermark(observed, targetWidth, targetHeight, radius) : observed;
+  // After the ordinary pixel-based recovery fails, classify each QR module
+  // from its unobstructed pixels. Keep this off the normal scanning fast path.
+  const code = jsQR(pixels, targetWidth, targetHeight, { inversionAttempts: "attemptBoth" })
+    ?? (radius ? scanModuleAwareQr(observed, pixels, targetWidth, targetHeight) : null);
   if (code && radius) code.watermark = true;
   if (!code || originalSize || !code.location) return code;
   return {
