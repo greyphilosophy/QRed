@@ -5,9 +5,6 @@ import { decodeSigningKey, deriveSigningPublicKey, generateSigningKeyPair, readS
 import { encodeBase64Url } from "./sealSignature.js";
 import { beginAccountSignIn, finishAccountSignIn, checkAccountSignInStatus, attestPagesWithAccount, accountSealingAvailable } from "./accountSealing.js";
 import { AUTH_PROVIDERS, authProvider } from "./authProviders.js";
-import { ProviderSignInButton } from "./ProviderSignInButton.jsx";
-import { openAmazonSignInTab } from "./amazonSignInTab.js";
-import { ACCOUNT_SESSION_SECONDS } from "./accountAuthLimits.js";
 import { readPendingAuth, clearPendingAuth, navigateToProvider } from "./sameTabAuth.js";
 import { pageCommitment } from "./attestation.js";
 
@@ -37,12 +34,6 @@ export function PdfSealForm({ onUsePublicKey }) {
     readPendingAuth()?.pageScalingStrategy || "automatic");
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [readyForSignIn, setReadyForSignIn] = useState(false);
-  // Keep the verified authorization href stable across the link's click.
-  // Clearing a ref in onClick must not remove href before native navigation.
-  const [preparedAuthorizeUrl, setPreparedAuthorizeUrl] = useState("");
-  const [authenticating, setAuthenticating] = useState(false);
-  const [checkingAccount, setCheckingAccount] = useState(false);
   const [method, setMethod] = useState(() => readPendingAuth()?.provider || null);
   const [resumeSession, setResumeSession] = useState(() => readPendingAuth());
   const [signingIdentity, setSigningIdentity] = useState(null);
@@ -52,7 +43,6 @@ export function PdfSealForm({ onUsePublicKey }) {
   const provider = authProvider(method);
   const usesAccount = Boolean(provider);
   const activeRequest = useRef(null);
-  const pendingAccountSignIn = useRef(null);
   const derivedFor = useRef("");
 
   useEffect(() => {
@@ -77,10 +67,6 @@ export function PdfSealForm({ onUsePublicKey }) {
 
   useEffect(() => () => {
     activeRequest.current?.controller.abort();
-    const waiting = pendingAccountSignIn.current;
-    pendingAccountSignIn.current = null;
-    waiting?.reject(new Error("Account sealing cancelled"));
-    try { activeRequest.current?.popup?.close(); } catch { /* The provider may isolate the popup. */ }
   }, []);
 
   useEffect(() => {
@@ -173,75 +159,6 @@ export function PdfSealForm({ onUsePublicKey }) {
   function cancelSealing() {
     const request = activeRequest.current;
     request?.controller.abort();
-    // Close our preparation/provider tab immediately, even if async parsing
-    // or the provider status poll is currently stalled in a background tab.
-    try { request?.popup?.close(); } catch { /* The provider may isolate the tab. */ }
-    const waiting = pendingAccountSignIn.current;
-    pendingAccountSignIn.current = null;
-    waiting?.reject(new Error("Account sealing cancelled"));
-    setReadyForSignIn(false);
-    setPreparedAuthorizeUrl("");
-    setAuthenticating(false);
-  }
-
-  async function checkSignInStatus() {
-    const request = activeRequest.current;
-    if (!request?.session || request.controller.signal.aborted) return;
-    setCheckingAccount(true);
-    try {
-      const result = await checkAccountSignInStatus(request.provider, request.session,
-        { signal: request.controller.signal });
-      // Do not replace the finished PDF message with an older status response.
-      if (activeRequest.current !== request) return;
-      if (result.status === "ready") setMessage("Account sign-in verified by QRed. Finishing your PDF locally…");
-      else if (result.status === "failed") setMessage("Account sign-in failed: " +
-        (result.error || "The provider did not complete the request. Cancel and prepare the PDF again."));
-      else setMessage("QRed has not received a completed sign-in from the provider. " +
-        "If the provider tab closed, review any message it showed or cancel and prepare a new sign-in.");
-    } catch (error) {
-      if (activeRequest.current === request && !request.controller.signal.aborted)
-        setMessage("Could not confirm account sign-in: " + error.message +
-          " You can cancel and prepare the PDF again.");
-    } finally {
-      if (activeRequest.current === request) setCheckingAccount(false);
-    }
-  }
-
-  function openPreparedSignIn(event) {
-    const waiting = pendingAccountSignIn.current;
-    if (!waiting) {
-      event.preventDefault();
-      return;
-    }
-    if (waiting.provider !== method || Date.now() >= waiting.session.startedAt + ACCOUNT_SESSION_SECONDS * 1000) {
-      event.preventDefault();
-      pendingAccountSignIn.current = null;
-      waiting.reject(new Error("Sign-in preparation expired. Prepare the PDF again."));
-      setReadyForSignIn(false);
-      setPreparedAuthorizeUrl("");
-      return;
-    }
-    // For Amazon only, open the final, already-prepared URL synchronously on
-    // the user's click. Script-created tabs are more reliably closable after
-    // Amazon redirects back on mobile Chrome. Never open a blank placeholder.
-    // If opening fails or its opener cannot be severed, the native noopener
-    // link retains its default browser navigation. Google and Microsoft keep
-    // their proven native-link behavior unchanged.
-    if (method === "amazon" && !event.defaultPrevented &&
-        event.button === 0 && !event.ctrlKey && !event.metaKey &&
-        !event.shiftKey && !event.altKey &&
-        openAmazonSignInTab(waiting.session.authorize_url)) {
-      event.preventDefault();
-    }
-    pendingAccountSignIn.current = null;
-    waiting.resolve(null);
-    setTimeout(() => {
-      if (activeRequest.current && !activeRequest.current.controller.signal.aborted) {
-        setReadyForSignIn(false);
-        setPreparedAuthorizeUrl("");
-        setAuthenticating(true);
-      }
-    }, 0);
   }
 
   function beginProviderSealing(id) {
@@ -361,9 +278,6 @@ export function PdfSealForm({ onUsePublicKey }) {
     let saved = false;
     setLoading(true);
     setSigningIdentity(null);
-    setReadyForSignIn(false);
-    setPreparedAuthorizeUrl("");
-    setAuthenticating(false);
     try {
       if (accountMode) await loadProviderAvailability(selectedMethod, controller.signal);
       // Validate before parsing a PDF so key errors are immediate and actionable.
@@ -426,11 +340,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       // original document window reporting an error.
       // No popup exists in the same-tab flow.
       if (activeRequest.current === request) activeRequest.current = null;
-      setReadyForSignIn(false);
-      setPreparedAuthorizeUrl("");
-      setAuthenticating(false);
-      setCheckingAccount(false);
-      setLoading(false);
+              setLoading(false);
     }
   }
 
@@ -558,25 +468,16 @@ export function PdfSealForm({ onUsePublicKey }) {
         </div>}
 
       <p id="signing-key-status" role="status" style={{ marginTop: "1rem", color: keyError ? "#ef4444" : "#64748b" }}>{keyStatus}</p>
-      {usesAccount && !resumeSession && readyForSignIn && <ProviderSignInButton provider={method} onClick={openPreparedSignIn}
-        href={preparedAuthorizeUrl}
-        disabled={loadingKeys || !accountSealingAvailable}
-        aria-describedby="account-sealing-action" />}
-      {usesAccount && !resumeSession && loading && !readyForSignIn && <p role="status" aria-live="polite">
-        {authenticating ? "Waiting for sign-in…" : "Preparing document…"}
+      {usesAccount && !resumeSession && loading && <p role="status" aria-live="polite">
+        Preparing authentication in this tab. Your PDF is not being stored.
       </p>}
       {method === "private-key" && <button type="button" onClick={() => sealPdf()}
         disabled={loading || loadingKeys} aria-busy={loading} style={{ marginTop: "1rem" }}>
         {loading ? "Sealing..." : "Stamp and save PDF"}
       </button>}
       {usesAccount && !resumeSession && <p id="account-sealing-action" className="key-help">
-        {readyForSignIn ? "Sign-in could not open automatically. Tap the provider link to continue."
-          : "QRed opens a sign-in tab when you choose a provider. Your PDF stays on this device."}
+        QRed uses the current tab for authentication. You'll reselect the original PDF on return.
       </p>}
-      {loading && usesAccount && !resumeSession && authenticating && <button type="button"
-        onClick={checkSignInStatus} disabled={checkingAccount}>
-        {checkingAccount ? "Checking sign-in..." : "Check sign-in status"}
-      </button>}
       {loading && usesAccount && !resumeSession && <button type="button" onClick={cancelSealing}>Cancel sealing</button>}
       {message && (
         <p id="stamp-result" role="status" style={{ marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155", whiteSpace: "pre-wrap" }}>
