@@ -42,43 +42,84 @@ async function documentMerkleRoot(pageTexts) {
   return level[0];
 }
 
-async function createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages }) {
+async function preparePageSealing({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attested }) {
   const { readPdfPagesWithEvidence } = await import("./pdf/readPdfText.js");
   const plans = await readPdfPagesWithEvidence(file, page => planPageEvidence(page, {
-    attested: Boolean(attestPages), multiple: page.pageCount > 1, encodingStrategy,
+    attested, multiple: page.pageCount > 1, encodingStrategy,
   }));
   const merkleRoot = await documentMerkleRoot(plans.map(page => page.body));
   const timestamp = new Date().toISOString();
-  const contexts = plans.map((_, index) => ({ pageNumber: index + 1, pageCount: plans.length, documentRoot: merkleRoot }));
-  const attestations = attestPages ? await attestPages(plans.map((page, index) => ({
-    content: page.body, metadata: { pdf: true, ...(page.pageEvidence ? { page_evidence: true } : {}), page_number: index + 1,
-      page_count: plans.length, document_root: plans.length > 1 ? merkleRoot : null },
-  }))) : null;
-  if (attestations && attestations.length !== plans.length) throw new Error("Missing page attestations");
-  const results = await Promise.all(plans.map(async (page, index) => createQRedSeals({
-    content: page.text, pageEvidence: page.pageEvidence, privateKey, publicKey, bootstrapUrl, encodingStrategy, timestamp,
-    pageContext: contexts[index], attestation: attestations?.[index],
-  })));
-  return { results, plans };
+  const contexts = plans.map((_, index) => ({
+    pageNumber: index + 1, pageCount: plans.length, documentRoot: merkleRoot,
+  }));
+  const pages = plans.map((page, index) => ({
+    content: page.body,
+    metadata: { pdf: true, ...(page.pageEvidence ? { page_evidence: true } : {}),
+      page_number: index + 1, page_count: plans.length,
+      document_root: plans.length > 1 ? merkleRoot : null },
+  }));
+  return {
+    pages,
+    async complete(attestations = null) {
+      if (attested && (!Array.isArray(attestations) || attestations.length !== plans.length)) {
+        throw new Error("Missing page attestations");
+      }
+      const results = await Promise.all(plans.map(async (page, index) => createQRedSeals({
+        content: page.text, pageEvidence: page.pageEvidence, privateKey, publicKey,
+        bootstrapUrl, encodingStrategy, timestamp, pageContext: contexts[index],
+        attestation: attestations?.[index],
+      })));
+      return { results, plans };
+    },
+  };
+}
+
+async function createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages }) {
+  const prepared = await preparePageSealing({
+    file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attested: Boolean(attestPages),
+  });
+  const attestations = attestPages ? await attestPages(prepared.pages) : null;
+  return prepared.complete(attestations);
+}
+
+async function finishPdfSeal({ file, prepared, pageSealResults, plans, pageScalingStrategy }) {
+  const { blob, watermarkLayout, footerPages } = await renderSealedPdf({
+    file, pageSealResults, pagesWithText: plans.map(page => Boolean(page.text)), pageScalingStrategy,
+  });
+  const pageSealStrings = pageSealResults.map(result => result.seals);
+  const firstResult = pageSealResults[0] ?? null;
+  return {
+    blob, sealResult: firstResult, stampedQrValues: firstResult?.seals ?? [],
+    pageSealResults, pageSealStrings, flattenedFieldCount: prepared.flattenedFieldCount,
+    watermarkLayout, footerPages,
+  };
+}
+
+// Precompute all sensitive PDF work before the user initiates a provider login.
+// No PDF, page text or keys are persisted or passed to any provider; these
+// values live only in this browsing context's memory.
+export async function prepareAccountPdfSeal({ file, bootstrapUrl = DEFAULT_BOOTSTRAP_URL,
+  encodingStrategy = "automatic", pageScalingStrategy = "automatic" }) {
+  const prepared = await flattenPdfForSealing(file);
+  const plan = await preparePageSealing({
+    file: prepared.file, bootstrapUrl, encodingStrategy, attested: true,
+  });
+  return {
+    pages: plan.pages,
+    async finish(attestations) {
+      const { results, plans } = await plan.complete(attestations);
+      return finishPdfSeal({
+        file: prepared.file, prepared, pageSealResults: results, plans, pageScalingStrategy,
+      });
+    },
+  };
 }
 
 export async function sealPdfInBrowser({ file, privateKey, publicKey, attestPages, bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic", pageScalingStrategy = "automatic" }) {
   const prepared = await flattenPdfForSealing(file);
   file = prepared.file;
   const { results: pageSealResults, plans } = await createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages });
-  const { blob, watermarkLayout, footerPages } = await renderSealedPdf({
-    file, pageSealResults, pagesWithText: plans.map(page => Boolean(page.text)), pageScalingStrategy,
+  return finishPdfSeal({
+    file, prepared, pageSealResults, plans, pageScalingStrategy,
   });
-  const pageSealStrings = pageSealResults.map((result) => result.seals);
-  const firstResult = pageSealResults[0] ?? null;
-  return {
-    blob,
-    sealResult: firstResult,
-    stampedQrValues: firstResult?.seals ?? [],
-    pageSealResults,
-    pageSealStrings,
-    flattenedFieldCount: prepared.flattenedFieldCount,
-    watermarkLayout,
-    footerPages,
-  };
 }
