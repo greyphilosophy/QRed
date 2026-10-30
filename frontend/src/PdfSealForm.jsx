@@ -400,7 +400,7 @@ export function PdfSealForm({ onUsePublicKey }) {
             <p className="key-help">Choose a PDF and layout, then sign in. QRed returns here in the same tab. Reselect the original PDF to finish without storing a copy.</p>
             {!resumeSession && <div className="sealing-method-grid">
               {Object.entries(AUTH_PROVIDERS).map(([id, account]) => <button
-                key={id} type="button" aria-pressed={method === id}
+                key={id} type="button" aria-label={account.button} aria-pressed={method === id}
                 onClick={() => beginProviderSealing(id)}
                 disabled={!file || loading || loadingKeys || !accountSealingAvailable || availability?.[id] === false}
                 title={availability?.[id] === false ? "Not enabled on this QRed installation" : undefined}>
