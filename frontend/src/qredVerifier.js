@@ -176,7 +176,7 @@ export async function verifyQRedSeals(seals, publicKey, authorities = trustedAut
   try {
     if (first.multipart) {
       const record = concatenate(Array.from({ length: first.total_chunks }, (_, index) => chunks.get(index).data));
-      if (!bytesEqual((await sha256(record)).subarray(0, 16), first.digest)) return { status: "INVALID", error_message: "Seal set digest does not match its contents" };
+      if (!bytesEqual((await sha256(record)).subarray(0, first.digest.length), first.digest)) return { status: "INVALID", error_message: "Seal set digest does not match its contents" };
       metadata = decodeEnvelope(record);
       if (metadata.version !== first.version) throw new Error("Seal version does not match its chunks");
     }
