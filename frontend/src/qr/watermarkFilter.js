@@ -4,7 +4,7 @@
 // This avoids treating shadows across a photographed sheet as QR modules.
 // The high local percentile is robust to pale modules and most printed text.
 function locallyNormalize(luminances, width, height) {
-  const tile = Math.max(48, Math.min(128, Math.round(Math.max(width, height) / 18)));
+  const tile = Math.max(32, Math.min(96, Math.round(Math.max(width, height) / 28)));
   const columns = Math.ceil(width / tile), rows = Math.ceil(height / tile);
   const histograms = new Uint32Array(columns * rows * 256);
   for (let y = 0; y < height; y++) {
