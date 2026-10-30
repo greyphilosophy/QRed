@@ -10,13 +10,12 @@ export const MAX_QR_PAYLOAD_BYTES = 2945;
 export const CHUNK_HEADER_BYTES = 40;
 export const MAX_CHUNKS = 4096;
 export const SIGNATURE_BYTES = 64;
-export const COMMITMENT_SALT_BYTES = 32;
 const metadataByteLength = multiple => 17 + (multiple ? 36 : 0);
 
 // Shared by the wire encoder and the optional-evidence budget planner.
 export function sealEnvelopeOverhead({ attested = false, multiple = false, identityBytes = 0 } = {}) {
   return RECORD_MAGIC.length + metadataByteLength(multiple) + SIGNATURE_BYTES
-    + (attested ? COMMITMENT_SALT_BYTES + identityBytes : 0);
+    + (attested ? identityBytes : 0);
 }
 const RECORD_MAGIC = new Uint8Array([81, 82, 83, 51]); // QRS3
 const CHUNK_MAGIC = new Uint8Array([81, 82, 67, 51]); // QRC3
@@ -101,8 +100,7 @@ export function encodeEnvelope(metadata, signature, body, encoding) {
   if (encoding === "gzip") header[0] |= 1;
   if (encoding === "zlib") header[0] |= 8;
   if (metadata.version === "4") {
-    if (!(metadata.salt instanceof Uint8Array) || metadata.salt.length !== COMMITMENT_SALT_BYTES) throw new Error("Invalid commitment salt");
-    return concatenate([ATTESTED_MAGIC, header, encodeIdentity(metadata.identity), metadata.salt, signature, body]);
+    return concatenate([ATTESTED_MAGIC, header, encodeIdentity(metadata.identity), signature, body]);
   }
   return concatenate([RECORD_MAGIC, header, signature, body]);
 }
@@ -118,12 +116,11 @@ export function decodeEnvelope(bytes) {
   if ((flags & ~31) || ((flags & 9) === 9) || ((flags & 20) && !(flags & 2))) throw new Error("Unsupported seal flags");
   const multiple = Boolean(flags & 4);
   let signatureOffset = RECORD_MAGIC.length + metadataByteLength(multiple);
-  let identity, salt;
+  let identity;
   if (attested) {
     const decoded = decodeIdentity(bytes, signatureOffset);
     identity = decoded.identity;
-    salt = bytes.slice(decoded.offset, decoded.offset + COMMITMENT_SALT_BYTES);
-    signatureOffset = decoded.offset + COMMITMENT_SALT_BYTES;
+    signatureOffset = decoded.offset;
   }
   const bodyOffset = signatureOffset + SIGNATURE_BYTES;
   if (bytes.length <= bodyOffset) throw new Error("Truncated seal record");
@@ -143,7 +140,7 @@ export function decodeEnvelope(bytes) {
     page_number: pdf ? pageNumber : null, page_count: pdf ? pageCount : null,
     document_root: multiple ? bytesToHex(bytes.subarray(25, 57)) : null,
     signature: bytes.slice(signatureOffset, bodyOffset), encoding, data,
-    ...(attested ? { identity, salt } : {}),
+    ...(attested ? { identity } : {}),
     ...(flags & 16 ? { page_evidence: true } : {}),
   };
 }
