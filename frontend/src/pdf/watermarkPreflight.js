@@ -54,7 +54,7 @@ export function scanAllSealsFromPage(image, expectedSeals) {
     // Fast fail-closed pass: one raw decode and one local-watermark recovery.
     // The verifier can still try all of its normal camera recovery scales.
     const code = scanQrImage(working.data, working.width, working.height,
-      { tryRescaling: false, maxAttempts: 2 });
+      { tryRescaling: false, maxAttempts: 3 });
     if (!code?.location) return false;
     const payload = hiddenPayloadFromScanResult(code);
     if (remaining.has(payload)) remaining.delete(payload);
