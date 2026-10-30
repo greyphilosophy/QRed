@@ -7,7 +7,7 @@ import { computeKeyId, sealSignatureMessage } from "./sealSignature.js";
 import { deriveSigningPublicKey, validateSigningKeyPair } from "./signingKeys.js";
 import { attestationMessage, pageCommitment, decodeFixedBase64 } from "./attestation.js";
 import { verifyAsync } from "@noble/ed25519";
-import { CHUNK_HEADER_BYTES, DEFAULT_BOOTSTRAP_URL, MAX_CHUNKS, MAX_SEAL_TEXT_BYTES,
+import { chunkHeaderBytes, DEFAULT_BOOTSTRAP_URL, MAX_CHUNKS, MAX_SEAL_TEXT_BYTES,
   decodeTransport, encodeBase64Url, encodeChunk, encodeEnvelope, sealString, sha256, utf8 } from "./sealFormat.js";
 
 export { computeKeyId } from "./sealSignature.js";
@@ -15,14 +15,15 @@ export { DEFAULT_BOOTSTRAP_URL } from "./sealFormat.js";
 
 async function splitRecord(record, version) {
   if (record.length <= qredPayloadCapacity()) return [record];
-  const maximumBody = qredPayloadCapacity() - CHUNK_HEADER_BYTES;
-  const count = recordQrCount(record.length);
+  const maximumBody = qredPayloadCapacity() - chunkHeaderBytes(version);
+  const count = recordQrCount(record.length, version);
   if (count > MAX_CHUNKS) throw new Error("Document exceeds the 4096-seal limit");
   const balancedBody = Math.ceil(record.length / count);
   // Keep the minimum code count. Balance only if every grid can be smaller
   // than version 40; otherwise retain the smaller final grid of a greedy split.
-  const balance = balancedBody + CHUNK_HEADER_BYTES <= qredPayloadCapacity(39);
-  const digest = (await sha256(record)).subarray(0, 16);
+  const balance = balancedBody + chunkHeaderBytes(version) <= qredPayloadCapacity(39);
+  const fullDigest = await sha256(record);
+  const digest = version === "4" ? fullDigest.subarray(0, 16) : fullDigest;
   const chunks = [];
   let offset = 0;
   for (let index = 0; index < count; index += 1) {
