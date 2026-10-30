@@ -426,7 +426,20 @@ export function PdfSealForm({ onUsePublicKey }) {
                   target="_blank" rel="noopener noreferrer" className="account-provider-choice"
                   aria-label={label} onClick={event => startPreparedProvider(event, id)}>
                   <ProviderMark provider={id} /><span>{label}</span>
-                </a> : <button key={id} type="button" disabled aria-pressed="false" aria-label={label}
+                </a> : <button key={id} type="button"
+                  disabled={method !== "private-key" || loading || loadingKeys}
+                  onClick={() => {
+                    // Explicitly choosing an account method exits offline mode.
+                    // No account request is made until this click (and a PDF is
+                    // selected). The final OAuth URL must still be prepared
+                    // before the user clicks its link in a second gesture.
+                    setMethod(null);
+                    setSigningIdentity(null);
+                    setMessage(file
+                      ? `Preparing ${account.label} sign-in. Tap ${account.label} again when ready.`
+                      : "Open a PDF, then choose an account provider.");
+                  }}
+                  aria-pressed="false" aria-label={label}
                   className="account-provider-choice" aria-busy={Boolean(preparingProviders && file && method !== "private-key")}>
                   <ProviderMark provider={id} /><span>{label}</span>
                 </button>;
