@@ -31,13 +31,64 @@ function syndromes(block, parityBytes) {
   return result;
 }
 
+
+// Remove known erasure contributions from the syndromes before locating any
+// additional unknown-position errors. Multiplying the syndrome sequence by
+// (x + alpha^(N-1-position)) cancels that erasure's contribution.
+function withoutKnownErasures(syndrome, locations, length) {
+  const values = Array.from(syndrome);
+  for (const position of locations) {
+    const factor = power(length - 1 - position);
+    for (let i = 0; i < values.length - 1; i++) {
+      values[i] = multiply(values[i], factor) ^ values[i + 1];
+    }
+    values.pop();
+  }
+  return values;
+}
+
+// Berlekamp-Massey determines the few remaining unknown error locations;
+// once ALL locations are known, the same Vandermonde solver recovers bytes.
+function unknownErrors(syndrome, erasures, length, parityBytes) {
+  const residual = withoutKnownErasures(syndrome, erasures, length);
+  let locator = [1], previous = [1], degree = 0, shift = 1, last = 1;
+  for (let step = 0; step < residual.length; step++) {
+    let discrepancy = residual[step];
+    for (let i = 1; i <= degree; i++) {
+      discrepancy ^= multiply(locator[i] ?? 0, residual[step - i]);
+    }
+    if (!discrepancy) { shift++; continue; }
+    const old = locator.slice(), scale = multiply(discrepancy, inverse(last));
+    while (locator.length < previous.length + shift) locator.push(0);
+    for (let i = 0; i < previous.length; i++) {
+      locator[i + shift] ^= multiply(scale, previous[i]);
+    }
+    if (2 * degree <= step) {
+      degree = step + 1 - degree;
+      previous = old; last = discrepancy; shift = 1;
+    } else shift++;
+  }
+  if (2 * degree + erasures.size > parityBytes) return null;
+  if (!degree) return [];
+  const evaluate = x => locator.reduceRight((acc, coefficient) => multiply(acc, x) ^ coefficient, 0);
+  const errors = [];
+  for (let position = 0; position < length; position++) {
+    if (erasures.has(position)) continue;
+    if (!evaluate(power(-(length - 1 - position)))) errors.push(position);
+  }
+  return errors.length === degree ? errors : null;
+}
+
 function solveErasures(block, erasures, parityBytes) {
   const output = Uint8Array.from(block);
   const syndrome = syndromes(output, parityBytes);
   if (syndrome.every(value => value === 0)) return output;
-  const count = erasures.size;
+  if (erasures.size > parityBytes) return null;
+  const errors = unknownErrors(syndrome, erasures, output.length, parityBytes);
+  if (errors === null) return null;
+  const count = erasures.size + errors.length;
   if (!count || count > parityBytes) return null;
-  const positions = [...erasures].sort((a, b) => a - b);
+  const positions = [...erasures, ...errors].sort((a, b) => a - b);
   // Vandermonde system over GF(256):
   // S_i = SUM(delta_j * alpha^(i * (N - 1 - position_j))).
   // Erasure positions are codeword indices, NOT module indices.

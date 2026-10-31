@@ -65,6 +65,27 @@ describe("QR Reed-Solomon erasure-aware recovery", () => {
     expect(recoveredSeal(qr, bits, unknown)).toBe(qr.seal);
   });
 
+  it("corrects unknown byte errors alongside known foreground erasures", () => {
+    const qr = fixture();
+    const bits = qr.bits.slice(), unknown = qr.unknown.slice();
+    for (let row = 30; row < 32; row++) for (let col = 18; col < qr.size - 18; col++) {
+      const index = row * qr.size + col;
+      bits[index] = 0;
+      unknown[index] = 1;
+    }
+    let corrupted = false;
+    for (let row = 40; row < qr.size - 15 && !corrupted; row++) {
+      for (let col = 28; col < qr.size - 15; col++) {
+        if (qr.symbol.modules.isReserved(row, col)) continue;
+        bits[row * qr.size + col] ^= 1; // Unmarked wrong codeword.
+        corrupted = true;
+        break;
+      }
+    }
+    expect(corrupted).toBe(true);
+    expect(recoveredSeal(qr, bits, unknown)).toBe(qr.seal);
+  });
+
   it("fails closed when too many codewords are missing instead of fabricating data", () => {
     const qr = fixture();
     const bits = qr.bits.slice(), unknown = qr.unknown.slice();
