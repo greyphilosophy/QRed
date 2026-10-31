@@ -40,6 +40,15 @@ describe("QR Reed-Solomon erasure-aware recovery", () => {
       extractedHead: Array.from(extracted.codewords.slice(0, 12)),
       encodedHead: Array.from(data.codewords.slice(0, 12)) });
     expect(Array.from(corrected ?? [])).toEqual(Array.from(data.bytes));
+    const directPayload = hiddenPayloadFromScanResult({ data: "QRED.ORG", version: data.version,
+      correctedData: corrected });
+    const matrixResult = readErasedQrMatrix(qr.bits, qr.unknown, qr.symbol.version);
+    const matrixPayload = hiddenPayloadFromScanResult(matrixResult && { data: "QRED.ORG",
+      version: data.version, correctedData: matrixResult.correctedData });
+    console.info("WM RS extraction", { directMatches: directPayload === qr.seal,
+      directPrefix: directPayload?.slice(0, 30), matrixPresent: Boolean(matrixResult),
+      matrixCorrectedLength: matrixResult?.correctedData.length,
+      matrixMatches: matrixPayload === qr.seal });
     expect(recoveredSeal(qr, qr.bits, qr.unknown)).toBe(qr.seal);
   });
 
