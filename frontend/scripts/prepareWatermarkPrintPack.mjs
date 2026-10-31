@@ -77,14 +77,18 @@ async function sampleDocument(kind) {
     }
     stamp(page, "End of sample B. Keep the original page size when printing.", 42, 114, 9.2, ink.green, regular);
   } else {
-    stamp(page, "High-entropy text / four balanced watermark fragments", 42, 709, 9.5, ink.navy, bold);
+    stamp(page, "UTF-8 text stress test / four balanced watermark fragments", 42, 709, 9.5, ink.navy, bold);
     // Deliberately incompressible text forces >1 QR's worth of signed bytes.
     // Keep it under the original page boundary and readable at 100% size.
     const rand = nextRand(0x0b1eaced);
+    // Noncompressible UTF-8 Latin text carries 2 bytes per visible glyph.
+    // Compared with printed hex, fewer glyph strokes obscure QR modules
+    // while retaining a genuinely >1-QR signed record.
+    const alphabet = ["é", "ñ", "ö", "à", "ç", "ø", "ß", "ü", "å", "î", "á", "è", "õ", "ï", "æ", "ù"];
     for (let i = 0; i < 40; i++) {
-      const values = Array.from({ length: 9 }, () => rand().toString(16).padStart(8, "0")).join(" ");
-      stamp(page, `R${String(i + 1).padStart(2, "0")} ${values}`, 43, 690 - i * 14.0, 8.0,
-        rgb(0.10, 0.14, 0.19), mono);
+      const values = Array.from({ length: 47 }, () => alphabet[rand() % alphabet.length]).join("");
+      stamp(page, `R${String(i + 1).padStart(2, "0")} ${values}`, 43, 690 - i * 14.0, 9,
+        rgb(0.12, 0.14, 0.18), mono);
     }
     stamp(page, "END QUADRANT CHALLENGE - scan all four parts from one photograph.", 43, 91, 8.4, ink.blue, regular);
   }
