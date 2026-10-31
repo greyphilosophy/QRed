@@ -72,6 +72,7 @@ it("restores a decodable navigation QR after recovering a readable signed waterm
   expect(result.footerPages).toEqual([]);
   const layout = result.watermarkLayout[0];
   expect(layout.entry).toBeTruthy();
+  expect(await findEntryForWatermark(source, layout.boxes)).toEqual(layout.entry);
   for (const box of layout.boxes) expect(intersectsWithClearance(layout.entry, box)).toBe(false);
   const sealedPdf = await PDFDocument.load(await result.blob.arrayBuffer());
   expect(sealedPdf.getPage(0).getSize()).toEqual({ width: 612, height: 792 });
