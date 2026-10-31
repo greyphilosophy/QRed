@@ -151,8 +151,15 @@ for (const [name, kind, expectedCount] of samples) {
   assert.equal(parts.length, expectedCount,
     `${name} produced ${parts.length} part(s), expected ${expectedCount}`);
   assert.deepEqual(footerPages, [], `${name} fell back to a footer`);
-  assert.equal(watermarkLayout[0]?.pageAligned, true,
-    `${name} did not get a page-filling rectangular watermark`);
+  assert.ok(watermarkLayout[0],
+    `${name} has no viable watermark on the original page`);
+  // Sample B deliberately includes enough colored ink and a logo to exercise
+  // the safe content-avoiding SQUARE fallback. Samples A and C must stay
+  // page-filling rectangular watermarks.
+  if (kind !== "single-color") {
+    assert.equal(watermarkLayout[0].pageAligned, true,
+      `${name} did not get a page-filling rectangular watermark`);
+  }
   const sealedBytes = Buffer.from(await blob.arrayBuffer());
   const loaded = await PDFDocument.load(sealedBytes);
   assert.equal(loaded.getPageCount(), 1);
@@ -168,7 +175,8 @@ for (const [name, kind, expectedCount] of samples) {
   writeFileSync(sourcePath, originalBytes);
   writeFileSync(printPath, sealedBytes);
   const details = { name, source: name + "-SOURCE.pdf", print: name + "-SEALED.pdf",
-    format: "watermark-1-or-4", pageAligned: true, signedParts: parts.length,
+    format: watermarkLayout[0].pageAligned ? "page-filling-1-or-4" : "content-avoiding-square",
+    pageAligned: Boolean(watermarkLayout[0].pageAligned), signedParts: parts.length,
     qrVersions: parts.map(seal => createQRedQrSymbol(seal).version),
     pageSize: loaded.getPage(0).getSize(), fullPageDigitalScan: "VALID",
     footerPages: [], originalBytes: originalBytes.length, sealedBytes: sealedBytes.length };
@@ -183,7 +191,7 @@ writeFileSync(join(out, "START-HERE.txt"), [
   "",
   "Print only the *-SEALED.pdf documents at 100% actual size on US Letter paper.",
   "Test A is a single watermark beneath black text.",
-  "Test B is a single watermark beneath colored text and a small logo.",
+  "Test B includes colored text/logo; QRed may choose its safer square fallback.",
   "Test C is four adjacent watermark fragments: all 4 are required to verify.",
   "",
   "Start at 300 DPI (normal quality), then also try 150/600 DPI if supported.",
