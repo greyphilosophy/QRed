@@ -66,13 +66,16 @@ function isValidImage(data, width, height) {
     && data?.length === width * height * 4;
 }
 
-function scanAttempts(width, height, tryRescaling = true, tryWatermark = true) {
+function scanAttempts(width, height, tryRescaling = true, tryWatermark = true, includeModuleAware = false) {
   const attempts = scanSizes(width, height, tryRescaling);
   if (tryWatermark) {
     const scale = Math.min(1, Math.sqrt(MAX_WATERMARK_PIXELS / (width * height)));
     const w = Math.max(1, Math.floor(width * scale)), h = Math.max(1, Math.floor(height * scale));
     const radius = Math.max(1, Math.min(4, Math.round(Math.max(w, h) / 550)));
     attempts.push([w, h, radius]);
+    // In camera mode, spend only one frame on module-aware color recovery.
+    // Still photos have a separately budgeted final module-aware attempt.
+    if (includeModuleAware) attempts.push([w, h, radius, true]);
     attempts.push([w, h, radius + 1]);
     if (radius > 1) attempts.push([w, h, radius - 1]);
     for (const factor of [0.9, 1.25]) {
@@ -115,7 +118,7 @@ function decodePrepared(prepared, width, height, moduleAware = false) {
 }
 
 function scanAtSize(data, width, height, size) {
-  return decodePrepared(prepareAtSize(data, width, height, size), width, height);
+  return decodePrepared(prepareAtSize(data, width, height, size), width, height, Boolean(size[3]));
 }
 
 /** Return QR geometry in the original image's coordinates, even after a retry.
@@ -163,7 +166,7 @@ export function createQrFrameScanner() {
     if (width !== previousWidth || height !== previousHeight) {
       previousWidth = width;
       previousHeight = height;
-      sizes = scanAttempts(width, height);
+      sizes = scanAttempts(width, height, true, true, true);
       nextSize = 0;
     }
     if (!sizes.length) return null;

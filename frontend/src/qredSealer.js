@@ -89,7 +89,7 @@ export async function createQRedSeals({
     return { chunks, qr_count: chunks.length, payload_bytes: chunks.reduce((sum, chunk) => sum + chunk.length, 0) };
   });
   const selected = selectBodyEncoding({ candidates, failures }, encodingStrategy);
-  if (pageContext && selected.qr_count > MAX_PDF_SEALS) throw new Error(`PDF page ${pageContext.pageNumber} exceeds the two-QR limit. Shorten the page or split its content across pages.`);
+  if (pageContext && selected.qr_count > MAX_PDF_SEALS) throw new Error(`PDF page ${pageContext.pageNumber} exceeds the ${MAX_PDF_SEALS}-QR limit. Shorten the page or split its content across pages.`);
   const plaintext = candidates.find(item => item.encoding === "plaintext");
   return {
     ...metadata, ...(evidence ? { evidence } : {}), bootstrap_url: (bootstrapUrl || DEFAULT_BOOTSTRAP_URL).split("#")[0],

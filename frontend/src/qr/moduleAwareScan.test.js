@@ -5,7 +5,7 @@ import { scanModuleAwareQr } from "./moduleAwareScan.js";
 import { createQRedQrSymbol } from "../qredQr.js";
 import { hiddenPayloadFromScanResult } from "./hiddenPayload.js";
 
-function photographedQr({ text = true, blank = false, symbol } = {}) {
+function photographedQr({ text = true, blank = false, symbol, inkColor = null } = {}) {
   const qr = symbol ?? QRCode.create("QRED.ORG", { version: 10, errorCorrectionLevel: "L" });
   const tile = 10, margin = 4;
   const width = (qr.modules.size + margin * 2) * tile;
@@ -22,10 +22,12 @@ function photographedQr({ text = true, blank = false, symbol } = {}) {
     const inFinder = row < 9 && col < 9 ||
       row < 9 && col >= qr.modules.size - 9 ||
       row >= qr.modules.size - 9 && col < 9;
+    const crossing = inkColor ? x % tile >= 3 && x % tile <= 6 : x % tile === 4 || x % tile === 5;
     const textInk = text && !inFinder && row >= 0 && col >= 0 &&
-      (x % tile === 4 || x % tile === 5) && y > 70 && y < height - 70;
-    const value = textInk ? 20 : Math.round((moduleInk ? paper * 0.85 : paper) + ((x + y * 3) % 5 - 2));
-    rgba[offset] = rgba[offset + 1] = rgba[offset + 2] = value;
+      crossing && y > 70 && y < height - 70;
+    const value = Math.round((moduleInk ? paper * 0.85 : paper) + ((x + y * 3) % 5 - 2));
+    const color = textInk ? inkColor ?? [20, 20, 20] : [value, value, value];
+    rgba[offset] = color[0]; rgba[offset + 1] = color[1]; rgba[offset + 2] = color[2];
     rgba[offset + 3] = 255;
   }
   return { rgba, width, height };
@@ -45,6 +47,19 @@ describe("module-aware watermark recovery", () => {
     const payload = "signed-page-evidence-".repeat(30);
     const symbol = createQRedQrSymbol(payload);
     const { rgba, width, height } = photographedQr({ symbol });
+    const filtered = filterWatermark(rgba, width, height, 3);
+    const code = scanModuleAwareQr(rgba, filtered, width, height);
+    expect(code?.data).toBe("QRED.ORG");
+    expect(hiddenPayloadFromScanResult(code)).toBe(payload);
+  });
+
+  it.each([
+    ["bright yellow", [255, 245, 100]],
+    ["light cyan", [100, 235, 240]],
+  ])("recovers the complete hidden data through %s foreground crossing most module centers", (_name, inkColor) => {
+    const payload = "colored-ink-evidence-".repeat(30);
+    const symbol = createQRedQrSymbol(payload);
+    const { rgba, width, height } = photographedQr({ symbol, inkColor });
     const filtered = filterWatermark(rgba, width, height, 3);
     const code = scanModuleAwareQr(rgba, filtered, width, height);
     expect(code?.data).toBe("QRED.ORG");

@@ -95,6 +95,19 @@ describe("compact browser QRed sealing", () => {
     expect(await verifyQRedSeals(seals.toReversed(), publicKey)).toMatchObject({ status: "VALID", content });
   });
 
+  it("supports four independently scanned chunks for an oversized PDF page", async () => {
+    const content = "ABCD".repeat(2300);
+    const { seals } = await createQRedSeals({
+      ...keys, content, timestamp, encodingStrategy: "plaintext",
+      pageContext: { pageNumber: 1, pageCount: 1 },
+    });
+    expect(seals).toHaveLength(4);
+    expect(await verifyQRedSeals(seals.toReversed(), publicKey)).toMatchObject({
+      status: "VALID", content, page_number: 1,
+    });
+    expect(await verifyQRedSeals(seals.slice(1), publicKey)).toMatchObject({ status: "INCOMPLETE" });
+  });
+
   it("stores Unicode and punctuation directly without URL expansion or lost characters", async () => {
     const content = "A *-._~!+'%&= /猫é😀\n".repeat(200).trim();
     const result = await createQRedSeals({ ...keys, content, encodingStrategy: "plaintext", bootstrapUrl: "https://example.org/検証?mode=local" });

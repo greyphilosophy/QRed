@@ -1,5 +1,6 @@
-// Separate pale QR ink from white paper and dark document text. Dark pixels
-// are unknown, not white: use the surrounding known pixels to bridge strokes.
+// Separate neutral pale QR ink from paper and opaque document foreground.
+// Colored and dark text are unknown, not QR bits: bridge only from exposed
+// watermark pixels. Never erase the foreground in the document itself.
 // Adjust each pixel against its local paper brightness before looking for ink.
 // This avoids treating shadows across a photographed sheet as QR modules.
 // The high local percentile is robust to pale modules and most printed text.
@@ -40,6 +41,15 @@ function locallyNormalize(luminances, width, height) {
   return normalized;
 }
 
+// QRed's printed watermark is neutral gray. Color saturation is foreground
+// evidence even when colored text is brighter than the old "black ink" mask.
+// The generous tolerance allows ordinary camera white-balance shifts.
+export function isChromaticForeground(data, offset) {
+  const r = data[offset], g = data[offset + 1], b = data[offset + 2];
+  const high = Math.max(r, g, b), low = Math.min(r, g, b);
+  return high - low >= 26 && (high - low) / Math.max(1, high) > 0.09;
+}
+
 // Reuse exactly the same local paper estimate for pixel- and module-level
 // recovery, so the two decoding strategies agree on what is background.
 export function normalizeWatermarkLuminance(data, width, height) {
@@ -59,6 +69,10 @@ export function filterWatermark(data, width, height, radius = 3, normalized = nu
   const histogram = new Uint32Array(256);
   // Reuse the same normalized image for module-aware fallback when supplied.
   const luminances = normalized ?? normalizeWatermarkLuminance(data, width, height);
+  const coloredCore = new Uint8Array(width * height);
+  for (let i = 0; i < coloredCore.length; i++) {
+    coloredCore[i] = isChromaticForeground(data, i * 4) ? 1 : 0;
+  }
   for (const value of luminances) histogram[value]++;
   let white = 255, count = 0;
   while (white > 0 && count < width * height * 0.02) count += histogram[white--];
@@ -73,17 +87,19 @@ export function filterWatermark(data, width, height, radius = 3, normalized = nu
     let knownRow = 0, grayRow = 0;
     for (let x = 0; x < width; x++) {
       const luminance = luminances[y * width + x];
-      // Treat dark text as missing QR evidence. Neighboring unmasked pixels
-      // reconstruct its module values. Grow the one-pixel fringe only from its
-      // black core. Growing from already antialiased edges discards nearby
-      // watermark pixels, with different damage for different PDF renderers.
-      let text = luminance < textThreshold;
+      // Neutral gray is the watermark signal; dark OR colored foreground is
+      // missing evidence. Grow only from definite dark/chromatic cores so
+      // antialiasing does not erase the surrounding pale QR modules.
+      let text = luminance < textThreshold || Boolean(coloredCore[y * width + x]);
       for (let dy = -1; dy <= 1 && !text; dy++) {
         const row = y + dy;
         if (row < 0 || row >= height) continue;
         for (let dx = -1; dx <= 1; dx++) {
           const column = x + dx;
-          if (column >= 0 && column < width && luminances[row * width + column] < textCoreThreshold) { text = true; break; }
+          if (column >= 0 && column < width &&
+              (luminances[row * width + column] < textCoreThreshold || coloredCore[row * width + column])) {
+            text = true; break;
+          }
         }
       }
       if (!text) {

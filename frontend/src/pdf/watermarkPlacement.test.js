@@ -50,6 +50,17 @@ describe("page-aware watermark placement", () => {
     }
   });
 
+  it("fits four version-40 symbols in a nonoverlapping 2x2 grid on letter paper", () => {
+    const boxes = planWatermarks(pageWithGraphic(null), [symbol, symbol, symbol, symbol]);
+    expect(boxes).toHaveLength(4);
+    for (let i = 0; i < boxes.length; i++) {
+      expect(boxes[i].width / 185).toBeGreaterThanOrEqual(MIN_WATERMARK_MODULE_SIZE);
+      for (let j = i + 1; j < boxes.length; j++) expect(intersects(boxes[i], boxes[j])).toBe(false);
+    }
+    expect(boxes[0].y).toBeGreaterThan(boxes[2].y);
+    expect(boxes[1].x).toBeGreaterThan(boxes[0].x);
+  });
+
   it("searches a genuinely different placement after a candidate fails decoding", () => {
     const image = pageWithGraphic({ x: 260, y: 400, width: 90, height: 40 });
     const first = planWatermarks(image, [symbol]);

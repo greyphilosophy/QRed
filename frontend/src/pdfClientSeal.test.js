@@ -288,10 +288,10 @@ describe("browser PDF sealing", () => {
     });
   });
 
-  it("refuses text that needs more than two QR codes instead of making a crowded footer", async () => {
+  it("refuses text that needs more than four QR codes instead of making a crowded footer", async () => {
     const file = await makeHugeLetterPdfFile();
     await expect(sealPdfInBrowser({ file, privateKey, publicKey, encodingStrategy: "plaintext", pageScalingStrategy: "legal-footer" }))
-      .rejects.toThrow("two-QR limit");
+      .rejects.toThrow("4-QR limit");
   });
 
   it("shrinks page content without changing the source page size when asked", async () => {
