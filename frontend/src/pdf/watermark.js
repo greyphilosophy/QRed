@@ -71,10 +71,9 @@ function drawSymbol(page, symbol, box, gray, multiply = false) {
 }
 
 export async function planPdfWatermarks(file, pageSealResults, pageIndices = pageSealResults.map((_, index) => index),
-  { excludedLayouts = null } = {}) {
+  { excludedLayouts = null, omitEntry = false } = {}) {
   const layouts = new Array(pageSealResults.length).fill(null);
   await withPdfDocument(file, async (source) => {
-    let entry = null;
     for (const index of pageIndices) {
       const seals = pageSealResults[index].seals;
       if (seals.length > 4) throw new Error(`Page ${index + 1} needs too many watermarks. Choose a footer layout.`);
@@ -83,15 +82,25 @@ export async function planPdfWatermarks(file, pageSealResults, pageIndices = pag
       const viewport = sourcePage.getViewport({ scale: 2, rotation: 0 });
       if (viewport.width * viewport.height > 12_000_000) { sourcePage.cleanup(); continue; }
       const image = await renderPdfPage(source, index + 1);
-      if (index === 0) {
-        try { entry = findEntryPlacement(image); } catch { sourcePage.cleanup(); continue; }
+      let entry = null;
+      if (index === 0 && !omitEntry) {
+        // This is only a navigation convenience, never a prerequisite for a
+        // signed watermark on the original page size.
+        try { entry = findEntryPlacement(image); } catch { /* A watermark needs no entry QR. */ }
       }
       const symbols = seals.map(value => createQRedQrSymbol(value));
-      let boxes;
-      try { boxes = planWatermarks(image, symbols, index === 0 ? entry : null,
-        { excludeBoxes: excludedLayouts?.[index]?.boxes ?? null }); }
-      catch { sourcePage.cleanup(); continue; }
-      layouts[index] = { boxes, ...(index === 0 ? { entry } : {}) };
+      const options = { excludeBoxes: excludedLayouts?.[index]?.boxes ?? null };
+      let boxes = null;
+      try { boxes = planWatermarks(image, symbols, entry, options); }
+      catch {
+        // Even a successfully placed entry QR can consume the only workable
+        // watermark region. Give the signed seal precedence.
+        if (entry) {
+          try { boxes = planWatermarks(image, symbols, null, options); entry = null; }
+          catch { /* The caller retains its safe footer fallback. */ }
+        }
+      }
+      if (boxes) layouts[index] = { boxes, ...(entry ? { entry } : {}) };
       sourcePage.cleanup();
     }
   });
