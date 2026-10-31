@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createQrFrameScanner, scanQrImage } from "./qr/scanQrImage.js";
+import { scanPageAlignedImage } from "./qr/pageAlignedScan.js";
 import { decodeSeal, VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult, qredTextFromScanResult } from "./qredVerifier.js";
 import { isQRedEntryLink } from "./qr/hiddenPayload.js";
 import { startCameraSession } from "./qr/cameraSession.js";
@@ -238,6 +239,13 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
   // The reticle is only an aiming guide. Keep recovery in this same frame.
   ctx.drawImage(video, 0, 0, vWidth, vHeight);
   const imageData = ctx.getImageData(0, 0, vWidth, vHeight);
+  // A manual full-page photo may contain all four adjacent watermark chunks.
+  // Return them in one action rather than repeatedly recovering only the
+  // first quadrant from the same frame.
+  if (manual && returnPayload) {
+    const aligned = scanPageAlignedImage(imageData);
+    if (aligned.length) return { status: "found-multiple", texts: aligned.map(result => result.seal) };
+  }
   const code = !manual && options.scanQrFrame
     ? options.scanQrFrame(imageData.data, vWidth, vHeight)
     : scanQrImage(imageData.data, vWidth, vHeight, { tryRescaling: manual });
@@ -287,6 +295,18 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
     let camera;
 
     handleScanActionRef.current = (scanAction) => {
+      if (scanAction.status === "found-multiple") {
+        let shouldStop = false;
+        for (const text of scanAction.texts) {
+          if (seen.has(text)) continue;
+          seen.add(text);
+          // All chunks share the same captured page photograph.
+          if (!onScan(text, canvasRef.current)) { shouldStop = true; break; }
+        }
+        setFeedback(null);
+        if (shouldStop) { camera.stop(); return true; }
+        return false;
+      }
       if (scanAction.status === "found") {
         if (seen.has(scanAction.text)) return false;
         seen.add(scanAction.text);
