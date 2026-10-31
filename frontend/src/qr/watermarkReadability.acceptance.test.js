@@ -46,7 +46,7 @@ async function signed(content) {
 function printAndPhotograph(seals, {
   width = 690, height = 900, ink = [65, 120, 235],
   tilted = true, finderBlocked = true, text = true,
-  backdrop = [43, 43, 47],
+  backdrop = [43, 43, 47], patternedBackdrop = false, shadowed = false,
 } = {}) {
   const symbols = seals.map(seal => createQRedQrSymbol(seal));
   if (![0, 1, 4].includes(symbols.length)) throw new Error("Fixture supports 0, 1 or 4 QR chunks");
@@ -70,11 +70,14 @@ function printAndPhotograph(seals, {
     const u = (rhsX * D - B * rhsY) / det;
     const v = (A * rhsY - rhsX * C) / det;
     if (u < 0 || v < 0 || u >= 1 || v >= 1) {
-      outputColor(rgba, offset, backdrop);
+      const motif = (Math.floor(px / 29) * 5 + Math.floor(py / 37) * 7) % 9;
+      outputColor(rgba, offset, patternedBackdrop
+        ? (motif < 3 ? [160, 100, 180] : [48, 28, 76]) : backdrop);
       continue;
     }
     // Apply uneven lighting and slight deterministic photo noise.
-    const paper = 246 - 10 * v - 3 * u + ((px * 7 + py * 13) % 5 - 2);
+    const paper = (shadowed ? 137 + 108 * u : 246) - 10 * v - 3 * u +
+      ((px * 7 + py * 13) % 5 - 2);
     let value = paper;
     let localRow = -1, localCol = -1, matchedPart = -1;
     for (let part = 0; part < symbols.length; part++) {
@@ -200,6 +203,20 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     await expect(verifyQRedSeals(recovered, publicKey))
       .resolves.toMatchObject({ status: "VALID", content });
   }, 90000);
+
+  it("[WM-01, WM-03] recovers a signed rectangular watermark over patterned purple cloth and strong shadow", async () => {
+    const content = "Strongly shaded physical-photo regression with purple patterned background. ".repeat(7).trim();
+    const { seals } = await signed(content);
+    expect(seals).toHaveLength(1);
+    const photo = printAndPhotograph(seals, {
+      width: 850, height: 1120, ink: [64, 118, 235],
+      patternedBackdrop: true, shadowed: true,
+    });
+    const recovered = await scanPdfPage(photo);
+    expect(recovered.seals).toContain(seals[0]);
+    await expect(verifyQRedSeals(recovered.seals, publicKey))
+      .resolves.toMatchObject({ status: "VALID", content });
+  }, 60000);
 
   it("[WM-04, WM-05] reconstructs FOUR adjacent QR grids with no internal quiet zones", async () => {
     const content = "Four-quadrant signed page\n" + "QRed evidence-".repeat(700);

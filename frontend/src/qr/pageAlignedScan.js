@@ -101,19 +101,35 @@ function locatePaperAtResolution(image) {
   const deskRgb = [0, 1, 2].map(channel =>
     cornerOffsets.reduce((sum, [x, y]) => sum + data[(y * width + x) * 4 + channel], 0) / 4);
   const deskChroma = Math.max(...deskRgb) - Math.min(...deskRgb);
-  const useChroma = deskChroma >= 9 && paper > 218;
+  const paperChroma = [];
+  for (const v of [0.3, 0.4, 0.5, 0.6, 0.7]) {
+    for (const u of [0.3, 0.4, 0.5, 0.6, 0.7]) {
+      const x = Math.round(u * (width - 1)), y = Math.round(v * (height - 1));
+      const index = (y * width + x) * 4;
+      const r = data[index], g = data[index + 1], b = data[index + 2];
+      paperChroma.push(Math.max(r, g, b) - Math.min(r, g, b));
+    }
+  }
+  paperChroma.sort((a, b) => a - b);
+  // A printed gray QR on white paper is nearly neutral even beneath shadow,
+  // while a purple or brightly patterned tabletop remains chromatic.
+  // Don't require paper to exceed 218: real photos often expose white as ~190.
+  const useChroma = deskChroma >= 12 && paperChroma[Math.floor(paperChroma.length / 2)] < deskChroma * 0.55;
   if (Math.abs(contrast) < 8 && !useChroma) return null;
   const forward = contrast >= 0;
   const threshold = Math.abs(contrast) >= 45
     ? (paper + bg) / 2
     : bg + (forward ? 1 : -1) * Math.max(2.5, 0.23 * Math.abs(contrast));
+  const chromaLimit = Math.max(7, Math.min(12, deskChroma * 0.45));
   const bright = (x, y) => {
     const value = at(x, y);
-    if (forward ? value >= threshold : value <= threshold) return true;
-    if (!useChroma || value < 215 || value < bg - 7) return false;
-    const start = (y * width + x) * 4;
-    const r = data[start], g = data[start + 1], b = data[start + 2];
-    return Math.max(r, g, b) - Math.min(r, g, b) <= Math.max(5, deskChroma * 0.35);
+    if (useChroma) {
+      const start = (y * width + x) * 4;
+      const r = data[start], g = data[start + 1], b = data[start + 2];
+      return value > Math.max(45, bg * 0.42) &&
+        Math.max(r, g, b) - Math.min(r, g, b) < chromaLimit;
+    }
+    return forward ? value >= threshold : value <= threshold;
   };
   const rowStep = Math.max(2, Math.round(height / 280));
   const colStep = Math.max(2, Math.round(width / 280));
@@ -157,7 +173,9 @@ function locatePaperAtResolution(image) {
   if (edges.some(edge => !edge)) return null;
   const [l, r, t, b] = edges;
   const quad = [intersect(l, t), intersect(r, t), intersect(r, b), intersect(l, b)];
-  if (quad.some(p => !p || !Number.isFinite(p.x) || !Number.isFinite(p.y))) return null;
+  if (quad.some(p => !p || !Number.isFinite(p.x) || !Number.isFinite(p.y) ||
+      p.x < -width * 0.03 || p.x > width * 1.03 ||
+      p.y < -height * 0.03 || p.y > height * 1.03)) return null;
   const [tl, tr, br, bl] = quad;
   const pageWidth = (distance(tl, tr) + distance(bl, br)) / 2;
   const pageHeight = (distance(tl, bl) + distance(tr, br)) / 2;
@@ -205,6 +223,39 @@ export function pageHomography([tl, tr, br, bl]) {
   };
 }
 
+// Find the locally illuminated *paper*, not an absolute RGB white value.
+// A printed sheet can be 130 gray in shadow and 220 gray under bright light.
+// Twenty-five samples within each of 32x32 page-coordinate tiles estimate
+// the exposed paper signal, rejecting colored glyphs. This is computed only
+// once per page-aligned scan, even for a four-quadrant watermark.
+function paperBrightnessMap(image, mapping) {
+  const count = 32, values = new Float32Array(count * count);
+  for (let row = 0; row < count; row++) for (let col = 0; col < count; col++) {
+    let best = 0;
+    for (let sy = 0; sy < 5; sy++) for (let sx = 0; sx < 5; sx++) {
+      const u = (col + (sx + 0.5) / 5) / count;
+      const v = (row + (sy + 0.5) / 5) / count;
+      const point = mapping(u, v), x = Math.round(point.x), y = Math.round(point.y);
+      if (x < 0 || y < 0 || x >= image.width || y >= image.height) continue;
+      const index = (y * image.width + x) * 4;
+      if (isChromaticForeground(image.data, index)) continue;
+      const gray = luminance(image.data, index);
+      if (gray > best) best = gray;
+    }
+    values[row * count + col] = best;
+  }
+  return (u, v) => {
+    const xx = Math.max(0, Math.min(count - 1.001, u * count - 0.5));
+    const yy = Math.max(0, Math.min(count - 1.001, v * count - 0.5));
+    const x = Math.floor(xx), y = Math.floor(yy), fx = xx - x, fy = yy - y;
+    const a = values[y * count + x], b = values[y * count + Math.min(count - 1, x + 1)];
+    const c = values[Math.min(count - 1, y + 1) * count + x];
+    const d = values[Math.min(count - 1, y + 1) * count + Math.min(count - 1, x + 1)];
+    return Math.max(35, (a * (1 - fx) + b * fx) * (1 - fy) +
+      (c * (1 - fx) + d * fx) * fy);
+  };
+}
+
 function observe(image, mapping, region, size, row, col, ox = 0.5, oy = 0.5) {
   const u = region.x + region.width * (col + ox) / size;
   const v = region.y + region.height * (row + oy) / size;
@@ -214,9 +265,11 @@ function observe(image, mapping, region, size, row, col, ox = 0.5, oy = 0.5) {
   const index = (sy * image.width + sx) * 4;
   if (isChromaticForeground(image.data, index)) return null;
   const gray = luminance(image.data, index);
-  // Solid dark text is opaque, not evidence of the pale QR bit.
-  if (gray < 175) return null;
-  return gray;
+  const paper = image.paperAt ? image.paperAt(u, v) : 255;
+  // Dark text is missing evidence, but a gray watermark under a shadow
+  // must never be discarded solely because its absolute luminance is <175.
+  if (gray < paper * 0.56) return null;
+  return Math.min(255, 255 * gray / paper);
 }
 
 function finderIsDark(row, col) {
@@ -382,11 +435,12 @@ export function scanPageAlignedImage(image) {
   if (!quad) return [];
   const mapping = pageHomography(quad);
   if (!mapping) return [];
-  const single = decodeRegion(image, mapping, pageWatermarkRegions(1)[0]);
+  const sampledImage = { ...image, paperAt: paperBrightnessMap(image, mapping) };
+  const single = decodeRegion(sampledImage, mapping, pageWatermarkRegions(1)[0]);
   if (single) return [single];
   const codes = [];
   for (const region of pageWatermarkRegions(4)) {
-    const found = decodeRegion(image, mapping, region);
+    const found = decodeRegion(sampledImage, mapping, region);
     if (found && !codes.some(other => other.seal === found.seal)) codes.push(found);
   }
   return codes;
