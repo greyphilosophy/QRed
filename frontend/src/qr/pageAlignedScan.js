@@ -208,6 +208,7 @@ function restoreStructure(matrix, size) {
 function sampledMatrix(image, mapping, region, version) {
   const size = 17 + 4 * version;
   const bits = new Uint8Array(size * size), unknown = new Uint8Array(bits.length);
+  const confidence = new Uint8Array(bits.length);
   const offsets = [0.20, 0.5, 0.80];
   for (let row = 0; row < size; row++) for (let col = 0; col < size; col++) {
     let pale = 0, paper = 0;
@@ -222,10 +223,15 @@ function sampledMatrix(image, mapping, region, version) {
     // If text covers the entire module, guessing white turns an erasure
     // (known location) into a more expensive unknown-position byte error.
     // Flag for the RS erasure decoder instead.
-    if (pale + paper < 3 || Math.abs(pale - paper) < 2) unknown[index] = 1;
+    if (pale + paper < 3 || Math.abs(pale - paper) < 2) {
+      unknown[index] = 1;
+      // A nearly fully opaque module is less trustworthy than a cell with
+      // exposed pixels. This value ranks erasures; it is not a QR bit.
+      confidence[index] = 9 - (pale + paper);
+    }
   }
   restoreStructure(bits, size);
-  return { bits, size, unknown };
+  return { bits, size, unknown, confidence };
 }
 
 function rasterForDecoder({ bits, size }) {
@@ -258,7 +264,7 @@ function scannedGeometry(mapping, region, size) {
 
 function decodeRegion(image, mapping, region) {
   for (const { version } of chooseVersions(image, mapping, region)) {
-    const { bits, size, unknown } = sampledMatrix(image, mapping, region, version);
+    const { bits, size, unknown, confidence } = sampledMatrix(image, mapping, region, version);
     const raster = rasterForDecoder({ bits, size });
     const ordinary = jsQR(raster.data, raster.width, raster.width, { inversionAttempts: "dontInvert" });
     if (ordinary?.version === version) {
@@ -270,7 +276,7 @@ function decodeRegion(image, mapping, region) {
     // pass this recovery. Erasures come from photographed opaque foreground,
     // never from a saved PDF's text, layout or claimed content.
     if (!unknown.some(Boolean)) continue;
-    const recovered = readErasedQrMatrix(bits, unknown, version);
+    const recovered = readErasedQrMatrix(bits, unknown, version, confidence);
     if (!recovered) continue;
     const code = { data: "QRED.ORG", version, correctedData: recovered.correctedData,
       location: scannedGeometry(mapping, region, size), pageAligned: true, erasureAware: true };

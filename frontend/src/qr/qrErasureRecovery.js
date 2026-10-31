@@ -128,37 +128,82 @@ function blockLayout(version, ecLevelBits) {
   return { total, sizes, parityPerBlock };
 }
 
-export function recoverErasedDataCodewords(codewords, version, ecLevelBits, interleavedErasures = new Set()) {
-  const info = blockLayout(version, ecLevelBits);
-  if (!info || codewords.length < info.total) return null;
+function separateBlocks(codewords, info) {
   const blocks = info.sizes.map(size => new Uint8Array(size + info.parityPerBlock));
-  const positions = blocks.map(() => new Set());
-  let index = 0;
+  const indexes = blocks.map(block => new Array(block.length));
+  let cursor = 0;
   for (let offset = 0; offset < Math.max(...info.sizes); offset++) {
     for (let block = 0; block < blocks.length; block++) {
       if (offset >= info.sizes[block]) continue;
-      blocks[block][offset] = codewords[index];
-      if (interleavedErasures.has(index)) positions[block].add(offset);
-      index++;
+      blocks[block][offset] = codewords[cursor];
+      indexes[block][offset] = cursor++;
     }
   }
   for (let offset = 0; offset < info.parityPerBlock; offset++) {
     for (let block = 0; block < blocks.length; block++) {
-      const target = info.sizes[block] + offset;
-      blocks[block][target] = codewords[index];
-      if (interleavedErasures.has(index)) positions[block].add(target);
-      index++;
+      const position = info.sizes[block] + offset;
+      blocks[block][position] = codewords[cursor];
+      indexes[block][position] = cursor++;
     }
   }
-  let cursor = 0;
-  const output = new Uint8ClampedArray(info.sizes.reduce((a, b) => a + b, 0));
+  return { blocks, indexes };
+}
+
+function dataFromBlocks(blocks, sizes) {
+  const data = new Uint8ClampedArray(sizes.reduce((sum, length) => sum + length, 0));
+  let offset = 0;
   for (let i = 0; i < blocks.length; i++) {
-    const corrected = solveErasures(blocks[i], positions[i], info.parityPerBlock);
-    if (!corrected) return null;
-    output.set(corrected.subarray(0, info.sizes[i]), cursor);
-    cursor += info.sizes[i];
+    data.set(blocks[i].subarray(0, sizes[i]), offset);
+    offset += sizes[i];
   }
-  return output;
+  return data;
+}
+
+export function recoverErasedDataCodewords(codewords, version, ecLevelBits, interleavedErasures = new Set()) {
+  const info = blockLayout(version, ecLevelBits);
+  if (!info || codewords.length < info.total) return null;
+  const { blocks, indexes } = separateBlocks(codewords, info);
+  const corrected = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const positions = new Set(indexes[i].flatMap((global, local) =>
+      interleavedErasures.has(global) ? [local] : []));
+    const fixed = solveErasures(blocks[i], positions, info.parityPerBlock);
+    if (!fixed) return null;
+    corrected.push(fixed);
+  }
+  return dataFromBlocks(corrected, info.sizes);
+}
+
+// Soft erasures: a wholly text-covered byte is less trustworthy than a byte
+// with a single ambiguous sample. Spend the limited parity symbols on the
+// highest-risk bytes first, and use BM for any unmarked residual errors.
+export function recoverRankedErasedCodewords(codewords, version, ecLevelBits, riskScores) {
+  const info = blockLayout(version, ecLevelBits);
+  if (!info || codewords.length < info.total || riskScores.length < info.total) return null;
+  const { blocks, indexes } = separateBlocks(codewords, info);
+  const corrected = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const candidates = indexes[i].map((global, local) => ({ local, risk: riskScores[global] || 0 }))
+      .filter(item => item.risk > 0)
+      .sort((a, b) => b.risk - a.risk || a.local - b.local);
+    const ec = info.parityPerBlock, total = candidates.length;
+    const budgets = [...new Set([
+      Math.min(total, ec - 6), Math.min(total, ec - 8),
+      Math.min(total, ec - 4), Math.min(total, ec - 10),
+      Math.min(total, Math.floor(total * 0.7)),
+      Math.min(total, ec - 2), Math.min(total, ec),
+      Math.min(total, ec - 12), 0,
+    ].filter(value => value >= 0))];
+    let fixed = null;
+    for (const size of budgets) {
+      const positions = new Set(candidates.slice(0, size).map(item => item.local));
+      fixed = solveErasures(blocks[i], positions, ec);
+      if (fixed) break;
+    }
+    if (!fixed) return null;
+    corrected.push(fixed);
+  }
+  return dataFromBlocks(corrected, info.sizes);
 }
 
 // Recover codewords from the QR's normal zig-zag interleave. A module is
@@ -185,13 +230,32 @@ export function codewordErasureIndexes(unknown, version) {
   return erased;
 }
 
-export function readErasedQrMatrix(bits, unknown, version) {
+export function readErasedQrMatrix(bits, unknown, version, confidence = null) {
   const size = 17 + 4 * version;
   if (bits.length !== size * size || unknown.length !== bits.length) return null;
   const matrix = Array.from({ length: size }, (_, row) =>
     Array.from({ length: size }, (_, col) => Boolean(bits[row * size + col])));
   const { codewords, ecLevelBits } = codewordsFromMatrix(matrix, version);
   const erased = codewordErasureIndexes(unknown, version);
-  const data = recoverErasedDataCodewords(codewords, version, ecLevelBits, erased);
+  let data = recoverErasedDataCodewords(codewords, version, ecLevelBits, erased);
+  if (!data && erased.size) {
+    const risk = new Uint16Array(codewords.length);
+    const quality = confidence?.length === unknown.length ? confidence : unknown;
+    const reserved = functionMask(size, version);
+    let bit = 0, upward = true;
+    for (let right = size - 1; right > 0; right -= 2) {
+      if (right === 6) right--;
+      for (let offset = 0; offset < size; offset++) {
+        const row = upward ? size - 1 - offset : offset;
+        for (const col of [right, right - 1]) {
+          if (reserved[row][col]) continue;
+          if (bit >> 3 < risk.length) risk[bit >> 3] += quality[row * size + col];
+          bit++;
+        }
+      }
+      upward = !upward;
+    }
+    data = recoverRankedErasedCodewords(codewords, version, ecLevelBits, risk);
+  }
   return data && { correctedData: data, interleavedErasures: erased.size };
 }
