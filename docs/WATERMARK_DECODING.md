@@ -31,12 +31,22 @@ are for **QRed's own verifier**, not for standard phone-camera QR apps.
 
 ## Photograph verification
 
-The page-aligned scanner detects a rectangular white sheet against a darker
-background from visible paper edges, then computes a projective mapping into
-normalized page coordinates. Merely scaling a photograph by 8.5/11 cannot
-remove skew or keystone distortion. A white sheet on a white background or a
-cropped sheet may not be locatable; in that case QRed retains conventional
-finder-based scanning.
+The page-aligned scanner detects the rectangular sheet from visible paper
+edges (including modest brightness or color separation from a pale tabletop),
+then computes a projective mapping into normalized page coordinates. Merely
+scaling a photograph by 8.5/11 cannot remove skew or keystone distortion.
+There is no reliable optical way to infer a border that has no contrast with
+the background: white paper against indistinguishable white surroundings,
+or a heavily cropped sheet, may be unlocatable. In those cases QRed retains
+conventional finder-based scanning; placing the document on a contrasting
+surface makes page-aligned scanning easier.
+
+High-resolution photos are not blindly rejected at 12 megapixels. The page
+edge detector instead runs on a bounded (~1.5 MP) preview and maps the
+detected corners **back to the original full-resolution pixels**, which are
+still used to estimate the QR modules. If that scan fails, legacy QR-region
+discovery runs on a separately bounded (~8 MP) copy so it never repeatedly
+clones a complete 12–48 MP original photograph.
 
 For each expected 1/4-page region, candidate QR versions 1..40 are checked
 against visible finder and timing patterns. The expected modules are sampled
