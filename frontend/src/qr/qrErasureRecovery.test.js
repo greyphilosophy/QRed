@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createQRedQrSymbol } from "../qredQr.js";
+import { createQRedQrSymbol, createQRedQrData } from "../qredQr.js";
 import { sealString } from "../sealFormat.js";
 import { hiddenPayloadFromScanResult } from "./hiddenPayload.js";
-import { readErasedQrMatrix } from "./qrErasureRecovery.js";
+import { readErasedQrMatrix, recoverErasedDataCodewords } from "./qrErasureRecovery.js";
+import { codewordsFromMatrix } from "./qrLowLevel.js";
 
 function fixture() {
   const payload = new Uint8Array(720);
@@ -27,6 +28,18 @@ function recoveredSeal(qr, bits, unknown) {
 describe("QR Reed-Solomon erasure-aware recovery", () => {
   it("reads the original complete hidden payload without changing its signed wire format", () => {
     const qr = fixture();
+    const data = createQRedQrData(qr.seal, { errorCorrectionLevel: "L" });
+    const matrix = Array.from({ length: qr.size }, (_, row) =>
+      Array.from({ length: qr.size }, (_, col) => Boolean(qr.bits[row * qr.size + col])));
+    const extracted = codewordsFromMatrix(matrix, qr.symbol.version);
+    const difference = extracted.codewords.reduce((sum, byte, i) => sum + Number(byte !== data.codewords[i]), 0);
+    const corrected = recoverErasedDataCodewords(data.codewords, data.version, 1);
+    console.info("WM RS diagnostics", { version: data.version, ecLevelBits: extracted.ecLevelBits,
+      extractedLength: extracted.codewords.length, codewordCount: data.codewords.length,
+      difference, rawDirectDecodes: corrected !== null,
+      extractedHead: Array.from(extracted.codewords.slice(0, 12)),
+      encodedHead: Array.from(data.codewords.slice(0, 12)) });
+    expect(Array.from(corrected ?? [])).toEqual(Array.from(data.bytes));
     expect(recoveredSeal(qr, qr.bits, qr.unknown)).toBe(qr.seal);
   });
 
