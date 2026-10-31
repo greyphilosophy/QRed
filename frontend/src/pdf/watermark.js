@@ -5,7 +5,7 @@ import { scanQrImage } from "../qr/scanQrImage.js";
 import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
 import { renderPdfPage, withPdfDocument } from "./readPdfText.js";
 import { planWatermarks } from "./watermarkPlacement.js";
-import { scanAllSealsFromPage, simulatePrintPhoto } from "./watermarkPreflight.js";
+import { scanAllSealsFromPage, scanFramedSealFromPage, simulatePrintPhoto } from "./watermarkPreflight.js";
 
 export { planWatermarks } from "./watermarkPlacement.js";
 
@@ -139,8 +139,13 @@ function crop(image, box) {
 // print/photo degradation and full-page discovery. Any failure uses a footer.
 // Physical printer/camera tests remain necessary; simulations cannot promise
 // compatibility with every device.
-export async function checkWatermarks(bytes, layouts, pageSealResults) {
+export async function checkWatermarks(bytes, layouts, pageSealResults, { onFailure = null } = {}) {
   const failed = new Set();
+  const fail = (index, reason) => {
+    if (failed.has(index)) return;
+    failed.add(index);
+    onFailure?.(index, reason);
+  };
   await withPdfDocument(new Blob([bytes], { type: "application/pdf" }), async (pdf) => {
     for (let index = 0; index < layouts.length; index++) {
       if (!layouts[index]) continue;
@@ -151,7 +156,7 @@ export async function checkWatermarks(bytes, layouts, pageSealResults) {
           { tryRescaling: false, maxAttempts: 3 });
         const expected = pageSealResults[index].seals[part];
         if (hiddenPayloadFromScanResult(code) !== expected) {
-          failed.add(index);
+          fail(index, "The seal could not be read in the clean PDF.");
           break;
         }
         // A clean PDF render is too forgiving. Check a softened, slightly
@@ -159,7 +164,7 @@ export async function checkWatermarks(bytes, layouts, pageSealResults) {
         const photo = simulatePrintPhoto(qr);
         if (hiddenPayloadFromScanResult(scanQrImage(photo.data, photo.width, photo.height,
           { tryRescaling: false, maxAttempts: 3 })) !== expected) {
-          failed.add(index);
+          fail(index, "The seal did not survive the simulated print test.");
           break;
         }
       }
@@ -167,12 +172,19 @@ export async function checkWatermarks(bytes, layouts, pageSealResults) {
       // Require the verifier to locate *every* seal on the full page as well.
       if (!failed.has(index) && !scanAllSealsFromPage(image, pageSealResults[index].seals,
         { entry: layouts[index].entry })) {
-        failed.add(index);
+        // Full-page discovery is useful, but not mandatory: a person can
+        // frame the pale watermark more closely with a phone camera.
+        // A 40%-wider field of view still requires independent QR location,
+        // and every code must yield its *exact* signed hidden payload.
+        const framedReadable = layouts[index].boxes.every((box, part) =>
+          scanFramedSealFromPage(image, box, pageSealResults[index].seals[part],
+            { entry: layouts[index].entry }));
+        if (!framedReadable) fail(index, "The seal could not be located in a camera-framed view.");
       }
       if (layouts[index].entry) {
         const qr = crop(image, layouts[index].entry);
         if (scanQrImage(qr.data, qr.width, qr.height, { tryWatermark: false })?.data !== ENTRY_URL) {
-          failed.add(index);
+          fail(index, "The small verification-link QR could not be read.");
         }
       }
     }

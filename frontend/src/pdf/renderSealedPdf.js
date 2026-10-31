@@ -18,13 +18,21 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
   // that page needs a footer; image-only and blank pages still use one.
   const footerPages = tryWatermarks
     ? pagesWithText.flatMap((hasText, index) => !hasText ? [index + 1] : []) : [];
+  // Only short reason labels are retained; never collect PDF text or scan data.
+  const footerReasons = {};
+  for (let index = 0; index < pagesWithText.length; index++) {
+    if (!pagesWithText[index] && tryWatermarks) footerReasons[index + 1] = "This page has no extractable text.";
+  }
   let plannedWatermarkLayout = null;
   if (tryWatermarks) {
     const watermarkPages = pagesWithText.map((_, index) => index).filter(index => !footerPages.includes(index + 1));
     if (watermarkPages.length) {
       const { planPdfWatermarks } = await import("./watermark.js");
       plannedWatermarkLayout = await planPdfWatermarks(file, pageSealResults, watermarkPages);
-      for (const index of watermarkPages) if (!plannedWatermarkLayout[index]) footerPages.push(index + 1);
+      for (const index of watermarkPages) if (!plannedWatermarkLayout[index]) {
+        footerPages.push(index + 1);
+        footerReasons[index + 1] = "No safe watermark position was found.";
+      }
     }
   }
   async function renderAttempt() {
@@ -82,11 +90,13 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
 
     const sealedBytes = await pdf.save();
     let failed = [];
+    const failureReasons = {};
     if (watermarkLayout?.some(Boolean)) {
       const { checkWatermarks } = await import("./watermark.js");
-      failed = await checkWatermarks(sealedBytes, watermarkLayout, pageSealResults);
+      failed = await checkWatermarks(sealedBytes, watermarkLayout, pageSealResults,
+        { onFailure: (index, reason) => { failureReasons[index + 1] = reason; } });
     }
-    return { sealedBytes, watermarkLayout, failed };
+    return { sealedBytes, watermarkLayout, failed, failureReasons };
   }
   // Give a failed watermark one distinct placement before sacrificing the
   // original page size for a footer. Both candidates must pass every check.
@@ -107,10 +117,11 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
         plannedWatermarkLayout[index] = alternatives[index];
       } else if (!footerPages.includes(index + 1)) {
         footerPages.push(index + 1);
+        footerReasons[index + 1] = rendered.failureReasons[index + 1] ?? "The watermark did not pass verification.";
       }
     }
   } while (rendered.failed.length);
   const { sealedBytes, watermarkLayout } = rendered;
   footerPages.sort((a, b) => a - b);
-  return { blob: new Blob([sealedBytes], { type: "application/pdf" }), watermarkLayout, footerPages };
+  return { blob: new Blob([sealedBytes], { type: "application/pdf" }), watermarkLayout, footerPages, footerReasons };
 }
