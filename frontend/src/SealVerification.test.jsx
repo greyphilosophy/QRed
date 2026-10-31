@@ -202,11 +202,14 @@ it("collects all four signed chunks from one uploaded page photograph", async ()
   vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(callback =>
     callback(new Blob(["one-page"], { type: "image/png" })));
   render(<App />);
-  selectKey(publicKey);
-  await screen.findByText(/Public key opened/);
   fireEvent.change(screen.getByLabelText("Choose QR image"), {
     target: { files: [new File(["synthetic"], "whole-page.png", { type: "image/png" })] },
   });
+  // QRed displays the local-key picker only after a QRed v3 seal is
+  // collected. The previous test tried to open it before uploading a seal.
+  await screen.findByLabelText("Open issuer public key file");
+  selectKey(publicKey);
+  await screen.findByText(/Public key opened/);
   expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
   await waitFor(() => expect(scanner.props.collectionProgress).toMatchObject({
     collected: 4, total: 4, finished: true,
