@@ -81,9 +81,9 @@ async function sampleDocument(kind) {
     // Deliberately incompressible text forces >1 QR's worth of signed bytes.
     // Keep it under the original page boundary and readable at 100% size.
     const rand = nextRand(0x0b1eaced);
-    for (let i = 0; i < 54; i++) {
+    for (let i = 0; i < 40; i++) {
       const values = Array.from({ length: 9 }, () => rand().toString(16).padStart(8, "0")).join(" ");
-      stamp(page, `R${String(i + 1).padStart(2, "0")} ${values}`, 43, 690 - i * 10.6, 7.45,
+      stamp(page, `R${String(i + 1).padStart(2, "0")} ${values}`, 43, 690 - i * 14.0, 8.0,
         rgb(0.10, 0.14, 0.19), mono);
     }
     stamp(page, "END QUADRANT CHALLENGE - scan all four parts from one photograph.", 43, 91, 8.4, ink.blue, regular);
@@ -148,6 +148,8 @@ for (const [name, kind, expectedCount] of samples) {
   });
   const { blob, watermarkLayout, pageSealStrings, footerPages } = result;
   const parts = pageSealStrings[0];
+  console.log("SEAL PREFLIGHT", JSON.stringify({name, footerPages, footerReasons:result.footerReasons,
+    layout: watermarkLayout[0], version:parts.map(s => createQRedQrSymbol(s).version)}));
   assert.equal(parts.length, expectedCount,
     `${name} produced ${parts.length} part(s), expected ${expectedCount}`);
   assert.deepEqual(footerPages, [], `${name} fell back to a footer`);
