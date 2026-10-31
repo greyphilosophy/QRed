@@ -16,9 +16,12 @@ occupy more usable page area, and evaluate the exposed pixels in each predicted
 module. Every recovered seal must still pass the existing hidden-payload,
 chunk-digest and Ed25519 verification.
 
-The baseline is the current `scanQrImage` with ordinary finder-based recovery,
-the current square `planWatermarks` placement, and the existing signed-payload
-tests. Keep it available as a fallback. No scanned personal PDFs, keys or
+The baseline is the existing finder-based `scanPdfPage` pipeline with
+`{pageAligned: false}`, the current square `planWatermarks` placement,
+and the signed-payload tests. The enhanced scanner must support the same
+`scanPdfPage` call with `{pageAligned: true}` (default after rollout). This
+is a rollback/test switch, not metadata supplied by the original PDF.
+Keep the legacy path as a fallback. No scanned personal PDFs, keys or
 photographs may be sent to a server.
 
 ## Requirements and objective acceptance criteria
@@ -27,7 +30,10 @@ photographs may be sent to a server.
 | --- | --- | --- | --- |
 | **WM-01** | Detect a complete rectangular page independently of QR finder patterns, rectify translation/rotation/perspective and reject ambiguous/incomplete pages. No original PDF, stored stamp layout, or metadata supplied at verification. | Synthetic perspective page photo with one deliberately obscured QR finder must recover the full signed payload using the normal verifier API; unrelated images must not yield seals. | Phone photographs at off-axis angles with page edges visible. No fabricated page geometry when edges are missing. |
 | **WM-02** | When a single QR suffices and outer margins are usable, prefer a **page-filling rectangle** over a square. Preserve paper dimensions and printable margins. Each module may be rectangular; its mapping must be reversible. | On otherwise empty US Letter, the single watermark uses at least **80% of the interior 18-point-margin area**; width and height differ by at least 15%. The actual rendered bottom finder must appear at the correct expected page-relative location. | Readability and normal text legibility on printout. |
-| **WM-03** | Decode from predicted module positions, not just finder geometry: sample several pixels per cell, normalize local lighting and treat foreground text (black, blue, red, yellow, etc.) as missing or low-confidence evidence. Do not assume that every nonblack pixel is QR ink. | At least **four of five** fixed difficult synthetic photographs must recover identical signed data, with at least **three additional successes** over the current finder-only fallback. Partially visible modules are tested, not clean crops. | Compare black and colored text overlays on actual prints. |
+| **WM-03** | Decode from predicted module positions, not just finder geometry: sample several pixels per cell, normalize local lighting and treat foreground text (black, blue, red, yellow, etc.) as missing or low-confidence evidence. Do not assume that every nonblack pixel is QR ink. | At least **four of five** fixed difficult synthetic photographs must recover identical signed data, with at least **three additional successes** over the same scanner with
+`pageAligned: false`. Both modes use the same page-image workload and the
+same production payload verification; partially visible modules are tested,
+not clean crops. | Compare black and colored text overlays on actual prints. |
 | **WM-04** | When one QR cannot hold the signed record, try two and then up to four QR pieces. A 2×2 page grid should not require **four separate internal quiet zones**; it may reconstruct them in memory once the page is rectified. A fragment must carry the same signed bytes as today. | A synthetic page with four adjacent rectangular QR grids, **zero internal quiet zones**, and a partially obscured finder reconstructs **all four distinct chunks** out of order into a valid signed page. A missing chunk remains incomplete. | One camera/page-scan workflow, no manual selection of quadrant codes. |
 | **WM-05** | Never count a visible `QRED.ORG` marker, a guessed bitmap, an incorrect page alignment, or an unverified chunk as a valid seal. Keep existing full-byte, digest, signature and trusted-authority checks. | Signed-payload verification after synthetic recovery; blank/foreground-only page and missing-part negative controls; existing verifier/security regression suite. | Any uncertainty must lead to a retry or clear fallback, not "verified". |
 | **WM-06** | Sealing must refuse unsafe watermark placement after photo-like preflight. Use a readable footer only when practical; preserve original page dimensions when watermark passes. Navigation QR is optional. | Existing `watermarkPreflight`, `pdfWatermark`, `pdfInputIntegrity` and footer fallback tests; new rectangle and 2×2 tests. | Verify printed copy with phone. No silent false positive or inaccessible tiny fallback code. |

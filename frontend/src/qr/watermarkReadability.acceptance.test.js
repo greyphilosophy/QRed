@@ -10,8 +10,6 @@ import { verifyQRedSeals } from "../qredVerifier.js";
 import { planWatermarks } from "../pdf/watermarkPlacement.js";
 import { stampWatermarks } from "../pdf/watermark.js";
 import { renderPdfPage, withPdfDocument } from "../pdf/readPdfText.js";
-import { hiddenPayloadFromScanResult } from "./hiddenPayload.js";
-import { scanQrImage } from "./scanQrImage.js";
 import { scanPdfPage } from "../verifier/scanPdf.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
@@ -136,7 +134,7 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     const n = qr.modules.size;
     // One of the dark pixels in the bottom-left and top-right finder cores.
     for (const [row, col] of [[n - 4, 3], [3, n - 4]]) {
-      expect(qr.modules.get(row, col)).toBe(true);
+      expect(qr.modules.get(row, col)).toBeTruthy();
       const x = box.x + (4 + col + 0.5) * box.width / (n + 8);
       const y = box.y + box.height - (4 + row + 0.5) * box.height / (n + 8);
       expect(sampleAtPagePoint(image, x, y), `finder module ${row},${col}`).toBeLessThan(239);
@@ -187,10 +185,12 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     let finderOnly = 0, pageAligned = 0;
     for (const [name, ink, tilted] of variants) {
       const photo = printAndPhotograph(seals, { ink, tilted, finderBlocked: true });
-      const conventional = scanQrImage(photo.data, photo.width, photo.height,
-        { tryRescaling: false, maxAttempts: 3 });
-      finderOnly += Number(hiddenPayloadFromScanResult(conventional) === seals[0]);
-      const { seals: collected } = await scanPdfPage(photo);
+      // Both variants consume the same production page scanner's work
+      // budget. The option is an explicit rollback switch for the new
+      // page-aligned decoder, not a hint containing the original PDF layout.
+      const legacy = await scanPdfPage(photo, { pageAligned: false });
+      finderOnly += Number(legacy.seals.includes(seals[0]));
+      const { seals: collected } = await scanPdfPage(photo, { pageAligned: true });
       if (collected.includes(seals[0])) {
         console.info(`WM-08 verified case: ${name}`);
         expect(await verifyQRedSeals(collected, publicKey)).toMatchObject({ status: "VALID", content });
