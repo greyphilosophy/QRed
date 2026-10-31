@@ -158,6 +158,31 @@ describe("experimental PDF watermarks", () => {
     }
   }, 60000);
 
+  it("uses a signed first-page watermark when no navigation QR fits", async () => {
+    // Thin print rules eliminate every 70x52-point blank entry box, but
+    // leave QR finder patterns and the signed payload recoverable.
+    const pdf = await PDFDocument.create();
+    const page = pdf.addPage([612, 792]);
+    for (let y = 24; y < 780; y += 32) {
+      page.drawLine({ start: { x: 0, y }, end: { x: 612, y },
+        thickness: 0.35, color: rgb(0, 0, 0) });
+    }
+    page.drawText("Example signed report", { x: 60, y: 740, size: 12 });
+    const file = new File([await pdf.save()], "ruled-document.pdf", { type: "application/pdf" });
+    const result = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "automatic" });
+    expect(result.footerPages).toEqual([]);
+    expect(result.watermarkLayout[0]?.entry).toBeUndefined();
+    const sealed = await PDFDocument.load(await result.blob.arrayBuffer());
+    expect(sealed.getPage(0).getSize()).toEqual({ width: 612, height: 792 });
+    const printed = render(await result.blob.arrayBuffer(), 1);
+    const symbol = crop(printed, result.watermarkLayout[0].boxes[0]);
+    const payload = hiddenPayloadFromScanResult(scanQrImage(symbol.data, symbol.width, symbol.height));
+    expect(payload).toBe(result.pageSealStrings[0][0]);
+    await expect(verifyQRedSeals([payload], publicKey)).resolves.toMatchObject({
+      status: "VALID", page_number: 1, page_count: 1,
+    });
+  }, 60000);
+
   it("preserves black text with a recoverable watermark or a safe footer on both pages", async () => {
     const file = await makeDocument({ pages: 2 });
     const original = render(await file.arrayBuffer());
