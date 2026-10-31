@@ -1,5 +1,10 @@
 # Page-aware watermark recovery (experimental)
 
+This document describes the incremental behavior already implemented.
+The [page-filling rectangular watermark acceptance requirements](WATERMARK_READABILITY_REQUIREMENTS.md)
+are **not yet met**; draft PR #157 contains executable red tests that must
+pass before claiming the more ambitious readability improvement.
+
 QRed uses the same signed QR payload and QR Reed–Solomon checks for both
 ordinary printed seals and pale watermarks. Do not accept the visible
 `QRED.ORG` marker as proof; verification requires *all* corrected hidden

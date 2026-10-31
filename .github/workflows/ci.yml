@@ -28,10 +28,30 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - name: Test frontend and rendered PDF seals
         working-directory: frontend
-        run: npm test -- --exclude '**/{pdfWatermark,pdfClientSeal,pdfInputIntegrity,pdfVisualEvidence,scanQrImage,scanPdf}.test.js'
+        run: npm test -- --exclude '**/{pdfWatermark,pdfClientSeal,pdfInputIntegrity,pdfVisualEvidence,scanQrImage,scanPdf}.test.js' --exclude '**/watermarkReadability.acceptance.test.js'
       - name: Build frontend
         working-directory: frontend
         run: npm run build:pages
+
+  # Deliberately red until actual page-corner/rectangular watermark recovery
+  # satisfies docs/WATERMARK_READABILITY_REQUIREMENTS.md.
+  # Keep this as a separate hard gate; do not skip or use expected-failure tests.
+  watermark-readability-acceptance:
+    name: Watermark readability acceptance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Verify rectangular, page-aligned, signed photo recovery
+        working-directory: frontend
+        run: npm test -- src/qr/watermarkReadability.acceptance.test.js
 
   frontend-heavy-tests:
     name: Frontend heavy (${{ matrix.shard }})

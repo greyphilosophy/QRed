@@ -92,6 +92,9 @@ Watermark recovery uses QR module geometry to sample pale neutral-gray ink
 around dark or colored foreground text, with uncertain pixels excluded from
 the decision. The page can carry up to four conventional QR symbols, in a
 2×2 watermark layout where space permits. See [watermark decoding](docs/WATERMARK_DECODING.md).
+Page-filling rectangular printing and page-corner image decoding remain
+**unimplemented**; [readability requirements and red acceptance tests](docs/WATERMARK_READABILITY_REQUIREMENTS.md)
+define the release gate for those improvements.
  Recovered data still requires the same
 cryptographic signature verification. Digital rendering tests cover opaque white
 backgrounds, text overlap, multiple pages/chunks, and both PDF.js and Poppler.
