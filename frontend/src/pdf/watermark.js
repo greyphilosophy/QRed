@@ -9,8 +9,18 @@ import { scanAllSealsFromPage, scanFramedSealFromPage, simulatePrintPhoto } from
 
 export { planWatermarks } from "./watermarkPlacement.js";
 
-export const ENTRY_URL = "https://qred.org/";
+// Uppercase URL uses QR alphanumeric mode. The URL standard treats scheme
+// and host case-insensitively; omitting the trailing slash allows V1/Q.
+export const ENTRY_URL = "HTTPS://QRED.ORG";
 export const ENTRY_QR_SIZE = 36;
+
+// Enforce the compact layout instead of relying on the QR library's automatic
+// choice (which can silently change if its segmentation defaults change).
+export function createEntryQrSymbol() {
+  return QRCode.create([{ data: ENTRY_URL, mode: "alphanumeric" }], {
+    version: 1, errorCorrectionLevel: "Q",
+  });
+}
 // Fifteen-percent black survives more printer gray-tone loss than the old 6%.
 // Keep it pale enough to preserve the readability of underlying black text.
 export const WATERMARK_GRAY = 0.85;
@@ -146,7 +156,7 @@ export async function stampWatermarks(pdf, layouts, pageSealResults) {
     // The box was checked before any watermark was drawn, and the watermark
     // layout excludes it. Its white quiet zone never covers source content.
     page.drawRectangle({ ...entry, color: rgb(1, 1, 1) });
-    drawSymbol(page, QRCode.create(ENTRY_URL, { errorCorrectionLevel: "M" }),
+    drawSymbol(page, createEntryQrSymbol(),
       { x: entry.x + (entry.width - ENTRY_QR_SIZE) / 2, y: entry.y + 12, width: ENTRY_QR_SIZE, height: ENTRY_QR_SIZE }, 0);
     const font = await pdf.embedFont(StandardFonts.Helvetica);
     const caption = "Verify at qred.org";

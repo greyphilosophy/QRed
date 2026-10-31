@@ -6,12 +6,14 @@ import { join } from "node:path";
 import { PDFDocument, degrees, rgb } from "pdf-lib";
 import { PNG } from "pngjs";
 import jsQR from "jsqr";
+import ECLevel from "qrcode/lib/core/error-correction-level";
+import Mode from "qrcode/lib/core/mode";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { extractPdfText, planQrStampLayout, planQrStampLayoutForFooterBand, sealPdfInBrowser } from "./pdfClientSeal.js";
 import { scanQrImage, createQrFrameScanner } from "./qr/scanQrImage.js";
 import { hiddenPayloadFromScanResult, isQRedEntryLink } from "./qr/hiddenPayload.js";
 import { verifyQRedSeals } from "./qredVerifier.js";
-import { ENTRY_URL, ENTRY_QR_SIZE } from "./pdf/watermark.js";
+import { ENTRY_URL, ENTRY_QR_SIZE, createEntryQrSymbol } from "./pdf/watermark.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
@@ -242,7 +244,7 @@ describe("experimental PDF watermarks", () => {
         expect(checked).toBeGreaterThan(10000);
         expect(changed).toBe(0);
         const entry = crop(image, watermarkLayout[0].entry);
-        expect(jsQR(entry.data, entry.width, entry.height)).toMatchObject({ data: ENTRY_URL, version: 2 });
+        expect(jsQR(entry.data, entry.width, entry.height)).toMatchObject({ data: ENTRY_URL, version: 1 });
         expect(ENTRY_QR_SIZE / 72).toBe(0.5);
         const live = createQrFrameScanner();
         let livePayload;
@@ -358,7 +360,22 @@ it.each([
   await expect(verifyQRedSeals([signed], publicKey)).resolves.toMatchObject({ status: "VALID" });
 }, 60000);
 
-it("recognizes only entry links, not seal fragments or lookalike hosts", () => {
-  for (const text of ["QRED.ORG", "https://qred.org/", "https://qred.org"]) expect(isQRedEntryLink(text)).toBe(true);
-  for (const text of ["https://qred.org/#QRED3:abc", "https://qred.org.evil.test/", "hello qred.org"]) expect(isQRedEntryLink(text)).toBe(false);
+it("generates the half-inch navigation code as version 1, Q, alphanumeric", () => {
+  expect(ENTRY_URL).toBe("HTTPS://QRED.ORG");
+  expect(new URL(ENTRY_URL).href).toBe("https://qred.org/");
+  const qr = createEntryQrSymbol();
+  expect(qr.version).toBe(1);
+  expect(qr.modules.size).toBe(21);
+  expect(qr.errorCorrectionLevel).toEqual(ECLevel.Q);
+  expect(qr.segments).toHaveLength(1);
+  expect(qr.segments[0].mode).toEqual(Mode.ALPHANUMERIC);
+  expect(qr.segments[0].data).toBe(ENTRY_URL);
+  expect(ENTRY_QR_SIZE / 72).toBe(0.5);
+});
+
+it("recognizes both new and legacy entry links, not seal fragments or lookalike hosts", () => {
+  for (const text of ["QRED.ORG", "https://qred.org/", "https://qred.org", "HTTPS://QRED.ORG"])
+    expect(isQRedEntryLink(text)).toBe(true);
+  for (const text of ["https://qred.org/#QRED3:abc", "https://qred.org.evil.test/", "hello qred.org", "HTTPS://QRED.ORG/VERIFY"])
+    expect(isQRedEntryLink(text)).toBe(false);
 });
