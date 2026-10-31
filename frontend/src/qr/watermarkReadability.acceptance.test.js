@@ -18,7 +18,6 @@ const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
 const pageSize = { width: 612, height: 792 };
 const margin = 18;
-const SYNTHETIC_ONLY = "All documents in this test are generated in memory.";
 
 function blankPage() {
   const width = pageSize.width, height = pageSize.height;
@@ -172,7 +171,6 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
   it("[WM-05] never reports a signed seal on blank paper with colored foreground alone", async () => {
     const photo = printAndPhotograph([], { ink: [216, 86, 72], finderBlocked: false });
     expect((await scanPdfPage(photo)).seals).toEqual([]);
-    expect(SYNTHETIC_ONLY).toContain("generated in memory");
   }, 30000);
 
   it("[WM-03, WM-08] achieves >=4/5 signed recoveries and >=3 wins over finder-only baseline", async () => {
@@ -187,13 +185,14 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
       ["black, flat", [24, 24, 24], false],
     ];
     let finderOnly = 0, pageAligned = 0;
-    for (const [_name, ink, tilted] of variants) {
+    for (const [name, ink, tilted] of variants) {
       const photo = printAndPhotograph(seals, { ink, tilted, finderBlocked: true });
       const conventional = scanQrImage(photo.data, photo.width, photo.height,
         { tryRescaling: false, maxAttempts: 3 });
       finderOnly += Number(hiddenPayloadFromScanResult(conventional) === seals[0]);
       const { seals: collected } = await scanPdfPage(photo);
       if (collected.includes(seals[0])) {
+        console.info(`WM-08 verified case: ${name}`);
         expect(await verifyQRedSeals(collected, publicKey)).toMatchObject({ status: "VALID", content });
         pageAligned++;
       }
