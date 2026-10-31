@@ -87,7 +87,7 @@ async function sampleDocument(kind) {
     const alphabet = ["é", "ñ", "ö", "à", "ç", "ø", "ß", "ü", "å", "î", "á", "è", "õ", "ï", "æ", "ù"];
     for (let i = 0; i < 40; i++) {
       const values = Array.from({ length: 47 }, () => alphabet[rand() % alphabet.length]).join("");
-      stamp(page, `R${String(i + 1).padStart(2, "0")} ${values}`, 43, 690 - i * 14.0, 9,
+      stamp(page, `R${String(i + 1).padStart(2, "0")} ${values}`, 43, 690 - i * 14.0, 6.25,
         rgb(0.12, 0.14, 0.18), mono);
     }
     stamp(page, "END QUADRANT CHALLENGE - scan all four parts from one photograph.", 43, 91, 8.4, ink.blue, regular);
