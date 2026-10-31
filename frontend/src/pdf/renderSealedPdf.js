@@ -137,6 +137,31 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
       }
     }
   } while (rendered.failed.length);
+  // An entry-free watermark may be perfectly readable even though the
+  // first watermark+entry geometry failed. The old retry algorithm stopped
+  // here, losing the navigation code despite ample space elsewhere.
+  //
+  // After the *signed watermark* passes, reuse its geometry and search the
+  // original page for a non-overlapping navigation code. Accept the combined
+  // layout only if the complete, unchanged signed payload AND entry QR pass
+  // exactly the same preflight as every other watermark layout.
+  if (rendered.watermarkLayout?.[0] && !rendered.watermarkLayout[0].entry) {
+    const { findEntryForWatermark } = await import("./watermark.js");
+    const prior = plannedWatermarkLayout[0];
+    const entry = await findEntryForWatermark(file, prior.boxes);
+    if (entry) {
+      plannedWatermarkLayout[0] = { ...prior, entry };
+      try {
+        const withEntry = await renderAttempt();
+        if (!withEntry.failed.length) rendered = withEntry;
+        else plannedWatermarkLayout[0] = prior;
+      } catch {
+        // The navigational QR is optional: never discard a validated signed
+        // watermark because an optional follow-up render cannot complete.
+        plannedWatermarkLayout[0] = prior;
+      }
+    }
+  }
   const { sealedBytes, watermarkLayout } = rendered;
   footerPages.sort((a, b) => a - b);
   return { blob: new Blob([sealedBytes], { type: "application/pdf" }), watermarkLayout, footerPages, footerReasons };
