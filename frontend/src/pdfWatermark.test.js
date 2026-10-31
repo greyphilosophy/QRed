@@ -140,9 +140,25 @@ describe("experimental PDF watermarks", () => {
     for (let index = 0; index < 2; index++) {
       const original = render(await file.arrayBuffer(), index + 1);
       const printed = render(await result.blob.arrayBuffer(), index + 1);
-      // Recover from the entire Poppler-rendered page, with no placement hint.
-      const payload = hiddenPayloadFromScanResult(scanQrImage(printed.data, printed.width, printed.height));
+      // Whole-page discovery can prefer the dark navigation link over the
+      // pale signed watermark. A user can instead aim the camera at a roomy
+      // view of the watermark; still require independent QR localization and
+      // the exact hidden signed payload (never just the visible QRED.ORG).
+      let payload = hiddenPayloadFromScanResult(scanQrImage(printed.data, printed.width, printed.height));
+      if (!payload && result.watermarkLayout[index]?.entry) {
+        const box = result.watermarkLayout[index].boxes[0];
+        const margin = Math.min(72, Math.max(18, box.width * 0.2));
+        const x = Math.max(0, box.x - margin), y = Math.max(0, box.y - margin);
+        const right = Math.min(612, box.x + box.width + margin);
+        const top = Math.min(792, box.y + box.height + margin);
+        const framed = crop(printed, { x, y, width: right - x, height: top - y });
+        payload = hiddenPayloadFromScanResult(scanQrImage(framed.data, framed.width, framed.height));
+      }
       expect(payload).toBe(result.pageSealStrings[index][0]);
+      if (result.watermarkLayout[index]?.entry) {
+        const navigation = crop(printed, result.watermarkLayout[index].entry);
+        expect(jsQR(navigation.data, navigation.width, navigation.height)?.data).toBe(ENTRY_URL);
+      }
       const verified = await verifyQRedSeals([payload], publicKey);
       expect(verified).toMatchObject({ status: "VALID", page_number: index + 1, page_count: 2 });
       expect(verified.content).toBe(result.pageSealResults[index].evidence.text);

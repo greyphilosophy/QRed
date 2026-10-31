@@ -19,7 +19,7 @@ const ENTRY_WIDTH = 70, ENTRY_HEIGHT = 52;
 
 // Count every visible nonwhite pixel, including graphics and annotations.
 // Never infer empty space from extracted text alone.
-export function findEntryPlacement(image) {
+export function findEntryPlacement(image, { avoidBoxes = [] } = {}) {
   const { data, width, height, scale, bounds } = image;
   const stride = width + 1;
   const ink = new Uint32Array(stride * (height + 1));
@@ -43,12 +43,36 @@ export function findEntryPlacement(image) {
       const top = Math.max(0, Math.floor((bounds.height - y - ENTRY_HEIGHT - 3) * scale));
       const bottom = Math.min(height, Math.ceil((bounds.height - y + 3) * scale));
       if (ink[bottom * stride + right] - ink[top * stride + right]
-          - ink[bottom * stride + left] + ink[top * stride + left] === 0) {
-        return { x: bounds.x + x, y: bounds.y + y, width: ENTRY_WIDTH, height: ENTRY_HEIGHT };
-      }
+          - ink[bottom * stride + left] + ink[top * stride + left] !== 0) continue;
+      const candidate = { x: bounds.x + x, y: bounds.y + y, width: ENTRY_WIDTH, height: ENTRY_HEIGHT };
+      // Its white background and quiet zone must never paint over the signed
+      // watermark, including its quiet zone. Leave the same 8-point clearance
+      // that first-pass watermark placement reserves around the entry QR.
+      const clearance = 8;
+      if (avoidBoxes.some(box =>
+        candidate.x < box.x + box.width + clearance && candidate.x + candidate.width > box.x - clearance &&
+        candidate.y < box.y + box.height + clearance && candidate.y + candidate.height > box.y - clearance)) continue;
+      return candidate;
     }
   }
   throw new Error("No clear space on the first page for the small qred.org code. Choose a footer layout or provide a PDF with a blank area at least 1.1 by 0.8 inches.");
+}
+
+// Once the actual signed QR geometry has passed preflight, look for a clear
+// navigation-code position around *those* boxes. This is a layout-only pass
+// over the original page, not a new or weaker signed-seal decoding method.
+export async function findEntryForWatermark(file, boxes) {
+  if (!boxes?.length) return null;
+  return withPdfDocument(file, async (pdf) => {
+    const page = await pdf.getPage(1);
+    const supported = page.userUnit === 1 &&
+      page.getViewport({ scale: 2, rotation: 0 }).width *
+      page.getViewport({ scale: 2, rotation: 0 }).height <= 12_000_000;
+    if (!supported) { page.cleanup(); return null; }
+    const image = await renderPdfPage(pdf, 1);
+    try { return findEntryPlacement(image, { avoidBoxes: boxes }); }
+    catch { return null; }
+  });
 }
 
 function drawSymbol(page, symbol, box, gray, multiply = false) {
