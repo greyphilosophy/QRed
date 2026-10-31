@@ -174,7 +174,8 @@ it("does not collect an uploaded image that finishes opening after the user clea
 
 
 it("collects all four signed chunks from one uploaded page photograph", async () => {
-  const content = "Entire printed page photo: one image, four watermark chunks. ".repeat(70);
+  // QRed signs canonicalized text (which trims the trailing space).
+  const content = "Entire printed page photo: one image, four watermark chunks. ".repeat(70).trimEnd();
   const { seals } = await createQRedSeals({
     content, privateKey, publicKey, encodingStrategy: "plaintext",
     timestamp: "2026-10-31T12:00:00Z",
