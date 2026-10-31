@@ -206,6 +206,109 @@ export function recoverRankedErasedCodewords(codewords, version, ecLevelBits, ri
   return dataFromBlocks(corrected, info.sizes);
 }
 
+// Solve QR parity directly for missing *bits*, not entire codewords.
+// A one-bit occlusion costs one GF(2) unknown rather than one GF(256) byte.
+// QR's thirty parity symbols per RS block provide 240 binary constraints.
+function solveBitErasures(block, erasedBits, parityBytes) {
+  const syndrome = syndromes(block, parityBytes);
+  if (syndrome.every(value => value === 0)) return Uint8Array.from(block);
+  const count = erasedBits.length;
+  const equations = parityBytes * 8;
+  if (!count || count > equations) return null;
+  const words = Math.ceil((count + 1) / 32);
+  const rows = Array.from({ length: equations }, () => new Uint32Array(words));
+  const rhsWord = count >>> 5, rhsBit = (1 << (count & 31));
+  for (let k = 0; k < parityBytes; k++) {
+    for (let bit = 0; bit < 8; bit++) {
+      if (syndrome[k] & (1 << bit)) rows[k * 8 + bit][rhsWord] |= rhsBit;
+    }
+  }
+  for (let i = 0; i < count; i++) {
+    const { position, mask } = erasedBits[i];
+    const word = i >>> 5, bitFlag = 1 << (i & 31);
+    const exponent = block.length - 1 - position;
+    for (let k = 0; k < parityBytes; k++) {
+      const contribution = multiply(mask, power(k * exponent));
+      for (let bit = 0; bit < 8; bit++) {
+        if (contribution & (1 << bit)) rows[k * 8 + bit][word] |= bitFlag;
+      }
+    }
+  }
+  const bitAt = (row, index) => Boolean(row[index >>> 5] & (1 << (index & 31)));
+  let pivotRow = 0;
+  for (let col = 0; col < count; col++) {
+    let selected = pivotRow;
+    while (selected < equations && !bitAt(rows[selected], col)) selected++;
+    if (selected === equations) return null; // Underdetermined; fail closed.
+    [rows[pivotRow], rows[selected]] = [rows[selected], rows[pivotRow]];
+    for (let row = pivotRow + 1; row < equations; row++) {
+      if (!bitAt(rows[row], col)) continue;
+      for (let word = 0; word < words; word++) rows[row][word] ^= rows[pivotRow][word];
+    }
+    pivotRow++;
+  }
+  for (let row = count; row < equations; row++) {
+    if (bitAt(rows[row], count)) return null; // Inconsistent with observed bits.
+  }
+  const corrections = new Uint8Array(count);
+  for (let i = count - 1; i >= 0; i--) {
+    let value = Number(bitAt(rows[i], count));
+    for (let col = i + 1; col < count; col++) {
+      if (corrections[col] && bitAt(rows[i], col)) value ^= 1;
+    }
+    corrections[i] = value;
+  }
+  const corrected = Uint8Array.from(block);
+  erasedBits.forEach(({ position, mask }, i) => {
+    if (corrections[i]) corrected[position] ^= mask;
+  });
+  return syndromes(corrected, parityBytes).every(value => value === 0) ? corrected : null;
+}
+
+// The input is one bit mask per interleaved QR codeword, with bit 7 the
+// leftmost bit. No source document or expected payload enters this process.
+export function recoverBitErasedDataCodewords(codewords, version, ecLevelBits, interleavedBitMasks) {
+  const info = blockLayout(version, ecLevelBits);
+  if (!info || codewords.length < info.total || interleavedBitMasks.length < info.total) return null;
+  const { blocks, indexes } = separateBlocks(codewords, info);
+  const corrected = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const missing = [];
+    for (let position = 0; position < indexes[i].length; position++) {
+      const mask = interleavedBitMasks[indexes[i][position]];
+      for (let bit = 0; bit < 8; bit++) {
+        if (mask & (1 << bit)) missing.push({ position, mask: 1 << bit });
+      }
+    }
+    const fixed = solveBitErasures(blocks[i], missing, info.parityPerBlock);
+    if (!fixed) return null;
+    corrected.push(fixed);
+  }
+  return dataFromBlocks(corrected, info.sizes);
+}
+
+function moduleBitErasureMasks(unknown, version, codewordCount) {
+  const size = 17 + 4 * version;
+  const reserved = functionMask(size, version);
+  const masks = new Uint8Array(codewordCount);
+  let bit = 0, upward = true;
+  for (let right = size - 1; right > 0; right -= 2) {
+    if (right === 6) right--;
+    for (let offset = 0; offset < size; offset++) {
+      const row = upward ? size - 1 - offset : offset;
+      for (const col of [right, right - 1]) {
+        if (reserved[row][col]) continue;
+        if ((bit >>> 3) < masks.length && unknown[row * size + col]) {
+          masks[bit >>> 3] |= 1 << (7 - (bit & 7));
+        }
+        bit++;
+      }
+    }
+    upward = !upward;
+  }
+  return masks;
+}
+
 // Recover codewords from the QR's normal zig-zag interleave. A module is
 // uncertain only if the page sampler identified occluding foreground; marks
 // in function/format/align patterns never count as RS data erasures.
@@ -237,7 +340,9 @@ export function readErasedQrMatrix(bits, unknown, version, confidence = null) {
     Array.from({ length: size }, (_, col) => Boolean(bits[row * size + col])));
   const { codewords, ecLevelBits } = codewordsFromMatrix(matrix, version);
   const erased = codewordErasureIndexes(unknown, version);
-  let data = recoverErasedDataCodewords(codewords, version, ecLevelBits, erased);
+  const bitMasks = moduleBitErasureMasks(unknown, version, codewords.length);
+  let data = recoverBitErasedDataCodewords(codewords, version, ecLevelBits, bitMasks);
+  if (!data) data = recoverErasedDataCodewords(codewords, version, ecLevelBits, erased);
   if (!data && erased.size) {
     const risk = new Uint16Array(codewords.length);
     const quality = confidence?.length === unknown.length ? confidence : unknown;

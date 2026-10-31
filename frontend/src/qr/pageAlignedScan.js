@@ -238,11 +238,13 @@ function sampledMatrix(image, mapping, region, version) {
     // If text covers the entire module, guessing white turns an erasure
     // (known location) into a more expensive unknown-position byte error.
     // Flag for the RS erasure decoder instead.
-    if (pale + paper < 3 || Math.abs(pale - paper) < 2) {
+    // Even one foreground-covered observation means the corresponding
+    // module has missing bit evidence. Mark it for GF(2) parity recovery
+    // (which spends only one bit of redundancy, not an entire codeword).
+    // The fallback byte-erasure path ranks how much evidence is missing.
+    if (pale + paper < 9 || Math.abs(pale - paper) < 2) {
       unknown[index] = 1;
-      // A nearly fully opaque module is less trustworthy than a cell with
-      // exposed pixels. This value ranks erasures; it is not a QR bit.
-      confidence[index] = 9 - (pale + paper);
+      confidence[index] = Math.max(1, 9 - (pale + paper));
     }
   }
   restoreStructure(bits, size);
