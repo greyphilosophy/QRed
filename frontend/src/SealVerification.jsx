@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { scanQrImage } from "./qr/scanQrImage.js";
+import { scanPageAlignedImage } from "./qr/pageAlignedScan.js";
 import { decodeSeal, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./qredVerifier.js";
 import { isQRedEntryLink } from "./qr/hiddenPayload.js";
 import { readSigningKeyFile } from "./signingKeys.js";
@@ -107,8 +108,17 @@ export function SealVerification({ verification }) {
       const context = canvas.getContext("2d");
       context.drawImage(image, 0, 0);
       const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+      // A single photographed sheet can contain four adjacent watermark
+      // chunks. Recover them all without asking the user to upload the same
+      // image four times. Keep the page photo once for later comparison.
+      const aligned = scanPageAlignedImage(pixels);
+      if (request !== imageRead.current) return;
+      if (aligned.length) {
+        aligned.forEach(({ seal }, index) => addSeal(seal, index === 0 ? canvas : null));
+        return;
+      }
       const code = scanQrImage(pixels.data, pixels.width, pixels.height);
-      if (!code) throw new Error("No QR code found. Choose a clear image of one seal.");
+      if (!code) throw new Error("No readable QR seal found. Choose a clear photo of the page or one seal.");
       addSeal(qredPayloadFromPhotoScanResult(pixels.data, pixels.width, pixels.height, code), canvas);
     } catch (error) {
       if (request === imageRead.current) setNotice(error.message);
