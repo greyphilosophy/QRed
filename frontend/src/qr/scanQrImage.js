@@ -2,6 +2,7 @@ import jsQR from "jsqr";
 import { hiddenPayloadFromScanResult, isQRedEntryLink } from "./hiddenPayload.js";
 import { filterWatermark, normalizeWatermarkLuminance } from "./watermarkFilter.js";
 import { scanModuleAwareQr } from "./moduleAwareScan.js";
+import { scanPageAlignedImage } from "./pageAlignedScan.js";
 
 // Keep each decode bounded, including large photo uploads. Retry only when the
 // original scale fails: dense printed codes can land badly on the pixel grid.
@@ -161,15 +162,24 @@ export function createQrFrameScanner() {
   let previousHeight;
   let sizes;
   let nextSize = 0;
+  let queued = [];
   return (data, width, height) => {
     if (!isValidImage(data, width, height)) return null;
     if (width !== previousWidth || height !== previousHeight) {
       previousWidth = width;
       previousHeight = height;
-      sizes = scanAttempts(width, height, true, true, true);
+      sizes = [...scanAttempts(width, height, true, true, true), "pageAligned"];
       nextSize = 0;
+      queued = [];
     }
     if (!sizes.length) return null;
+    if (queued.length) return queued.shift();
+    if (sizes[nextSize] === "pageAligned") {
+      queued = scanPageAlignedImage({ data, width, height })
+        .map(({ code }) => code).filter(usableResult);
+      nextSize = queued.length ? 0 : (nextSize + 1) % sizes.length;
+      return queued.shift() ?? null;
+    }
     const code = scanAtSize(data, width, height, sizes[nextSize]);
     nextSize = usableResult(code) ? 0 : (nextSize + 1) % sizes.length;
     return code;

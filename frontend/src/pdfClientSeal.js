@@ -42,7 +42,7 @@ async function documentMerkleRoot(pageTexts) {
   return level[0];
 }
 
-async function preparePageSealing({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attested }) {
+async function preparePageSealing({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attested, pageScalingStrategy = "automatic" }) {
   const { readPdfPagesWithEvidence } = await import("./pdf/readPdfText.js");
   const plans = await readPdfPagesWithEvidence(file, page => planPageEvidence(page, {
     attested, multiple: page.pageCount > 1, encodingStrategy,
@@ -67,6 +67,7 @@ async function preparePageSealing({ file, privateKey, publicKey, bootstrapUrl, e
       const results = await Promise.all(plans.map(async (page, index) => createQRedSeals({
         content: page.text, pageEvidence: page.pageEvidence, privateKey, publicKey,
         bootstrapUrl, encodingStrategy, timestamp, pageContext: contexts[index],
+        preferFourQrPage: pageScalingStrategy === "automatic" || pageScalingStrategy === "watermark",
         attestation: attestations?.[index],
       })));
       return { results, plans };
@@ -74,9 +75,9 @@ async function preparePageSealing({ file, privateKey, publicKey, bootstrapUrl, e
   };
 }
 
-async function createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages }) {
+async function createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages, pageScalingStrategy }) {
   const prepared = await preparePageSealing({
-    file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attested: Boolean(attestPages),
+    file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attested: Boolean(attestPages), pageScalingStrategy,
   });
   const attestations = attestPages ? await attestPages(prepared.pages) : null;
   return prepared.complete(attestations);
@@ -102,7 +103,7 @@ export async function prepareAccountPdfSeal({ file, bootstrapUrl = DEFAULT_BOOTS
   encodingStrategy = "automatic", pageScalingStrategy = "automatic" }) {
   const prepared = await flattenPdfForSealing(file);
   const plan = await preparePageSealing({
-    file: prepared.file, bootstrapUrl, encodingStrategy, attested: true,
+    file: prepared.file, bootstrapUrl, encodingStrategy, attested: true, pageScalingStrategy,
   });
   return {
     pages: plan.pages,
@@ -118,7 +119,7 @@ export async function prepareAccountPdfSeal({ file, bootstrapUrl = DEFAULT_BOOTS
 export async function sealPdfInBrowser({ file, privateKey, publicKey, attestPages, bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic", pageScalingStrategy = "automatic" }) {
   const prepared = await flattenPdfForSealing(file);
   file = prepared.file;
-  const { results: pageSealResults, plans } = await createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages });
+  const { results: pageSealResults, plans } = await createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages, pageScalingStrategy });
   return finishPdfSeal({
     file, prepared, pageSealResults, plans, pageScalingStrategy,
   });

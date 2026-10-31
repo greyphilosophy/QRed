@@ -1,3 +1,5 @@
+import { pageWatermarkRegions } from "../qr/pageAlignedScan.js";
+
 // Predict watermark obstruction from the ORIGINAL page. Layout selection only
 // queries these maps: it does not stamp, render, or decode trial watermarks.
 const MAX_ANALYSIS_EDGE = 384;
@@ -137,8 +139,25 @@ function axis(start, end, step) {
   return values;
 }
 
-export function planWatermarks(image, symbols, entry = null, { excludeBoxes = null } = {}) {
+// Standardized page-filling geometry is recoverable from a photograph without
+// knowing the sealer's placement decisions. The old content-avoiding planner
+// remains a fallback for graphics and failed print/photo preflight.
+export function planWatermarks(image, symbols, entry = null, { excludeBoxes = null, preferPageAligned = true } = {}) {
   const map = analyzeWatermarkPage(image), { bounds } = image;
+  if (preferPageAligned && !entry && !excludeBoxes &&
+      (symbols.length === 1 || symbols.length === 4)) {
+    const regions = pageWatermarkRegions(symbols.length);
+    const boxes = regions.map(region => ({
+      x: bounds.x + region.x * bounds.width,
+      y: bounds.y + (1 - region.y - region.height) * bounds.height,
+      width: region.width * bounds.width,
+      height: region.height * bounds.height,
+    }));
+    const legibleModules = boxes.every((box, i) =>
+      Math.min(box.width, box.height) / symbols[i].modules.size >= MIN_WATERMARK_MODULE_SIZE);
+    const broadInterference = boxes.some(box => mean(map.risk, map, box.x, box.y, box.width, box.height) > 0.012);
+    if (legibleModules && !broadInterference) return boxes;
+  }
   const area = { x: bounds.x + MARGIN, y: bounds.y + MARGIN,
     width: bounds.width - 2 * MARGIN, height: bounds.height - 2 * MARGIN };
   const keepout = entry && { x: entry.x - ENTRY_GAP, y: entry.y - ENTRY_GAP,

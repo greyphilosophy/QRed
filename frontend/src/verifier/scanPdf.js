@@ -1,5 +1,6 @@
 import { scanQrImage } from "../qr/scanQrImage.js";
 import { decodeSeal, qredPayloadFromPhotoScanResult } from "../qredVerifier.js";
+import { scanPageAlignedImage } from "../qr/pageAlignedScan.js";
 
 const MAX_CODES_PER_PAGE = 64;
 const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -48,9 +49,27 @@ function regionPixels(pixels, width, region) {
   return data;
 }
 
-export async function scanPdfPage(image, { onSeal = () => {}, signal } = {}) {
-  const pixels = new Uint8ClampedArray(image.data);
+export async function scanPdfPage(image, { onSeal = () => {}, signal, pageAligned = true } = {}) {
   const seals = new Set();
+  // The page-aligned path is independent of QR finder detection and can
+  // recover rectangular modules with virtual quiet zones. It sees only the
+  // provided pixels; the original PDF's layout is never required.
+  if (pageAligned) {
+    signal?.throwIfAborted();
+    const aligned = scanPageAlignedImage(image);
+    for (const { seal } of aligned) {
+      if (!decodeSeal(seal) || seals.has(seal)) continue;
+      seals.add(seal);
+      await onSeal(seal, image);
+      signal?.throwIfAborted();
+    }
+    // A complete one- or four-symbol page has nothing more to discover.
+    // Incomplete page scans still try the historical region-based locator.
+    if (aligned.length === 4 || aligned.length === 1 && decodeSeal(aligned[0].seal)?.total_chunks === 1) {
+      return { seals: [...seals], limited: false };
+    }
+  }
+  const pixels = new Uint8ClampedArray(image.data);
   const regions = scanRegions(image.width, image.height);
   let codes = 0;
   for (let regionIndex = 0; regionIndex < regions.length; regionIndex++) {

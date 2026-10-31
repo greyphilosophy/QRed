@@ -13,15 +13,18 @@ import { chunkHeaderBytes, DEFAULT_BOOTSTRAP_URL, MAX_CHUNKS, MAX_SEAL_TEXT_BYTE
 export { computeKeyId } from "./sealSignature.js";
 export { DEFAULT_BOOTSTRAP_URL } from "./sealFormat.js";
 
-async function splitRecord(record, version) {
+async function splitRecord(record, version, { preferFourQrPage = false } = {}) {
   if (record.length <= qredPayloadCapacity()) return [record];
   const maximumBody = qredPayloadCapacity() - chunkHeaderBytes(version);
-  const count = recordQrCount(record.length, version);
+  // A page-filling watermark uses exactly one QR or four quadrants. Four
+  // balanced pieces make substantially larger physical modules than two
+  // or three dense symbols squeezed into portions of the same sheet.
+  const count = preferFourQrPage ? 4 : recordQrCount(record.length, version);
   if (count > MAX_CHUNKS) throw new Error("Document exceeds the 4096-seal limit");
   const balancedBody = Math.ceil(record.length / count);
   // Keep the minimum code count. Balance only if every grid can be smaller
   // than version 40; otherwise retain the smaller final grid of a greedy split.
-  const balance = balancedBody + chunkHeaderBytes(version) <= qredPayloadCapacity(39);
+  const balance = preferFourQrPage || balancedBody + chunkHeaderBytes(version) <= qredPayloadCapacity(39);
   const fullDigest = await sha256(record);
   const digest = version === "4" ? fullDigest.subarray(0, 16) : fullDigest;
   const chunks = [];
@@ -54,6 +57,7 @@ export function canonicalizeText(text) {
 export async function createQRedSeals({
   content, privateKey, publicKey, pageContext = null, pageEvidence = null, attestation = null,
   timestamp = new Date().toISOString(), bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic",
+  preferFourQrPage = false,
 }) {
   const canonical = canonicalizeText(content);
   const evidence = pageEvidence ? decodePageEvidence(pageEvidence) : null;
@@ -85,7 +89,8 @@ export async function createQRedSeals({
     signature = await signEd25519(sealSignatureMessage(metadata, textBytes), privateBytes);
   }
   const { candidates, failures } = await encodedBodyCandidates(textBytes, encodingStrategy, async (body, encoding) => {
-    const chunks = await splitRecord(encodeEnvelope(metadata, signature, body, encoding), metadata.version);
+    const chunks = await splitRecord(encodeEnvelope(metadata, signature, body, encoding), metadata.version,
+      { preferFourQrPage: Boolean(pageContext && preferFourQrPage) });
     return { chunks, qr_count: chunks.length, payload_bytes: chunks.reduce((sum, chunk) => sum + chunk.length, 0) };
   });
   const selected = selectBodyEncoding({ candidates, failures }, encodingStrategy);
