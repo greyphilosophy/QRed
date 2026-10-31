@@ -7,7 +7,11 @@ import { isChromaticForeground } from "./watermarkFilter.js";
 import { readErasedQrMatrix } from "./qrErasureRecovery.js";
 
 const PAPER_INSET = 0.03;
-const MAX_PHOTO_PIXELS = 12_000_000;
+// Allow current 12–48 MP phone stills without duplicating their full raster.
+// Only the page-edge detector uses a small preview. QR module evidence is
+// ALWAYS sampled from the original full-resolution pixels.
+const MAX_PHOTO_PIXELS = 80_000_000;
+const MAX_GEOMETRY_PIXELS = 1_500_000;
 const MODULE_RENDER_PIXELS = 4;
 const FINDER_LOCATIONS = ["topRight", "bottomLeft"];
 
@@ -48,12 +52,34 @@ function intersect(vertical, horizontal) {
 
 function distance(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 
-function locatePaper(image) {
-  const { data, width, height } = image;
-  if (image.bounds && Number.isFinite(image.scale)) {
-    return [{ x: 0, y: 0 }, { x: width - 1, y: 0 },
-      { x: width - 1, y: height - 1 }, { x: 0, y: height - 1 }];
+// Read a bounded geometry preview instead of copying a 12–48 MP phone photo.
+// Nearest neighboring samples are averaged for edge stability, without
+// softening or discarding fine watermark modules in the original image.
+function previewForPaperEdges(image) {
+  const { width, height, data } = image;
+  if (width * height <= MAX_GEOMETRY_PIXELS) return image;
+  const scale = Math.sqrt(MAX_GEOMETRY_PIXELS / (width * height));
+  const w = Math.max(160, Math.floor(width * scale));
+  const h = Math.max(160, Math.floor(height * scale));
+  const pixels = new Uint8ClampedArray(w * h * 4);
+  const offsets = [[-1, -1], [0, 0], [1, 0], [0, 1]];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const sx = Math.round((x + 0.5) * width / w - 0.5);
+    const sy = Math.round((y + 0.5) * height / h - 0.5);
+    const out = (y * w + x) * 4;
+    for (const [dx, dy] of offsets) {
+      const px = Math.min(width - 1, Math.max(0, sx + dx));
+      const py = Math.min(height - 1, Math.max(0, sy + dy));
+      const input = (py * width + px) * 4;
+      for (let channel = 0; channel < 3; channel++) pixels[out + channel] += data[input + channel] / offsets.length;
+    }
+    pixels[out + 3] = 255;
   }
+  return { data: pixels, width: w, height: h };
+}
+
+function locatePaperAtResolution(image) {
+  const { data, width, height } = image;
   const at = (x, y) => luminance(data, (y * width + x) * 4);
   const bg = [at(0, 0), at(width - 1, 0), at(0, height - 1), at(width - 1, height - 1)]
     .sort((a, b) => a - b)[1];
@@ -65,9 +91,30 @@ function locatePaper(image) {
       middle.push(at(Math.round(u * (width - 1)), Math.round(v * (height - 1))));
   middle.sort((a, b) => a - b);
   const paper = middle[Math.floor(middle.length * 0.8)];
-  if (paper - bg < 45) return null; // White-on-white photograph: use ordinary QR.
-  const threshold = (paper + bg) / 2;
-  const bright = (x, y) => at(x, y) >= threshold;
+  const contrast = paper - bg;
+  // On a light desk, the sheet's brightness can differ by only ~10 levels.
+  // A large fixed 45-level threshold rejects those pages unnecessarily.
+  // The blank outer margin provides a continuous edge even where printed
+  // glyphs obscure the interior. Do not invent an edge when no distinguishable
+  // border exists; old finder-based scanning remains the fallback.
+  const cornerOffsets = [[0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1]];
+  const deskRgb = [0, 1, 2].map(channel =>
+    cornerOffsets.reduce((sum, [x, y]) => sum + data[(y * width + x) * 4 + channel], 0) / 4);
+  const deskChroma = Math.max(...deskRgb) - Math.min(...deskRgb);
+  const useChroma = deskChroma >= 9 && paper > 218;
+  if (Math.abs(contrast) < 8 && !useChroma) return null;
+  const forward = contrast >= 0;
+  const threshold = Math.abs(contrast) >= 45
+    ? (paper + bg) / 2
+    : bg + (forward ? 1 : -1) * Math.max(2.5, 0.23 * Math.abs(contrast));
+  const bright = (x, y) => {
+    const value = at(x, y);
+    if (forward ? value >= threshold : value <= threshold) return true;
+    if (!useChroma || value < 215 || value < bg - 7) return false;
+    const start = (y * width + x) * 4;
+    const r = data[start], g = data[start + 1], b = data[start + 2];
+    return Math.max(r, g, b) - Math.min(r, g, b) <= Math.max(5, deskChroma * 0.35);
+  };
   const rowStep = Math.max(2, Math.round(height / 280));
   const colStep = Math.max(2, Math.round(width / 280));
   const left = [], right = [], top = [], bottom = [];
@@ -117,6 +164,25 @@ function locatePaper(image) {
   if (pageWidth < width * 0.35 || pageHeight < height * 0.35 ||
       pageWidth > width * 1.15 || pageHeight > height * 1.15) return null;
   return quad;
+}
+
+function locatePaper(image) {
+  const { width, height } = image;
+  if (image.bounds && Number.isFinite(image.scale)) {
+    // PDF renderers already supply a known visible page crop; this is only a
+    // raster-coordinate mapping, not metadata passed to the photo verifier.
+    return [{ x: 0, y: 0 }, { x: width - 1, y: 0 },
+      { x: width - 1, y: height - 1 }, { x: 0, y: height - 1 }];
+  }
+  const preview = previewForPaperEdges(image);
+  const corners = locatePaperAtResolution(preview);
+  if (!corners) return null;
+  if (preview === image) return corners;
+  const factorX = width / preview.width, factorY = height / preview.height;
+  return corners.map(({ x, y }) => ({
+    x: (x + 0.5) * factorX - 0.5,
+    y: (y + 0.5) * factorY - 0.5,
+  }));
 }
 
 // Unit-square-to-quadrilateral projective transform; correcting by the

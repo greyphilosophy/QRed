@@ -46,6 +46,7 @@ async function signed(content) {
 function printAndPhotograph(seals, {
   width = 690, height = 900, ink = [65, 120, 235],
   tilted = true, finderBlocked = true, text = true,
+  backdrop = [43, 43, 47],
 } = {}) {
   const symbols = seals.map(seal => createQRedQrSymbol(seal));
   if (![0, 1, 4].includes(symbols.length)) throw new Error("Fixture supports 0, 1 or 4 QR chunks");
@@ -69,7 +70,7 @@ function printAndPhotograph(seals, {
     const u = (rhsX * D - B * rhsY) / det;
     const v = (A * rhsY - rhsX * C) / det;
     if (u < 0 || v < 0 || u >= 1 || v >= 1) {
-      outputColor(rgba, offset, [43, 43, 47]);
+      outputColor(rgba, offset, backdrop);
       continue;
     }
     // Apply uneven lighting and slight deterministic photo noise.
@@ -100,6 +101,27 @@ function printAndPhotograph(seals, {
     outputColor(rgba, offset, pixel);
   }
   return { data: rgba, width, height };
+}
+
+// Simulate a high-megapixel phone capture without changing the photographed
+// content. The verifier must read ORIGINAL pixels; only page-edge detection
+// is allowed to run on a bounded analysis preview.
+function enlargedPhoto(source, factor = 5) {
+  const width = source.width * factor, height = source.height * factor;
+  const data = new Uint8ClampedArray(width * height * 4);
+  const row = new Uint8ClampedArray(width * 4);
+  for (let sy = 0; sy < source.height; sy++) {
+    for (let sx = 0; sx < source.width; sx++) {
+      const input = (sy * source.width + sx) * 4;
+      for (let dx = 0; dx < factor; dx++) {
+        row.set(source.data.subarray(input, input + 4), (sx * factor + dx) * 4);
+      }
+    }
+    for (let dy = 0; dy < factor; dy++) {
+      data.set(row, ((sy * factor + dy) * width) * 4);
+    }
+  }
+  return { data, width, height };
 }
 
 function sampleAtPagePoint(image, x, y) {
@@ -150,6 +172,34 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     expect(recovered).toContain(seals[0]);
     await expect(verifyQRedSeals(recovered, publicKey)).resolves.toMatchObject({ status: "VALID", content });
   }, 120000);
+
+  it.each([
+    ["light neutral tabletop", [229, 229, 229]],
+    ["light blue tabletop", [226, 235, 244]],
+  ])("[WM-01, WM-03] reads a page photographed against a %s", async (_label, backdrop) => {
+    const content = "Pale-watermark-on-light-desk. ".repeat(18).trimEnd();
+    const { seals } = await signed(content);
+    expect(seals).toHaveLength(1);
+    const photo = printAndPhotograph(seals, { backdrop, ink: [52, 126, 220] });
+    const { seals: recovered } = await scanPdfPage(photo);
+    expect(recovered).toContain(seals[0]);
+    await expect(verifyQRedSeals(recovered, publicKey))
+      .resolves.toMatchObject({ status: "VALID", content });
+  }, 45000);
+
+  it("[WM-01] reads a >12MP photo without downsampling its QR module evidence", async () => {
+    const content = "High resolution page coordinate challenge. ".repeat(16).trimEnd();
+    const { seals } = await signed(content);
+    expect(seals).toHaveLength(1);
+    const image = enlargedPhoto(printAndPhotograph(seals, {
+      backdrop: [222, 224, 226], ink: [217, 79, 90],
+    }), 5);
+    expect(image.width * image.height).toBeGreaterThan(12_000_000);
+    const { seals: recovered } = await scanPdfPage(image);
+    expect(recovered).toContain(seals[0]);
+    await expect(verifyQRedSeals(recovered, publicKey))
+      .resolves.toMatchObject({ status: "VALID", content });
+  }, 90000);
 
   it("[WM-04, WM-05] reconstructs FOUR adjacent QR grids with no internal quiet zones", async () => {
     const content = "Four-quadrant signed page\n" + "QRed evidence-".repeat(700);
