@@ -3,7 +3,7 @@
 // cryptographic verification. They are deliberately red until page-coordinate
 // geometry and rectangular watermark recovery are actually implemented.
 import { PDFDocument } from "pdf-lib";
-import { pageAlignedDiagnostics } from "./pageAlignedScan.js";
+import { pageAlignedDiagnostics, scanPageAlignedImage } from "./pageAlignedScan.js";
 import { describe, expect, it } from "vitest";
 import { createQRedSeals } from "../qredSealer.js";
 import { createQRedQrSymbol } from "../qredQr.js";
@@ -159,7 +159,11 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     const photo = printAndPhotograph(seals, {
       width: 1000, height: 1300, ink: [61, 135, 225], tilted: true,
     });
-    console.info("WM-04 alignment diagnostics", pageAlignedDiagnostics(photo));
+    console.info("WM-04 symbol versions", seals.map(value => createQRedQrSymbol(value).version));
+    console.info("WM-04 alignment diagnostics", JSON.stringify(pageAlignedDiagnostics(photo)));
+    const clean = printAndPhotograph(seals, { width: 1000, height: 1300, text: false, finderBlocked: false });
+    console.info("WM-04 clean diagnostics", JSON.stringify(pageAlignedDiagnostics(clean)));
+    console.info("WM-04 clean recovered", scanPageAlignedImage(clean).length);
     const { seals: recovered } = await scanPdfPage(photo);
     expect(new Set(recovered)).toEqual(new Set(seals));
     await expect(verifyQRedSeals(recovered.toReversed(), publicKey))
