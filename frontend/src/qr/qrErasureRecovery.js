@@ -113,12 +113,9 @@ export function recoverErasedDataCodewords(codewords, version, ecLevelBits, inte
 // Recover codewords from the QR's normal zig-zag interleave. A module is
 // uncertain only if the page sampler identified occluding foreground; marks
 // in function/format/align patterns never count as RS data erasures.
-export function readErasedQrMatrix(bits, unknown, version) {
+export function codewordErasureIndexes(unknown, version) {
   const size = 17 + 4 * version;
-  if (bits.length !== size * size || unknown.length !== bits.length) return null;
-  const matrix = Array.from({ length: size }, (_, row) =>
-    Array.from({ length: size }, (_, col) => Boolean(bits[row * size + col])));
-  const { codewords, ecLevelBits } = codewordsFromMatrix(matrix, version);
+  if (!unknown || unknown.length !== size * size) return new Set();
   const mask = functionMask(size, version);
   const erased = new Set();
   let bit = 0, upward = true;
@@ -134,6 +131,16 @@ export function readErasedQrMatrix(bits, unknown, version) {
     }
     upward = !upward;
   }
+  return erased;
+}
+
+export function readErasedQrMatrix(bits, unknown, version) {
+  const size = 17 + 4 * version;
+  if (bits.length !== size * size || unknown.length !== bits.length) return null;
+  const matrix = Array.from({ length: size }, (_, row) =>
+    Array.from({ length: size }, (_, col) => Boolean(bits[row * size + col])));
+  const { codewords, ecLevelBits } = codewordsFromMatrix(matrix, version);
+  const erased = codewordErasureIndexes(unknown, version);
   const data = recoverErasedDataCodewords(codewords, version, ecLevelBits, erased);
   return data && { correctedData: data, interleavedErasures: erased.size };
 }
