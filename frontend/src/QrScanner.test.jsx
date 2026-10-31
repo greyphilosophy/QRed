@@ -387,10 +387,14 @@ describe("decodeCanvasFrame", () => {
     });
   });
 
-  it("keeps looking for a watermark after seeing the small navigation code", () => {
-    const { canvas, video } = frame();
-    vi.mocked(jsQR).mockReturnValue({ data: "https://qred.org/" });
-    expect(decodeCanvasFrame(video, canvas)).toEqual({ status: "continue" });
-    expect(decodeCanvasFrame(video, canvas, { manual: true })).toMatchObject({ status: "feedback", message: expect.stringContaining("pale watermark") });
-  });
+  it.each(["https://qred.org/", "HTTPS://QRED.ORG"])(
+    "keeps looking for a watermark after seeing navigation code %s", url => {
+      const { canvas, video } = frame();
+      vi.mocked(jsQR).mockReturnValue({ data: url });
+      expect(decodeCanvasFrame(video, canvas)).toEqual({ status: "continue" });
+      expect(decodeCanvasFrame(video, canvas, { manual: true })).toMatchObject({
+        status: "feedback", message: expect.stringContaining("pale watermark"),
+      });
+    },
+  );
 });
