@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createQRedQrSymbol, createQRedQrData } from "../qredQr.js";
-import { sealString } from "../sealFormat.js";
+import { encodeChunk, sealString } from "../sealFormat.js";
 import { hiddenPayloadFromScanResult } from "./hiddenPayload.js";
 import { readErasedQrMatrix, recoverErasedDataCodewords } from "./qrErasureRecovery.js";
 import { codewordsFromMatrix } from "./qrLowLevel.js";
@@ -8,7 +8,9 @@ import { codewordsFromMatrix } from "./qrLowLevel.js";
 function fixture() {
   const payload = new Uint8Array(720);
   for (let i = 0; i < payload.length; i++) payload[i] = (i * 17 + (i >>> 2) * 37) & 255;
-  const seal = sealString(payload);
+  // Use a correctly framed QRC3 transport chunk. Arbitrary bytes are not
+  // a QRed seal and must be rejected by hidden-payload recovery.
+  const seal = sealString(encodeChunk(new Uint8Array(32).fill(23), 0, 4, payload));
   const symbol = createQRedQrSymbol(seal, { errorCorrectionLevel: "L" });
   const size = symbol.modules.size;
   const bits = new Uint8Array(size * size);
