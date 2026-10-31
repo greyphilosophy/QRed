@@ -1,46 +1,72 @@
-# Page-aware watermark recovery (experimental)
+# Page-aligned watermark recovery (experimental)
 
-This document describes the incremental behavior already implemented.
-The [page-filling rectangular watermark acceptance requirements](WATERMARK_READABILITY_REQUIREMENTS.md)
-are **not yet met**; draft PR #157 contains executable red tests that must
-pass before claiming the more ambitious readability improvement.
+The implementation in draft PR #157 supports a **single page-filling
+rectangular QR** or **four balanced QR chunks arranged 2×2**, with no
+internal physical quiet zones. Explicit footer mode and legacy square
+watermarks remain compatible. See [quantitative acceptance requirements](WATERMARK_READABILITY_REQUIREMENTS.md).
+Synthetic tests do not establish printer or phone reliability; keep the PR
+draft until physical samples satisfy the release gate.
 
-QRed uses the same signed QR payload and QR Reed–Solomon checks for both
-ordinary printed seals and pale watermarks. Do not accept the visible
-`QRED.ORG` marker as proof; verification requires *all* corrected hidden
-bytes and the valid signed page envelope.
+## Encoding and placement
 
-## Decoder
+The sealer retains standard QRed compressed payload bytes and signatures.
+When a signed page fits in one QR it uses that QR, choosing the smallest
+version/strongest correction supported by the payload. If it exceeds single-QR
+capacity in Automatic/Watermark mode, the record is divided into exactly
+four balanced chunks, including existing digest and chunk indices. The
+1/4 choice applies to newly watermarked PDF pages, not to existing seals,
+non-PDF documents, or explicitly selected footer layouts.
 
-1. The QR finder/alignment pass locates a candidate grid, including its
-   module-to-image mapping. No trusted PDF metadata is required.
-2. Local brightness normalization compensates for camera shadows.
-3. Mask definite foreground *both* by darkness and color saturation.
-   A brightly colored glyph must not become a gray QR bit merely because
-   its average brightness matches pale watermark ink.
-4. Within each mapped module, sample exposed pixels throughout the cell.
-   Vote only on unambiguous gray watermark or paper; ignore foreground and
-   indecisive gray values. Unrecoverable cells retain the conservative
-   preprocessed estimate.
-5. Run the existing QR decoder and Reed–Solomon checks on the reconstructed
-   matrix. Only a complete hidden payload can validate the signature.
+For one QR, a defined `0.03..0.97` region of the page becomes the entire
+symbol; in 2×2 mode this region is divided into four adjoining rectangles.
+Each module is independently scaled horizontally and vertically while the
+original document remains the same physical size. A small optional
+navigation QR is omitted when it would overlap the page-filling watermark.
+Large opaque graphics may cause a content-avoiding square placement or footer
+fallback. The stamp is considered viable only after exact-byte preflight
+on a full-page PDF render and a softened/shaded simulation.
 
-Still photos and PDF scans use this fallback after ordinary scans; live
-camera frames now rotate through it as a bounded separate attempt.
+The lack of physical quiet zones and rectangular cells means these marks
+are for **QRed's own verifier**, not for standard phone-camera QR apps.
 
-## Placement and overflow
+## Photograph verification
 
-A PDF page may contain up to four signed QR chunks. The existing placement
-planner considers one-, two- and 2x2 four-code layouts using the physical
-module-size minimum and reserved finder zones. Every proposed watermark
-must pass exact-payload rendered and simulated-photo preflight before sealing;
-otherwise the page uses a footer **only if the footer's modules remain large
-enough to photograph**. Dense 3–4-code pages that fail their watermark
-preflight fail closed rather than silently produce miniature footer codes.
+The page-aligned scanner detects a rectangular white sheet against a darker
+background from visible paper edges, then computes a projective mapping into
+normalized page coordinates. Merely scaling a photograph by 8.5/11 cannot
+remove skew or keystone distortion. A white sheet on a white background or a
+cropped sheet may not be locatable; in that case QRed retains conventional
+finder-based scanning.
 
-This version deliberately keeps the four-module printed quiet zones and
-square QR cells: it does not yet rectify phone photographs from paper corners,
-stretch rectangular QR grids, support erasure-aware QR decoding, or strip
-physical quiet zones in the 2x2 layout. Those need separate printed-camera
-validation before enabling; the photo must remain independently verifiable
-without a saved layout.
+For each expected 1/4-page region, candidate QR versions 1..40 are checked
+against visible finder and timing patterns. The expected modules are sampled
+at multiple points per cell in the photograph and classified as neutral-gray
+watermark, paper or opaque/colored foreground. QR finder/separator/timing
+structure is reconstructed where it has been covered. Uncertain **data**
+modules are not invented; QR Reed–Solomon and optional erasure-aware recovery
+must reconstruct any missing codewords. A virtual quiet border is added when
+passing a reconstructed square matrix to patched jsQR. Successful scanning
+requires recovering the complete QRed transport, and normal digest/signature
+verification still makes the trust decision.
+
+Live camera frames rotate through this path with a bounded retry budget;
+the PDF page verifier also tries page geometry before ordinary QR-region
+scanning. The original document, its placement coordinates, or its private
+keys are not needed to interpret a printed page.
+
+## Measurement and release
+
+- Fixed synthetic-photo test: compare 5 black/colored foreground + skew
+  photographs against the same finder-based scanner, requiring >=4/5
+  complete signed recoveries and >=3 additional successes.
+- Four-chunk test: all four independent no-internal-quiet-zone fragments
+  recovered from one synthetic skewed photograph and cryptographically
+  verified, even with partially obscured finder/foreground text.
+- Negative controls: blank colored paper, missing chunks, malformed
+  signatures and unsupported geometry do not yield valid signatures.
+- Existing conventional QR, browser/offline, PDF and security regressions
+  must remain green.
+- Before merge, test actual printed pages at 150, 300 and 600 DPI. At 300
+  DPI the acceptance target is >=9/10 signed-page recoveries from phone
+  photographs, with representative text, logos, shadows and perspective.
+  Do not claim production reliability solely from simulation.

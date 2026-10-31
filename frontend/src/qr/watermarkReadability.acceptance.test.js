@@ -3,10 +3,6 @@
 // cryptographic verification. They are deliberately red until page-coordinate
 // geometry and rectangular watermark recovery are actually implemented.
 import { PDFDocument } from "pdf-lib";
-import { pageAlignedDiagnostics, scanPageAlignedImage, sampledPageAlignedBits } from "./pageAlignedScan.js";
-import { createQRedQrData } from "../qredQr.js";
-import { codewordsFromMatrix } from "./qrLowLevel.js";
-import { codewordErasureIndexes, readErasedQrMatrix } from "./qrErasureRecovery.js";
 import { describe, expect, it } from "vitest";
 import { createQRedSeals } from "../qredSealer.js";
 import { createQRedQrSymbol } from "../qredQr.js";
@@ -162,36 +158,6 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     const photo = printAndPhotograph(seals, {
       width: 1000, height: 1300, ink: [61, 135, 225], tilted: true,
     });
-    console.info("WM-04 symbol versions", seals.map(value => createQRedQrSymbol(value).version));
-    console.info("WM-04 alignment diagnostics", JSON.stringify(pageAlignedDiagnostics(photo)));
-    const clean = printAndPhotograph(seals, { width: 1000, height: 1300, text: false, finderBlocked: false });
-    console.info("WM-04 clean diagnostics", JSON.stringify(pageAlignedDiagnostics(clean)));
-    console.info("WM-04 clean recovered", scanPageAlignedImage(clean).length);
-    for (let part = 0; part < 4; part++) {
-      const symbol = createQRedQrSymbol(seals[part]);
-      const sampled = sampledPageAlignedBits(photo, part + 1, symbol.version);
-      const expected = createQRedQrData(seals[part]).codewords;
-      const rows = Array.from({ length: sampled.size }, (_, row) =>
-        Array.from({ length: sampled.size }, (_, col) => Boolean(sampled.bits[row * sampled.size + col])));
-      const reconstructed = codewordsFromMatrix(rows, symbol.version).codewords;
-      const marked = codewordErasureIndexes(sampled.unknown, symbol.version);
-      const decoded = readErasedQrMatrix(sampled.bits, sampled.unknown, symbol.version);
-      let damagedCodewords = 0, missed = 0, unnecessary = 0, incorrectModules = 0;
-      for (let i = 0; i < expected.length; i++) {
-        const wrong = expected[i] !== reconstructed[i];
-        damagedCodewords += Number(wrong);
-        missed += Number(wrong && !marked.has(i));
-        unnecessary += Number(!wrong && marked.has(i));
-      }
-      for (let row = 0; row < sampled.size; row++) for (let col = 0; col < sampled.size; col++) {
-        incorrectModules += Number(Boolean(sampled.bits[row * sampled.size + col]) !== Boolean(symbol.modules.get(row, col)));
-      }
-      const targetData = createQRedQrData(seals[part]).bytes;
-      const recoveredBytes = decoded?.correctedData;
-      const byteDifferences = recoveredBytes
-        ? targetData.reduce((sum, byte, i) => sum + Number(byte !== recoveredBytes[i]), 0) : null;
-      console.info(`WM-04 quadrant ${part + 1}: version=${symbol.version}, damaged=${damagedCodewords}/${expected.length}, marked erasures=${marked.size}, unmarked errors=${missed}, unnecessary erasures=${unnecessary}, direct RS recovery=${Boolean(decoded)}, corrected byte differences=${byteDifferences}, module errors=${incorrectModules}/${sampled.size ** 2}`);
-    }
     const { seals: recovered } = await scanPdfPage(photo);
     expect(new Set(recovered)).toEqual(new Set(seals));
     await expect(verifyQRedSeals(recovered.toReversed(), publicKey))

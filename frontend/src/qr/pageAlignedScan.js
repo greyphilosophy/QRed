@@ -325,32 +325,3 @@ export function scanPageAlignedImage(image) {
   }
   return codes;
 }
-
-
-/** Diagnostic geometry and version scores; never returns page contents or
- * signed data. Used by synthetic benchmark tests to isolate alignment faults.
- */
-export function pageAlignedDiagnostics(image) {
-  const quad = locatePaper(image);
-  const mapping = quad && pageHomography(quad);
-  if (!mapping) return { pageFound: false };
-  return {
-    pageFound: true,
-    corners: quad.map(({ x, y }) => [Math.round(x), Math.round(y)]),
-    single: chooseVersions(image, mapping, pageWatermarkRegions(1)[0]),
-    quadrants: pageWatermarkRegions(4).map(region => chooseVersions(image, mapping, region)),
-  };
-}
-
-
-/** Test diagnostic: return sampled bit decisions without pretending they are
- * authenticated. Production verification never trusts this helper's output.
- */
-export function sampledPageAlignedBits(image, regionIndex, version) {
-  const quad = locatePaper(image);
-  const mapping = quad && pageHomography(quad);
-  if (!mapping || !Number.isInteger(version) || version < 1 || version > 40) return null;
-  const regions = pageWatermarkRegions(regionIndex === 0 ? 1 : 4);
-  const region = regionIndex === 0 ? regions[0] : regions[regionIndex - 1];
-  return region ? sampledMatrix(image, mapping, region, version) : null;
-}

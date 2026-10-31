@@ -1,9 +1,9 @@
 # QRed watermark readability — acceptance requirements
 
-Status: **proposed, not implemented** on draft PR #157. A green conventional-QR
-unit test or a successful digital-PDF crop does **not** establish any of the
-readability targets below. The executable acceptance tests are intentionally
-red until the corresponding behavior works end-to-end.
+Status: **experimental implementation under test** in draft PR #157.
+A successful digital-PDF crop or synthetic camera test does **not** establish
+reliability of actual printed paper. This specification remains the release
+gate until synthetic acceptance and physical print-photo criteria pass.
 
 ## Problem and baseline
 
@@ -34,7 +34,7 @@ photographs may be sent to a server.
 `pageAligned: false`. Both modes use the same page-image workload and the
 same production payload verification; partially visible modules are tested,
 not clean crops. | Compare black and colored text overlays on actual prints. |
-| **WM-04** | When one QR cannot hold the signed record, try two and then up to four QR pieces. A 2×2 page grid should not require **four separate internal quiet zones**; it may reconstruct them in memory once the page is rectified. A fragment must carry the same signed bytes as today. | A synthetic page with four adjacent rectangular QR grids, **zero internal quiet zones**, and a partially obscured finder reconstructs **all four distinct chunks** out of order into a valid signed page. A missing chunk remains incomplete. | One camera/page-scan workflow, no manual selection of quadrant codes. |
+| **WM-04** | When a watermark record fits one QR use one page-filling code; otherwise split it into **exactly four balanced QR pieces**, omitting two- and three-piece watermark layouts. A 2×2 page grid should not require **four separate internal quiet zones**; it may reconstruct them in memory once the page is rectified. A fragment must carry the same signed bytes as today. | A synthetic page with four adjacent rectangular QR grids, **zero internal quiet zones**, and a partially obscured finder reconstructs **all four distinct chunks** out of order into a valid signed page. A missing chunk remains incomplete. | One camera/page-scan workflow, no manual selection of quadrant codes. |
 | **WM-05** | Never count a visible `QRED.ORG` marker, a guessed bitmap, an incorrect page alignment, or an unverified chunk as a valid seal. Keep existing full-byte, digest, signature and trusted-authority checks. | Signed-payload verification after synthetic recovery; blank/foreground-only page and missing-part negative controls; existing verifier/security regression suite. | Any uncertainty must lead to a retry or clear fallback, not "verified". |
 | **WM-06** | Sealing must refuse unsafe watermark placement after photo-like preflight. Use a readable footer only when practical; preserve original page dimensions when watermark passes. Navigation QR is optional. | Existing `watermarkPreflight`, `pdfWatermark`, `pdfInputIntegrity` and footer fallback tests; new rectangle and 2×2 tests. | Verify printed copy with phone. No silent false positive or inaccessible tiny fallback code. |
 | **WM-07** | Preserve old conventional QR and two-part compatibility, offline operation, bounded scan workload, document text, and current signed format. | Existing `scanQrImage.test.js`, `qredVerifier.test.js`, `scanPdf.test.js`, `test_network_privacy.py`, and the complete CI suite. | Existing sealed documents must still scan. |
@@ -44,8 +44,8 @@ not clean crops. | Compare black and colored text overlays on actual prints. |
 
 - `frontend/src/qr/watermarkReadability.acceptance.test.js` explicitly tests
   **WM-01, WM-02, WM-03, WM-04, WM-05 and WM-08** against production functions.
-  Tests are intentionally red first (test-driven development), not skipped and
-  not satisfied by a mocked decoder or a claimed successful visible QR scan.
+  Tests were written before the geometry decoder (test-driven development), are
+  never skipped and are not satisfied by a mocked decoder or visible marker.
 - Existing tests named in **WM-06 and WM-07** must also remain green.
 - The new acceptance suite runs in its own GitHub Actions job; the PR must
   remain **draft** until all jobs pass. Do not change the threshold to match

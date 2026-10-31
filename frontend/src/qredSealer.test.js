@@ -108,6 +108,26 @@ describe("compact browser QRed sealing", () => {
     expect(await verifyQRedSeals(seals.slice(1), publicKey)).toMatchObject({ status: "INCOMPLETE" });
   });
 
+  it("uses one full-page QR or four balanced QR chunks, never two or three, for watermark PDFs", async () => {
+    const pageContext = { pageNumber: 1, pageCount: 1 };
+    const base = { ...keys, timestamp, encodingStrategy: "plaintext", pageContext,
+      preferFourQrPage: true };
+    const small = await createQRedSeals({ ...base, content: "A".repeat(1500) });
+    expect(small.seals).toHaveLength(1);
+    const content = "B".repeat(3000);
+    const four = await createQRedSeals({ ...base, content });
+    const footer = await createQRedSeals({ ...base, preferFourQrPage: false, content });
+    expect(four.seals).toHaveLength(4);
+    expect(footer.seals).toHaveLength(2);
+    expect(new Set(four.seals).size).toBe(4);
+    expect(Math.max(...four.seals.map(seal => createQRedQrData(seal).version)))
+      .toBeLessThan(Math.max(...footer.seals.map(seal => createQRedQrData(seal).version)));
+    expect(await verifyQRedSeals(four.seals.toReversed(), publicKey))
+      .toMatchObject({ status: "VALID", content, page_number: 1 });
+    expect(await verifyQRedSeals(four.seals.slice(1), publicKey))
+      .toMatchObject({ status: "INCOMPLETE" });
+  });
+
   it("stores Unicode and punctuation directly without URL expansion or lost characters", async () => {
     const content = "A *-._~!+'%&= /猫é😀\n".repeat(200).trim();
     const result = await createQRedSeals({ ...keys, content, encodingStrategy: "plaintext", bootstrapUrl: "https://example.org/検証?mode=local" });

@@ -10,8 +10,9 @@ Local seals use compact v3 binary records with signed text, timestamp, key ID,
 and page context. Issuer names are omitted. Older seals must be re-sealed.
 Image-only pages carry a signed grayscale visual reference; blank pages carry an
 explicit signed blank-page marker. Text pages use spare capacity for line positions
-and an approximate visual reference, without adding QR codes. PDF pages support
-up to four QR codes when the signed text requires them. See [page references](docs/PAGE_REFERENCES.md) and
+and an approximate visual reference, without adding QR codes. Experimental
+watermark mode uses one page-filling QR or splits overflow into four balanced
+quadrant QRs. Explicit footer mode retains ordinary QR counts up to four. See [page references](docs/PAGE_REFERENCES.md) and
 [Compact seals v3](docs/COMPACT_SEALS_V3.md) for scope, compatibility, and tests.
 Supported PDF forms are automatically flattened before text extraction and
 signing. Text fields and dropdowns are checked against their saved appearances;
@@ -92,10 +93,12 @@ Watermark recovery uses QR module geometry to sample pale neutral-gray ink
 around dark or colored foreground text, with uncertain pixels excluded from
 the decision. The page can carry up to four conventional QR symbols, in a
 2×2 watermark layout where space permits. See [watermark decoding](docs/WATERMARK_DECODING.md).
-Page-filling rectangular printing and page-corner image decoding remain
-**unimplemented**; [readability requirements and red acceptance tests](docs/WATERMARK_READABILITY_REQUIREMENTS.md)
-define the release gate for those improvements.
- Recovered data still requires the same
+In experimental watermark mode, QRed uses page-filling rectangular QR
+modules, page-corner perspective correction, and virtual quiet zones. Ordinary
+QR decoding remains a fallback for old seals and close-up photographs.
+[Readability requirements and acceptance tests](docs/WATERMARK_READABILITY_REQUIREMENTS.md)
+remain the release gate, and **physical 150/300/600-DPI print/phone verification
+is not yet established**. Recovered data still requires the same
 cryptographic signature verification. Digital rendering tests cover opaque white
 backgrounds, text overlap, multiple pages/chunks, and both PDF.js and Poppler.
 They do not establish print-camera reliability. Test a printed copy before
