@@ -251,7 +251,7 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
     : scanQrImage(imageData.data, vWidth, vHeight, { tryRescaling: manual });
 
   if (manual && !code?.data) {
-    return { status: "feedback", message: "No QR code found in this photo. Keep the whole seal in view, hold steady, and avoid glare. Then try again." };
+    return { status: "feedback", message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For older seals, try framing the individual QR instead." };
   }
   if (manual && (code.data === VISIBLE_QR_TEXT || /QRED[34]:/.test(code.data) || code.data.includes("qred.org"))) {
     const text = returnPayload
@@ -259,7 +259,7 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
       : qredTextFromPhotoScanResult(imageData.data, vWidth, vHeight, code);
     if (text && !isQRedEntryLink(text)) return { status: "found", text };
     if (isQRedEntryLink(text) && code.data !== VISIBLE_QR_TEXT) {
-      return { status: "feedback", message: "That code opens qred.org. Point at the pale watermark and include the whole square in view." };
+      return { status: "feedback", message: "That code opens qred.org. Include the full printed page against a contrasting background to recover its pale watermark." };
     }
     if (code.data === VISIBLE_QR_TEXT) {
       return { status: "feedback", message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again." };

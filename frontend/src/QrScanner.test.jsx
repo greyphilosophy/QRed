@@ -370,7 +370,7 @@ describe("decodeCanvasFrame", () => {
 
     expect(decodeCanvasFrame(video, canvas, { manual: true })).toEqual({
       status: "feedback",
-      message: "No QR code found in this photo. Keep the whole seal in view, hold steady, and avoid glare. Then try again.",
+      message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For older seals, try framing the individual QR instead.",
     });
     expect(jsQR.mock.calls.length).toBeGreaterThan(1);
     expect(jsQR.mock.calls.length).toBeLessThanOrEqual(10);
