@@ -10,8 +10,9 @@ Local seals use compact v3 binary records with signed text, timestamp, key ID,
 and page context. Issuer names are omitted. Older seals must be re-sealed.
 Image-only pages carry a signed grayscale visual reference; blank pages carry an
 explicit signed blank-page marker. Text pages use spare capacity for line positions
-and an approximate visual reference, without adding QR codes. PDF pages are limited
-to two QR codes. See [page references](docs/PAGE_REFERENCES.md) and
+and an approximate visual reference, without adding QR codes. Experimental
+watermark mode uses one page-filling QR or splits overflow into four balanced
+quadrant QRs. Explicit footer mode retains ordinary QR counts up to four. See [page references](docs/PAGE_REFERENCES.md) and
 [Compact seals v3](docs/COMPACT_SEALS_V3.md) for scope, compatibility, and tests.
 Supported PDF forms are automatically flattened before text extraction and
 signing. Text fields and dropdowns are checked against their saved appearances;
@@ -67,8 +68,8 @@ the same behavior; footer layouts can also be selected directly.
 Watermarks preserve the original paper
 dimensions, text size, rotation, and crop on pages where watermarks are readable. A half-inch conventional QR opens
 `https://qred.org/` from a clear area on the first page; pale QR watermarks carry
-each page's signed data. The watermark uses 6% black with multiply blending to
-keep the pattern faint and black text intact. Use QRed's camera or image picker
+each page's signed data. The watermark uses 15% black with multiply blending to
+keep the pattern pale and document text intact. Use QRed's camera or image picker
 to read the watermarks.
 The navigation code contains no document data and is ignored during verification.
 Placement checks rendered pixels, including graphics, before using a blank area.
@@ -88,8 +89,16 @@ QRed cannot recover it from the rendered output. Other pages retain their waterm
 layout. Footer fallback expands letter pages to legal size and shrinks other page
 contents to make room; the completion message lists the affected pages.
 
-Watermark recovery masks black text and its antialiased edges, then reconstructs
-the pale pattern from nearby pixels. Recovered data still requires the same
+Watermark recovery uses QR module geometry to sample pale neutral-gray ink
+around dark or colored foreground text, with uncertain pixels excluded from
+the decision. The page can carry up to four conventional QR symbols, in a
+2×2 watermark layout where space permits. See [watermark decoding](docs/WATERMARK_DECODING.md).
+In experimental watermark mode, QRed uses page-filling rectangular QR
+modules, page-corner perspective correction, and virtual quiet zones. Ordinary
+QR decoding remains a fallback for old seals and close-up photographs.
+[Readability requirements and acceptance tests](docs/WATERMARK_READABILITY_REQUIREMENTS.md)
+remain the release gate, and **physical 150/300/600-DPI print/phone verification
+is not yet established**. Recovered data still requires the same
 cryptographic signature verification. Digital rendering tests cover opaque white
 backgrounds, text overlap, multiple pages/chunks, and both PDF.js and Poppler.
 They do not establish print-camera reliability. Test a printed copy before

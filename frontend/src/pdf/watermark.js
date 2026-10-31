@@ -2,6 +2,7 @@ import { BlendMode, rgb, StandardFonts } from "pdf-lib";
 import QRCode from "qrcode";
 import { createQRedQrSymbol } from "../qredQr.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
+import { pageWatermarkRegions, scanPageAlignedImage } from "../qr/pageAlignedScan.js";
 import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
 import { renderPdfPage, withPdfDocument } from "./readPdfText.js";
 import { planWatermarks } from "./watermarkPlacement.js";
@@ -85,8 +86,12 @@ export async function findEntryForWatermark(file, boxes) {
   });
 }
 
-function drawSymbol(page, symbol, box, gray, multiply = false) {
-  const count = symbol.modules.size, unit = box.width / (count + 8);
+function drawSymbol(page, symbol, box, gray, multiply = false, pageAligned = false) {
+  const count = symbol.modules.size;
+  const unitX = box.width / (count + (pageAligned ? 0 : 8));
+  const unitY = box.height / (count + (pageAligned ? 0 : 8));
+  // The QR module grid is generated once and scaled separately in X and Y.
+  // The original PDF page, including its actual text, is never stretched.
   const paths = [];
   for (let row = 0; row < count; row++) {
     let column = 0;
@@ -95,13 +100,14 @@ function drawSymbol(page, symbol, box, gray, multiply = false) {
       const start = column;
       while (column < count && symbol.modules.get(row, column)) column++;
       const run = column - start;
-      paths.push(`M${start} ${row}h${run}v1h-${run}z`);
+      paths.push(`M${(start * unitX).toFixed(4)} ${(row * unitY).toFixed(4)}h${(run * unitX).toFixed(4)}v${unitY.toFixed(4)}h-${(run * unitX).toFixed(4)}z`);
     }
   }
   // Multiply leaves black text black, even over an opaque white PDF background.
   // One vector path per symbol keeps printed modules sharp at any resolution.
-  page.drawSvgPath(paths.join(""), { x: box.x + 4 * unit, y: box.y + box.height - 4 * unit,
-    scale: unit, color: rgb(gray, gray, gray), blendMode: multiply ? BlendMode.Multiply : BlendMode.Normal });
+  page.drawSvgPath(paths.join(""), { x: box.x + (pageAligned ? 0 : 4 * unitX),
+    y: box.y + box.height - (pageAligned ? 0 : 4 * unitY),
+    scale: 1, color: rgb(gray, gray, gray), blendMode: multiply ? BlendMode.Multiply : BlendMode.Normal });
 }
 
 export async function planPdfWatermarks(file, pageSealResults, pageIndices = pageSealResults.map((_, index) => index),
@@ -116,25 +122,42 @@ export async function planPdfWatermarks(file, pageSealResults, pageIndices = pag
       const viewport = sourcePage.getViewport({ scale: 2, rotation: 0 });
       if (viewport.width * viewport.height > 12_000_000) { sourcePage.cleanup(); continue; }
       const image = await renderPdfPage(source, index + 1);
-      let entry = null;
-      if (index === 0 && !omitEntry) {
-        // This is only a navigation convenience, never a prerequisite for a
-        // signed watermark on the original page size.
-        try { entry = findEntryPlacement(image); } catch { /* A watermark needs no entry QR. */ }
-      }
       const symbols = seals.map(value => createQRedQrSymbol(value));
       const options = { excludeBoxes: excludedLayouts?.[index]?.boxes ?? null };
-      let boxes = null;
-      try { boxes = planWatermarks(image, symbols, entry, options); }
-      catch {
-        // Even a successfully placed entry QR can consume the only workable
-        // watermark region. Give the signed seal precedence.
-        if (entry) {
-          try { boxes = planWatermarks(image, symbols, null, options); entry = null; }
-          catch { /* The caller retains its safe footer fallback. */ }
+      let boxes = null, pageAligned = false;
+      // A standard page-relative grid uses all available paper, not arbitrary
+      // blank squares. An entry QR would overlap it, so the signed data wins.
+      if (!options.excludeBoxes && (symbols.length === 1 || symbols.length === 4)) {
+        try {
+          const proposed = planWatermarks(image, symbols, null, options);
+          // Only the standardized page-relative geometry can be decoded
+          // without the signer sharing its placement. Four *legacy squares*
+          // must not be mislabeled as four aligned quadrants.
+          const standard = pageWatermarkRegions(symbols.length).map(region => ({
+            x: image.bounds.x + region.x * image.bounds.width,
+            y: image.bounds.y + (1 - region.y - region.height) * image.bounds.height,
+            width: region.width * image.bounds.width,
+            height: region.height * image.bounds.height,
+          }));
+          const aligned = proposed.length === standard.length && proposed.every((box, i) =>
+            ["x", "y", "width", "height"].every(key => Math.abs(box[key] - standard[i][key]) <= 0.05));
+          if (aligned) { boxes = proposed; pageAligned = true; }
+        } catch { /* Try the content-avoiding legacy layout below. */ }
+      }
+      let entry = null;
+      if (!boxes) {
+        if (index === 0 && !omitEntry) {
+          try { entry = findEntryPlacement(image); } catch { /* Optional navigation only. */ }
+        }
+        try { boxes = planWatermarks(image, symbols, entry, { ...options, preferPageAligned: false }); }
+        catch {
+          if (entry) {
+            try { boxes = planWatermarks(image, symbols, null, { ...options, preferPageAligned: false }); entry = null; }
+            catch { /* Safe footer fallback. */ }
+          }
         }
       }
-      if (boxes) layouts[index] = { boxes, ...(entry ? { entry } : {}) };
+      if (boxes) layouts[index] = { boxes, ...(pageAligned ? { pageAligned: true } : {}), ...(entry ? { entry } : {}) };
       sourcePage.cleanup();
     }
   });
@@ -147,7 +170,8 @@ export async function stampWatermarks(pdf, layouts, pageSealResults) {
   for (let index = 0; index < layouts.length; index++) {
     if (!layouts[index]) continue;
     pageSealResults[index].seals.forEach((value, part) => {
-      drawSymbol(pdf.getPage(index), createQRedQrSymbol(value), layouts[index].boxes[part], WATERMARK_GRAY, true);
+      drawSymbol(pdf.getPage(index), createQRedQrSymbol(value), layouts[index].boxes[part], WATERMARK_GRAY, true,
+        Boolean(layouts[index].pageAligned));
     });
   }
   const entry = layouts[0]?.entry;
@@ -193,6 +217,20 @@ export async function checkWatermarks(bytes, layouts, pageSealResults, { onFailu
     for (let index = 0; index < layouts.length; index++) {
       if (!layouts[index]) continue;
       const image = await renderPdfPage(pdf, index + 1);
+      if (layouts[index].pageAligned) {
+        // Verify a REAL full-page raster, not saved placement metadata. The
+        // same standalone image decoder is used by photographed paper. Also
+        // simulate printer/camera degradation at the page rather than crop.
+        const expected = pageSealResults[index].seals;
+        const observed = scanPageAlignedImage(image).map(result => result.seal);
+        const degraded = { ...simulatePrintPhoto(image), bounds: image.bounds, scale: image.scale };
+        const softened = scanPageAlignedImage(degraded).map(result => result.seal);
+        if (!expected.every(value => observed.includes(value)) ||
+            !expected.every(value => softened.includes(value))) {
+          fail(index, "The page-aligned watermark could not be recovered from the complete rendered page.");
+        }
+        continue;
+      }
       for (let part = 0; part < layouts[index].boxes.length; part++) {
         const qr = crop(image, layouts[index].boxes[part]);
         const code = scanQrImage(qr.data, qr.width, qr.height,

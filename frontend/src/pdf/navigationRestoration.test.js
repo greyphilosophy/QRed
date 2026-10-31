@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, rgb } from "pdf-lib";
 import { sealPdfInBrowser } from "../pdfClientSeal.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
 import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
@@ -57,6 +57,9 @@ it("restores a decodable navigation QR after recovering a readable signed waterm
   // Synthetic invoice-like page; no real customer's document is committed.
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([612, 792]);
+  // A solid logo calls for the content-avoiding square layout. Full-page
+  // rectangular watermarks intentionally omit the navigation QR instead.
+  page.drawRectangle({ x: 260, y: 360, width: 125, height: 120, color: rgb(0, 0, 0) });
   page.drawText("SAMPLE INVOICE", { x: 420, y: 660, size: 11 });
   page.drawText("Example Customer", { x: 36, y: 660, size: 11 });
   page.drawText("Paid in full", { x: 36, y: 580, size: 11 });

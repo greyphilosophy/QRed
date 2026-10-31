@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createQrFrameScanner, scanQrImage } from "./qr/scanQrImage.js";
+import { scanPageAlignedImage } from "./qr/pageAlignedScan.js";
 import { decodeSeal, VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult, qredTextFromScanResult } from "./qredVerifier.js";
 import { isQRedEntryLink } from "./qr/hiddenPayload.js";
 import { startCameraSession } from "./qr/cameraSession.js";
@@ -238,12 +239,19 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
   // The reticle is only an aiming guide. Keep recovery in this same frame.
   ctx.drawImage(video, 0, 0, vWidth, vHeight);
   const imageData = ctx.getImageData(0, 0, vWidth, vHeight);
+  // A manual full-page photo may contain all four adjacent watermark chunks.
+  // Return them in one action rather than repeatedly recovering only the
+  // first quadrant from the same frame.
+  if (manual && returnPayload) {
+    const aligned = scanPageAlignedImage(imageData);
+    if (aligned.length) return { status: "found-multiple", texts: aligned.map(result => result.seal) };
+  }
   const code = !manual && options.scanQrFrame
     ? options.scanQrFrame(imageData.data, vWidth, vHeight)
     : scanQrImage(imageData.data, vWidth, vHeight, { tryRescaling: manual });
 
   if (manual && !code?.data) {
-    return { status: "feedback", message: "No QR code found in this photo. Keep the whole seal in view, hold steady, and avoid glare. Then try again." };
+    return { status: "feedback", message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For older seals, try framing the individual QR instead." };
   }
   if (manual && (code.data === VISIBLE_QR_TEXT || /QRED[34]:/.test(code.data) || isQRedEntryLink(code.data) || code.data.includes("qred.org"))) {
     const text = returnPayload
@@ -251,7 +259,7 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
       : qredTextFromPhotoScanResult(imageData.data, vWidth, vHeight, code);
     if (text && !isQRedEntryLink(text)) return { status: "found", text };
     if (isQRedEntryLink(text) && code.data !== VISIBLE_QR_TEXT) {
-      return { status: "feedback", message: "That code opens qred.org. Point at the pale watermark and include the whole square in view." };
+      return { status: "feedback", message: "That code opens qred.org. Include the full printed page against a contrasting background to recover its pale watermark." };
     }
     if (code.data === VISIBLE_QR_TEXT) {
       return { status: "feedback", message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again." };
@@ -287,6 +295,18 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
     let camera;
 
     handleScanActionRef.current = (scanAction) => {
+      if (scanAction.status === "found-multiple") {
+        let shouldStop = false;
+        for (const text of scanAction.texts) {
+          if (seen.has(text)) continue;
+          seen.add(text);
+          // All chunks share the same captured page photograph.
+          if (!onScan(text, canvasRef.current)) { shouldStop = true; break; }
+        }
+        setFeedback(null);
+        if (shouldStop) { camera.stop(); return true; }
+        return false;
+      }
       if (scanAction.status === "found") {
         if (seen.has(scanAction.text)) return false;
         seen.add(scanAction.text);

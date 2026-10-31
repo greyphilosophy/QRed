@@ -14,7 +14,7 @@ export async function planPageEvidence(page, { attested = false, multiple = fals
   const baseLength = await encodedBodyLength(baseBytes, encodingStrategy);
   const minimumHeader = sealEnvelopeOverhead({ attested, multiple });
   if (baseLength + minimumHeader > recordCapacity(MAX_PDF_SEALS, attested)) {
-    throw new Error(`PDF page ${page.pageNumber || 1} exceeds the two-QR limit. Shorten the page or split its content across pages.`);
+    throw new Error(`PDF page ${page.pageNumber || 1} exceeds the ${MAX_PDF_SEALS}-QR limit. Shorten the page or split its content across pages.`);
   }
   const budget = evidenceBodyBudget(baseLength, { attested, multiple });
   if (text && !budget) return { ...page, image: undefined, body: baseBytes, pageEvidence: null };

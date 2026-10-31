@@ -4,9 +4,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, describe, expect, it, vi } from "vitest";
 import jsQR from "jsqr";
 import { createQrFrameScanner } from "./qr/scanQrImage.js";
+import { scanPageAlignedImage } from "./qr/pageAlignedScan.js";
 import { applyCameraQualityControls, applyContinuousCameraFocus, decodeCanvasFrame, findPreferredZoomCamera, getPreferredCameraStream, isCameraFrameReady, manualCapturePendingAction, MANUAL_CAPTURE_PENDING_TIMEOUT_MS, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
 
 vi.mock("jsqr", () => ({ default: vi.fn() }));
+vi.mock("./qr/pageAlignedScan.js", async importOriginal => {
+  const actual = await importOriginal();
+  return { ...actual, scanPageAlignedImage: vi.fn(() => []) };
+});
 
 describe("QrScanner camera controls", () => {
   it("requests the rear camera at an efficient resolution for mobile scanning", () => {
@@ -349,13 +354,23 @@ describe("decodeCanvasFrame", () => {
     expect(jsQR).toHaveBeenCalledWith(expect.any(Uint8ClampedArray), 320, 240, expect.any(Object));
   });
 
+  it("returns all four page-aligned watermark chunks from one manual camera capture", () => {
+    const { canvas, video } = frame();
+    const texts = ["chunk-1", "chunk-2", "chunk-3", "chunk-4"];
+    vi.mocked(scanPageAlignedImage).mockReturnValueOnce(texts.map(seal => ({ seal })));
+    expect(decodeCanvasFrame(video, canvas, { manual: true, returnPayload: true }))
+      .toEqual({ status: "found-multiple", texts });
+    expect(scanPageAlignedImage).toHaveBeenCalledTimes(1);
+    expect(jsQR).not.toHaveBeenCalled();
+  });
+
   it("gives manual photo feedback when no QR is found", () => {
     const { canvas, video } = frame();
     vi.mocked(jsQR).mockReturnValue(null);
 
     expect(decodeCanvasFrame(video, canvas, { manual: true })).toEqual({
       status: "feedback",
-      message: "No QR code found in this photo. Keep the whole seal in view, hold steady, and avoid glare. Then try again.",
+      message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For older seals, try framing the individual QR instead.",
     });
     expect(jsQR.mock.calls.length).toBeGreaterThan(1);
     expect(jsQR.mock.calls.length).toBeLessThanOrEqual(10);

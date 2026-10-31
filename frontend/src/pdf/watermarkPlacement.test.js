@@ -50,10 +50,31 @@ describe("page-aware watermark placement", () => {
     }
   });
 
+  it("fits four version-40 symbols in a nonoverlapping 2x2 grid on letter paper", () => {
+    const boxes = planWatermarks(pageWithGraphic(null), [symbol, symbol, symbol, symbol]);
+    expect(boxes).toHaveLength(4);
+    for (let i = 0; i < boxes.length; i++) {
+      expect(boxes[i].width / 185).toBeGreaterThanOrEqual(MIN_WATERMARK_MODULE_SIZE);
+      for (let j = i + 1; j < boxes.length; j++) expect(intersects(boxes[i], boxes[j])).toBe(false);
+    }
+    expect(boxes[0].y).toBeGreaterThan(boxes[2].y);
+    expect(boxes[1].x).toBeGreaterThan(boxes[0].x);
+  });
+
+  it("does not call four content-avoiding squares a standardized page-filling grid", () => {
+    const image = pageWithGraphic({ x: 254, y: 335, width: 106, height: 120 });
+    const boxes = planWatermarks(image, [symbol, symbol, symbol, symbol], null,
+      { preferPageAligned: false });
+    expect(boxes).toHaveLength(4);
+    for (const box of boxes) expect(box.width).toBeCloseTo(box.height);
+  });
+
   it("searches a genuinely different placement after a candidate fails decoding", () => {
     const image = pageWithGraphic({ x: 260, y: 400, width: 90, height: 40 });
-    const first = planWatermarks(image, [symbol]);
-    const alternate = planWatermarks(image, [symbol], null, { excludeBoxes: first });
+    // Exercise the legacy placement retry rather than the new standardized
+    // page-filling grid, which necessarily occupies nearly all the page.
+    const first = planWatermarks(image, [symbol], null, { preferPageAligned: false });
+    const alternate = planWatermarks(image, [symbol], null, { excludeBoxes: first, preferPageAligned: false });
     expect(alternate).toHaveLength(1);
     const a = first[0], b = alternate[0];
     const overlapWidth = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import QRCode from "qrcode";
 import jsQR from "jsqr";
-import { filterWatermark } from "./watermarkFilter.js";
+import { filterWatermark, isChromaticForeground } from "./watermarkFilter.js";
 
 // Synthetic printed page; never store real invoices or photographed personal
 // documents as public test fixtures.
@@ -30,6 +30,11 @@ function printedQr({ shadow = true, strokes = true } = {}) {
 }
 
 describe("watermark photo recovery", () => {
+  it("identifies colored text without discarding neutral gray QR ink", () => {
+    expect(isChromaticForeground(new Uint8ClampedArray([255, 245, 100, 255]), 0)).toBe(true);
+    expect(isChromaticForeground(new Uint8ClampedArray([110, 240, 235, 255]), 0)).toBe(true);
+    expect(isChromaticForeground(new Uint8ClampedArray([218, 219, 222, 255]), 0)).toBe(false);
+  });
   it("decodes pale dense modules through shadows and crossing dark text", () => {
     const { data, width, height } = printedQr();
     const recovered = filterWatermark(data, width, height, 3);

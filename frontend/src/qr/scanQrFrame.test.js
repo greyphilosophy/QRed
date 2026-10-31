@@ -17,6 +17,14 @@ it("limits a live frame to one decode and spreads retries across subsequent fram
   ]);
 });
 
+it("uses one color-aware module pass across live frames instead of reserving it for uploads", () => {
+  const scan = createQrFrameScanner();
+  const pixels = new Uint8ClampedArray(200 * 200 * 4).fill(255);
+  for (let frame = 0; frame < 6; frame++) scan(pixels, 200, 200);
+  expect(jsQR).toHaveBeenCalledTimes(6);
+  expect(typeof vi.mocked(jsQR).mock.calls.at(-1)[3]?.moduleSampler).toBe("function");
+});
+
 it("resets after detection or a resolution change and keeps camera sessions independent", () => {
   const scan = createQrFrameScanner();
   const pixels = new Uint8ClampedArray(200 * 200 * 4);

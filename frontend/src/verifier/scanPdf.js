@@ -1,7 +1,12 @@
 import { scanQrImage } from "../qr/scanQrImage.js";
 import { decodeSeal, qredPayloadFromPhotoScanResult } from "../qredVerifier.js";
+import { scanPageAlignedImage } from "../qr/pageAlignedScan.js";
 
 const MAX_CODES_PER_PAGE = 64;
+// An original 48 MP photo may remain in memory for trustworthy module
+// sampling. Only the legacy QR-region fallback should use a reduced raster,
+// otherwise that older path repeatedly allocates full-size image copies.
+const MAX_LEGACY_SCAN_PIXELS = 8_000_000;
 const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 0));
 
 // Erase only a working raster, after recovery. Keep the original page image
@@ -39,6 +44,33 @@ function scanRegions(width, height) {
   ];
 }
 
+const LEGACY_DOWNSAMPLE_OFFSETS = [[0, 0], [-1, 0], [0, -1], [-1, -1]];
+
+function boundedLegacyRaster(image) {
+  const { width, height, data } = image;
+  if (width * height <= MAX_LEGACY_SCAN_PIXELS) return image;
+  const scale = Math.sqrt(MAX_LEGACY_SCAN_PIXELS / (width * height));
+  const w = Math.max(1, Math.floor(width * scale));
+  const h = Math.max(1, Math.floor(height * scale));
+  const pixels = new Uint8ClampedArray(w * h * 4);
+  // Average adjacent observations so downsizing conventional QR photos
+  // doesn't throw away narrow module edges via nearest-neighbor aliasing.
+  for (let y = 0; y < h; y++) {
+    const sy = Math.min(height - 1, Math.round((y + 0.5) * height / h - 0.5));
+    for (let x = 0; x < w; x++) {
+      const sx = Math.min(width - 1, Math.round((x + 0.5) * width / w - 0.5));
+      const start = (y * w + x) * 4;
+      for (const [dx, dy] of LEGACY_DOWNSAMPLE_OFFSETS) {
+        const px = Math.max(0, sx + dx), py = Math.max(0, sy + dy);
+        const src = (py * width + px) * 4;
+        for (let c = 0; c < 3; c++) pixels[start + c] += data[src + c] * 0.25;
+      }
+      pixels[start + 3] = 255;
+    }
+  }
+  return { data: pixels, width: w, height: h };
+}
+
 function regionPixels(pixels, width, region) {
   const data = new Uint8ClampedArray(region.width * region.height * 4);
   for (let row = 0; row < region.height; row++) {
@@ -48,17 +80,39 @@ function regionPixels(pixels, width, region) {
   return data;
 }
 
-export async function scanPdfPage(image, { onSeal = () => {}, signal } = {}) {
-  const pixels = new Uint8ClampedArray(image.data);
+export async function scanPdfPage(image, { onSeal = () => {}, signal, pageAligned = true } = {}) {
   const seals = new Set();
-  const regions = scanRegions(image.width, image.height);
+  // The page-aligned path is independent of QR finder detection and can
+  // recover rectangular modules with virtual quiet zones. It sees only the
+  // provided pixels; the original PDF's layout is never required.
+  if (pageAligned) {
+    signal?.throwIfAborted();
+    const aligned = scanPageAlignedImage(image);
+    for (const { seal } of aligned) {
+      if (!decodeSeal(seal) || seals.has(seal)) continue;
+      seals.add(seal);
+      await onSeal(seal, image);
+      signal?.throwIfAborted();
+    }
+    // A complete one- or four-symbol page has nothing more to discover.
+    // Incomplete page scans still try the historical region-based locator.
+    if (aligned.length === 4 || aligned.length === 1 && decodeSeal(aligned[0].seal)?.total_chunks === 1) {
+      return { seals: [...seals], limited: false };
+    }
+  }
+  // Never clone and subdivide the full 12–48 MP original merely because the
+  // page-aligned scan was incomplete. The legacy fallback operates on its own
+  // bounded copy; collected seals still retain the ORIGINAL page photograph.
+  const legacy = boundedLegacyRaster(image);
+  const pixels = legacy === image ? new Uint8ClampedArray(image.data) : legacy.data;
+  const regions = scanRegions(legacy.width, legacy.height);
   let codes = 0;
   for (let regionIndex = 0; regionIndex < regions.length; regionIndex++) {
     const region = regions[regionIndex];
     while (codes < MAX_CODES_PER_PAGE) {
       await yieldToBrowser();
       signal?.throwIfAborted();
-      const data = regionPixels(pixels, image.width, region);
+      const data = regionPixels(pixels, legacy.width, region);
       if (data.every((value, index) => index % 4 === 3 || value === 255)) break;
       const code = scanQrImage(data, region.width, region.height);
       if (!code) break;
@@ -71,7 +125,7 @@ export async function scanPdfPage(image, { onSeal = () => {}, signal } = {}) {
       }
       // Navigation and unrelated QR codes are skipped too, so they cannot hide
       // another seal elsewhere on the page. Bound work on hostile input.
-      if (!maskCode(pixels, image.width, image.height, code, region)) return { seals: [...seals], limited: true };
+      if (!maskCode(pixels, legacy.width, legacy.height, code, region)) return { seals: [...seals], limited: true };
       // Removing an isolated code can make the remaining full-page geometry
       // readable. Revisit it before trying more small views.
       if (regionIndex > 0) { regionIndex = -1; break; }

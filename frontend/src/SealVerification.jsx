@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { scanQrImage } from "./qr/scanQrImage.js";
+import { scanPageAlignedImage } from "./qr/pageAlignedScan.js";
 import { decodeSeal, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./qredVerifier.js";
 import { isQRedEntryLink } from "./qr/hiddenPayload.js";
 import { readSigningKeyFile } from "./signingKeys.js";
@@ -107,8 +108,17 @@ export function SealVerification({ verification }) {
       const context = canvas.getContext("2d");
       context.drawImage(image, 0, 0);
       const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+      // A single photographed sheet can contain four adjacent watermark
+      // chunks. Recover them all without asking the user to upload the same
+      // image four times. Keep the page photo once for later comparison.
+      const aligned = scanPageAlignedImage(pixels);
+      if (request !== imageRead.current) return;
+      if (aligned.length) {
+        aligned.forEach(({ seal }, index) => addSeal(seal, index === 0 ? canvas : null));
+        return;
+      }
       const code = scanQrImage(pixels.data, pixels.width, pixels.height);
-      if (!code) throw new Error("No QR code found. Choose a clear image of one seal.");
+      if (!code) throw new Error("No readable QR seal found. Include the entire page against a contrasting background, or choose a clear close-up of an older QR seal.");
       addSeal(qredPayloadFromPhotoScanResult(pixels.data, pixels.width, pixels.height, code), canvas);
     } catch (error) {
       if (request === imageRead.current) setNotice(error.message);
@@ -120,7 +130,7 @@ export function SealVerification({ verification }) {
 
   return <section className="verification-card" aria-label="Seal verification">
     <h2>Verify collected seals</h2>
-    <p>Scan each QR seal for a page. Its scan image is kept for comparison with the signed page contents; you can also take a clearer page photo.</p>
+    <p>Include the whole printed page to recover one or four pale watermark codes at once. You can also scan older individual QR seals. Keep the page photo for comparison with its signed contents.</p>
     <p className="verification-note">PDFs, QR images, and camera frames are processed in this browser and are not sent to a server.</p>
     <details>
       <summary>Optional: use airplane mode</summary>
