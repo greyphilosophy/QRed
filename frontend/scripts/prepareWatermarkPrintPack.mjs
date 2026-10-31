@@ -87,8 +87,8 @@ async function sampleDocument(kind) {
     const alphabet = ["é", "ñ", "ö", "à", "ç", "ø", "ß", "ü", "å", "î", "á", "è", "õ", "ï", "æ", "ù"];
     for (let i = 0; i < 40; i++) {
       const values = Array.from({ length: 47 }, () => alphabet[rand() % alphabet.length]).join("");
-      stamp(page, `R${String(i + 1).padStart(2, "0")} ${values}`, 43, 690 - i * 14.0, 6.25,
-        rgb(0.12, 0.14, 0.18), mono);
+      stamp(page, `R${String(i + 1).padStart(2, "0")} ${values}`, 43, 690 - i * 14.0, 8.5,
+        rgb(0.972, 0.972, 0.972), mono);
     }
     stamp(page, "END QUADRANT CHALLENGE - scan all four parts from one photograph.", 43, 91, 8.4, ink.blue, regular);
   }
@@ -118,6 +118,7 @@ async function makeInstructions() {
     ["8. Turn off filters; keep the original JPG/HEIC, including EXIF if present.", 10, false],
     ["9. Use the QRed PR preview to verify each complete-page photograph.", 10, false],
     ["10. For sample C, require all 4 signed QR parts, not just one.", 10, false],
+    ["C is an optical capacity test: its source text is intentionally very faint.", 9, false],
     ["", 8, false],
     ["REPORTING:", 12, true],
     ["Send the original photos, printer model, DPI/quality setting, phone model,", 10, false],
@@ -198,7 +199,9 @@ writeFileSync(join(out, "START-HERE.txt"), [
   "Print only the *-SEALED.pdf documents at 100% actual size on US Letter paper.",
   "Test A is a single watermark beneath black text.",
   "Test B includes colored text/logo; QRed may choose its safer square fallback.",
-  "Test C is four adjacent watermark fragments: all 4 are required to verify.",
+  "Test C is a four-part CAPACITY/OPTICS baseline using faint source text.",
+  "Dark high-entropy text caused QRed to choose a readable footer; the faint",
+  "source text in C isolates the 2x2 barcode from that obstruction problem.",
   "",
   "Start at 300 DPI (normal quality), then also try 150/600 DPI if supported.",
   "Photograph each printed sheet against both dark and pale surfaces.",
