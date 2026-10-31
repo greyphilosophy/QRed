@@ -59,6 +59,22 @@ passing a reconstructed square matrix to patched jsQR. Successful scanning
 requires recovering the complete QRed transport, and normal digest/signature
 verification still makes the trust decision.
 
+Printed-paper findings (October 31, 2026): full-resolution originals from
+a 12 MP Galaxy Z Flip6 were processed privately, with the same signed PDF
+fixtures for quantitative comparison. Paper edges and finder shapes were
+recoverable, but the actual printed content had roughly 2–4% shrink and
+small nonuniform positional errors relative to the physical sheet. The
+page-aligned decoder returned zero authentic signed parts from each of four
+original photographs. A square cropped QR also failed the normal fallback.
+The absolute ~223/230 grayscale votes were too rigid for the real paper
+brightness. We now derive a threshold from the photographed finder cells
+and try one bounded 97%-scale correction after ordinary page geometry fails.
+
+**This is not final print validation**. Per-quadrant timing/finder refinement
+and stronger optical tests must still be implemented before merging. The
+original photographs are private, not placed in the repository. The real
+result is kept separate from the passing synthetic regression tests.
+
 Live camera frames rotate through this path with a bounded retry budget;
 the PDF page verifier also tries page geometry before ordinary QR-region
 scanning. The original document, its placement coordinates, or its private

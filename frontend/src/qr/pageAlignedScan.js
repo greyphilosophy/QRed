@@ -277,16 +277,43 @@ function finderIsDark(row, col) {
     (row >= 2 && row <= 4 && col >= 2 && col <= 4);
 }
 
+// Calibrate to the actual local gray levels in printed QR finder cells.
+// A phone may expose white paper as gray 180–240, and a pale module only
+// 8–20 units darker. Fixed thresholds cannot handle that range.
+function finderContrast(image, mapping, region, size) {
+  const dark = [], light = [];
+  for (const pattern of FINDER_LOCATIONS) {
+    const rowOffset = pattern === "bottomLeft" ? size - 7 : 0;
+    const colOffset = pattern === "topRight" ? size - 7 : 0;
+    for (let row = 0; row < 7; row++) for (let col = 0; col < 7; col++) {
+      const gray = observe(image, mapping, region, size, rowOffset + row, colOffset + col);
+      if (gray === null) continue;
+      (finderIsDark(row, col) ? dark : light).push(gray);
+    }
+  }
+  if (dark.length < 12 || light.length < 12) return null;
+  const median = values => {
+    values.sort((a, b) => a - b);
+    return values[Math.floor(values.length / 2)];
+  };
+  const black = median(dark), white = median(light);
+  if (white - black < 4) return null;
+  return { threshold: (black + white) / 2, gap: white - black };
+}
+
 function scoreVersion(image, mapping, region, version) {
   const size = 17 + 4 * version;
+  const contrast = finderContrast(image, mapping, region, size);
+  if (!contrast) return 0;
+  const threshold = contrast.threshold;
   let matches = 0, observed = 0;
   for (const pattern of FINDER_LOCATIONS) {
     const rowOffset = pattern === "bottomLeft" ? size - 7 : 0;
     const colOffset = pattern === "topRight" ? size - 7 : 0;
     for (let row = 0; row < 7; row++) for (let col = 0; col < 7; col++) {
       const gray = observe(image, mapping, region, size, rowOffset + row, colOffset + col);
-      if (gray === null || (gray > 220 && gray < 231)) continue;
-      matches += Number((gray < 225) === finderIsDark(row, col));
+      if (gray === null || Math.abs(gray - threshold) < 1) continue;
+      matches += Number((gray < threshold) === finderIsDark(row, col));
       observed++;
     }
   }
@@ -298,8 +325,8 @@ function scoreVersion(image, mapping, region, version) {
   for (let position = 11; position < size - 11; position += 2) {
     for (const [row, col] of [[6, position], [position, 6]]) {
       const gray = observe(image, mapping, region, size, row, col);
-      if (gray === null || gray > 220 && gray < 231) continue;
-      timingHits += Number((gray < 225) === (position % 2 === 0));
+      if (gray === null || Math.abs(gray - threshold) < 1) continue;
+      timingHits += Number((gray < threshold) === (position % 2 === 0));
       timingSeen++;
     }
   }
@@ -343,14 +370,17 @@ function sampledMatrix(image, mapping, region, version) {
   const size = 17 + 4 * version;
   const bits = new Uint8Array(size * size), unknown = new Uint8Array(bits.length);
   const confidence = new Uint8Array(bits.length);
+  const contrast = finderContrast(image, mapping, region, size);
+  const threshold = contrast?.threshold ?? 237;
+  const band = contrast ? Math.max(1.5, Math.min(6, contrast.gap * 0.12)) : 3;
   const offsets = [0.20, 0.5, 0.80];
   for (let row = 0; row < size; row++) for (let col = 0; col < size; col++) {
     let pale = 0, paper = 0;
     for (const oy of offsets) for (const ox of offsets) {
       const gray = observe(image, mapping, region, size, row, col, ox, oy);
       if (gray === null) continue;
-      if (gray <= 223) pale++;
-      else if (gray >= 230) paper++;
+      if (gray <= threshold - band) pale++;
+      else if (gray >= threshold + band) paper++;
     }
     const index = row * size + col;
     bits[index] = pale > paper ? 1 : 0;
@@ -435,13 +465,25 @@ export function scanPageAlignedImage(image) {
   if (!quad) return [];
   const mapping = pageHomography(quad);
   if (!mapping) return [];
-  const sampledImage = { ...image, paperAt: paperBrightnessMap(image, mapping) };
-  const single = decodeRegion(sampledImage, mapping, pageWatermarkRegions(1)[0]);
-  if (single) return [single];
-  const codes = [];
-  for (const region of pageWatermarkRegions(4)) {
-    const found = decodeRegion(sampledImage, mapping, region);
-    if (found && !codes.some(other => other.seal === found.seal)) codes.push(found);
+  // Printing can shrink the PDF's content slightly within the fixed paper
+  // boundary. Try one bounded centered scale hypothesis only after regular
+  // geometry fails. This handles uniform 97% shrink; off-axis and local
+  // distortion still require independent QR finder/timing calibration.
+  const scaleAttempts = image.bounds ? [1] : [1, 0.97];
+  let bestCodes = [];
+  for (const scale of scaleAttempts) {
+    const candidateMapping = scale === 1 ? mapping :
+      (u, v) => mapping(0.5 + (u - 0.5) * scale, 0.5 + (v - 0.5) * scale);
+    const sampledImage = { ...image, paperAt: paperBrightnessMap(image, candidateMapping) };
+    const single = decodeRegion(sampledImage, candidateMapping, pageWatermarkRegions(1)[0]);
+    if (single) return [single];
+    const codes = [];
+    for (const region of pageWatermarkRegions(4)) {
+      const found = decodeRegion(sampledImage, candidateMapping, region);
+      if (found && !codes.some(other => other.seal === found.seal)) codes.push(found);
+    }
+    if (codes.length > bestCodes.length) bestCodes = codes;
+    if (codes.length === 4) return codes;
   }
-  return codes;
+  return bestCodes;
 }

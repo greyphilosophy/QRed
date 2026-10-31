@@ -79,34 +79,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Temporary: package PUBLIC source/dependencies so we can run the exact
-  # JavaScript decoder against PRIVATE camera originals outside GitHub.
-  # No photographs or user data are uploaded to this CI runner.
-  local-photo-scanner-runtime:
-    name: Package offline scanner runtime (no photos)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install dependencies
-        working-directory: frontend
-        run: npm ci
-      - name: Bundle patched decoder and offline dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          tar -czf offline-qred-runtime.tar.gz -C frontend src node_modules package.json vite.config.js
-      - uses: actions/upload-artifact@v4
-        with:
-          name: qred-offline-scanner-runtime
-          path: offline-qred-runtime.tar.gz
-          if-no-files-found: error
-          retention-days: 1
-
   frontend-heavy-tests:
     name: Frontend heavy (${{ matrix.shard }})
     runs-on: ubuntu-latest

@@ -11,6 +11,7 @@ import { planWatermarks } from "../pdf/watermarkPlacement.js";
 import { stampWatermarks } from "../pdf/watermark.js";
 import { renderPdfPage, withPdfDocument } from "../pdf/readPdfText.js";
 import { scanPdfPage } from "../verifier/scanPdf.js";
+import { scanPageAlignedImage } from "./pageAlignedScan.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
@@ -47,6 +48,7 @@ function printAndPhotograph(seals, {
   width = 690, height = 900, ink = [65, 120, 235],
   tilted = true, finderBlocked = true, text = true,
   backdrop = [43, 43, 47], patternedBackdrop = false, shadowed = false,
+  printGray = 0.85, paperBase = 246, printerScale = 1,
 } = {}) {
   const symbols = seals.map(seal => createQRedQrSymbol(seal));
   if (![0, 1, 4].includes(symbols.length)) throw new Error("Fixture supports 0, 1 or 4 QR chunks");
@@ -76,24 +78,30 @@ function printAndPhotograph(seals, {
       continue;
     }
     // Apply uneven lighting and slight deterministic photo noise.
-    const paper = (shadowed ? 137 + 108 * u : 246) - 10 * v - 3 * u +
+    const paper = (shadowed ? 137 + 108 * u : paperBase) - 10 * v - 3 * u +
       ((px * 7 + py * 13) % 5 - 2);
     let value = paper;
+    // Physical printer content is not guaranteed to occupy the same region
+    // of the paper as the source PDF. Keep the paper corners unchanged while
+    // independently shrinking the printed content.
+    const sheetU = 0.5 + (u - 0.5) / printerScale;
+    const sheetV = 0.5 + (v - 0.5) / printerScale;
     let localRow = -1, localCol = -1, matchedPart = -1;
     for (let part = 0; part < symbols.length; part++) {
       const box = boxes[part];
-      if (u < box.x || u >= box.x + box.w || v < box.y || v >= box.y + box.h) continue;
+      if (sheetU < box.x || sheetU >= box.x + box.w ||
+          sheetV < box.y || sheetV >= box.y + box.h) continue;
       const size = symbols[part].modules.size;
-      localCol = Math.floor((u - box.x) / box.w * size);
-      localRow = Math.floor((v - box.y) / box.h * size);
-      value = paper * (symbols[part].modules.get(localRow, localCol) ? 0.85 : 1);
+      localCol = Math.floor((sheetU - box.x) / box.w * size);
+      localRow = Math.floor((sheetV - box.y) / box.h * size);
+      value = paper * (symbols[part].modules.get(localRow, localCol) ? printGray : 1);
       matchedPart = part;
       break;
     }
     let pixel = [value, value, value];
     // Horizontal colored or black letter strokes cross modules but leave
     // exposed pixels elsewhere. Color is deliberately unrelated to QR bits.
-    if (text && u > 0.09 && u < 0.91 && v > 0.14 && v < 0.86 &&
+    if (text && sheetU > 0.09 && sheetU < 0.91 && sheetV > 0.14 && sheetV < 0.86 &&
         (Math.floor(v * 760) % 27 < 3) && Math.floor(u * 600 / 13) % 4 !== 0) {
       pixel = ink;
     }
@@ -215,6 +223,39 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     const recovered = await scanPdfPage(photo);
     expect(recovered.seals).toContain(seals[0]);
     await expect(verifyQRedSeals(recovered.seals, publicKey))
+      .resolves.toMatchObject({ status: "VALID", content });
+  }, 60000);
+
+  it("[WM-03] calibrates to pale printed ink on gray-exposed paper", async () => {
+    const content = "Printed low-contrast paper and ink test. ".repeat(17).trimEnd();
+    const { seals } = await signed(content);
+    expect(seals).toHaveLength(1);
+    const photo = printAndPhotograph(seals, {
+      printGray: 0.925, paperBase: 208, ink: [210, 65, 80],
+      finderBlocked: true,
+    });
+    const recovered = await scanPdfPage(photo);
+    expect(recovered.seals).toContain(seals[0]);
+    await expect(verifyQRedSeals(recovered.seals, publicKey))
+      .resolves.toMatchObject({ status: "VALID", content });
+  }, 30000);
+
+  it.each([
+    ["one QR", 1],
+    ["four adjacent QRs", 4],
+  ])("[WM-11] recalibrates PDF-to-paper print shrink for %s", async (_label, count) => {
+    const content = count === 1
+      ? "Printer alignment evidence. ".repeat(21).trimEnd()
+      : "Four-quadrant printer-scale challenge. ".repeat(260).trimEnd();
+    const { seals } = await signed(content);
+    expect(seals).toHaveLength(count);
+    const photo = printAndPhotograph(seals, {
+      width: count === 1 ? 690 : 1000, height: count === 1 ? 900 : 1300,
+      printerScale: 0.97, text: false, finderBlocked: false,
+    });
+    const recovered = scanPageAlignedImage(photo).map(result => result.seal);
+    expect(new Set(recovered)).toEqual(new Set(seals));
+    await expect(verifyQRedSeals(recovered, publicKey))
       .resolves.toMatchObject({ status: "VALID", content });
   }, 60000);
 
