@@ -4,6 +4,7 @@
 import jsQR from "jsqr";
 import { hiddenPayloadFromScanResult } from "./hiddenPayload.js";
 import { isChromaticForeground } from "./watermarkFilter.js";
+import { readErasedQrMatrix } from "./qrErasureRecovery.js";
 
 const PAPER_INSET = 0.03;
 const MAX_PHOTO_PIXELS = 12_000_000;
@@ -206,7 +207,7 @@ function restoreStructure(matrix, size) {
 
 function sampledMatrix(image, mapping, region, version) {
   const size = 17 + 4 * version;
-  const bits = new Uint8Array(size * size);
+  const bits = new Uint8Array(size * size), unknown = new Uint8Array(bits.length);
   const offsets = [0.20, 0.5, 0.80];
   for (let row = 0; row < size; row++) for (let col = 0; col < size; col++) {
     let pale = 0, paper = 0;
@@ -216,10 +217,15 @@ function sampledMatrix(image, mapping, region, version) {
       if (gray <= 223) pale++;
       else if (gray >= 230) paper++;
     }
-    bits[row * size + col] = pale > paper ? 1 : 0;
+    const index = row * size + col;
+    bits[index] = pale > paper ? 1 : 0;
+    // If text covers the entire module, guessing white turns an erasure
+    // (known location) into a more expensive unknown-position byte error.
+    // Flag for the RS erasure decoder instead.
+    if (pale + paper < 3 || Math.abs(pale - paper) < 2) unknown[index] = 1;
   }
   restoreStructure(bits, size);
-  return { bits, size };
+  return { bits, size, unknown };
 }
 
 function rasterForDecoder({ bits, size }) {
@@ -252,13 +258,24 @@ function scannedGeometry(mapping, region, size) {
 
 function decodeRegion(image, mapping, region) {
   for (const { version } of chooseVersions(image, mapping, region)) {
-    const { bits, size } = sampledMatrix(image, mapping, region, version);
+    const { bits, size, unknown } = sampledMatrix(image, mapping, region, version);
     const raster = rasterForDecoder({ bits, size });
-    const code = jsQR(raster.data, raster.width, raster.width, { inversionAttempts: "dontInvert" });
-    if (code?.version !== version) continue;
+    const ordinary = jsQR(raster.data, raster.width, raster.width, { inversionAttempts: "dontInvert" });
+    if (ordinary?.version === version) {
+      const seal = hiddenPayloadFromScanResult(ordinary);
+      if (seal) return { seal, code: { ...ordinary,
+        location: scannedGeometry(mapping, region, size), pageAligned: true } };
+    }
+    // Only the exact same QR parity blocks and corrected hidden payload can
+    // pass this recovery. Erasures come from photographed opaque foreground,
+    // never from a saved PDF's text, layout or claimed content.
+    if (!unknown.some(Boolean)) continue;
+    const recovered = readErasedQrMatrix(bits, unknown, version);
+    if (!recovered) continue;
+    const code = { data: "QRED.ORG", version, correctedData: recovered.correctedData,
+      location: scannedGeometry(mapping, region, size), pageAligned: true, erasureAware: true };
     const seal = hiddenPayloadFromScanResult(code);
-    if (!seal) continue;
-    return { seal, code: { ...code, location: scannedGeometry(mapping, region, size), pageAligned: true } };
+    if (seal) return { seal, code };
   }
   return null;
 }
