@@ -288,10 +288,17 @@ describe("browser PDF sealing", () => {
     });
   });
 
-  it("refuses dense multi-QR footers that cannot be photographed reliably", async () => {
+  it("seals three readable QR parts in a legal footer without losing the signed text", async () => {
     const file = await makeHugeLetterPdfFile();
-    await expect(sealPdfInBrowser({ file, privateKey, publicKey, encodingStrategy: "plaintext", pageScalingStrategy: "legal-footer" }))
-      .rejects.toThrow("too many dense QR seals for a readable footer");
+    const { blob, stampedQrValues } = await sealPdfInBrowser({
+      file, privateKey, publicKey, encodingStrategy: "plaintext", pageScalingStrategy: "legal-footer",
+    });
+    expect(stampedQrValues).toHaveLength(3);
+    const printedPdf = await PDFDocument.load(await blob.arrayBuffer());
+    expect(printedPdf.getPage(0).getHeight()).toBe(1008);
+    await expect(verifyQRedSeals(stampedQrValues.toReversed(), publicKey)).resolves.toMatchObject({
+      status: "VALID", content: expect.stringContaining("QRed sealing content needs more than one footer row."),
+    });
   });
 
   it("shrinks page content without changing the source page size when asked", async () => {
