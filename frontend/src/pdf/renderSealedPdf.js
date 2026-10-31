@@ -101,19 +101,35 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
   // Give a failed watermark one distinct placement before sacrificing the
   // original page size for a footer. Both candidates must pass every check.
   const triedAlternative = new Set();
+  let triedWithoutEntry = false;
   let rendered;
   do {
     rendered = await renderAttempt();
-    const needAlternative = rendered.failed.filter(index => !triedAlternative.has(index));
+    // If the first-page navigation QR interferes with signed-payload recovery,
+    // remove it before trying another placement or extending the page.
+    let entryless = null;
+    const dropEntry = !triedWithoutEntry && rendered.failed.includes(0)
+      && Boolean(plannedWatermarkLayout?.[0]?.entry);
+    if (dropEntry) {
+      triedWithoutEntry = true;
+      const { planPdfWatermarks } = await import("./watermark.js");
+      entryless = await planPdfWatermarks(file, pageSealResults, [0], { omitEntry: true });
+    }
+    const needAlternative = rendered.failed.filter(index =>
+      !entryless?.[index] && !triedAlternative.has(index));
     for (const index of needAlternative) triedAlternative.add(index);
     let alternatives = null;
     if (needAlternative.length) {
       const { planPdfWatermarks } = await import("./watermark.js");
-      alternatives = await planPdfWatermarks(file, pageSealResults, needAlternative,
-        { excludedLayouts: plannedWatermarkLayout });
+      alternatives = await planPdfWatermarks(file, pageSealResults, needAlternative, {
+        excludedLayouts: plannedWatermarkLayout,
+        omitEntry: needAlternative.includes(0) && !plannedWatermarkLayout[0]?.entry,
+      });
     }
     for (const index of rendered.failed) {
-      if (alternatives?.[index]) {
+      if (entryless?.[index]) {
+        plannedWatermarkLayout[index] = entryless[index];
+      } else if (alternatives?.[index]) {
         plannedWatermarkLayout[index] = alternatives[index];
       } else if (!footerPages.includes(index + 1)) {
         footerPages.push(index + 1);
