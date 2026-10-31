@@ -63,8 +63,10 @@ describe("page-aware watermark placement", () => {
 
   it("searches a genuinely different placement after a candidate fails decoding", () => {
     const image = pageWithGraphic({ x: 260, y: 400, width: 90, height: 40 });
-    const first = planWatermarks(image, [symbol]);
-    const alternate = planWatermarks(image, [symbol], null, { excludeBoxes: first });
+    // Exercise the legacy placement retry rather than the new standardized
+    // page-filling grid, which necessarily occupies nearly all the page.
+    const first = planWatermarks(image, [symbol], null, { preferPageAligned: false });
+    const alternate = planWatermarks(image, [symbol], null, { excludeBoxes: first, preferPageAligned: false });
     expect(alternate).toHaveLength(1);
     const a = first[0], b = alternate[0];
     const overlapWidth = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));

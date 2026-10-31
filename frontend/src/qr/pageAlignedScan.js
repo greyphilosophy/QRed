@@ -285,3 +285,19 @@ export function scanPageAlignedImage(image) {
   }
   return codes;
 }
+
+
+/** Diagnostic geometry and version scores; never returns page contents or
+ * signed data. Used by synthetic benchmark tests to isolate alignment faults.
+ */
+export function pageAlignedDiagnostics(image) {
+  const quad = locatePaper(image);
+  const mapping = quad && pageHomography(quad);
+  if (!mapping) return { pageFound: false };
+  return {
+    pageFound: true,
+    corners: quad.map(({ x, y }) => [Math.round(x), Math.round(y)]),
+    single: chooseVersions(image, mapping, pageWatermarkRegions(1)[0]),
+    quadrants: pageWatermarkRegions(4).map(region => chooseVersions(image, mapping, region)),
+  };
+}

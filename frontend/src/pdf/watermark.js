@@ -204,7 +204,8 @@ export async function checkWatermarks(bytes, layouts, pageSealResults, { onFailu
         // simulate printer/camera degradation at the page rather than crop.
         const expected = pageSealResults[index].seals;
         const observed = scanPageAlignedImage(image).map(result => result.seal);
-        const softened = scanPageAlignedImage(simulatePrintPhoto(image)).map(result => result.seal);
+        const degraded = { ...simulatePrintPhoto(image), bounds: image.bounds, scale: image.scale };
+        const softened = scanPageAlignedImage(degraded).map(result => result.seal);
         if (!expected.every(value => observed.includes(value)) ||
             !expected.every(value => softened.includes(value))) {
           fail(index, "The page-aligned watermark could not be recovered from the complete rendered page.");

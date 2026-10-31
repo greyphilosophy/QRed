@@ -3,6 +3,7 @@
 // cryptographic verification. They are deliberately red until page-coordinate
 // geometry and rectangular watermark recovery are actually implemented.
 import { PDFDocument } from "pdf-lib";
+import { pageAlignedDiagnostics } from "./pageAlignedScan.js";
 import { describe, expect, it } from "vitest";
 import { createQRedSeals } from "../qredSealer.js";
 import { createQRedQrSymbol } from "../qredQr.js";
@@ -128,21 +129,21 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     const box = { x: 18, y: 18, width: 576, height: 756 };
     const pdf = await PDFDocument.create();
     pdf.addPage([pageSize.width, pageSize.height]);
-    await stampWatermarks(pdf, [{ boxes: [box] }], [{ seals: [payload] }]);
+    await stampWatermarks(pdf, [{ boxes: [box], pageAligned: true }], [{ seals: [payload] }]);
     const file = new Blob([await pdf.save()], { type: "application/pdf" });
     const image = await withPdfDocument(file, instance => renderPdfPage(instance, 1, 2));
     const n = qr.modules.size;
     // One of the dark pixels in the bottom-left and top-right finder cores.
     for (const [row, col] of [[n - 4, 3], [3, n - 4]]) {
       expect(qr.modules.get(row, col)).toBeTruthy();
-      const x = box.x + (4 + col + 0.5) * box.width / (n + 8);
-      const y = box.y + box.height - (4 + row + 0.5) * box.height / (n + 8);
+      const x = box.x + (col + 0.5) * box.width / n;
+      const y = box.y + box.height - (row + 0.5) * box.height / n;
       expect(sampleAtPagePoint(image, x, y), `finder module ${row},${col}`).toBeLessThan(239);
     }
   }, 30000);
 
   it("[WM-01, WM-03, WM-05] recovers signed bytes from a perspective sheet with one unreadable finder", async () => {
-    const content = "PAGE COORDINATE CHALLENGE\n" + "Inventory and inspection text. ".repeat(25);
+    const content = ("PAGE COORDINATE CHALLENGE\n" + "Inventory and inspection text. ".repeat(25)).trimEnd();
     const { seals } = await signed(content);
     expect(seals).toHaveLength(1);
     const photo = printAndPhotograph(seals, { ink: [223, 62, 67] });
@@ -158,6 +159,7 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     const photo = printAndPhotograph(seals, {
       width: 1000, height: 1300, ink: [61, 135, 225], tilted: true,
     });
+    console.info("WM-04 alignment diagnostics", pageAlignedDiagnostics(photo));
     const { seals: recovered } = await scanPdfPage(photo);
     expect(new Set(recovered)).toEqual(new Set(seals));
     await expect(verifyQRedSeals(recovered.toReversed(), publicKey))
