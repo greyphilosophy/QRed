@@ -171,7 +171,22 @@ function scoreVersion(image, mapping, region, version) {
       observed++;
     }
   }
-  return observed >= 36 ? matches / observed : 0;
+  if (observed < 36) return 0;
+  // Finder geometry alone is ambiguous for dense v35–v40 symbols because
+  // several nearby versions produce almost identical endpoint patterns.
+  // Timing stripes provide a version-specific interior pitch reference.
+  let timingHits = 0, timingSeen = 0;
+  for (let position = 11; position < size - 11; position += 2) {
+    for (const [row, col] of [[6, position], [position, 6]]) {
+      const gray = observe(image, mapping, region, size, row, col);
+      if (gray === null || gray > 220 && gray < 231) continue;
+      timingHits += Number((gray < 225) === (position % 2 === 0));
+      timingSeen++;
+    }
+  }
+  const finderScore = matches / observed;
+  const timingScore = timingSeen >= 14 ? timingHits / timingSeen : finderScore;
+  return finderScore * 0.58 + timingScore * 0.42;
 }
 
 function chooseVersions(image, mapping, region) {

@@ -186,7 +186,11 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
       for (let row = 0; row < sampled.size; row++) for (let col = 0; col < sampled.size; col++) {
         incorrectModules += Number(Boolean(sampled.bits[row * sampled.size + col]) !== Boolean(symbol.modules.get(row, col)));
       }
-      console.info(`WM-04 quadrant ${part + 1}: version=${symbol.version}, damaged=${damagedCodewords}/${expected.length}, marked erasures=${marked.size}, unmarked errors=${missed}, unnecessary erasures=${unnecessary}, direct RS recovery=${Boolean(decoded)}, module errors=${incorrectModules}/${sampled.size ** 2}`);
+      const targetData = createQRedQrData(seals[part]).bytes;
+      const recoveredBytes = decoded?.correctedData;
+      const byteDifferences = recoveredBytes
+        ? targetData.reduce((sum, byte, i) => sum + Number(byte !== recoveredBytes[i]), 0) : null;
+      console.info(`WM-04 quadrant ${part + 1}: version=${symbol.version}, damaged=${damagedCodewords}/${expected.length}, marked erasures=${marked.size}, unmarked errors=${missed}, unnecessary erasures=${unnecessary}, direct RS recovery=${Boolean(decoded)}, corrected byte differences=${byteDifferences}, module errors=${incorrectModules}/${sampled.size ** 2}`);
     }
     const { seals: recovered } = await scanPdfPage(photo);
     expect(new Set(recovered)).toEqual(new Set(seals));
