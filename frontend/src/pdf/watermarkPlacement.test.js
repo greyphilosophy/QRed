@@ -61,6 +61,14 @@ describe("page-aware watermark placement", () => {
     expect(boxes[1].x).toBeGreaterThan(boxes[0].x);
   });
 
+  it("does not call four content-avoiding squares a standardized page-filling grid", () => {
+    const image = pageWithGraphic({ x: 254, y: 335, width: 106, height: 120 });
+    const boxes = planWatermarks(image, [symbol, symbol, symbol, symbol], null,
+      { preferPageAligned: false });
+    expect(boxes).toHaveLength(4);
+    for (const box of boxes) expect(box.width).toBeCloseTo(box.height);
+  });
+
   it("searches a genuinely different placement after a candidate fails decoding", () => {
     const image = pageWithGraphic({ x: 260, y: 400, width: 90, height: 40 });
     // Exercise the legacy placement retry rather than the new standardized

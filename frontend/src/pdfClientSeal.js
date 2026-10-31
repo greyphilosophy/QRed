@@ -67,7 +67,11 @@ async function preparePageSealing({ file, privateKey, publicKey, bootstrapUrl, e
       const results = await Promise.all(plans.map(async (page, index) => createQRedSeals({
         content: page.text, pageEvidence: page.pageEvidence, privateKey, publicKey,
         bootstrapUrl, encodingStrategy, timestamp, pageContext: contexts[index],
-        preferFourQrPage: pageScalingStrategy === "automatic" || pageScalingStrategy === "watermark",
+        // Image-only and blank pages always use an ordinary footer, so do
+        // not force them into four pieces merely because the user selected
+        // Automatic. The 1-or-4 policy applies to watermark-eligible text.
+        preferFourQrPage: Boolean(page.text) &&
+          (pageScalingStrategy === "automatic" || pageScalingStrategy === "watermark"),
         attestation: attestations?.[index],
       })));
       return { results, plans };

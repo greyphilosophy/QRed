@@ -2,7 +2,7 @@ import { BlendMode, rgb, StandardFonts } from "pdf-lib";
 import QRCode from "qrcode";
 import { createQRedQrSymbol } from "../qredQr.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
-import { scanPageAlignedImage } from "../qr/pageAlignedScan.js";
+import { pageWatermarkRegions, scanPageAlignedImage } from "../qr/pageAlignedScan.js";
 import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
 import { renderPdfPage, withPdfDocument } from "./readPdfText.js";
 import { planWatermarks } from "./watermarkPlacement.js";
@@ -120,9 +120,18 @@ export async function planPdfWatermarks(file, pageSealResults, pageIndices = pag
       if (!options.excludeBoxes && (symbols.length === 1 || symbols.length === 4)) {
         try {
           const proposed = planWatermarks(image, symbols, null, options);
-          if (proposed.length === 4 || proposed[0].height / proposed[0].width >= 1.15) {
-            boxes = proposed; pageAligned = true;
-          }
+          // Only the standardized page-relative geometry can be decoded
+          // without the signer sharing its placement. Four *legacy squares*
+          // must not be mislabeled as four aligned quadrants.
+          const standard = pageWatermarkRegions(symbols.length).map(region => ({
+            x: image.bounds.x + region.x * image.bounds.width,
+            y: image.bounds.y + (1 - region.y - region.height) * image.bounds.height,
+            width: region.width * image.bounds.width,
+            height: region.height * image.bounds.height,
+          }));
+          const aligned = proposed.length === standard.length && proposed.every((box, i) =>
+            ["x", "y", "width", "height"].every(key => Math.abs(box[key] - standard[i][key]) <= 0.05));
+          if (aligned) { boxes = proposed; pageAligned = true; }
         } catch { /* Try the content-avoiding legacy layout below. */ }
       }
       let entry = null;
