@@ -67,12 +67,16 @@ function isValidImage(data, width, height) {
     && data?.length === width * height * 4;
 }
 
+function watermarkScanSize(width, height) {
+  const scale = Math.min(1, Math.sqrt(MAX_WATERMARK_PIXELS / (width * height)));
+  const w = Math.max(1, Math.floor(width * scale)), h = Math.max(1, Math.floor(height * scale));
+  return [w, h, Math.max(1, Math.min(4, Math.round(Math.max(w, h) / 550)))];
+}
+
 function scanAttempts(width, height, tryRescaling = true, tryWatermark = true, includeModuleAware = false) {
   const attempts = scanSizes(width, height, tryRescaling);
   if (tryWatermark) {
-    const scale = Math.min(1, Math.sqrt(MAX_WATERMARK_PIXELS / (width * height)));
-    const w = Math.max(1, Math.floor(width * scale)), h = Math.max(1, Math.floor(height * scale));
-    const radius = Math.max(1, Math.min(4, Math.round(Math.max(w, h) / 550)));
+    const [w, h, radius] = watermarkScanSize(width, height);
     attempts.push([w, h, radius]);
     // In camera mode, spend only one frame on module-aware color recovery.
     // Still photos have a separately budgeted final module-aware attempt.
@@ -120,6 +124,13 @@ function decodePrepared(prepared, width, height, moduleAware = false) {
 
 function scanAtSize(data, width, height, size) {
   return decodePrepared(prepareAtSize(data, width, height, size), width, height, Boolean(size[3]));
+}
+
+// Try the established 2.5 MP watermark filter once before exhaustive photo
+// alignment. Keep the original pixels for all later recovery and saved photos.
+export function scanWatermarkPreview(data, width, height) {
+  if (!isValidImage(data, width, height)) return null;
+  return scanAtSize(data, width, height, watermarkScanSize(width, height));
 }
 
 /** Return QR geometry in the original image's coordinates, even after a retry.

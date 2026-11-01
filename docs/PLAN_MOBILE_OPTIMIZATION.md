@@ -5,6 +5,8 @@ As of November 2026, both scanner pages prefer the rear main camera at 1× with 
 
 Manual camera photos and selected images use a background worker for exhaustive recovery. The page shows a reading status and supports cancellation (close the camera or cancel the selected photo). The worker receives transferred pixels, preserves all recovered page chunks, and terminates on completion or cancellation. Its public code is prepared for offline use through the existing service worker; photographs stay on the device. Live scanning retains bounded attempts between frames. Physical lens selection still needs testing on supported phones because camera labels and controls vary by browser.
 
+Photo recovery now tries the existing watermark filter once at a maximum of 2.5 MP before exhaustive page alignment. Only a complete single-code QRed seal can finish this first attempt; navigation codes and multipart pages continue through full page recovery. The original-resolution pixels remain available to the existing fallbacks, and the normal verification session still checks the signature.
+
 The audit and phases below record the earlier optimization plan, not a current inventory of missing features.
 
 ## Findings from Codebase Audit

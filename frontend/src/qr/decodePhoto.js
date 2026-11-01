@@ -1,7 +1,7 @@
-import { scanQrImage } from "./scanQrImage.js";
+import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
 import { isQRedEntryLink } from "./hiddenPayload.js";
-import { VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult,
+import { decodeSeal, VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult,
   qredTextFromScanResult } from "../qredVerifier.js";
 
 export function qrScanAction(data, width, height, code, { returnPayload = false } = {}) {
@@ -21,6 +21,13 @@ export function decodePhoto(image, { returnPayload = false } = {}) {
     throw new Error("This photo cannot be scanned at its current size. Choose a smaller photo.");
   }
   if (returnPayload) {
+    const preview = scanWatermarkPreview(data, width, height);
+    const payload = preview && qredPayloadFromPhotoScanResult(data, width, height, preview);
+    // A complete single-code seal can skip the expensive alignment search.
+    // Navigation/ordinary QRs must not hide a watermark, and one chunk must
+    // not stop recovery of a four-code page. Trust is checked by the normal
+    // verification session after either decoding path returns its payload.
+    if (decodeSeal(payload)?.total_chunks === 1) return { status: "found", text: payload };
     const aligned = scanPageAlignedImage(image, { deep: true });
     if (aligned.length) return { status: "found-multiple", texts: aligned.map(result => result.seal) };
   }

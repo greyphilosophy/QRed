@@ -11,6 +11,7 @@ import { planWatermarks } from "../pdf/watermarkPlacement.js";
 import { stampWatermarks } from "../pdf/watermark.js";
 import { renderPdfPage, withPdfDocument } from "../pdf/readPdfText.js";
 import { scanPdfPage } from "../verifier/scanPdf.js";
+import { decodePhoto } from "./decodePhoto.js";
 import { DEFAULT_WATERMARK_MARGIN_POINTS, pageWatermarkRegions, scanPageAlignedImage } from "./pageAlignedScan.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
@@ -503,14 +504,16 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
       .resolves.toMatchObject({ status: "VALID", content });
   }, 60000);
 
-  it("[WM-04, WM-05] reconstructs FOUR adjacent QR grids with no internal quiet zones", async () => {
+  it.each(["PDF", "photo"])("[WM-04, WM-05] reconstructs FOUR adjacent QR grids with no internal quiet zones through %s recovery", async source => {
     const content = "Four-quadrant signed page\n" + "QRed evidence-".repeat(700);
     const { seals } = await signed(content);
     expect(seals).toHaveLength(4);
     const photo = printAndPhotograph(seals, {
       width: 1000, height: 1300, ink: [61, 135, 225], tilted: true,
     });
-    const { seals: recovered } = await scanPdfPage(photo);
+    const recovered = source === "PDF"
+      ? (await scanPdfPage(photo)).seals
+      : decodePhoto(photo, { returnPayload: true }).texts;
     expect(new Set(recovered)).toEqual(new Set(seals));
     await expect(verifyQRedSeals(recovered.toReversed(), publicKey))
       .resolves.toMatchObject({ status: "VALID", content });

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import jsQR from "jsqr";
 import { scanModuleAwareQr } from "./moduleAwareScan.js";
-import { scanQrImage } from "./scanQrImage.js";
+import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 
 vi.mock("jsqr", () => ({ default: vi.fn(() => null) }));
 vi.mock("./moduleAwareScan.js", () => ({ scanModuleAwareQr: vi.fn(() => null) }));
@@ -17,6 +17,20 @@ beforeEach(() => {
 });
 
 describe("bounded watermark scan budget", () => {
+  it("tries one small watermark preview and maps its geometry back to the untouched original", () => {
+    const width = 2048, height = 1536;
+    const original = new Uint8ClampedArray(width * height * 4).fill(255);
+    jsQR.mockReturnValue({ data: "preview", location: { topLeftCorner: { x: 20, y: 30 } } });
+    const found = scanWatermarkPreview(original, width, height);
+    expect(jsQR).toHaveBeenCalledTimes(1);
+    const [, w, h] = jsQR.mock.calls[0];
+    expect(w * h).toBeLessThanOrEqual(2_500_000);
+    expect(found.location.topLeftCorner).toEqual({ x: 20.5 * width / w - 0.5, y: 30.5 * height / h - 0.5 });
+    expect(original).toHaveLength(width * height * 4);
+    expect(original[0]).toBe(255);
+    expect(scanModuleAwareQr).not.toHaveBeenCalled();
+  });
+
   it("counts the module-aware retry inside the three-attempt preflight limit", () => {
     scanQrImage(pixels, width, height, { tryRescaling: false, maxAttempts: 3 });
     expect(jsQR).toHaveBeenCalledTimes(2);
