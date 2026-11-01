@@ -51,7 +51,42 @@ def test_main_camera_at_one_times_zoom_without_flashlight(browser, path):
         assert state["stopped"] == ["tele"]
         expect(page.get_by_role("button", name="Flashlight", exact=False)).to_have_count(0)
         assert page.locator("video").evaluate("video => getComputedStyle(video).objectFit") == "contain"
+        # The same camera stays open while the phone rotates or its viewport
+        # changes. The guide must fit the real image, not the black letterbox,
+        # and must leave the advice and camera controls usable.
+        for width, height in [(393, 873), (873, 393), (320, 568), (1280, 800)]:
+            page.set_viewport_size({"width": width, "height": height})
+            expect(page.locator(".page-scan-guide")).to_be_visible()
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            geometry = page.evaluate("""() => {
+                const video = document.querySelector('video'), view = video.getBoundingClientRect();
+                const guide = document.querySelector('.page-scan-guide'), box = guide.getBoundingClientRect();
+                const scale = Math.min(view.width / video.videoWidth, view.height / video.videoHeight);
+                const w = video.videoWidth * scale, h = video.videoHeight * scale;
+                const left = view.left + (view.width - w) / 2, top = view.top + (view.height - h) / 2;
+                const overlaps = element => {
+                    const other = element.getBoundingClientRect();
+                    return box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top;
+                };
+                return {
+                    insideImage: box.left >= left - 1 && box.right <= left + w + 1 && box.top >= top - 1 && box.bottom <= top + h + 1,
+                    ratio: box.width / box.height,
+                    overlappingControls: [...document.querySelectorAll('.ar-controls, .ar-close, .ar-scan-feedback, .controls, .page-scan-hint')]
+                        .filter(element => !element.hidden && overlaps(element))
+                        .map(element => ({ name: element.className, bounds: element.getBoundingClientRect().toJSON() })),
+                    bounds: box.toJSON(),
+                    animation: getComputedStyle(guide).animationName,
+                    pointerEvents: getComputedStyle(guide).pointerEvents,
+                };
+            }""")
+            assert geometry["insideImage"], (width, height, geometry)
+            assert geometry["overlappingControls"] == [], (width, height, geometry)
+            assert geometry["ratio"] == pytest.approx(4 / 3 if width > height else 3 / 4, abs=0.01)
+            assert geometry["animation"] == "none"
+            assert geometry["pointerEvents"] == "none"
+        expect(page.get_by_text("Keep all four page corners visible. Avoid glare.", exact=True)).to_be_visible()
         page.get_by_role("button", name="Close" if path == "/" else "Stop", exact=True).click()
+        expect(page.locator(".page-scan-guide")).not_to_be_visible()
         assert page.evaluate("cameraTest.stopped") == ["tele", "main"]
     finally:
         context.close()

@@ -458,6 +458,8 @@ describe("decodeCanvasFrame", () => {
     expect(decodeCanvasFrame(video, canvas, { scanQrFrame, returnPayload: true }))
       .toEqual({ status: "continue" });
     expect(scanPageAlignedImage).toHaveBeenCalledTimes(1);
+    expect(scanPageAlignedImage).toHaveBeenCalledWith(
+      expect.objectContaining({ width: 320, height: 240 }), { deep: false });
   });
 
   it("gives manual photo feedback when no QR is found", () => {

@@ -185,7 +185,9 @@ export function createQrFrameScanner() {
     }
     if (!sizes.length) return null;
     if (sizes[nextSize] === "pageAligned") {
-      const codes = scanPageAlignedImage({ data, width, height })
+      // Keep exhaustive refinement in the selected/captured-photo worker.
+      // Live scanning should try again with the operator's latest framing.
+      const codes = scanPageAlignedImage({ data, width, height }, { deep: false })
         .map(({ code }) => code).filter(usableResult);
       nextSize = codes.length ? 0 : (nextSize + 1) % sizes.length;
       return codes.length ? { codes } : null;

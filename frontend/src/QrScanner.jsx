@@ -8,6 +8,7 @@ export { QR_CAMERA_CONSTRAINTS, findPreferredMainCamera, getPreferredCameraStrea
   applyCameraQualityControls, applyContinuousCameraFocus } from "./qr/cameraControls.js";
 export { qrScanAction } from "./qr/decodePhoto.js";
 import { startCameraSession } from "./qr/cameraSession.js";
+import { observePageScanGuide } from "./qr/pageScanGuide.js";
 import "./qrScanner.css";
 
 /**
@@ -74,7 +75,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
   }
 
   if (mode === "scanning") {
-    return React.createElement("section", { className: "ar-display", "aria-label": "QRed AR scanner" },
+    return React.createElement("section", { className: "ar-display ar-display-scanning", "aria-label": "QRed AR scanner" },
       React.createElement(ScannerView, {
         onScan: handleScan,
         onClose: () => setMode("idle"),
@@ -161,6 +162,8 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
 function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPayload }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const guideAreaRef = useRef(null);
+  const guideRef = useRef(null);
   const handleScanActionRef = useRef(() => false);
   const pendingManualCaptureRef = useRef(false);
   const pendingManualCaptureStartedAtRef = useRef(null);
@@ -181,6 +184,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
     const seen = new Set();
     const scanQrFrame = createQrFrameScanner();
     let camera;
+    const stopGuide = observePageScanGuide(videoRef.current, guideAreaRef.current, guideRef.current);
     preparePhotoScanner();
 
     handleScanActionRef.current = (scanAction) => {
@@ -283,6 +287,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       photoScanRef.current = null;
       onReadingPhoto(false);
       camera.stop();
+      stopGuide();
     };
   }, [onScan, returnPayload, onReadingPhoto]);
 
@@ -304,15 +309,18 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       playsInline: true,
       autoPlay: true,
     }),
-    React.createElement("div", { className: "ar-reticle ar-reticle-live", "aria-hidden": "true" },
-      React.createElement("span", null),
-      React.createElement("span", null),
-      React.createElement("span", null),
-      React.createElement("span", null)
+    React.createElement("div", { className: "page-scan-guide-area", ref: guideAreaRef, "aria-hidden": "true" },
+      React.createElement("div", { className: "page-scan-guide", ref: guideRef, hidden: true },
+        React.createElement("span", null),
+        React.createElement("span", null),
+        React.createElement("span", null),
+        React.createElement("span", null)
+      )
     ),
     React.createElement("canvas", { ref: canvasRef, style: { display: "none" } }),
     !cameraReady ? React.createElement(CameraLoadingIndicator, { message: feedback || "Starting camera…" }) : null,
-    feedback && cameraReady ? React.createElement("div", { className: "ar-scan-feedback", role: "status", "aria-live": "polite" }, feedback) : null,
+    cameraReady ? React.createElement("div", { className: "ar-scan-feedback", role: "status", "aria-live": "polite" },
+      feedback || "Keep all four page corners visible. Avoid glare.") : null,
     React.createElement("button", { className: "ar-close", onClick: onClose }, "Close")
   );
 }
