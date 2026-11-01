@@ -254,6 +254,8 @@ describe("experimental PDF watermarks", () => {
     const result = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "automatic" });
     expect(result.footerPages).toEqual([]);
     expect(result.watermarkLayout[0]?.entry).toBeUndefined();
+    expect(result.watermarkLayout[0]?.entryText).toBeTruthy();
+    expect((await extractPdfText(result.blob)).match(/Verify at qred\.org/g)).toHaveLength(1);
     const sealed = await PDFDocument.load(await result.blob.arrayBuffer());
     expect(sealed.getPage(0).getSize()).toEqual({ width: 612, height: 792 });
     const printed = render(await result.blob.arrayBuffer(), 1);
@@ -418,6 +420,8 @@ it.each([
   const result = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "automatic" });
   expect(result.footerPages).toEqual([]);
   expect(result.watermarkLayout[0]?.entry).toBeUndefined();
+  expect(result.watermarkLayout[0]?.entryText).toBeTruthy();
+  expect((await extractPdfText(result.blob)).match(/Verify at qred\.org/g)).toHaveLength(1);
   expect(result.watermarkLayout[0]?.pageAligned).toBe(true);
   expect((await PDFDocument.load(await result.blob.arrayBuffer())).getPage(0).getSize())
     .toEqual({ width: size[0], height: size[1] });

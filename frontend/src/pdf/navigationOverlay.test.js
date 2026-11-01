@@ -3,11 +3,14 @@ import { PDFDocument, rgb } from "pdf-lib";
 import { createQRedSeals } from "../qredSealer.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
+import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
 import { scanPdfPage } from "../verifier/scanPdf.js";
 import { renderSealedPdf } from "./renderSealedPdf.js";
+import { extractPdfText } from "../pdfClientSeal.js";
 import { renderPdfPage, withPdfDocument } from "./readPdfText.js";
 import { ENTRY_URL, checkWatermarks } from "./watermark.js";
 import { simulatePrintPhoto } from "./watermarkPreflight.js";
+import { planQrStampLayoutForFooterBand } from "./qrLayout.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
@@ -102,4 +105,34 @@ it("rejects an unreadable navigation overlay even when its signed watermark stil
     onFailure: (_index, reason) => reasons.push(reason),
   })).toEqual([0]);
   expect(reasons).toEqual(["The small verification-link QR could not be read."]);
+}, 60000);
+
+it("reserves readable instruction text above a full-width three-code footer", async () => {
+  const content = "Footer caption placement. ".repeat(240).trimEnd();
+  const signed = await createQRedSeals({ privateKey, publicKey, content,
+    encodingStrategy: "plaintext", timestamp: "2026-10-31T12:00:00Z",
+    pageContext: { pageNumber: 1, pageCount: 1 } });
+  expect(signed.seals).toHaveLength(3);
+  const pdf = await PDFDocument.create();
+  pdf.addPage([612, 792]).drawText("Synthetic footer layout example", { x: 72, y: 700, size: 12 });
+  const file = new File([await pdf.save()], "three-part-footer.pdf", { type: "application/pdf" });
+  const result = await renderSealedPdf({ file, pageSealResults: [signed],
+    pagesWithText: [true], pageScalingStrategy: "legal-footer" });
+  expect((await extractPdfText(result.blob)).match(/Verify at qred\.org/g)).toHaveLength(1);
+  await withPdfDocument(result.blob, async document => {
+    const image = await renderPdfPage(document, 1, 300 / 72);
+    const layout = planQrStampLayoutForFooterBand(612, 3, { footerBandHeight: 198 });
+    const { items } = await (await document.getPage(1)).getTextContent();
+    const caption = items.find(item => item.str === "Verify at qred.org");
+    expect(caption.transform[5]).toBeGreaterThan(layout.qrOffsetY + layout.gridHeight + 3);
+    // Dense conventional footer codes can be framed individually. Verify
+    // all three actual printed rasters at 300 DPI, including their quiet zones.
+    const recovered = signed.seals.map((_seal, index) => {
+      const qr = crop(image, { x: layout.qrOffsetX + index * (layout.qrSize + layout.gap),
+        y: layout.qrOffsetY, width: layout.qrSize, height: layout.qrSize });
+      return hiddenPayloadFromScanResult(scanQrImage(qr.data, qr.width, qr.height));
+    });
+    expect(recovered).toEqual(signed.seals);
+    await expect(verifyQRedSeals(recovered, publicKey)).resolves.toMatchObject({ status: "VALID", content });
+  });
 }, 60000);

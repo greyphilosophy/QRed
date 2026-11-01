@@ -30,32 +30,38 @@ const ENTRY_WIDTH = 70, ENTRY_HEIGHT = 52;
 
 // Count every visible nonwhite pixel, including graphics and annotations.
 // Never infer empty space from extracted text alone.
-export function findEntryPlacement(image, { avoidBoxes = [] } = {}) {
+export function findEntryPlacement(image, { avoidBoxes = [], textOnly = false } = {}) {
   const { data, width, height, scale, bounds } = image;
+  const entryHeight = textOnly ? 14 : ENTRY_HEIGHT;
+  // Text needs no white backing. A uniform pale paper background can remain
+  // intact beneath it; darker or differently colored source marks stay clear.
+  const background = Array.from(data.subarray(0, 3));
+  const paleBackground = textOnly && background.every(channel => channel >= 230);
   const stride = width + 1;
   const ink = new Uint32Array(stride * (height + 1));
   for (let y = 0; y < height; y++) {
     let row = 0;
     for (let x = 0; x < width; x++) {
       const i = (y * width + x) * 4;
-      if (Math.min(data[i], data[i + 1], data[i + 2]) < 250) row++;
+      const matchesBackground = paleBackground && background.every((channel, c) => Math.abs(data[i + c] - channel) <= 1);
+      if (Math.min(data[i], data[i + 1], data[i + 2]) < 250 && !matchesBackground) row++;
       ink[(y + 1) * stride + x + 1] = ink[y * stride + x + 1] + row;
     }
   }
   // Bottom first, then top, then work inward. Favor the right corner so the
   // small navigation code usually stays outside the main body of the page.
-  const ys = new Set([MARGIN, bounds.height - MARGIN - ENTRY_HEIGHT]);
-  for (let y = MARGIN; y <= bounds.height - MARGIN - ENTRY_HEIGHT; y += 6) ys.add(y);
+  const ys = new Set([MARGIN, bounds.height - MARGIN - entryHeight]);
+  for (let y = MARGIN; y <= bounds.height - MARGIN - entryHeight; y += 6) ys.add(y);
   for (const y of ys) {
     for (let x = bounds.width - MARGIN - ENTRY_WIDTH; x >= MARGIN; x -= 6) {
       if (y < MARGIN) continue;
       const left = Math.max(0, Math.floor((x - 3) * scale));
       const right = Math.min(width, Math.ceil((x + ENTRY_WIDTH + 3) * scale));
-      const top = Math.max(0, Math.floor((bounds.height - y - ENTRY_HEIGHT - 3) * scale));
+      const top = Math.max(0, Math.floor((bounds.height - y - entryHeight - 3) * scale));
       const bottom = Math.min(height, Math.ceil((bounds.height - y + 3) * scale));
       if (ink[bottom * stride + right] - ink[top * stride + right]
           - ink[bottom * stride + left] + ink[top * stride + left] !== 0) continue;
-      const candidate = { x: bounds.x + x, y: bounds.y + y, width: ENTRY_WIDTH, height: ENTRY_HEIGHT };
+      const candidate = { x: bounds.x + x, y: bounds.y + y, width: ENTRY_WIDTH, height: entryHeight };
       // Caller-supplied keepouts protect legacy square watermarks and their
       // quiet zones. Full-page overlays instead rely on combined preflight.
       // Match the first-pass planner's 8-point entry clearance.
@@ -73,7 +79,7 @@ export function findEntryPlacement(image, { avoidBoxes = [] } = {}) {
 // navigation-code position on the original page. Page-aligned watermarks may
 // be covered by the optional entry panel, but the combined render must still
 // pass exact-payload preflight. Legacy squares retain their quiet zones.
-export async function findEntryForWatermark(file, boxes, { pageAligned = false } = {}) {
+export async function findEntryForWatermark(file, boxes, { pageAligned = false, textOnly = false } = {}) {
   if (!boxes?.length) return null;
   return withPdfDocument(file, async (pdf) => {
     const page = await pdf.getPage(1);
@@ -82,7 +88,7 @@ export async function findEntryForWatermark(file, boxes, { pageAligned = false }
       page.getViewport({ scale: 2, rotation: 0 }).height <= 12_000_000;
     if (!supported) { page.cleanup(); return null; }
     const image = await renderPdfPage(pdf, 1);
-    try { return findEntryPlacement(image, { avoidBoxes: pageAligned ? [] : boxes }); }
+    try { return findEntryPlacement(image, { avoidBoxes: pageAligned ? [] : boxes, textOnly }); }
     catch { return null; }
   });
 }
@@ -217,10 +223,15 @@ export async function stampWatermarks(pdf, layouts, pageSealResults) {
     }
     drawSymbol(page, createEntryQrSymbol(),
       { x: entry.x + (entry.width - ENTRY_QR_SIZE) / 2, y: entry.y + 12, width: ENTRY_QR_SIZE, height: ENTRY_QR_SIZE }, 0);
+  }
+  const captionBox = entry ?? layouts[0]?.entryText;
+  if (captionBox) {
+    const page = pdf.getPage(0);
     const font = await pdf.embedFont(StandardFonts.Helvetica);
     const caption = "Verify at qred.org";
-    page.drawText(caption, { x: entry.x + (entry.width - font.widthOfTextAtSize(caption, 7)) / 2,
-      y: entry.y + 3, size: 7, font, color: rgb(0, 0, 0) });
+    const size = entry ? 7 : 8;
+    page.drawText(caption, { x: captionBox.x + (captionBox.width - font.widthOfTextAtSize(caption, size)) / 2,
+      y: captionBox.y + 3, size, font, color: rgb(0, 0, 0) });
   }
 }
 

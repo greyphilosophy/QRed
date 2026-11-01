@@ -39,8 +39,14 @@ navigation panel with corner targeting brackets. This panel may cover watermark
 modules, but never original text, artwork or annotations. It retains the link
 QR's four-module quiet zone. The complete combined page must recover every
 exact signed chunk in both clean and softened/shaded renders, and the link
-itself must decode in both conditions. If either fails, keep the already-verified
-full-page watermark without the optional panel. Legacy square quiet zones are
+itself must decode in both conditions. If the QR cannot be placed or fails,
+try a smaller text-only **Verify at qred.org** instruction and repeat watermark
+preflight. The text has no white backing, so a uniform pale page background
+can remain visible beneath it while source text and other marks are avoided.
+If even the text cannot fit safely or preserve recovery, use a readable footer
+with that instruction. Footer layouts reserve caption space even when the QR
+grid fills the available width. Every completed document has a visible way to
+find the verifier. Legacy square quiet zones are
 still excluded from navigation placement. No covered-area percentage is treated
 as a guarantee of error correction. Earlier page-aligned 3%-inset seals remain
 supported by the verifier's legacy geometry profile.

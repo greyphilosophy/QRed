@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PDFDocument, rgb } from "pdf-lib";
-import { sealPdfInBrowser } from "../pdfClientSeal.js";
+import { extractPdfText, sealPdfInBrowser } from "../pdfClientSeal.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
 import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
@@ -12,7 +12,7 @@ import { scanPdfPage } from "../verifier/scanPdf.js";
 // Force the initial failure that starts each retry sequence; every successful
 // candidate still passes the real decoding and signed-payload preflight.
 const preflight = vi.hoisted(() => ({ forceSquare: true, failFirstEntry: true,
-  failFirstAligned: false, layouts: [] }));
+  failFirstAligned: false, failEntryText: false, layouts: [] }));
 vi.mock("./watermark.js", async importOriginal => {
   const real = await importOriginal();
   return {
@@ -36,6 +36,10 @@ vi.mock("./watermark.js", async importOriginal => {
       if (preflight.failFirstEntry && layouts[0]?.entry) {
         preflight.failFirstEntry = false;
         options?.onFailure?.(0, "Simulated failed first entry placement.");
+        return [0];
+      }
+      if (preflight.failEntryText && layouts[0]?.entryText) {
+        options?.onFailure?.(0, "Simulated unreadable text overlay.");
         return [0];
       }
       return real.checkWatermarks(bytes, layouts, pageSeals, options);
@@ -67,6 +71,7 @@ beforeEach(() => {
   preflight.forceSquare = true;
   preflight.failFirstEntry = true;
   preflight.failFirstAligned = false;
+  preflight.failEntryText = false;
   preflight.layouts.length = 0;
   vi.setSystemTime(new Date("2026-10-22T06:00:00Z"));
 });
@@ -150,16 +155,34 @@ it("keeps legacy square quiet zones free of navigation overlays", () => {
     .toThrow(/No clear space/);
 });
 
-it("retains the verified full-page watermark when its optional navigation overlay fails", async () => {
+it("retains verification text and the full-page watermark when its navigation QR fails", async () => {
   preflight.forceSquare = false;
   const result = await sealPdfInBrowser({
     file: await makeInvoice(), privateKey, publicKey, pageScalingStrategy: "automatic",
   });
   expect(preflight.failFirstEntry).toBe(false);
-  expect(preflight.layouts).toEqual(["page-aligned", "page-aligned"]);
+  expect(preflight.layouts).toEqual(["page-aligned", "page-aligned", "page-aligned"]);
   expect(result.footerPages).toEqual([]);
   expect(result.watermarkLayout[0]?.pageAligned).toBe(true);
   expect(result.watermarkLayout[0]?.entry).toBeUndefined();
+  expect(result.watermarkLayout[0]?.entryText).toBeTruthy();
+  expect((await extractPdfText(result.blob)).match(/Verify at qred\.org/g)).toHaveLength(1);
+  await withPdfDocument(result.blob, async doc => {
+    const scanned = await scanPdfPage(await renderPdfPage(doc, 1));
+    expect(scanned.seals).toEqual(result.pageSealStrings[0]);
+    await expect(verifyQRedSeals(scanned.seals, publicKey)).resolves.toMatchObject({ status: "VALID" });
+  });
+}, 60000);
+
+it("keeps the verification instruction in a footer when neither overlay is readable", async () => {
+  preflight.forceSquare = false;
+  preflight.failEntryText = true;
+  const result = await sealPdfInBrowser({ file: await makeInvoice(), privateKey, publicKey });
+  expect(preflight.failFirstEntry).toBe(false);
+  expect(result.watermarkLayout[0]).toBeNull();
+  expect(result.footerPages).toEqual([1]);
+  expect(result.footerReasons[1]).toContain("verification instruction");
+  expect((await extractPdfText(result.blob)).match(/Verify at qred\.org/g)).toHaveLength(1);
   await withPdfDocument(result.blob, async doc => {
     const scanned = await scanPdfPage(await renderPdfPage(doc, 1));
     expect(scanned.seals).toEqual(result.pageSealStrings[0]);
