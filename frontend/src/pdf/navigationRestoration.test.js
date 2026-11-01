@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PDFDocument, rgb } from "pdf-lib";
 import { sealPdfInBrowser } from "../pdfClientSeal.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
@@ -6,17 +6,33 @@ import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { renderPdfPage, withPdfDocument } from "./readPdfText.js";
 import { ENTRY_URL, findEntryForWatermark, findEntryPlacement } from "./watermark.js";
+import { scanPdfPage } from "../verifier/scanPdf.js";
 
 // Exercise the real signer, renderer, QR decoder, and signed-payload preflight.
-// Only the *first* entry-bearing placement fails artificially, reproducing the
-// retry sequence that used to drop the small navigation QR permanently.
-const preflight = vi.hoisted(() => ({ failFirstEntry: true, layouts: [] }));
+// Force the initial failure that starts each retry sequence; every successful
+// candidate still passes the real decoding and signed-payload preflight.
+const preflight = vi.hoisted(() => ({ forceSquare: true, failFirstEntry: true,
+  failFirstAligned: false, layouts: [] }));
 vi.mock("./watermark.js", async importOriginal => {
   const real = await importOriginal();
   return {
     ...real,
+    planPdfWatermarks: async (file, seals, pages, options = {}) => {
+      const layouts = await real.planPdfWatermarks(file, seals, pages, options);
+      // Keep the original entry-removal regression on the square-layout
+      // branch. A separate test below starts with the preferred rectangle.
+      if (preflight.forceSquare && layouts.some(layout => layout?.pageAligned)) {
+        return real.planPdfWatermarks(file, seals, pages, { ...options, excludedLayouts: layouts });
+      }
+      return layouts;
+    },
     checkWatermarks: async (bytes, layouts, pageSeals, options) => {
-      preflight.layouts.push(layouts[0]?.entry ? "entry" : "no-entry");
+      preflight.layouts.push(layouts[0]?.pageAligned ? "page-aligned" : layouts[0]?.entry ? "entry" : "no-entry");
+      if (preflight.failFirstAligned && layouts[0]?.pageAligned) {
+        preflight.failFirstAligned = false;
+        options?.onFailure?.(0, "Simulated unreadable full-page rectangle.");
+        return [0];
+      }
       if (preflight.failFirstEntry && layouts[0]?.entry) {
         preflight.failFirstEntry = false;
         options?.onFailure?.(0, "Simulated failed first entry placement.");
@@ -48,24 +64,30 @@ function intersectsWithClearance(a, b, clearance = 8) {
 }
 
 beforeEach(() => {
+  preflight.forceSquare = true;
   preflight.failFirstEntry = true;
+  preflight.failFirstAligned = false;
   preflight.layouts.length = 0;
   vi.setSystemTime(new Date("2026-10-22T06:00:00Z"));
 });
+afterEach(() => vi.useRealTimers());
 
-it("restores a decodable navigation QR after recovering a readable signed watermark", async () => {
+async function makeInvoice() {
   // Synthetic invoice-like page; no real customer's document is committed.
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([612, 792]);
-  // A solid logo calls for the content-avoiding square layout. Full-page
-  // rectangular watermarks intentionally omit the navigation QR instead.
+  // Exercise graphic avoidance on the square fallback. Full-page rectangles
+  // intentionally omit the navigation QR instead.
   page.drawRectangle({ x: 260, y: 360, width: 125, height: 120, color: rgb(0, 0, 0) });
   page.drawText("SAMPLE INVOICE", { x: 420, y: 660, size: 11 });
   page.drawText("Example Customer", { x: 36, y: 660, size: 11 });
   page.drawText("Paid in full", { x: 36, y: 580, size: 11 });
   page.drawText("Thank you", { x: 260, y: 140, size: 10 });
-  const source = new File([await pdf.save()], "synthetic-restore-navigation.pdf", { type: "application/pdf" });
+  return new File([await pdf.save()], "synthetic-restore-navigation.pdf", { type: "application/pdf" });
+}
 
+it("restores a decodable navigation QR after recovering a readable signed watermark", async () => {
+  const source = await makeInvoice();
   const result = await sealPdfInBrowser({
     file: source, privateKey, publicKey, pageScalingStrategy: "automatic",
   });
@@ -91,6 +113,29 @@ it("restores a decodable navigation QR after recovering a readable signed waterm
   });
   await expect(verifyQRedSeals(result.pageSealStrings[0], publicKey))
     .resolves.toMatchObject({ status: "VALID", page_number: 1, page_count: 1 });
+}, 60000);
+
+it("tries and verifies a smaller square after the full-page rectangle fails preflight", async () => {
+  preflight.forceSquare = false;
+  preflight.failFirstEntry = false;
+  preflight.failFirstAligned = true;
+  const result = await sealPdfInBrowser({
+    file: await makeInvoice(), privateKey, publicKey, pageScalingStrategy: "automatic",
+  });
+  expect(preflight.layouts[0]).toBe("page-aligned");
+  expect(preflight.layouts.slice(1)).not.toContain("page-aligned");
+  expect(preflight.layouts).toContain("no-entry");
+  expect(preflight.layouts.at(-1)).toBe("entry");
+  expect(result.footerPages).toEqual([]);
+  const layout = result.watermarkLayout[0];
+  expect(layout.pageAligned).toBeUndefined();
+  expect(layout.boxes[0].width).toBeCloseTo(layout.boxes[0].height);
+  await withPdfDocument(result.blob, async doc => {
+    const scanned = await scanPdfPage(await renderPdfPage(doc, 1));
+    expect(scanned.seals).toEqual(result.pageSealStrings[0]);
+    await expect(verifyQRedSeals(scanned.seals, publicKey))
+      .resolves.toMatchObject({ status: "VALID", page_number: 1, page_count: 1 });
+  });
 }, 60000);
 
 it("never places the entry QR over a signed watermark or other page ink", () => {

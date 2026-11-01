@@ -71,9 +71,8 @@ async function sampleDocument(kind) {
       stamp(page, code, 46, y, 9.5, i % 3 === 0 ? ink.maroon : i % 3 === 1 ? ink.blue : ink.green, bold);
       stamp(page, `Verified item ${i + 1}; color and contrast test complete.`,
         205, y, 9.0, ink.gray, regular);
-      // Strong gray table rules across the whole page would increase the
-      // visual-risk score and correctly trigger the legacy square fallback.
-      // This sample isolates colored *text* beneath a page-filling watermark.
+      // This sample isolates colored text beneath a page-filling watermark;
+      // shaded table headings are covered by the invoice regression fixture.
     }
     stamp(page, "End of sample B. Keep the original page size when printing.", 42, 114, 9.2, ink.green, regular);
   } else {

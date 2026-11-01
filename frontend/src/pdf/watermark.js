@@ -123,11 +123,15 @@ export async function planPdfWatermarks(file, pageSealResults, pageIndices = pag
       if (viewport.width * viewport.height > 12_000_000) { sourcePage.cleanup(); continue; }
       const image = await renderPdfPage(source, index + 1);
       const symbols = seals.map(value => createQRedQrSymbol(value));
-      const options = { excludeBoxes: excludedLayouts?.[index]?.boxes ?? null };
+      const previous = excludedLayouts?.[index];
+      // A failed full-page grid contains every possible fallback square.
+      // Its footprint must not exclude those candidates; overlap exclusion
+      // applies only when retrying another content-avoiding square layout.
+      const options = { excludeBoxes: previous?.pageAligned ? null : previous?.boxes ?? null };
       let boxes = null, pageAligned = false;
       // A standard page-relative grid uses all available paper, not arbitrary
       // blank squares. An entry QR would overlap it, so the signed data wins.
-      if (!options.excludeBoxes && (symbols.length === 1 || symbols.length === 4)) {
+      if (!previous && (symbols.length === 1 || symbols.length === 4)) {
         try {
           const proposed = planWatermarks(image, symbols, null, options);
           // Only the standardized page-relative geometry can be decoded

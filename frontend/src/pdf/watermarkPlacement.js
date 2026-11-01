@@ -141,9 +141,10 @@ function axis(start, end, step) {
 
 // Standardized page-filling geometry is recoverable from a photograph without
 // knowing the sealer's placement decisions. The old content-avoiding planner
-// remains a fallback for graphics and failed print/photo preflight.
+// remains a fallback after failed print/photo preflight. Graphics alone must
+// not veto a rectangle that the actual signed-payload decoder can read.
 export function planWatermarks(image, symbols, entry = null, { excludeBoxes = null, preferPageAligned = true } = {}) {
-  const map = analyzeWatermarkPage(image), { bounds } = image;
+  const { bounds } = image;
   if (preferPageAligned && !entry && !excludeBoxes &&
       (symbols.length === 1 || symbols.length === 4)) {
     const regions = pageWatermarkRegions(symbols.length, bounds);
@@ -155,9 +156,9 @@ export function planWatermarks(image, symbols, entry = null, { excludeBoxes = nu
     }));
     const legibleModules = boxes.every((box, i) =>
       Math.min(box.width, box.height) / symbols[i].modules.size >= MIN_WATERMARK_MODULE_SIZE);
-    const broadInterference = boxes.some(box => mean(map.risk, map, box.x, box.y, box.width, box.height) > 0.012);
-    if (legibleModules && !broadInterference) return boxes;
+    if (legibleModules) return boxes;
   }
+  const map = analyzeWatermarkPage(image);
   const area = { x: bounds.x + MARGIN, y: bounds.y + MARGIN,
     width: bounds.width - 2 * MARGIN, height: bounds.height - 2 * MARGIN };
   const keepout = entry && { x: entry.x - ENTRY_GAP, y: entry.y - ENTRY_GAP,

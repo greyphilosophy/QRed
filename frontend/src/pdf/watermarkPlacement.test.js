@@ -21,8 +21,9 @@ describe("page-aware watermark placement", () => {
     ["center", { x: 256, y: 346, width: 100, height: 100 }, 0],
     ["left sidebar", { x: 18, y: 150, width: 140, height: 470 }, 0],
     ["right gray sidebar", { x: 454, y: 150, width: 140, height: 470 }, 224],
-  ])("uses available space around a %s graphic", (_name, graphic, shade) => {
-    const [box] = planWatermarks(pageWithGraphic(graphic, { shade }), [symbol]);
+  ])("places fallback squares around a %s graphic", (_name, graphic, shade) => {
+    const [box] = planWatermarks(pageWithGraphic(graphic, { shade }), [symbol], null,
+      { preferPageAligned: false });
     expect(intersects(box, graphic)).toBe(false);
     expect(box.width / 185).toBeGreaterThanOrEqual(MIN_WATERMARK_MODULE_SIZE);
     expect(box.x).toBeGreaterThanOrEqual(54);
@@ -31,10 +32,21 @@ describe("page-aware watermark placement", () => {
     expect(box.y + box.height).toBeLessThanOrEqual(738.001);
   });
 
+  it.each([1, 4])("tries the full-page layout for %i symbols despite a shaded table heading", count => {
+    const image = pageWithGraphic({ x: 32, y: 470, width: 548, height: 18 }, { shade: 243 });
+    const boxes = planWatermarks(image, Array(count).fill(quadrantSymbol));
+    expect(boxes).toHaveLength(count);
+    for (const box of boxes) {
+      expect(box.width).toBeCloseTo(count === 1 ? 504 : 252);
+      expect(box.height).toBeCloseTo(count === 1 ? 684 : 342);
+    }
+  });
+
   it("keeps the same physical placement when the PDF crop origin changes", () => {
     const graphic = { x: 256, y: 346, width: 100, height: 100 };
-    const [plain] = planWatermarks(pageWithGraphic(graphic), [symbol]);
-    const [offset] = planWatermarks(pageWithGraphic(graphic, { bounds: { x: 71, y: -37, width: 612, height: 792 } }), [symbol]);
+    const options = { preferPageAligned: false };
+    const [plain] = planWatermarks(pageWithGraphic(graphic), [symbol], null, options);
+    const [offset] = planWatermarks(pageWithGraphic(graphic, { bounds: { x: 71, y: -37, width: 612, height: 792 } }), [symbol], null, options);
     expect(offset.x - 71).toBeCloseTo(plain.x);
     expect(offset.y + 37).toBeCloseTo(plain.y);
     expect(offset.width).toBeCloseTo(plain.width);

@@ -89,7 +89,9 @@ jobs:
           - shard: watermark-layout
             test_args: "src/pdfWatermark.test.js -t 'analyzes logos|defaults to watermarks'"
           - shard: watermark-render
-            test_args: "src/pdfWatermark.test.js -t 'keeps two pages|keeps rotated|fits and verifies both parts|recognizes only entry'"
+            # Catch every case not assigned to the layout/footer shards, so
+            # renamed or newly added watermark tests cannot silently disappear.
+            test_args: "src/pdfWatermark.test.js -t '^(?!.*(analyzes logos|defaults to watermarks|Automatic uses a readable footer)).*$'"
           - shard: watermark-footer
             test_args: "src/pdfWatermark.test.js -t 'Automatic uses a readable footer'"
           - shard: pdf-and-scanning
