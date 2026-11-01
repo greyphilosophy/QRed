@@ -95,22 +95,42 @@ observed at 97% scale can also seed the full-size single-code mapping; both
 starting grids consume that same 16-region allowance. Each region attempt
 keeps the established nine-sample alignment/recovery pass, with **at most
 one** foreground-resistant retry (at most 104 grid fits across both layouts).
+The four strongest viable single-code orientation/format hypotheses each
+get their first version before the search widens to nearby versions. A small
+score advantage must not let the wrong orientation consume every retry.
 The retry compares exposed pixels in public alignment markers, requires
 17 of their 25 cells, scales residual tolerance to the observed module pitch,
 and continues local distortion to the outer symbol edge. Tied alignment
 scores prefer the nearer starting position instead of drifting to the first
 edge of a flat correlation peak.
 
-The retry samples 25 interior pixels per data module and averages its five
-brightest observations. This prevents dark text from biasing both the cell
-decision and its Gaussian local brightness reference. Wide within-cell
+The retry samples 25 interior pixels per data module. Where a dark stroke
+is detected, it averages the five brightest observations; otherwise it keeps
+the full mean, so bright edge pixels cannot erase pale modules. This prevents
+dark text from biasing both the cell decision and its Gaussian local
+brightness reference. Wide within-cell
 brightness ranges, fully dark cells and ambiguous decisions become erasures;
 they are not assumed to be dark QR ink. The original narrow sampling pass
 remains first because the wider sampling can degrade clean or faint-text
 prints. Neither pass relaxes QR parity, transport, digest or signature checks.
 
-Live scanning
-delivers every recovered chunk from a page in one batch while its original
+The foreground retry can combine bit-erasure and ordinary byte correction
+**independently in each parity block**. If both fail, it can locate **one**
+additional misread bit among the otherwise observed bits. It eliminates the
+known erasure columns from the binary parity equations and requires a unique
+remaining column to match the residual syndrome, with at least 16 residual
+equations available. Ambiguous, rank-deficient or inconsistent systems fail
+closed; the corrected block must still satisfy every QR parity equation.
+This bounded extra work runs only in the still-photo foreground retry.
+
+That retry also disables guessed, ranked byte-erasure fallback: using an
+entire parity budget to guess which bytes to erase can produce a different
+RS codeword and stop the grid search before the document signature rejects
+it. When measured recovery fails, the caller tries another grid within its
+existing budget. The established narrow pass retains its original recovery
+behavior, and final digest/signature verification remains mandatory.
+
+Live scanning delivers every recovered chunk from a page in one batch while its original
 camera frame is still available, so later frames cannot become comparison
 photos for earlier chunks.
 
@@ -161,7 +181,7 @@ deep page-aligned method in a separate local test; legacy code compatibility
 has synthetic coverage, but this result does not count as another physical
 pass.
 
-**This is one successful printed-page trial, not a 9/10 field acceptance
+**This was one successful printed-page trial, not a 9/10 field acceptance
 result.** More real prints at 150, 300 and 600 DPI, darker underlying text,
 different printers and varied lighting are still needed before merging.
 The user's private original photographs have never been committed to the
@@ -182,10 +202,22 @@ those findings. Synthetic regressions require exact signed recovery under
 warm/cool illumination and through dark strokes that defeat mean sampling,
 plus rejection when every module is covered. The previously successful
 four-code photograph still verifies in both upright and quarter-turn views.
-**The new dark-text photograph still does not verify:** its recovered
-candidate differs from the delivered seal and the ordinary verifier rejects
-it. Confidence/erasure classification remains an open physical release
-blocker. A parseable candidate is not a successful printed-page trial.
+
+**The dark-text photograph now verifies.** Conditional averaging and the
+mixed per-block recovery above allow the production `scanPdfPage` path to
+recover its complete Version-28 seal from the original 12 MP pixels. Normal
+`verifyQRedSeals` reports **VALID**, page 1 of 1, with all 1,483 signed text
+characters. Only after photo recovery, an independent scan of the delivered
+PDF confirmed an **exact seal-byte match**. The photo decoder received no
+source PDF, expected QR version, plaintext, source matrix or signing key.
+
+Quarter-turn retests also return **VALID** at 90°, 180° and 270°. Balanced
+candidate scheduling prevents the wrong orientation from exhausting the
+single-code budget, and conservative foreground recovery lets the 180° view
+continue past an unsupported grid candidate. These are four orientations of
+one photograph, not four independent print trials. There are now two
+successful printer-safe physical pages (the earlier quartet and this
+dark-text single), while the broader 9/10 physical release gate remains open.
 
 Live camera frames rotate through this path with a bounded retry budget;
 the PDF page verifier also tries page geometry before ordinary QR-region

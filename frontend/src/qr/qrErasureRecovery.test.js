@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import QRCode from "qrcode";
 import { createQRedQrSymbol, createQRedQrData } from "../qredQr.js";
 import { encodeChunk, sealString } from "../sealFormat.js";
 import { hiddenPayloadFromScanResult } from "./hiddenPayload.js";
-import { readErasedQrMatrix, recoverErasedDataCodewords } from "./qrErasureRecovery.js";
-import { codewordsFromMatrix } from "./qrLowLevel.js";
+import { readErasedQrMatrix, recoverBitErasedDataCodewords, recoverErasedDataCodewords } from "./qrErasureRecovery.js";
+import { codewordsFromMatrix, EC_BLOCKS_BY_LEVEL } from "./qrLowLevel.js";
 
 function fixture() {
   const payload = new Uint8Array(720);
@@ -83,5 +84,62 @@ describe("QR Reed-Solomon erasure-aware recovery", () => {
       unknown[index] = 1;
     }
     expect(recoveredSeal(qr, bits, unknown)).toBeNull();
+  });
+
+  it("locates one misread known bit alongside many independently erased bits", () => {
+    const qr = fixture(), data = createQRedQrData(qr.seal, { errorCorrectionLevel: "L" });
+    const masks = Uint8Array.from(data.codewords, (_, i) => 1 << ((i * 5 + Math.floor(i / 7)) % 8));
+    const damaged = Uint8Array.from(data.codewords, (byte, i) => byte ^ masks[i]);
+    // Every byte has a missing bit, so ordinary byte correction is exhausted.
+    // One extra flipped bit lies outside the observed erasure mask.
+    damaged[0] ^= masks[0] === 128 ? 1 : masks[0] << 1;
+    expect(recoverBitErasedDataCodewords(damaged, data.version, 1, masks)).toBeNull();
+    const corrected = recoverBitErasedDataCodewords(damaged, data.version, 1, masks,
+      { allowSingleBitError: true });
+    expect(Array.from(corrected ?? [])).toEqual(Array.from(data.bytes));
+  });
+
+  it("combines bit-erasure and ordinary byte correction across different parity blocks", () => {
+    // Version 7/L has two equal blocks. Even/odd interleaved bytes identify
+    // the blocks throughout both data and parity, independently of recovery.
+    const symbol = QRCode.create("Independent parity-block correction", { version: 7, errorCorrectionLevel: "L" });
+    const matrix = Array.from({ length: symbol.modules.size }, (_, row) =>
+      Array.from({ length: symbol.modules.size }, (_, col) => Boolean(symbol.modules.get(row, col))));
+    const { codewords } = codewordsFromMatrix(matrix, 7);
+    const expected = recoverErasedDataCodewords(codewords, 7, 1);
+    const masks = new Uint8Array(codewords.length), damaged = codewords.slice();
+    for (let i = 0; i < codewords.length; i += 2) {
+      masks[i] = 1 << ((i * 5 + Math.floor(i / 7)) % 8);
+      damaged[i] ^= masks[i];
+    }
+    damaged[1] ^= 0x53; damaged[3] ^= 0x91;
+    expect(recoverErasedDataCodewords(damaged, 7, 1)).toBeNull();
+    expect(recoverBitErasedDataCodewords(damaged, 7, 1, masks)).toBeNull();
+    const corrected = recoverBitErasedDataCodewords(damaged, 7, 1, masks,
+      { allowSingleBitError: true });
+    expect(Array.from(corrected ?? [])).toEqual(Array.from(expected));
+  });
+
+  it("rejects multiple unmarked bit errors when no unique supported correction exists", () => {
+    const qr = fixture(), data = createQRedQrData(qr.seal, { errorCorrectionLevel: "L" });
+    const masks = Uint8Array.from(data.codewords, (_, i) => 1 << ((i * 5 + Math.floor(i / 7)) % 8));
+    const damaged = Uint8Array.from(data.codewords, (byte, i) => byte ^ masks[i]);
+    // The first two data bytes of the same parity block, after interleave.
+    for (const index of [0, EC_BLOCKS_BY_LEVEL[1][data.version]]) {
+      damaged[index] ^= masks[index] === 128 ? 1 : masks[index] << 1;
+    }
+    expect(recoverBitErasedDataCodewords(damaged, data.version, 1, masks,
+      { allowSingleBitError: true })).toBeNull();
+  });
+
+  it("does not substitute guessed byte erasures when the measured grid has no usable data", () => {
+    const qr = fixture(), bits = qr.bits.slice();
+    for (let row = 0; row < qr.size; row++) for (let col = 0; col < qr.size; col++) {
+      if (!qr.symbol.modules.isReserved(row, col) && (row * 31 + col * 11) % 7 < 3)
+        bits[row * qr.size + col] ^= 1;
+    }
+    const unknown = new Uint8Array(bits.length).fill(1);
+    expect(readErasedQrMatrix(bits, unknown, qr.symbol.version, null,
+      { allowSingleBitError: true, allowRankedErasures: false })).toBeNull();
   });
 });

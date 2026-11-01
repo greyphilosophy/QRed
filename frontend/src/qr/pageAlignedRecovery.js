@@ -39,8 +39,9 @@ function restoreFunctions(bits, size) {
   }
 }
 
-// On the foreground retry, read 25 interior pixels per module and average
-// the brightest fifth. The initial pass keeps its nine-pixel mean. Dark
+// On the foreground retry, read 25 interior pixels per module. Average the
+// brightest fifth only where a dark stroke is present; elsewhere retain the
+// full mean so a stray bright edge pixel cannot erase pale QR ink. Dark
 // letter strokes must not drag down either the module decision or its local
 // mid-tone estimate. The within-cell range also records foreground evidence
 // for parity recovery, even when a few exposed pixels remain readable.
@@ -58,11 +59,12 @@ export function sampleRefinedQrMatrix(image, moduleMap, version, { foregroundRob
       samples[index++] = luminance(image, p.x, p.y);
     }
     if (foregroundRobust) samples.sort();
+    const covered = foregroundRobust && samples[0] < samples[samples.length - 1] * 0.8;
     let total = 0;
-    const exposedCount = foregroundRobust ? 5 : samples.length;
+    const exposedCount = covered ? 5 : samples.length;
     for (let i = samples.length - exposedCount; i < samples.length; i++) total += samples[i];
     mean[row * size + col] = total / exposedCount;
-    foreground[row * size + col] = Number(foregroundRobust && samples[0] < samples[samples.length - 1] * 0.8);
+    foreground[row * size + col] = Number(covered);
   }
   for (let row = 0; row < size; row++) for (let col = 0; col < size; col++) {
     let total = 0, weight = 0;
@@ -154,7 +156,8 @@ function recoverWithSampling(image, pageMapping, region, version, foregroundRobu
   let seal = ordinary?.version === version && hiddenPayloadFromScanResult(ordinary);
   if (seal) return { seal, code: { ...ordinary, location, pageAligned: true, refined: true } };
   if (!sampled.unknown.some(Boolean)) return null;
-  const recovered = readErasedQrMatrix(sampled.bits, sampled.unknown, version, sampled.confidence);
+  const recovered = readErasedQrMatrix(sampled.bits, sampled.unknown, version, sampled.confidence,
+    { allowSingleBitError: foregroundRobust, allowRankedErasures: !foregroundRobust });
   if (!recovered) return null;
   const code = {
     data: "QRED.ORG", version, correctedData: recovered.correctedData,

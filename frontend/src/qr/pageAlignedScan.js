@@ -513,10 +513,18 @@ function refinementScore(versions) {
   return versions.find(item => item.version >= 7)?.score ?? 0;
 }
 
-function refineSingles(image, singles) {
+export function refineSingles(image, singles) {
   let budget = 16;
-  for (const { mapping, fullMapping, region, versions } of singles) {
-    for (const version of refinementVersions(versions).slice(0, 8)) {
+  // Nearby orientation/format scores are not reliable enough to let one
+  // hypothesis spend every retry on neighboring versions. Give the four
+  // strongest viable hypotheses their first version before widening each.
+  const candidates = singles.map(single => ({ ...single,
+    candidates: refinementVersions(single.versions).slice(0, 8) }))
+    .filter(single => single.candidates.length).slice(0, 4);
+  for (let rank = 0; rank < 8 && budget > 0; rank++) {
+    for (const { mapping, fullMapping, region, candidates: versions } of candidates) {
+      const version = versions[rank];
+      if (version === undefined) continue;
       // Finder/timing evidence at 97% scale can identify the version even
       // when the local alignment search needs the full-size starting grid.
       // Both guesses consume the existing page-wide single-code budget.
@@ -527,7 +535,6 @@ function refineSingles(image, singles) {
       }
       if (budget <= 0) break;
     }
-    if (budget <= 0) break;
   }
   return [];
 }

@@ -265,9 +265,81 @@ function solveBitErasures(block, erasedBits, parityBytes) {
   return syndromes(corrected, parityBytes).every(value => value === 0) ? corrected : null;
 }
 
+// A dark-text photo may also contain one wrongly classified "known" bit.
+// After eliminating the erasure columns, the remaining parity equations
+// identify that bit only when exactly one observed column matches the
+// residual syndrome. No payload guesses or source data enter the search.
+function solveBitErasuresWithSingleError(block, erasedBits, parityBytes) {
+  const count = erasedBits.length, equations = parityBytes * 8;
+  // Keep spare parity constraints for locating the unexpected error. The
+  // ordinary erasure-only solver handles consistent systems separately.
+  if (!count || equations - count < 16) return null;
+  const erasedMasks = new Uint8Array(block.length);
+  for (const { position, mask } of erasedBits) erasedMasks[position] |= mask;
+  const variables = [...erasedBits];
+  for (let position = 0; position < block.length; position++) {
+    for (let bit = 0; bit < 8; bit++) {
+      const mask = 1 << bit;
+      if (!(erasedMasks[position] & mask)) variables.push({ position, mask });
+    }
+  }
+  const total = variables.length, words = Math.ceil((total + 1) / 32);
+  const rows = Array.from({ length: equations }, () => new Uint32Array(words));
+  const syndrome = syndromes(block, parityBytes);
+  const bitAt = (row, index) => Boolean(row[index >>> 5] & (1 << (index & 31)));
+  for (let k = 0; k < parityBytes; k++) {
+    for (let bit = 0; bit < 8; bit++) {
+      if (syndrome[k] & (1 << bit)) rows[k * 8 + bit][total >>> 5] |= 1 << (total & 31);
+    }
+  }
+  for (let col = 0; col < total; col++) {
+    const { position, mask } = variables[col];
+    for (let k = 0; k < parityBytes; k++) {
+      const contribution = multiply(mask, power(k * (block.length - 1 - position)));
+      for (let bit = 0; bit < 8; bit++) {
+        if (contribution & (1 << bit)) rows[k * 8 + bit][col >>> 5] |= 1 << (col & 31);
+      }
+    }
+  }
+  for (let col = 0; col < count; col++) {
+    let pivot = col;
+    while (pivot < equations && !bitAt(rows[pivot], col)) pivot++;
+    if (pivot === equations) return null;
+    [rows[col], rows[pivot]] = [rows[pivot], rows[col]];
+    for (let row = col + 1; row < equations; row++) {
+      if (!bitAt(rows[row], col)) continue;
+      for (let word = 0; word < words; word++) rows[row][word] ^= rows[col][word];
+    }
+  }
+  const residual = rows.slice(count);
+  if (residual.every(row => !bitAt(row, total))) return null;
+  let candidate = -1;
+  for (let col = count; col < total; col++) {
+    if (residual.some(row => bitAt(row, col) !== bitAt(row, total))) continue;
+    if (candidate !== -1) return null; // Ambiguous location; fail closed.
+    candidate = col;
+  }
+  if (candidate === -1) return null;
+  const corrections = new Uint8Array(count);
+  for (let row = count - 1; row >= 0; row--) {
+    let value = Number(bitAt(rows[row], total)) ^ Number(bitAt(rows[row], candidate));
+    for (let col = row + 1; col < count; col++) {
+      if (corrections[col] && bitAt(rows[row], col)) value ^= 1;
+    }
+    corrections[row] = value;
+  }
+  const corrected = Uint8Array.from(block);
+  corrected[variables[candidate].position] ^= variables[candidate].mask;
+  erasedBits.forEach(({ position, mask }, index) => {
+    if (corrections[index]) corrected[position] ^= mask;
+  });
+  return syndromes(corrected, parityBytes).every(value => value === 0) ? corrected : null;
+}
+
 // The input is one bit mask per interleaved QR codeword, with bit 7 the
 // leftmost bit. No source document or expected payload enters this process.
-export function recoverBitErasedDataCodewords(codewords, version, ecLevelBits, interleavedBitMasks) {
+export function recoverBitErasedDataCodewords(codewords, version, ecLevelBits, interleavedBitMasks,
+  { allowSingleBitError = false } = {}) {
   const info = blockLayout(version, ecLevelBits);
   if (!info || codewords.length < info.total || interleavedBitMasks.length < info.total) return null;
   const { blocks, indexes } = separateBlocks(codewords, info);
@@ -280,7 +352,14 @@ export function recoverBitErasedDataCodewords(codewords, version, ecLevelBits, i
         if (mask & (1 << bit)) missing.push({ position, mask: 1 << bit });
       }
     }
-    const fixed = solveBitErasures(blocks[i], missing, info.parityPerBlock);
+    let fixed = solveBitErasures(blocks[i], missing, info.parityPerBlock);
+    // Different regions of one QR can need different correction methods.
+    // Do not discard already-correct blocks because another block contains
+    // a small unmarked error. Extra work is limited to the deep-photo retry.
+    if (!fixed && allowSingleBitError) {
+      fixed = solveErasures(blocks[i], new Set(), info.parityPerBlock) ||
+        solveBitErasuresWithSingleError(blocks[i], missing, info.parityPerBlock);
+    }
     if (!fixed) return null;
     corrected.push(fixed);
   }
@@ -333,7 +412,7 @@ export function codewordErasureIndexes(unknown, version) {
   return erased;
 }
 
-export function readErasedQrMatrix(bits, unknown, version, confidence = null) {
+export function readErasedQrMatrix(bits, unknown, version, confidence = null, options = {}) {
   const size = 17 + 4 * version;
   if (bits.length !== size * size || unknown.length !== bits.length) return null;
   const matrix = Array.from({ length: size }, (_, row) =>
@@ -341,9 +420,13 @@ export function readErasedQrMatrix(bits, unknown, version, confidence = null) {
   const { codewords, ecLevelBits } = codewordsFromMatrix(matrix, version);
   const erased = codewordErasureIndexes(unknown, version);
   const bitMasks = moduleBitErasureMasks(unknown, version, codewords.length);
-  let data = recoverBitErasedDataCodewords(codewords, version, ecLevelBits, bitMasks);
+  let data = recoverBitErasedDataCodewords(codewords, version, ecLevelBits, bitMasks, options);
   if (!data) data = recoverErasedDataCodewords(codewords, version, ecLevelBits, erased);
-  if (!data && erased.size) {
+  // The foreground-resistant grid retry must yield to another measured grid
+  // if its evidence fails. Guessing a full parity budget of byte erasures can
+  // manufacture a different valid RS codeword and prematurely stop that
+  // search, even though the eventual document signature correctly rejects it.
+  if (!data && erased.size && options.allowRankedErasures !== false) {
     const risk = new Uint16Array(codewords.length);
     const quality = confidence?.length === unknown.length ? confidence : unknown;
     const reserved = functionMask(size, version);
