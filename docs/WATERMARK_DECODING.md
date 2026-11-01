@@ -99,6 +99,26 @@ camera frames continue using a lower-cost pass. Synthetic acceptance now
 requires recovery of all four signed Version 27 fragments on an independently
 warped page, without a saved placement or known version.
 
+**Integrated photo retest after PR #158 (October 31, 2026):** after
+merging the compact Version-1/Q navigation-code changes from main into
+PR #157, the exact current JavaScript source was packaged as a PUBLIC-code
+CI artifact and executed locally against the user's same PRIVATE original.
+The JPEG has EXIF orientation 6: the raw 4000×3000 raster must be rotated
+to the displayed 3000×4000 orientation before passing pixels to the scanner.
+With orientation applied, the current `scanPageAlignedImage({deep:true})`
+returned all four Version-27 QRed fragments and the complete
+`scanPdfPage` returned 4/4 in approximately 6.4 seconds. Using the demo
+public key, `verifyQRedSeals` returned **VALID**, page 1 of 1, for
+the exact signed text. Without applying the JPEG EXIF orientation in
+the local test harness, the same image appeared undecodable. Standard
+browser image-loading paths generally apply EXIF orientation before
+pixel extraction; keep that behavior in any custom/native image decoder.
+
+An older **3%-inset four-part photograph** remains undecodable by the new
+deep page-aligned method in a separate local test; legacy code compatibility
+has synthetic coverage, but this result does not count as another physical
+pass.
+
 **This is one successful printed-page trial, not a 9/10 field acceptance
 result.** More real prints at 150, 300 and 600 DPI, darker underlying text,
 different printers and varied lighting are still needed before merging.
