@@ -301,8 +301,16 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
   }, 60000);
 
   it("[WM-11] recovers independently warped 2x2 modules using only photographed alignment patterns", async () => {
-    const content = "Physical printer warp signed-page challenge. ".repeat(235).trimEnd();
-    const { seals } = await signed(content);
+    const content = "Physical printer warp signed-page challenge. ".repeat(120).trimEnd();
+    // Match QRed's real 1-or-4 watermark policy: four v27 symbols, as in the
+    // independently photographed 0.75-inch-margin print test. The verifier
+    // still must discover the version from camera pixels alone.
+    const { seals } = await createQRedSeals({
+      privateKey, publicKey, content, encodingStrategy: "plaintext",
+      timestamp: "2026-10-31T12:00:00Z",
+      pageContext: { pageNumber: 1, pageCount: 1 },
+      preferFourQrPage: true,
+    });
     expect(seals).toHaveLength(4);
     const photo = printAndPhotograph(seals, {
       width: 1200, height: 1600, text: false, finderBlocked: false,
