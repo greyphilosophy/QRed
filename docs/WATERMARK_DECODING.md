@@ -1,11 +1,11 @@
 # Page-aligned watermark recovery (experimental)
 
-The implementation in draft PR #157 supports a **single page-filling
+The implementation introduced in PR #157 supports a **single page-filling
 rectangular QR** or **four balanced QR chunks arranged 2×2**, with no
 internal physical quiet zones. Explicit footer mode and legacy square
 watermarks remain compatible. See [quantitative acceptance requirements](WATERMARK_READABILITY_REQUIREMENTS.md).
-Synthetic tests do not establish printer or phone reliability; keep the PR
-draft until physical samples satisfy the release gate.
+Synthetic tests do not establish printer or phone reliability; broader
+physical acceptance remains tracked in the requirements above.
 
 ## Encoding and placement
 
@@ -28,9 +28,15 @@ navigation QR must also remain at least 54 points inside the page edges;
 it is omitted when no safe location exists or it would overlap the
 page-filling watermark. Earlier page-aligned 3%-inset seals remain
 supported by the verifier's legacy geometry profile.
-Large opaque graphics may cause a content-avoiding square placement or footer
-fallback. The stamp is considered viable only after exact-byte preflight
-on a full-page PDF render and a softened/shaded simulation.
+Automatic and Watermark modes first try this full-page geometry whenever its
+modules meet the minimum printed size. A shaded table heading, logo or broad
+graphic cannot reject it based on an estimated obstruction score alone.
+The stamp is considered viable only after exact-byte preflight on a full-page
+PDF render and a softened/shaded simulation. If either check fails, try a
+content-avoiding square layout and then a readable footer if necessary.
+The failed rectangle's footprint must not exclude smaller fallback squares
+inside it; overlap exclusion applies only between legacy square attempts.
+Every fallback retains its existing exact-payload readability checks.
 
 The lack of physical quiet zones and rectangular cells means these marks
 are for **QRed's own verifier**, not for standard phone-camera QR apps.
