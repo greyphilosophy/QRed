@@ -72,21 +72,38 @@ passing a reconstructed square matrix to patched jsQR. Successful scanning
 requires recovering the complete QRed transport, and normal digest/signature
 verification still makes the trust decision.
 
-Printed-paper findings (October 31, 2026): full-resolution originals from
-a 12 MP Galaxy Z Flip6 were processed privately, with the same signed PDF
-fixtures for quantitative comparison. Paper edges and finder shapes were
-recoverable, but the actual printed content had roughly 2–4% shrink and
-small nonuniform positional errors relative to the physical sheet. The
-page-aligned decoder returned zero authentic signed parts from each of four
-original photographs. A square cropped QR also failed the normal fallback.
-The absolute ~223/230 grayscale votes were too rigid for the real paper
-brightness. We now derive a threshold from the photographed finder cells
-and try one bounded 97%-scale correction after ordinary page geometry fails.
+### Printed-paper findings, October 31, 2026
 
-**This is not final print validation**. Per-quadrant timing/finder refinement
-and stronger optical tests must still be implemented before merging. The
-original photographs are private, not placed in the repository. The real
-result is kept separate from the passing synthetic regression tests.
+The first four original 12-megapixel Galaxy Z Flip6 photographs recovered
+0/4, 0/4, 0/1 and 0/1 signed fragments with the older page-coordinate
+decoder. The printed PDF content was about 2–4% smaller than its nominal
+sheet-relative coordinates, with local shear/skew. Page-corner perspective
+correction alone was insufficient.
+
+A fifth **original 4000×3000 JPEG** of a newly printed US Letter document
+with **0.75-inch margins and four Version 27 QR symbols** provided an
+important physical acceptance milestone. The page-only decoder initially
+recovered zero fragments, but independent optical calibration using the
+QR codes' distributed *5×5 alignment patterns*, robust affine fitting,
+bilinear residual interpolation, nine-sample module brightness classification
+and version-information BCH checks recovered **all four distinct exact
+signed QRed fragments**. The ordinary QRed verifier returned **VALID**
+for the complete signed page (page 1 of 1) using its demo public key.
+Neither expected source PDF bytes nor its signing keys were provided to
+the photo decoder.
+
+The resulting source-free algorithm is implemented in
+`qrAlignmentRefinement.js` and `pageAlignedRecovery.js`, with bounded
+`deep:true` fallback for uploaded still photographs/manual captures; live
+camera frames continue using a lower-cost pass. Synthetic acceptance now
+requires recovery of all four signed Version 27 fragments on an independently
+warped page, without a saved placement or known version.
+
+**This is one successful printed-page trial, not a 9/10 field acceptance
+result.** More real prints at 150, 300 and 600 DPI, darker underlying text,
+different printers and varied lighting are still needed before merging.
+The user's private original photographs have never been committed to the
+public repository or uploaded into CI.
 
 Live camera frames rotate through this path with a bounded retry budget;
 the PDF page verifier also tries page geometry before ordinary QR-region

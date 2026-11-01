@@ -24,7 +24,7 @@ describe("oversized photographed-page fallback", () => {
     expect(width * height).toBeGreaterThan(12_000_000);
     const result = await scanPdfPage(photo);
     expect(result).toMatchObject({ seals: [], limited: false });
-    expect(scanPageAlignedImage).toHaveBeenCalledWith(photo);
+    expect(scanPageAlignedImage).toHaveBeenCalledWith(photo, { deep: true });
     expect(scanQrImage).toHaveBeenCalled();
     const dimensions = vi.mocked(scanQrImage).mock.calls.map(([, w, h]) => w * h);
     expect(Math.max(...dimensions)).toBeLessThanOrEqual(8_000_000);
