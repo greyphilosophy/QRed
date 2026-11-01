@@ -619,6 +619,9 @@ export function scanPageAlignedImage(image, { deep = false } = {}) {
       image.width < 160 || image.height < 160 ||
       image.width * image.height > MAX_PHOTO_PIXELS ||
       image.data?.length !== image.width * image.height * 4) return [];
+  // Native ImageData keeps width/height in prototype getters. Materialize
+  // them before spreading calibration fields, without copying the pixels.
+  image = { ...image, data: image.data, width: image.width, height: image.height };
   if (!image.bounds) {
     const paperColor = estimatePaperColor(image);
     if (paperColor[0] !== 1 || paperColor[2] !== 1) image = { ...image, paperColor };

@@ -485,6 +485,24 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
       .resolves.toMatchObject({ status: "VALID", content });
   }, 90000);
 
+  it.each([["neutral", null], ["warm", [1, 0.95, 0.82]]])(
+    "[WM-12] reads browser ImageData with inherited dimensions under %s light", async (_label, lightTint) => {
+    const content = "Browser image dimensions survive paper calibration. ".repeat(10).trimEnd();
+    const { seals } = await signed(content);
+    const photo = printAndPhotograph(seals, { width: 1200, height: 1600,
+      marginPoints: 36, lightTint });
+    // Native browser ImageData exposes width/height through prototype getters.
+    // Object spread copies its pixel buffer, but omits those dimensions.
+    const imageData = Object.assign(Object.create({
+      get width() { return photo.width; },
+      get height() { return photo.height; },
+    }), { data: photo.data });
+    const recovered = scanPageAlignedImage(imageData, { deep: true }).map(item => item.seal);
+    expect(recovered).toEqual(seals);
+    await expect(verifyQRedSeals(recovered, publicKey))
+      .resolves.toMatchObject({ status: "VALID", content });
+  }, 60000);
+
   it("[WM-04, WM-05] reconstructs FOUR adjacent QR grids with no internal quiet zones", async () => {
     const content = "Four-quadrant signed page\n" + "QRed evidence-".repeat(700);
     const { seals } = await signed(content);
