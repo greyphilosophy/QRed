@@ -4,11 +4,13 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, describe, expect, it, vi } from "vitest";
 import jsQR from "jsqr";
 import { createQrFrameScanner } from "./qr/scanQrImage.js";
+import { scanPhotoInWorker } from "./qr/photoScanClient.js";
 import { scanPageAlignedImage } from "./qr/pageAlignedScan.js";
 import { createQRedSeals } from "./qredSealer.js";
 import { createQRedQrData } from "./qredQr.js";
-import { applyCameraQualityControls, applyContinuousCameraFocus, decodeCanvasFrame, findPreferredZoomCamera, getPreferredCameraStream, isCameraFrameReady, manualCapturePendingAction, MANUAL_CAPTURE_PENDING_TIMEOUT_MS, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
+import { applyCameraQualityControls, applyContinuousCameraFocus, decodeCanvasFrame, findPreferredMainCamera, getPreferredCameraStream, isCameraFrameReady, manualCapturePendingAction, MANUAL_CAPTURE_PENDING_TIMEOUT_MS, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
 
+vi.mock("./qr/photoScanClient.js", () => ({ preparePhotoScanner: vi.fn(), scanPhotoInWorker: vi.fn() }));
 vi.mock("jsqr", () => ({ default: vi.fn() }));
 vi.mock("./qr/pageAlignedScan.js", async importOriginal => {
   const actual = await importOriginal();
@@ -20,13 +22,13 @@ describe("QrScanner camera controls", () => {
     expect(QR_CAMERA_CONSTRAINTS).toEqual({
       video: {
         facingMode: { ideal: "environment" },
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
       },
     });
   });
 
-  it("enables continuous focus, exposure, white balance, and moderate zoom when supported", async () => {
+  it("enables continuous focus, exposure, white balance, and resets to 1× zoom when supported", async () => {
     const applyConstraints = vi.fn().mockResolvedValue(undefined);
     const stream = {
       getVideoTracks: () => [{
@@ -48,7 +50,7 @@ describe("QrScanner camera controls", () => {
         { focusMode: "continuous" },
         { exposureMode: "continuous" },
         { whiteBalanceMode: "continuous" },
-        { zoom: 2 },
+        { zoom: 1 },
       ],
     });
   });
@@ -64,10 +66,10 @@ describe("QrScanner camera controls", () => {
 
     await applyContinuousCameraFocus(stream);
 
-    expect(applyConstraints).toHaveBeenCalledWith({ advanced: [{ zoom: 2 }] });
+    expect(applyConstraints).toHaveBeenCalledWith({ advanced: [{ zoom: 1 }] });
   });
 
-  it("only enables the torch when explicitly requested", async () => {
+  it("does not enable an advertised torch", async () => {
     const applyConstraints = vi.fn().mockResolvedValue(undefined);
     const stream = {
       getVideoTracks: () => [{
@@ -76,35 +78,35 @@ describe("QrScanner camera controls", () => {
       }],
     };
 
-    await applyCameraQualityControls(stream, { enableTorch: true });
+    await applyCameraQualityControls(stream);
 
-    expect(applyConstraints).toHaveBeenCalledWith({ advanced: [{ torch: true }] });
+    expect(applyConstraints).not.toHaveBeenCalled();
   });
 
-  it("prefers labeled zoom or telephoto cameras after permission unlocks labels", async () => {
+  it("prefers the main wide camera over a telephoto camera after permission unlocks labels", async () => {
     const firstStop = vi.fn();
     const firstStream = {
       getTracks: () => [{ stop: firstStop }],
-      getVideoTracks: () => [{ label: "Back Wide Camera" }],
+      getVideoTracks: () => [{ label: "Back Telephoto Camera" }],
     };
-    const zoomStream = { getTracks: () => [], getVideoTracks: () => [{ label: "Back Telephoto Camera" }] };
+    const mainStream = { getTracks: () => [], getVideoTracks: () => [{ label: "Back Wide Camera" }] };
     const mediaDevices = {
       getUserMedia: vi.fn()
         .mockResolvedValueOnce(firstStream)
-        .mockResolvedValueOnce(zoomStream),
+        .mockResolvedValueOnce(mainStream),
       enumerateDevices: vi.fn().mockResolvedValue([
         { kind: "videoinput", label: "Back Wide Camera", deviceId: "wide" },
         { kind: "videoinput", label: "Back Telephoto Camera", deviceId: "tele" },
       ]),
     };
 
-    await expect(getPreferredCameraStream(mediaDevices)).resolves.toBe(zoomStream);
+    await expect(getPreferredCameraStream(mediaDevices)).resolves.toBe(mainStream);
 
     expect(firstStop).toHaveBeenCalled();
     expect(mediaDevices.getUserMedia).toHaveBeenNthCalledWith(2, {
       video: {
         ...QR_CAMERA_CONSTRAINTS.video,
-        deviceId: { exact: "tele" },
+        deviceId: { exact: "wide" },
       },
     });
   });
@@ -113,7 +115,7 @@ describe("QrScanner camera controls", () => {
     const firstStop = vi.fn();
     const firstStream = {
       getTracks: () => [{ stop: firstStop }],
-      getVideoTracks: () => [{ label: "Back Wide Camera" }],
+      getVideoTracks: () => [{ label: "Back Telephoto Camera" }],
     };
     const mediaDevices = {
       getUserMedia: vi.fn()
@@ -130,11 +132,27 @@ describe("QrScanner camera controls", () => {
     expect(firstStop).not.toHaveBeenCalled();
   });
 
-  it("recognizes zoom camera labels", () => {
-    expect(findPreferredZoomCamera([
-      { kind: "videoinput", label: "Back Wide Camera", deviceId: "wide" },
-      { kind: "videoinput", label: "Back 3x Camera", deviceId: "zoom" },
-    ])).toEqual({ kind: "videoinput", label: "Back 3x Camera", deviceId: "zoom" });
+  it("chooses a rear main lens without selecting front, ultrawide, or zoom lenses", () => {
+    const wide = { kind: "videoinput", label: "Back Wide Camera", deviceId: "wide" };
+    const main = { kind: "videoinput", label: "Rear Main Camera 1x", deviceId: "main" };
+    const alternatives = ["Front Main Camera", "Back Ultra Wide Camera", "Back 3x Camera", "Back Telephoto Camera"]
+      .map(label => ({ kind: "videoinput", label, deviceId: label }));
+    expect(findPreferredMainCamera([...alternatives, wide, main])).toBe(main);
+    expect(findPreferredMainCamera([...alternatives, wide])).toBe(wide);
+    expect(findPreferredMainCamera(alternatives)).toBeNull();
+    expect(findPreferredMainCamera([{ kind: "videoinput", label: "", deviceId: "unknown" }])).toBeNull();
+  });
+
+  it("keeps the current main camera without reopening it", async () => {
+    const stream = { getVideoTracks: () => [{ getSettings: () => ({ deviceId: "main" }) }] };
+    const mediaDevices = {
+      getUserMedia: vi.fn().mockResolvedValue(stream),
+      enumerateDevices: vi.fn().mockResolvedValue([
+        { kind: "videoinput", label: "Rear Main Camera", deviceId: "main" },
+      ]),
+    };
+    await expect(getPreferredCameraStream(mediaDevices)).resolves.toBe(stream);
+    expect(mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
   });
 
   it("keeps scanning when browsers reject advertised focus controls", async () => {
@@ -212,7 +230,7 @@ describe("QrScanner manual photo capture", () => {
     await waitFor(() => expect(screen.getByText(/Camera access needed: denied/)).toBeTruthy());
   });
 
-  it("applies torch constraints when the flashlight toggle is enabled during scanning", async () => {
+  it("has no flashlight control even when the camera advertises a torch", async () => {
     const applyConstraints = vi.fn().mockResolvedValue(undefined);
     const stream = {
       getTracks: () => [{ stop: vi.fn() }],
@@ -232,9 +250,9 @@ describe("QrScanner manual photo capture", () => {
     render(React.createElement(QrScanner, { onOpenPdfStampTool: vi.fn() }));
 
     fireEvent.click(screen.getByRole("button", { name: "Start scanning" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Flashlight off" }));
-
-    await waitFor(() => expect(applyConstraints).toHaveBeenCalledWith({ advanced: [{ torch: true }] }));
+    await waitFor(() => expect(play).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /Flashlight/ })).toBeNull();
+    expect(applyConstraints).not.toHaveBeenCalled();
     play.mockRestore();
   });
 
@@ -306,6 +324,52 @@ describe("QrScanner manual photo capture", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start scanning" }));
 
     expect(screen.getByRole("status", { name: /Starting camera/ })).toBeTruthy();
+  });
+
+  it.each([false, true])("preserves the manual frame while decoding and handles cancellation=%s", async cancel => {
+    let nextFrame, finish;
+    vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation(callback => { nextFrame = callback; return 1; });
+    vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
+    let now = 1000;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const stop = vi.fn();
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: {
+      getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop }], getVideoTracks: () => [] }),
+    } });
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    const context = { drawImage: vi.fn(), getImageData: () => ({ data: new Uint8ClampedArray(320 * 240 * 4) }) };
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context);
+    vi.mocked(jsQR).mockReturnValue(null);
+    vi.mocked(scanPhotoInWorker).mockReset().mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const onSealDetected = vi.fn();
+    render(<QrScanner onSealDetected={onSealDetected} returnPayload />);
+    fireEvent.click(screen.getByRole("button", { name: "Start scanning" }));
+    await waitFor(() => expect(nextFrame).toBeTypeOf("function"));
+    Object.defineProperties(document.querySelector("video"), {
+      readyState: { value: 2 }, videoWidth: { value: 320 }, videoHeight: { value: 240 },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Scan photo" }));
+    expect(screen.getByRole("button", { name: "Reading photo…" }).disabled).toBe(true);
+    const canvas = document.querySelector("canvas");
+    const draws = context.drawImage.mock.calls.length;
+    act(() => { now += 500; nextFrame(); });
+    expect(context.drawImage).toHaveBeenCalledTimes(draws);
+    const signal = scanPhotoInWorker.mock.calls[0][1].signal;
+    if (cancel) {
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      expect(signal.aborted).toBe(true);
+      expect(screen.getByRole("button", { name: "Start scanning" }).disabled).toBe(false);
+    }
+    await act(async () => finish({ status: "found", text: "https://example.test" }));
+    if (cancel) {
+      expect(onSealDetected).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Start scanning" }));
+      expect(scanPhotoInWorker).toHaveBeenCalledTimes(1);
+    } else {
+      expect(onSealDetected).toHaveBeenCalledWith("https://example.test", canvas);
+      expect(screen.getByRole("button", { name: "Scan again" }).disabled).toBe(false);
+    }
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 });
 

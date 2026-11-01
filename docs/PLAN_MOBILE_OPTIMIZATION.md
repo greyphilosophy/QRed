@@ -1,14 +1,18 @@
 # QRed Mobile Optimization Plan
 
 ## Current State
-The QRed scanner is already production-grade with camera controls, hidden payload recovery, and browser-side Ed25519 verification. This plan targets **concrete mobile bottlenecks** identified through codebase audit.
+As of November 2026, both scanner pages prefer the rear main camera at 1× with a 1920×1080 ideal frame. Unknown camera labels retain the browser's environment-camera choice. The flashlight control has been removed. Full-page watermarks need the entire frame; the older center-crop and lower-resolution proposals below should not be applied to manual page captures.
+
+Manual camera photos and selected images use a background worker for exhaustive recovery. The page shows a reading status and supports cancellation (close the camera or cancel the selected photo). The worker receives transferred pixels, preserves all recovered page chunks, and terminates on completion or cancellation. Its public code is prepared for offline use through the existing service worker; photographs stay on the device. Live scanning retains bounded attempts between frames. Physical lens selection still needs testing on supported phones because camera labels and controls vary by browser.
+
+The audit and phases below record the earlier optimization plan, not a current inventory of missing features.
 
 ## Findings from Codebase Audit
 
 ### Already Good
 - Camera-based QR scanner with hidden payload recovery ✅
-- Zoom/telephoto camera selection on mobile ✅
-- Torch (flashlight) toggle ✅
+- Rear main camera selection at 1× ✅
+- Responsive, cancellable photo recovery ✅
 - Browser-side Ed25519 verification ✅
 - Multiple encoding strategies (plaintext and gzip) ✅
 - Responsive layout with CSS clamp() ✅
@@ -44,7 +48,7 @@ The QRed scanner is already production-grade with camera controls, hidden payloa
 8. **Scan animation** — Subtle "found" pulse on the reticle when jsQR detects a code.
 
 ## Out of Scope (Already Covered)
-- Camera quality controls (zoom, focus, torch) — already implemented
+- Camera quality controls (1× zoom, continuous focus, exposure and white balance) — already implemented
 - Hidden payload recovery — already implemented
 - Browser-side verification — already implemented
 - Multiple encoding/compression strategies — already implemented

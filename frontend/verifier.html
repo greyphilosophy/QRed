@@ -392,6 +392,7 @@
 
   <script type="module">
     import { startCameraSession } from "./src/qr/cameraSession.js";
+    import { getPreferredCameraStream, applyCameraQualityControls } from "./src/qr/cameraControls.js";
     import { createQrFrameScanner } from "./src/qr/scanQrImage.js";
     import { isQRedEntryLink } from "./src/qr/hiddenPayload.js";
     import { decodeSeal as decodeQRedSeal, verifyQRedSeals, qredPayloadFromPhotoScanResult } from "./src/qredVerifier.js";
@@ -558,11 +559,8 @@
       state.camera = startCameraSession({
         video: video,
         waitForMetadata: true,
-        requestStream: function() {
-          return navigator.mediaDevices.getUserMedia({
-            video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 960 } }
-          });
-        },
+        requestStream: getPreferredCameraStream,
+        prepareStream: applyCameraQualityControls,
         onFrame: function() {
           if (!video.videoWidth || !video.videoHeight) return;
           statusBar.classList.add("visible");

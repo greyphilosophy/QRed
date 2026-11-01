@@ -10,17 +10,14 @@ import { createQRedSeals } from "./qredSealer.js";
 import App from "./App.jsx";
 import { useSealVerification } from "./SealVerification.jsx";
 import { decodeSeal } from "./qredVerifier.js";
-import { scanPageAlignedImage } from "./qr/pageAlignedScan.js";
+import { scanPhotoInWorker } from "./qr/photoScanClient.js";
 
 vi.mock("./trustedAuthorities.json", () => ({ default: { da522162396ab2d0: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q" } }));
 
 const scanner = vi.hoisted(() => ({ props: null }));
 vi.mock("./QrScanner.jsx", () => ({ QrScanner: (props) => { scanner.props = props; return null; } }));
 vi.mock("./PdfSealForm.jsx", () => ({ PdfSealForm: () => null }));
-vi.mock("./qr/pageAlignedScan.js", async importOriginal => {
-  const actual = await importOriginal();
-  return { ...actual, scanPageAlignedImage: vi.fn(actual.scanPageAlignedImage) };
-});
+vi.mock("./qr/photoScanClient.js", () => ({ preparePhotoScanner: vi.fn(), scanPhotoInWorker: vi.fn() }));
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 
@@ -31,6 +28,7 @@ function selectKey(text, name = "issuer.txt") {
 }
 
 beforeEach(() => {
+  vi.mocked(scanPhotoInWorker).mockReset();
   vi.stubGlobal("crypto", webcrypto);
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
 });
@@ -172,6 +170,42 @@ it("does not collect an uploaded image that finishes opening after the user clea
   expect(scanner.props.collectionProgress).toBeNull();
 });
 
+it.each(["cancel", "clear", "replace"])("discards a pending photo result after %s and can read another photo", async reason => {
+  const pending = [];
+  vi.mocked(scanPhotoInWorker).mockImplementation((image, options) => new Promise(resolve => pending.push({ resolve, ...options })));
+  vi.stubGlobal("Image", class {
+    naturalWidth = 20; naturalHeight = 30;
+    decode() { return Promise.resolve(); }
+  });
+  const revoke = vi.fn();
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL() { return "blob:pending-photo"; }
+    static revokeObjectURL(url) { revoke(url); }
+  });
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+    drawImage() {}, getImageData: () => ({ data: new Uint8ClampedArray(20 * 30 * 4), width: 20, height: 30 }),
+  });
+  render(<App />);
+  const choose = () => fireEvent.change(screen.getByLabelText("Choose QR image"), {
+    target: { files: [new File(["synthetic"], "page.png", { type: "image/png" })] },
+  });
+  choose();
+  await waitFor(() => expect(pending).toHaveLength(1));
+  expect(screen.getByText(/Reading photo…/)).toBeTruthy();
+  if (reason === "cancel") fireEvent.click(screen.getByRole("button", { name: "Cancel photo scan" }));
+  if (reason === "clear") fireEvent.click(screen.getByRole("button", { name: "Clear collected seals" }));
+  choose();
+  await waitFor(() => expect(pending).toHaveLength(2));
+  expect(pending[0].signal.aborted).toBe(true);
+  await act(async () => pending[0].resolve({ status: "found", text: "stale content" }));
+  expect(screen.queryByText(/stale content/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Cancel photo scan" })).toBeTruthy();
+  await act(async () => pending[1].resolve({ status: "found", text: "new photo" }));
+  expect(screen.getByText("Unverified QR content: new photo")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Cancel photo scan" })).toBeNull();
+  expect(revoke).toHaveBeenCalledTimes(2);
+});
+
 
 it("collects all four signed chunks from one uploaded page photograph", async () => {
   // QRed signs canonicalized text (which trims the trailing space).
@@ -183,7 +217,7 @@ it("collects all four signed chunks from one uploaded page photograph", async ()
     preferFourQrPage: true,
   });
   expect(seals).toHaveLength(4);
-  vi.mocked(scanPageAlignedImage).mockReturnValueOnce(seals.map(seal => ({ seal })));
+  vi.mocked(scanPhotoInWorker).mockResolvedValueOnce({ status: "found-multiple", texts: seals });
   vi.stubGlobal("Image", class {
     naturalWidth = 600;
     naturalHeight = 800;

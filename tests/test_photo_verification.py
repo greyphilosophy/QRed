@@ -83,7 +83,7 @@ def test_photo_comparison_reads_real_pixels_offline(browser, sealed_text, path, 
         guard = OfflineNetworkGuard(context, base_url)
         page = context.new_page()
         page.goto(base_url + path, wait_until="networkidle")
-        wait_for_offline_resources(page)
+        wait_for_offline_resources(page, photo=path == "/")
         page.get_by_role("button", name="Load text recognition", exact=True).click()
         expect(page.get_by_role("button", name="Text recognition ready", exact=True)).to_be_visible(timeout=60000)
         page.wait_for_load_state("networkidle")

@@ -9,8 +9,14 @@ from playwright.sync_api import expect
 BASE_URL = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
 
 
-def wait_for_offline_resources(page, *, pdf=False):
+def wait_for_offline_resources(page, *, pdf=False, photo=False):
     page.wait_for_function("navigator.serviceWorker.controller?.state === 'activated'", timeout=10000)
+    if photo:
+        page.wait_for_function(r"""async () => {
+            const entries = await Promise.all((await caches.keys()).map(async key =>
+                (await (await caches.open(key)).keys()).map(request => request.url)));
+            return entries.flat().some(url => /\/assets\/photoScan\.worker-[\w-]+\.js$/.test(url));
+        }""", timeout=10000)
     if pdf:
         page.wait_for_function(r"""async () => {
             const entries = await Promise.all((await caches.keys()).map(async key =>

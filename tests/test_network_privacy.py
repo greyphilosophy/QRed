@@ -44,7 +44,7 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, la
         page = context.new_page()
         page.add_init_script("window.__qredTestMode = true;")
         page.goto(base_url, wait_until="networkidle")
-        wait_for_offline_resources(page)
+        wait_for_offline_resources(page, photo=True)
 
         # Explicit online warm-up, using disposable data, loads the lazy
         # PDF module, worker and fonts through the actual stamping UI.
