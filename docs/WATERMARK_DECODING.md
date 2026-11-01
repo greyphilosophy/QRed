@@ -17,16 +17,38 @@ four balanced chunks, including existing digest and chunk indices. The
 1/4 choice applies to newly watermarked PDF pages, not to existing seals,
 non-PDF documents, or explicitly selected footer layouts.
 
-For one QR, the symbol fills the interior of a **minimum 0.75-inch
-(54 PDF-point) blank border on all four paper edges**; in 2×2 mode that
-same printer-safe interior is divided into four adjacent rectangles. For
-US Letter the QR-safe area is 7.0 × 9.5 inches. A4, A3 and US Legal use
-54 points of clearance too, not a fixed percentage of page dimensions.
+For one QR, the symbol fills a centered rectangle with a **default 0.75-inch
+(54 PDF-point) border on all four paper edges**; in 2×2 mode that same
+interior is divided into four adjacent rectangles. Before stamping, inspect
+the original document's rendered pages, including text, graphics and annotations.
+If any page has at least 4 square points of visible ink within half an inch
+of an edge, use a **0.5-inch (36-point) border throughout the document**.
+Otherwise retain the default. Every full-page watermark uses the same physical
+margin, including on mixed paper sizes and when replanning a subset of pages.
+This bounded choice enlarges narrow-margin documents without reacting to an
+isolated raster speck. Entirely blank or wider-margin documents retain the default. Artwork
+running to the edge never reduces the watermark border below half an inch.
+US Letter therefore uses a 7.0 × 9.5-inch or 7.5 × 10-inch watermark area.
+A4, A3 and US Legal use the same physical clearances, not percentages.
 Each module is independently scaled horizontally and vertically while the
-original document remains the same physical size. An optional small
-navigation QR must also remain at least 54 points inside the page edges;
-it is omitted when no safe location exists or it would overlap the
-page-filling watermark. Earlier page-aligned 3%-inset seals remain
+original document remains the same physical size. Legacy square fallbacks
+retain 54-point edge clearance. The optional small navigation QR also keeps
+that clearance. After the full-page watermark passes preflight, the sealer
+looks for a blank area of the original first page and tries a small white-backed
+navigation panel with corner targeting brackets. This panel may cover watermark
+modules, but never original text, artwork or annotations. It retains the link
+QR's four-module quiet zone. The complete combined page must recover every
+exact signed chunk in both clean and softened/shaded renders, and the link
+itself must decode in both conditions. If the QR cannot be placed or fails,
+try a smaller text-only **Verify at qred.org** instruction and repeat watermark
+preflight. The text has no white backing, so a uniform pale page background
+can remain visible beneath it while source text and other marks are avoided.
+If even the text cannot fit safely or preserve recovery, use a readable footer
+with that instruction. Footer layouts reserve caption space even when the QR
+grid fills the available width. Every completed document has a visible way to
+find the verifier. Legacy square quiet zones are
+still excluded from navigation placement. No covered-area percentage is treated
+as a guarantee of error correction. Earlier page-aligned 3%-inset seals remain
 supported by the verifier's legacy geometry profile.
 Automatic and Watermark modes first try this full-page geometry whenever its
 modules meet the minimum printed size. A shaded table heading, logo or broad
@@ -71,8 +93,10 @@ clones a complete 12–48 MP original photograph.
 A photographed sheet has no trustworthy embedded paper-size metadata.
 The verifier ranks plausible US Letter, US Legal, A4, A3 and Tabloid page
 dimensions from its apparent aspect ratio, then checks each candidate's
-**physical 54-point inset** against finder/timing evidence and recovered
-signatures. Legacy 3%-inset page-aligned marks are also attempted. A rendered
+**physical 54- and 36-point insets** against finder/timing evidence and recovered
+signatures. The source content and selected margin are never supplied to the
+photo scanner. These profiles share the existing matrix-decoding and local
+refinement budgets. Legacy 3%-inset page-aligned marks are also attempted. A rendered
 PDF has its actual page bounds available; a printed photograph never does.
 
 Photographs are tried in all four quarter-turn orientations, including

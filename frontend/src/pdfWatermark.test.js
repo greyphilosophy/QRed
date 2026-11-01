@@ -14,7 +14,8 @@ import { scanQrImage, createQrFrameScanner } from "./qr/scanQrImage.js";
 import { hiddenPayloadFromScanResult, isQRedEntryLink } from "./qr/hiddenPayload.js";
 import { verifyQRedSeals } from "./qredVerifier.js";
 import { scanPdfPage } from "./verifier/scanPdf.js";
-import { ENTRY_URL, ENTRY_QR_SIZE, createEntryQrSymbol } from "./pdf/watermark.js";
+import { ENTRY_URL, ENTRY_QR_SIZE, createEntryQrSymbol, planPdfWatermarks } from "./pdf/watermark.js";
+import { renderPdfPage, withPdfDocument } from "./pdf/readPdfText.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
@@ -120,6 +121,45 @@ function expectGraphicPreserved(original, printed, box, pageAligned) {
 }
 
 describe("experimental PDF watermarks", () => {
+  it.each([
+    ["first", 0, 36], ["last", 1, 36], ["neither", -1, 54],
+  ])("uses one document margin when the %s page has narrow content margins", async (_name, narrowPage, margin) => {
+    const source = await PDFDocument.create();
+    const sizes = [[612, 792], [595.28, 841.89]];
+    for (let index = 0; index < sizes.length; index++) {
+      const page = source.addPage(sizes[index]);
+      page.drawText(`Document-wide margin example, page ${index + 1}`, { x: 90, y: 620, size: 11 });
+      if (index === narrowPage) page.drawText("Narrow original content", { x: 28, y: 400, size: 10 });
+    }
+    const file = new File([await source.save()], "mixed-page-margins.pdf", { type: "application/pdf" });
+    const result = await sealPdfInBrowser({ file, privateKey, publicKey });
+    expect(result.footerPages).toEqual([]);
+    for (let index = 0; index < sizes.length; index++) {
+      const layout = result.watermarkLayout[index];
+      expect(layout.pageAligned).toBe(true);
+      expect(layout.boxes).toHaveLength(1);
+      const box = layout.boxes[0], [width, height] = sizes[index];
+      expect(box.x).toBeCloseTo(margin);
+      expect(box.y).toBeCloseTo(margin);
+      expect(width - box.x - box.width).toBeCloseTo(margin);
+      expect(height - box.y - box.height).toBeCloseTo(margin);
+    }
+    // A retry planning just the wide-margin page must still see the other
+    // page's narrower source margin, without receiving a saved margin hint.
+    const widePage = narrowPage === 0 ? 1 : 0;
+    const subset = await planPdfWatermarks(file, result.pageSealResults, [widePage]);
+    expect(subset[widePage].boxes).toEqual(result.watermarkLayout[widePage].boxes);
+    expect(subset[1 - widePage]).toBeNull();
+    await withPdfDocument(result.blob, async pdf => {
+      for (let index = 0; index < sizes.length; index++) {
+        const scanned = await scanPdfPage(await renderPdfPage(pdf, index + 1));
+        expect(scanned.seals).toEqual(result.pageSealStrings[index]);
+        await expect(verifyQRedSeals(scanned.seals, publicKey))
+          .resolves.toMatchObject({ status: "VALID", page_number: index + 1, page_count: 2 });
+      }
+    });
+  }, 60000);
+
   it("analyzes logos at different page locations and verifies each chosen watermark", async () => {
     const positions = [
       { x: 32, y: 624, width: 120, height: 120 },
@@ -161,8 +201,8 @@ describe("experimental PDF watermarks", () => {
     expect(result.watermarkLayout.every(layout => layout.pageAligned)).toBe(true);
     for (const layout of result.watermarkLayout) {
       expect(layout.boxes).toHaveLength(1);
-      expect(layout.boxes[0]).toMatchObject({ x: 54, width: 504, height: 684 });
-      expect(layout.boxes[0].y).toBeCloseTo(54);
+      expect(layout.boxes[0]).toMatchObject({ x: 36, width: 540, height: 720 });
+      expect(layout.boxes[0].y).toBeCloseTo(36);
     }
     expect(result.pageSealStrings.map(seals => seals.length)).toEqual([1, 1]);
     const pdf = await PDFDocument.load(await result.blob.arrayBuffer());
@@ -214,6 +254,8 @@ describe("experimental PDF watermarks", () => {
     const result = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "automatic" });
     expect(result.footerPages).toEqual([]);
     expect(result.watermarkLayout[0]?.entry).toBeUndefined();
+    expect(result.watermarkLayout[0]?.entryText).toBeTruthy();
+    expect((await extractPdfText(result.blob)).match(/Verify at qred\.org/g)).toHaveLength(1);
     const sealed = await PDFDocument.load(await result.blob.arrayBuffer());
     expect(sealed.getPage(0).getSize()).toEqual({ width: 612, height: 792 });
     const printed = render(await result.blob.arrayBuffer(), 1);
@@ -378,6 +420,8 @@ it.each([
   const result = await sealPdfInBrowser({ file, privateKey, publicKey, pageScalingStrategy: "automatic" });
   expect(result.footerPages).toEqual([]);
   expect(result.watermarkLayout[0]?.entry).toBeUndefined();
+  expect(result.watermarkLayout[0]?.entryText).toBeTruthy();
+  expect((await extractPdfText(result.blob)).match(/Verify at qred\.org/g)).toHaveLength(1);
   expect(result.watermarkLayout[0]?.pageAligned).toBe(true);
   expect((await PDFDocument.load(await result.blob.arrayBuffer())).getPage(0).getSize())
     .toEqual({ width: size[0], height: size[1] });

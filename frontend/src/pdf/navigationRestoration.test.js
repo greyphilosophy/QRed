@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PDFDocument, rgb } from "pdf-lib";
-import { sealPdfInBrowser } from "../pdfClientSeal.js";
+import { extractPdfText, sealPdfInBrowser } from "../pdfClientSeal.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
 import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
@@ -12,7 +12,7 @@ import { scanPdfPage } from "../verifier/scanPdf.js";
 // Force the initial failure that starts each retry sequence; every successful
 // candidate still passes the real decoding and signed-payload preflight.
 const preflight = vi.hoisted(() => ({ forceSquare: true, failFirstEntry: true,
-  failFirstAligned: false, layouts: [] }));
+  failFirstAligned: false, failEntryText: false, layouts: [] }));
 vi.mock("./watermark.js", async importOriginal => {
   const real = await importOriginal();
   return {
@@ -36,6 +36,10 @@ vi.mock("./watermark.js", async importOriginal => {
       if (preflight.failFirstEntry && layouts[0]?.entry) {
         preflight.failFirstEntry = false;
         options?.onFailure?.(0, "Simulated failed first entry placement.");
+        return [0];
+      }
+      if (preflight.failEntryText && layouts[0]?.entryText) {
+        options?.onFailure?.(0, "Simulated unreadable text overlay.");
         return [0];
       }
       return real.checkWatermarks(bytes, layouts, pageSeals, options);
@@ -67,20 +71,20 @@ beforeEach(() => {
   preflight.forceSquare = true;
   preflight.failFirstEntry = true;
   preflight.failFirstAligned = false;
+  preflight.failEntryText = false;
   preflight.layouts.length = 0;
   vi.setSystemTime(new Date("2026-10-22T06:00:00Z"));
 });
 afterEach(() => vi.useRealTimers());
 
-async function makeInvoice() {
+async function makeInvoice(narrowMargins = false) {
   // Synthetic invoice-like page; no real customer's document is committed.
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([612, 792]);
-  // Exercise graphic avoidance on the square fallback. Full-page rectangles
-  // intentionally omit the navigation QR instead.
+  // Exercise graphic avoidance on both square fallbacks and optional overlays.
   page.drawRectangle({ x: 260, y: 360, width: 125, height: 120, color: rgb(0, 0, 0) });
   page.drawText("SAMPLE INVOICE", { x: 420, y: 660, size: 11 });
-  page.drawText("Example Customer", { x: 36, y: 660, size: 11 });
+  page.drawText("Example Customer", { x: narrowMargins ? 32 : 36, y: 660, size: 11 });
   page.drawText("Paid in full", { x: 36, y: 580, size: 11 });
   page.drawText("Thank you", { x: 260, y: 140, size: 10 });
   return new File([await pdf.save()], "synthetic-restore-navigation.pdf", { type: "application/pdf" });
@@ -115,12 +119,12 @@ it("restores a decodable navigation QR after recovering a readable signed waterm
     .resolves.toMatchObject({ status: "VALID", page_number: 1, page_count: 1 });
 }, 60000);
 
-it("tries and verifies a smaller square after the full-page rectangle fails preflight", async () => {
+it.each([false, true])("verifies a smaller square after the rectangle fails (narrow margins: %s)", async narrowMargins => {
   preflight.forceSquare = false;
   preflight.failFirstEntry = false;
   preflight.failFirstAligned = true;
   const result = await sealPdfInBrowser({
-    file: await makeInvoice(), privateKey, publicKey, pageScalingStrategy: "automatic",
+    file: await makeInvoice(narrowMargins), privateKey, publicKey, pageScalingStrategy: "automatic",
   });
   expect(preflight.layouts[0]).toBe("page-aligned");
   expect(preflight.layouts.slice(1)).not.toContain("page-aligned");
@@ -138,7 +142,7 @@ it("tries and verifies a smaller square after the full-page rectangle fails pref
   });
 }, 60000);
 
-it("never places the entry QR over a signed watermark or other page ink", () => {
+it("keeps legacy square quiet zones free of navigation overlays", () => {
   const width = 612, height = 792;
   const image = { width, height, scale: 1, bounds: { x: 0, y: 0, width, height },
     data: new Uint8ClampedArray(width * height * 4).fill(255) };
@@ -150,3 +154,38 @@ it("never places the entry QR over a signed watermark or other page ink", () => 
   expect(() => findEntryPlacement(image, { avoidBoxes: [{ x: 0, y: 0, width, height }] }))
     .toThrow(/No clear space/);
 });
+
+it("retains verification text and the full-page watermark when its navigation QR fails", async () => {
+  preflight.forceSquare = false;
+  const result = await sealPdfInBrowser({
+    file: await makeInvoice(), privateKey, publicKey, pageScalingStrategy: "automatic",
+  });
+  expect(preflight.failFirstEntry).toBe(false);
+  expect(preflight.layouts).toEqual(["page-aligned", "page-aligned", "page-aligned"]);
+  expect(result.footerPages).toEqual([]);
+  expect(result.watermarkLayout[0]?.pageAligned).toBe(true);
+  expect(result.watermarkLayout[0]?.entry).toBeUndefined();
+  expect(result.watermarkLayout[0]?.entryText).toBeTruthy();
+  expect((await extractPdfText(result.blob)).match(/Verify at qred\.org/g)).toHaveLength(1);
+  await withPdfDocument(result.blob, async doc => {
+    const scanned = await scanPdfPage(await renderPdfPage(doc, 1));
+    expect(scanned.seals).toEqual(result.pageSealStrings[0]);
+    await expect(verifyQRedSeals(scanned.seals, publicKey)).resolves.toMatchObject({ status: "VALID" });
+  });
+}, 60000);
+
+it("keeps the verification instruction in a footer when neither overlay is readable", async () => {
+  preflight.forceSquare = false;
+  preflight.failEntryText = true;
+  const result = await sealPdfInBrowser({ file: await makeInvoice(), privateKey, publicKey });
+  expect(preflight.failFirstEntry).toBe(false);
+  expect(result.watermarkLayout[0]).toBeNull();
+  expect(result.footerPages).toEqual([1]);
+  expect(result.footerReasons[1]).toContain("verification instruction");
+  expect((await extractPdfText(result.blob)).match(/Verify at qred\.org/g)).toHaveLength(1);
+  await withPdfDocument(result.blob, async doc => {
+    const scanned = await scanPdfPage(await renderPdfPage(doc, 1));
+    expect(scanned.seals).toEqual(result.pageSealStrings[0]);
+    await expect(verifyQRedSeals(scanned.seals, publicKey)).resolves.toMatchObject({ status: "VALID" });
+  });
+}, 60000);

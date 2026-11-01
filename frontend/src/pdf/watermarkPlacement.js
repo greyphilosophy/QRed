@@ -1,12 +1,36 @@
-import { MIN_WATERMARK_MARGIN_POINTS, pageWatermarkRegions } from "../qr/pageAlignedScan.js";
+import { DEFAULT_WATERMARK_MARGIN_POINTS, MIN_WATERMARK_MARGIN_POINTS,
+  pageWatermarkRegions } from "../qr/pageAlignedScan.js";
 
 // Predict watermark obstruction from the ORIGINAL page. Layout selection only
 // queries these maps: it does not stamp, render, or decode trial watermarks.
 const MAX_ANALYSIS_EDGE = 384;
-const MARGIN = MIN_WATERMARK_MARGIN_POINTS;
+const MARGIN = DEFAULT_WATERMARK_MARGIN_POINTS;
 const GAP = 12;
 const ENTRY_GAP = 8;
 export const MIN_WATERMARK_MODULE_SIZE = 1.5;
+
+// Inspect the original visible raster, including text, images and annotations.
+// A narrow-margin page already risks printer scaling at that edge, so allow a
+// larger centered watermark, but never put its modules within half an inch
+// of the paper. Require 4 square points of ink, not an isolated raster speck.
+// Blank pages and pages with wider margins retain the 0.75-inch default.
+export function watermarkMarginForPage({ data, width, height, bounds }) {
+  const scaleX = width / bounds.width, scaleY = height / bounds.height;
+  const bandX = Math.ceil(MIN_WATERMARK_MARGIN_POINTS * scaleX);
+  const bandY = Math.ceil(MIN_WATERMARK_MARGIN_POINTS * scaleY);
+  const minimumInk = Math.ceil(4 * scaleX * scaleY);
+  let ink = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (y >= bandY && y < height - bandY && x === bandX) x = Math.max(x, width - bandX);
+      const offset = (y * width + x) * 4;
+      if (data[offset + 3] >= 128 && Math.min(data[offset], data[offset + 1], data[offset + 2]) < 245) {
+        if (++ink >= minimumInk) return MIN_WATERMARK_MARGIN_POINTS;
+      }
+    }
+  }
+  return DEFAULT_WATERMARK_MARGIN_POINTS;
+}
 
 function integral(values, width, height) {
   const stride = width + 1, table = new Float64Array(stride * (height + 1));
@@ -143,11 +167,13 @@ function axis(start, end, step) {
 // knowing the sealer's placement decisions. The old content-avoiding planner
 // remains a fallback after failed print/photo preflight. Graphics alone must
 // not veto a rectangle that the actual signed-payload decoder can read.
-export function planWatermarks(image, symbols, entry = null, { excludeBoxes = null, preferPageAligned = true } = {}) {
+export function planWatermarks(image, symbols, entry = null,
+  { excludeBoxes = null, preferPageAligned = true, marginPoints } = {}) {
   const { bounds } = image;
   if (preferPageAligned && !entry && !excludeBoxes &&
       (symbols.length === 1 || symbols.length === 4)) {
-    const regions = pageWatermarkRegions(symbols.length, bounds);
+    const regions = pageWatermarkRegions(symbols.length, bounds,
+      { marginPoints: marginPoints ?? watermarkMarginForPage(image) });
     const boxes = regions.map(region => ({
       x: bounds.x + region.x * bounds.width,
       y: bounds.y + (1 - region.y - region.height) * bounds.height,

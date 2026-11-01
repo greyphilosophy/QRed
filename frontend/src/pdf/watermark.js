@@ -2,10 +2,10 @@ import { BlendMode, rgb, StandardFonts } from "pdf-lib";
 import QRCode from "qrcode";
 import { createQRedQrSymbol } from "../qredQr.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
-import { MIN_WATERMARK_MARGIN_POINTS, pageWatermarkRegions, scanPageAlignedImage } from "../qr/pageAlignedScan.js";
+import { DEFAULT_WATERMARK_MARGIN_POINTS, pageWatermarkRegions, scanPageAlignedImage } from "../qr/pageAlignedScan.js";
 import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
 import { renderPdfPage, withPdfDocument } from "./readPdfText.js";
-import { planWatermarks } from "./watermarkPlacement.js";
+import { planWatermarks, watermarkMarginForPage } from "./watermarkPlacement.js";
 import { scanAllSealsFromPage, scanFramedSealFromPage, simulatePrintPhoto } from "./watermarkPreflight.js";
 
 export { planWatermarks } from "./watermarkPlacement.js";
@@ -25,40 +25,46 @@ export function createEntryQrSymbol() {
 // Fifteen-percent black survives more printer gray-tone loss than the old 6%.
 // Keep it pale enough to preserve the readability of underlying black text.
 export const WATERMARK_GRAY = 0.85;
-const MARGIN = MIN_WATERMARK_MARGIN_POINTS;
+const MARGIN = DEFAULT_WATERMARK_MARGIN_POINTS;
 const ENTRY_WIDTH = 70, ENTRY_HEIGHT = 52;
 
 // Count every visible nonwhite pixel, including graphics and annotations.
 // Never infer empty space from extracted text alone.
-export function findEntryPlacement(image, { avoidBoxes = [] } = {}) {
+export function findEntryPlacement(image, { avoidBoxes = [], textOnly = false } = {}) {
   const { data, width, height, scale, bounds } = image;
+  const entryHeight = textOnly ? 14 : ENTRY_HEIGHT;
+  // Text needs no white backing. A uniform pale paper background can remain
+  // intact beneath it; darker or differently colored source marks stay clear.
+  const background = Array.from(data.subarray(0, 3));
+  const paleBackground = textOnly && background.every(channel => channel >= 230);
   const stride = width + 1;
   const ink = new Uint32Array(stride * (height + 1));
   for (let y = 0; y < height; y++) {
     let row = 0;
     for (let x = 0; x < width; x++) {
       const i = (y * width + x) * 4;
-      if (Math.min(data[i], data[i + 1], data[i + 2]) < 250) row++;
+      const matchesBackground = paleBackground && background.every((channel, c) => Math.abs(data[i + c] - channel) <= 1);
+      if (Math.min(data[i], data[i + 1], data[i + 2]) < 250 && !matchesBackground) row++;
       ink[(y + 1) * stride + x + 1] = ink[y * stride + x + 1] + row;
     }
   }
   // Bottom first, then top, then work inward. Favor the right corner so the
   // small navigation code usually stays outside the main body of the page.
-  const ys = new Set([MARGIN, bounds.height - MARGIN - ENTRY_HEIGHT]);
-  for (let y = MARGIN; y <= bounds.height - MARGIN - ENTRY_HEIGHT; y += 6) ys.add(y);
+  const ys = new Set([MARGIN, bounds.height - MARGIN - entryHeight]);
+  for (let y = MARGIN; y <= bounds.height - MARGIN - entryHeight; y += 6) ys.add(y);
   for (const y of ys) {
     for (let x = bounds.width - MARGIN - ENTRY_WIDTH; x >= MARGIN; x -= 6) {
       if (y < MARGIN) continue;
       const left = Math.max(0, Math.floor((x - 3) * scale));
       const right = Math.min(width, Math.ceil((x + ENTRY_WIDTH + 3) * scale));
-      const top = Math.max(0, Math.floor((bounds.height - y - ENTRY_HEIGHT - 3) * scale));
+      const top = Math.max(0, Math.floor((bounds.height - y - entryHeight - 3) * scale));
       const bottom = Math.min(height, Math.ceil((bounds.height - y + 3) * scale));
       if (ink[bottom * stride + right] - ink[top * stride + right]
           - ink[bottom * stride + left] + ink[top * stride + left] !== 0) continue;
-      const candidate = { x: bounds.x + x, y: bounds.y + y, width: ENTRY_WIDTH, height: ENTRY_HEIGHT };
-      // Its white background and quiet zone must never paint over the signed
-      // watermark, including its quiet zone. Leave the same 8-point clearance
-      // that first-pass watermark placement reserves around the entry QR.
+      const candidate = { x: bounds.x + x, y: bounds.y + y, width: ENTRY_WIDTH, height: entryHeight };
+      // Caller-supplied keepouts protect legacy square watermarks and their
+      // quiet zones. Full-page overlays instead rely on combined preflight.
+      // Match the first-pass planner's 8-point entry clearance.
       const clearance = 8;
       if (avoidBoxes.some(box =>
         candidate.x < box.x + box.width + clearance && candidate.x + candidate.width > box.x - clearance &&
@@ -70,9 +76,10 @@ export function findEntryPlacement(image, { avoidBoxes = [] } = {}) {
 }
 
 // Once the actual signed QR geometry has passed preflight, look for a clear
-// navigation-code position around *those* boxes. This is a layout-only pass
-// over the original page, not a new or weaker signed-seal decoding method.
-export async function findEntryForWatermark(file, boxes) {
+// navigation-code position on the original page. Page-aligned watermarks may
+// be covered by the optional entry panel, but the combined render must still
+// pass exact-payload preflight. Legacy squares retain their quiet zones.
+export async function findEntryForWatermark(file, boxes, { pageAligned = false, textOnly = false } = {}) {
   if (!boxes?.length) return null;
   return withPdfDocument(file, async (pdf) => {
     const page = await pdf.getPage(1);
@@ -81,7 +88,7 @@ export async function findEntryForWatermark(file, boxes) {
       page.getViewport({ scale: 2, rotation: 0 }).height <= 12_000_000;
     if (!supported) { page.cleanup(); return null; }
     const image = await renderPdfPage(pdf, 1);
-    try { return findEntryPlacement(image, { avoidBoxes: boxes }); }
+    try { return findEntryPlacement(image, { avoidBoxes: pageAligned ? [] : boxes, textOnly }); }
     catch { return null; }
   });
 }
@@ -110,10 +117,30 @@ function drawSymbol(page, symbol, box, gray, multiply = false, pageAligned = fal
     scale: 1, color: rgb(gray, gray, gray), blendMode: multiply ? BlendMode.Multiply : BlendMode.Normal });
 }
 
+async function documentWatermarkMargin(source) {
+  // Choose from the whole original document, even when planning only a subset
+  // of its pages during a retry. A later narrow-margin page must also enlarge
+  // earlier full-page watermarks. Discard each raster before reading the next.
+  for (let number = 1; number <= source.numPages; number++) {
+    const page = await source.getPage(number);
+    const viewport = page.getViewport({ scale: 2, rotation: 0 });
+    if (page.userUnit !== 1 || viewport.width * viewport.height > 12_000_000) {
+      page.cleanup();
+      continue;
+    }
+    const margin = watermarkMarginForPage(await renderPdfPage(source, number));
+    if (margin < DEFAULT_WATERMARK_MARGIN_POINTS) return margin;
+  }
+  return DEFAULT_WATERMARK_MARGIN_POINTS;
+}
+
 export async function planPdfWatermarks(file, pageSealResults, pageIndices = pageSealResults.map((_, index) => index),
   { excludedLayouts = null, omitEntry = false } = {}) {
   const layouts = new Array(pageSealResults.length).fill(null);
   await withPdfDocument(file, async (source) => {
+    // Legacy square retries do not use the page-aligned margin profile.
+    const marginPoints = pageIndices.some(index => !excludedLayouts?.[index])
+      ? await documentWatermarkMargin(source) : DEFAULT_WATERMARK_MARGIN_POINTS;
     for (const index of pageIndices) {
       const seals = pageSealResults[index].seals;
       if (seals.length > 4) throw new Error(`Page ${index + 1} needs too many watermarks. Choose a footer layout.`);
@@ -127,17 +154,18 @@ export async function planPdfWatermarks(file, pageSealResults, pageIndices = pag
       // A failed full-page grid contains every possible fallback square.
       // Its footprint must not exclude those candidates; overlap exclusion
       // applies only when retrying another content-avoiding square layout.
-      const options = { excludeBoxes: previous?.pageAligned ? null : previous?.boxes ?? null };
+      const options = { excludeBoxes: previous?.pageAligned ? null : previous?.boxes ?? null,
+        marginPoints };
       let boxes = null, pageAligned = false;
-      // A standard page-relative grid uses all available paper, not arbitrary
-      // blank squares. An entry QR would overlap it, so the signed data wins.
+      // Establish a readable full-page grid first. Navigation is added as a
+      // separately verified overlay after the signed watermark passes.
       if (!previous && (symbols.length === 1 || symbols.length === 4)) {
         try {
           const proposed = planWatermarks(image, symbols, null, options);
           // Only the standardized page-relative geometry can be decoded
           // without the signer sharing its placement. Four *legacy squares*
           // must not be mislabeled as four aligned quadrants.
-          const standard = pageWatermarkRegions(symbols.length, image.bounds).map(region => ({
+          const standard = pageWatermarkRegions(symbols.length, image.bounds, options).map(region => ({
             x: image.bounds.x + region.x * image.bounds.width,
             y: image.bounds.y + (1 - region.y - region.height) * image.bounds.height,
             width: region.width * image.bounds.width,
@@ -181,15 +209,29 @@ export async function stampWatermarks(pdf, layouts, pageSealResults) {
   const entry = layouts[0]?.entry;
   if (entry) {
     const page = pdf.getPage(0);
-    // The box was checked before any watermark was drawn, and the watermark
-    // layout excludes it. Its white quiet zone never covers source content.
+    // The box was checked against the original page: its white backing never
+    // covers source content. On a full-page layout it may cover watermark
+    // modules only if the resulting signed payload still passes preflight.
     page.drawRectangle({ ...entry, color: rgb(1, 1, 1) });
+    // Corner brackets frame the navigation target outside its QR quiet zone.
+    for (const [left, bottom] of [[true, true], [true, false], [false, true], [false, false]]) {
+      const x = entry.x + (left ? 1 : entry.width - 1);
+      const y = entry.y + (bottom ? 1 : entry.height - 1);
+      const start = { x, y };
+      page.drawLine({ start, end: { x: x + (left ? 6 : -6), y }, thickness: 0.6, color: rgb(0, 0, 0) });
+      page.drawLine({ start, end: { x, y: y + (bottom ? 6 : -6) }, thickness: 0.6, color: rgb(0, 0, 0) });
+    }
     drawSymbol(page, createEntryQrSymbol(),
       { x: entry.x + (entry.width - ENTRY_QR_SIZE) / 2, y: entry.y + 12, width: ENTRY_QR_SIZE, height: ENTRY_QR_SIZE }, 0);
+  }
+  const captionBox = entry ?? layouts[0]?.entryText;
+  if (captionBox) {
+    const page = pdf.getPage(0);
     const font = await pdf.embedFont(StandardFonts.Helvetica);
     const caption = "Verify at qred.org";
-    page.drawText(caption, { x: entry.x + (entry.width - font.widthOfTextAtSize(caption, 7)) / 2,
-      y: entry.y + 3, size: 7, font, color: rgb(0, 0, 0) });
+    const size = entry ? 7 : 8;
+    page.drawText(caption, { x: captionBox.x + (captionBox.width - font.widthOfTextAtSize(caption, size)) / 2,
+      y: captionBox.y + 3, size, font, color: rgb(0, 0, 0) });
   }
 }
 
@@ -221,6 +263,14 @@ export async function checkWatermarks(bytes, layouts, pageSealResults, { onFailu
     for (let index = 0; index < layouts.length; index++) {
       if (!layouts[index]) continue;
       const image = await renderPdfPage(pdf, index + 1);
+      if (layouts[index].entry) {
+        const qr = crop(image, layouts[index].entry);
+        const photo = simulatePrintPhoto(qr);
+        if ([qr, photo].some(sample => scanQrImage(sample.data, sample.width, sample.height,
+          { tryWatermark: false })?.data !== ENTRY_URL)) {
+          fail(index, "The small verification-link QR could not be read.");
+        }
+      }
       if (layouts[index].pageAligned) {
         // Verify a REAL full-page raster, not saved placement metadata. The
         // same standalone image decoder is used by photographed paper. Also
@@ -265,12 +315,6 @@ export async function checkWatermarks(bytes, layouts, pageSealResults, { onFailu
           scanFramedSealFromPage(image, box, pageSealResults[index].seals[part],
             { entry: layouts[index].entry }));
         if (!framedReadable) fail(index, "The seal could not be located in a camera-framed view.");
-      }
-      if (layouts[index].entry) {
-        const qr = crop(image, layouts[index].entry);
-        if (scanQrImage(qr.data, qr.width, qr.height, { tryWatermark: false })?.data !== ENTRY_URL) {
-          fail(index, "The small verification-link QR could not be read.");
-        }
       }
     }
   });

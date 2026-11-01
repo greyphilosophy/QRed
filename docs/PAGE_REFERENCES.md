@@ -80,8 +80,11 @@ successful scanning or allowances for cryptographic errors.
 The optimizer evaluates that map on a bounded spatial grid and refines the best
 location. It does not draw, render, or scan each candidate. Multiple seals use
 aligned rows/columns and a shared size, with the worst part weighted most. Page
-margins, the navigation-code keepout, and the 1.5-point minimum module size remain
-hard constraints. It does not enumerate arbitrary packings or QR rotations and
+margins, legacy square navigation-code keepouts, and the 1.5-point minimum module
+size remain hard constraints. Full-page rectangles can instead accept an optional
+navigation overlay after both the link and signed watermark pass clean and
+simulated-print decoding; the overlay never covers original page ink.
+The optimizer does not enumerate arbitrary packings or QR rotations and
 cannot promise to find every usable placement. Only the chosen layout is drawn
 and checked for exact payload recovery. Its geometry is retained if other pages
 need to be rebuilt with footers; fallback never starts another placement search.

@@ -11,6 +11,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from PIL import Image
 from playwright.sync_api import expect
 from browser_helpers import OfflineNetworkGuard, stamp_and_save, wait_for_offline_resources
 from reportlab.lib.pagesizes import letter
@@ -95,6 +96,14 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, la
         area = [] if layout == "automatic" else ["-x", "0", "-y", "2200", "-W", "1700", "-H", "600"]
         subprocess.run(["pdftoppm", "-f", "1", "-singlefile", "-r", "200", *area,
                         "-png", str(sealed_path), str(footer)], check=True, capture_output=True)
+        if layout == "automatic":
+            # Full-page photo recovery requires a visible paper boundary.
+            # Keep the exact stamped pixels and add the surrounding desk;
+            # a tightly cropped PDF export has no optical sheet edge.
+            with Image.open(footer.with_suffix(".png")) as image:
+                photo = Image.new("RGB", (image.width + 80, image.height + 80), (55, 55, 55))
+                photo.paste(image.convert("RGB"), (40, 40))
+            photo.save(footer.with_suffix(".png"))
         page.get_by_label("Choose QR image", exact=True).set_input_files(footer.with_suffix(".png"))
         page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)

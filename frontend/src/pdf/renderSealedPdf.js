@@ -55,9 +55,19 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
       const qrImages = await Promise.all(qrValues.map(async (value) => pdf.embedPng(await qrPngBytes(value))));
       const { width, height } = visiblePageGeometry(page);
       const resolvedPageScalingStrategy = resolvePageScalingStrategy(tryWatermarks ? "automatic" : pageScalingStrategy, width, height);
-      const layout = resolvedPageScalingStrategy === "legal-footer"
+      let layout = resolvedPageScalingStrategy === "legal-footer"
         ? planQrStampLayoutForFooterBand(width, qrImages.length, { footerBandHeight: LEGAL_FOOTER_HEIGHT })
         : planQrStampLayout(width, qrImages.length);
+      const caption = "Verify at qred.org";
+      let captionAbove = !layout.labelBeside;
+      if (layout.labelBeside && layout.qrOffsetX + layout.gridWidth + 12 +
+          font.widthOfTextAtSize(caption, 9) > width - PANEL_MARGIN) {
+        // A full-width grid still needs a visible verification instruction.
+        // Reserve a caption strip instead of dropping it or crossing a QR.
+        layout = { ...planQrStampLayoutForFooterBand(width, qrImages.length,
+          { footerBandHeight: LEGAL_FOOTER_HEIGHT - 18 }), panelHeight: LEGAL_FOOTER_HEIGHT };
+        captionAbove = true;
+      }
       // Four dense v40 symbols can fit mathematically in a three-inch footer
       // while becoming too small to photograph. Never silently emit such a
       // fallback if the original-page 2x2 watermarks failed their preflight.
@@ -70,23 +80,18 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
       const footerHeight = resolvedPageScalingStrategy === "legal-footer" ? LEGAL_FOOTER_HEIGHT : footerMargin + layout.panelHeight;
       page = await applyPageScaling(pdf, pageIndex, page, resolvedPageScalingStrategy, footerHeight);
       page.drawRectangle({ x: footerMargin, y: footerMargin, width: layout.panelWidth, height: layout.panelHeight, color: rgb(1, 1, 1), opacity: 0.94 });
-      const caption = "QRed sealed PDF page";
-      const captionX = layout.labelBeside
+      const captionX = !captionAbove
         ? layout.qrOffsetX + layout.gridWidth + 12
-        : footerMargin + PANEL_PADDING;
-      // A crowded grid uses the full footer width; never draw a label over a QR
-      // or its quiet zone merely to keep the decorative caption.
-      if (!layout.labelBeside || captionX + font.widthOfTextAtSize(caption, 9) <= width - PANEL_MARGIN) {
-        page.drawText(caption, {
-          x: captionX,
-          y: layout.labelBeside
-            ? layout.qrOffsetY + (layout.gridHeight / 2)
-            : footerMargin + layout.panelHeight - PANEL_PADDING - 9,
-          size: 9,
-          font,
-          color: rgb(0.05, 0.12, 0.22),
-        });
-      }
+        : footerMargin + (layout.qrOffsetX ?? PANEL_PADDING);
+      page.drawText(caption, {
+        x: captionX,
+        y: !captionAbove
+          ? layout.qrOffsetY + (layout.gridHeight / 2)
+          : footerMargin + layout.panelHeight - (layout.labelBeside ? 12 : PANEL_PADDING + 9),
+        size: 9,
+        font,
+        color: rgb(0.05, 0.12, 0.22),
+      });
       qrImages.forEach((image, index) => {
         const column = index % layout.columns;
         const row = Math.floor(index / layout.columns);
@@ -150,24 +155,32 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
   // here, losing the navigation code despite ample space elsewhere.
   //
   // After the *signed watermark* passes, reuse its geometry and search the
-  // original page for a non-overlapping navigation code. Accept the combined
-  // layout only if the complete, unchanged signed payload AND entry QR pass
-  // exactly the same preflight as every other watermark layout.
+  // original page for a navigation code. It may overlap full-page watermark
+  // modules, but never original ink or legacy square quiet zones. Accept it
+  // only if the complete, unchanged signed payload AND entry QR pass
+  // preflight. If the QR cannot stay, try a smaller text-only instruction.
   if (rendered.watermarkLayout?.[0] && !rendered.watermarkLayout[0].entry) {
     const { findEntryForWatermark } = await import("./watermark.js");
     const prior = plannedWatermarkLayout[0];
-    const entry = await findEntryForWatermark(file, prior.boxes);
-    if (entry) {
-      plannedWatermarkLayout[0] = { ...prior, entry };
+    for (const textOnly of [false, true]) {
+      const entry = await findEntryForWatermark(file, prior.boxes, { pageAligned: prior.pageAligned, textOnly });
+      if (!entry) continue;
+      plannedWatermarkLayout[0] = { ...prior, [textOnly ? "entryText" : "entry"]: entry };
       try {
         const withEntry = await renderAttempt();
-        if (!withEntry.failed.length) rendered = withEntry;
-        else plannedWatermarkLayout[0] = prior;
+        if (!withEntry.failed.length) { rendered = withEntry; break; }
       } catch {
-        // The navigational QR is optional: never discard a validated signed
-        // watermark because an optional follow-up render cannot complete.
-        plannedWatermarkLayout[0] = prior;
+        // A failed QR can still leave a smaller readable text instruction.
       }
+      plannedWatermarkLayout[0] = prior;
+    }
+    if (!rendered.watermarkLayout[0].entry && !rendered.watermarkLayout[0].entryText) {
+      // The instruction is mandatory. If even text cannot fit safely, use
+      // the standard footer, which reserves space for the same caption.
+      footerPages.push(1);
+      footerReasons[1] = "No readable position was available for the verification instruction.";
+      rendered = await renderAttempt();
+      if (rendered.failed.length) throw new Error("The sealed PDF could not retain readable verification instructions and watermarks.");
     }
   }
   const { sealedBytes, watermarkLayout } = rendered;

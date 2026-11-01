@@ -9,9 +9,11 @@ import { recoverRefinedQrRegion } from "./pageAlignedRecovery.js";
 import { estimatePaperColor, paperColorChannel, photoLuminance } from "./paperColor.js";
 import { encodedVersion } from "./qrLowLevel.js";
 
-// Printer-safe clearance for QRed's visible watermark modules. One PDF point
-// is 1/72 inch, so 54 points = 0.75 inch of blank border on every side.
-export const MIN_WATERMARK_MARGIN_POINTS = 54;
+// Keep the generous default unless the original page already prints closer
+// to an edge. Two physical profiles keep photo recovery bounded and allow
+// old 0.75-inch documents to coexist with content-aware 0.5-inch layouts.
+export const DEFAULT_WATERMARK_MARGIN_POINTS = 54;
+export const MIN_WATERMARK_MARGIN_POINTS = 36;
 const LEGACY_PAPER_INSET = 0.03;
 export const LETTER_PAGE_SIZE = Object.freeze({ width: 612, height: 792 });
 // Printed documents do not carry metadata revealing the original paper size.
@@ -35,15 +37,18 @@ const FINDER_LOCATIONS = ["topRight", "bottomLeft"];
 // Margins refer to the ORIGINAL PDF page in points, not the photographed
 // pixels. In particular, 54pt must NOT become "3%" on every paper size.
 // Legacy 3%-inset documents stay readable through an explicit scan fallback.
-export function pageWatermarkRegions(count, pageSize = LETTER_PAGE_SIZE, { legacy = false } = {}) {
+export function pageWatermarkRegions(count, pageSize = LETTER_PAGE_SIZE,
+  { legacy = false, marginPoints = DEFAULT_WATERMARK_MARGIN_POINTS } = {}) {
   const { width, height } = pageSize ?? {};
-  if (!Number.isFinite(width) || !Number.isFinite(height) ||
-      width <= MIN_WATERMARK_MARGIN_POINTS * 2 ||
-      height <= MIN_WATERMARK_MARGIN_POINTS * 2) {
-    throw new Error("Page is too small for 0.75-inch watermark margins.");
+  if (![DEFAULT_WATERMARK_MARGIN_POINTS, MIN_WATERMARK_MARGIN_POINTS].includes(marginPoints)) {
+    throw new Error("Unsupported watermark margin profile.");
   }
-  const marginX = legacy ? LEGACY_PAPER_INSET : MIN_WATERMARK_MARGIN_POINTS / width;
-  const marginY = legacy ? LEGACY_PAPER_INSET : MIN_WATERMARK_MARGIN_POINTS / height;
+  if (!Number.isFinite(width) || !Number.isFinite(height) ||
+      width <= marginPoints * 2 || height <= marginPoints * 2) {
+    throw new Error("Page is too small for watermark margins.");
+  }
+  const marginX = legacy ? LEGACY_PAPER_INSET : marginPoints / width;
+  const marginY = legacy ? LEGACY_PAPER_INSET : marginPoints / height;
   const innerWidth = 1 - marginX * 2, innerHeight = 1 - marginY * 2;
   if (count === 1) {
     return [{ x: marginX, y: marginY, width: innerWidth, height: innerHeight }];
@@ -614,6 +619,9 @@ export function scanPageAlignedImage(image, { deep = false } = {}) {
       image.width < 160 || image.height < 160 ||
       image.width * image.height > MAX_PHOTO_PIXELS ||
       image.data?.length !== image.width * image.height * 4) return [];
+  // Native ImageData keeps width/height in prototype getters. Materialize
+  // them before spreading calibration fields, without copying the pixels.
+  image = { ...image, data: image.data, width: image.width, height: image.height };
   if (!image.bounds) {
     const paperColor = estimatePaperColor(image);
     if (paperColor[0] !== 1 || paperColor[2] !== 1) image = { ...image, paperColor };
@@ -625,8 +633,8 @@ export function scanPageAlignedImage(image, { deep = false } = {}) {
   // geometry fails. This handles uniform 97% shrink; off-axis and local
   // distortion still require independent QR finder/timing calibration.
   const scaleAttempts = image.bounds ? [1] : [1, 0.97];
-  // Keep legacy 3%-inset documents verifiable alongside new 54pt layouts.
-  // Both profiles are ranked by visible evidence; any result still needs
+  // Keep 54pt and legacy 3%-inset documents verifiable alongside 36pt layouts.
+  // All profiles are ranked by visible evidence; any result still needs
   // the complete signed payload.
   // Rotate the paper coordinate mapping, never the full-resolution pixels.
   // QR function patterns must be reconstructed in the symbol's orientation;
@@ -637,7 +645,9 @@ export function scanPageAlignedImage(image, { deep = false } = {}) {
     const orientedQuad = quad.map((_, index) => quad[(index + orientation) % 4]);
     const mapping = pageHomography(orientedQuad);
     if (!mapping) continue;
-    const profiles = [...photoPageSizes(image, orientedQuad).map(size => ({ size, legacy: false })),
+    const profiles = [...photoPageSizes(image, orientedQuad).flatMap(size =>
+      [DEFAULT_WATERMARK_MARGIN_POINTS, MIN_WATERMARK_MARGIN_POINTS]
+        .map(marginPoints => ({ size, marginPoints, legacy: false }))),
       { size: LETTER_PAGE_SIZE, legacy: true }];
     for (const scale of scaleAttempts) {
       const candidateMapping = scale === 1 ? mapping :
