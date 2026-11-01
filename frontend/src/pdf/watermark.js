@@ -110,10 +110,30 @@ function drawSymbol(page, symbol, box, gray, multiply = false, pageAligned = fal
     scale: 1, color: rgb(gray, gray, gray), blendMode: multiply ? BlendMode.Multiply : BlendMode.Normal });
 }
 
+async function documentWatermarkMargin(source) {
+  // Choose from the whole original document, even when planning only a subset
+  // of its pages during a retry. A later narrow-margin page must also enlarge
+  // earlier full-page watermarks. Discard each raster before reading the next.
+  for (let number = 1; number <= source.numPages; number++) {
+    const page = await source.getPage(number);
+    const viewport = page.getViewport({ scale: 2, rotation: 0 });
+    if (page.userUnit !== 1 || viewport.width * viewport.height > 12_000_000) {
+      page.cleanup();
+      continue;
+    }
+    const margin = watermarkMarginForPage(await renderPdfPage(source, number));
+    if (margin < DEFAULT_WATERMARK_MARGIN_POINTS) return margin;
+  }
+  return DEFAULT_WATERMARK_MARGIN_POINTS;
+}
+
 export async function planPdfWatermarks(file, pageSealResults, pageIndices = pageSealResults.map((_, index) => index),
   { excludedLayouts = null, omitEntry = false } = {}) {
   const layouts = new Array(pageSealResults.length).fill(null);
   await withPdfDocument(file, async (source) => {
+    // Legacy square retries do not use the page-aligned margin profile.
+    const marginPoints = pageIndices.some(index => !excludedLayouts?.[index])
+      ? await documentWatermarkMargin(source) : DEFAULT_WATERMARK_MARGIN_POINTS;
     for (const index of pageIndices) {
       const seals = pageSealResults[index].seals;
       if (seals.length > 4) throw new Error(`Page ${index + 1} needs too many watermarks. Choose a footer layout.`);
@@ -128,7 +148,7 @@ export async function planPdfWatermarks(file, pageSealResults, pageIndices = pag
       // Its footprint must not exclude those candidates; overlap exclusion
       // applies only when retrying another content-avoiding square layout.
       const options = { excludeBoxes: previous?.pageAligned ? null : previous?.boxes ?? null,
-        marginPoints: watermarkMarginForPage(image) };
+        marginPoints };
       let boxes = null, pageAligned = false;
       // A standard page-relative grid uses all available paper, not arbitrary
       // blank squares. An entry QR would overlap it, so the signed data wins.

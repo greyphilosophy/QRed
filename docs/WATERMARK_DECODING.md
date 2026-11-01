@@ -20,11 +20,13 @@ non-PDF documents, or explicitly selected footer layouts.
 For one QR, the symbol fills a centered rectangle with a **default 0.75-inch
 (54 PDF-point) border on all four paper edges**; in 2×2 mode that same
 interior is divided into four adjacent rectangles. Before stamping, inspect
-the original rendered page, including text, graphics and annotations. If at
-least 4 square points of visible ink already lie within half an inch of any
-edge, use a **0.5-inch (36-point) border** on all four sides. This bounded
-choice enlarges narrow-margin documents without reacting to an isolated
-raster speck. Blank and wider-margin pages retain the default. Artwork
+the original document's rendered pages, including text, graphics and annotations.
+If any page has at least 4 square points of visible ink within half an inch
+of an edge, use a **0.5-inch (36-point) border throughout the document**.
+Otherwise retain the default. Every full-page watermark uses the same physical
+margin, including on mixed paper sizes and when replanning a subset of pages.
+This bounded choice enlarges narrow-margin documents without reacting to an
+isolated raster speck. Entirely blank or wider-margin documents retain the default. Artwork
 running to the edge never reduces the watermark border below half an inch.
 US Letter therefore uses a 7.0 × 9.5-inch or 7.5 × 10-inch watermark area.
 A4, A3 and US Legal use the same physical clearances, not percentages.

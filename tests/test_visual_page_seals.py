@@ -134,6 +134,12 @@ def test_text_invoice_with_raster_logos_keeps_watermarks(page, tmp_path, logo_lo
         printed = tmp_path / f"invoice-{number}.png"
         with Image.open(printed) as image:
             assert image.size == (1224, 1584)  # Original letter size on both pages.
+            # The image picker exercises photographed-paper recovery. Give it
+            # a visible sheet boundary, as a photo on a contrasting desk has;
+            # an edge-cropped PDF export supplies no optical paper boundary.
+            photo = Image.new("RGB", (image.width + 80, image.height + 80), (55, 55, 55))
+            photo.paste(image.convert("RGB"), (40, 40))
+        photo.save(printed)
         page.get_by_label("Choose QR image", exact=True).set_input_files(printed)
         if number == 2:
             page.get_by_label("Open issuer public key file", exact=True).set_input_files({
