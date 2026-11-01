@@ -153,8 +153,10 @@ export function scanQrImage(data, width, height, { tryRescaling = true, tryWater
   return entryLink;
 }
 
-/** One decode per live frame. A miss advances the scale for the next frame,
+/** One scan attempt per live frame. A miss advances the scale for the next frame,
  * letting the camera loop yield to rendering and input between retries.
+ * A page-aligned attempt returns all codes together in { codes }, so callers
+ * can collect them before the originating camera frame is overwritten.
  * Give each camera session its own scanner; still images use scanQrImage.
  */
 export function createQrFrameScanner() {
@@ -162,7 +164,6 @@ export function createQrFrameScanner() {
   let previousHeight;
   let sizes;
   let nextSize = 0;
-  let queued = [];
   return (data, width, height) => {
     if (!isValidImage(data, width, height)) return null;
     if (width !== previousWidth || height !== previousHeight) {
@@ -170,15 +171,13 @@ export function createQrFrameScanner() {
       previousHeight = height;
       sizes = [...scanAttempts(width, height, true, true, true), "pageAligned"];
       nextSize = 0;
-      queued = [];
     }
     if (!sizes.length) return null;
-    if (queued.length) return queued.shift();
     if (sizes[nextSize] === "pageAligned") {
-      queued = scanPageAlignedImage({ data, width, height })
+      const codes = scanPageAlignedImage({ data, width, height })
         .map(({ code }) => code).filter(usableResult);
-      nextSize = queued.length ? 0 : (nextSize + 1) % sizes.length;
-      return queued.shift() ?? null;
+      nextSize = codes.length ? 0 : (nextSize + 1) % sizes.length;
+      return codes.length ? { codes } : null;
     }
     const code = scanAtSize(data, width, height, sizes[nextSize]);
     nextSize = usableResult(code) ? 0 : (nextSize + 1) % sizes.length;

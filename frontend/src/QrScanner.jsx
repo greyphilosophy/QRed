@@ -250,6 +250,13 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
     ? options.scanQrFrame(imageData.data, vWidth, vHeight)
     : scanQrImage(imageData.data, vWidth, vHeight, { tryRescaling: manual });
 
+  if (code?.codes) {
+    const texts = code.codes.map(result =>
+      qrScanAction(imageData.data, vWidth, vHeight, result, { returnPayload }))
+      .filter(action => action.status === "found").map(action => action.text);
+    return texts.length ? { status: "found-multiple", texts } : { status: "continue" };
+  }
+
   if (manual && !code?.data) {
     return { status: "feedback", message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For older seals, try framing the individual QR instead." };
   }

@@ -21,7 +21,7 @@ const PHOTO_PAGE_FORMATS = [
   { width: 841.89, height: 1190.55 }, // A3
   { width: 612, height: 1008 },       // US Legal
   { width: 792, height: 1224 },       // US Tabloid/Ledger
-];
+].flatMap(size => [size, { width: size.height, height: size.width }]);
 // Allow current 12–48 MP phone stills without duplicating their full raster.
 // Only the page-edge detector uses a small preview. QR module evidence is
 // ALWAYS sampled from the original full-resolution pixels.
@@ -472,8 +472,10 @@ function scannedGeometry(mapping, region, size) {
   };
 }
 
-function decodeRegion(image, mapping, region) {
-  for (const { version } of chooseVersions(image, mapping, region)) {
+function decodeRegion(image, mapping, region, versions, budget) {
+  for (const { version } of versions) {
+    if (budget.remaining <= 0) break;
+    budget.remaining--;
     const { bits, size, unknown, confidence } = sampledMatrix(image, mapping, region, version);
     const raster = rasterForDecoder({ bits, size });
     const ordinary = jsQR(raster.data, raster.width, raster.width, { inversionAttempts: "dontInvert" });
@@ -496,6 +498,76 @@ function decodeRegion(image, mapping, region) {
   return null;
 }
 
+function refinementVersions(coarse, seededVersion = null, quadrants = false) {
+  const versions = [];
+  const add = version => {
+    if (version >= 7 && version <= 40 && !versions.includes(version)) versions.push(version);
+  };
+  if (seededVersion) for (const d of [0, -1, 1, -2, 2]) add(seededVersion + d);
+  for (const { version } of coarse)
+    for (const d of [0, -1, 1, -2, 2]) add(version + d);
+  if (quadrants) for (const version of [27, 26, 28, 25, 29, 24, 30, 23, 31, 22, 32]) add(version);
+  return versions;
+}
+
+function refinementScore(versions) {
+  return versions.find(item => item.version >= 7)?.score ?? 0;
+}
+
+function refineSingles(image, singles) {
+  let budget = 16;
+  for (const { mapping, region, versions } of singles) {
+    for (const version of refinementVersions(versions).slice(0, 8)) {
+      if (budget-- <= 0) break;
+      const recovered = recoverRefinedQrRegion(image, mapping, region, version);
+      if (recovered) return [recovered];
+    }
+    if (budget <= 0) break;
+  }
+  return [];
+}
+
+function refineQuadrants(image, quadrants, bestCodes) {
+  let budget = 36;
+  let best = bestCodes;
+  for (const { mapping, regions, versions, codes } of quadrants) {
+    const found = [...best];
+    let seededVersion = codes[0]?.code?.version ?? best[0]?.code?.version ?? null;
+    const order = [3, 2, 1, 0].sort((a, b) =>
+      refinementScore(versions[b]) - refinementScore(versions[a]));
+    for (const index of order) {
+      const candidates = refinementVersions(versions[index], seededVersion, true);
+      for (const version of candidates.slice(0, seededVersion ? 9 : 15)) {
+        if (budget-- <= 0) break;
+        const recovered = recoverRefinedQrRegion(image, mapping, regions[index], version);
+        if (!recovered) continue;
+        seededVersion = version;
+        if (!found.some(other => other.seal === recovered.seal)) found.push(recovered);
+        break;
+      }
+      if (budget <= 0) break;
+    }
+    if (found.length > best.length) best = found;
+    if (best.length >= 4 || budget <= 0) break;
+  }
+  return best;
+}
+
+function refinePage(image, singles, quadrants, bestCodes) {
+  // Each layout's budget is shared by ALL orientations, formats and scales.
+  // A four-quadrant miss can never consume the single-code allowance.
+  singles.sort((a, b) => refinementScore(b.versions) - refinementScore(a.versions));
+  quadrants.sort((a, b) => b.codes.length - a.codes.length || b.score - a.score);
+  const singleFirst = !bestCodes.length &&
+    refinementScore(singles[0]?.versions ?? []) > (quadrants[0]?.score ?? 0);
+  if (singleFirst) {
+    const recovered = refineSingles(image, singles);
+    if (recovered.length) return recovered;
+  }
+  const recovered = refineQuadrants(image, quadrants, bestCodes);
+  return recovered.length || singleFirst ? recovered : refineSingles(image, singles);
+}
+
 /** Synchronous photograph-only watermark recovery. The page and QR grids are
  * established from visible paper edges, not from metadata or a signing layout.
  * "pageAligned: false" is handled by callers as the legacy fallback path.
@@ -507,104 +579,63 @@ export function scanPageAlignedImage(image, { deep = false } = {}) {
       image.data?.length !== image.width * image.height * 4) return [];
   const quad = locatePaper(image);
   if (!quad) return [];
-  const mapping = pageHomography(quad);
-  if (!mapping) return [];
   // Printing can shrink the PDF's content slightly within the fixed paper
   // boundary. Try one bounded centered scale hypothesis only after regular
   // geometry fails. This handles uniform 97% shrink; off-axis and local
   // distortion still require independent QR finder/timing calibration.
   const scaleAttempts = image.bounds ? [1] : [1, 0.97];
-  // Keep legacy 3%-inset documents verifiable while new seals use 54pt.
-  // The new safe layout is always attempted before the backward-compatible
-  // one, and any result still needs the complete signed payload.
-  const formats = photoPageSizes(image, quad);
-  const profiles = [...formats.map(size => ({ size, legacy: false })),
-    { size: LETTER_PAGE_SIZE, legacy: true }];
+  // Keep legacy 3%-inset documents verifiable alongside new 54pt layouts.
+  // Both profiles are ranked by visible evidence; any result still needs
+  // the complete signed payload.
+  // Rotate the paper coordinate mapping, never the full-resolution pixels.
+  // QR function patterns must be reconstructed in the symbol's orientation;
+  // rotating an already reconstructed matrix would overwrite data modules.
+  const orientations = image.bounds ? [0] : [0, 2, 1, 3];
+  const hypotheses = [];
+  for (const orientation of orientations) {
+    const orientedQuad = quad.map((_, index) => quad[(index + orientation) % 4]);
+    const mapping = pageHomography(orientedQuad);
+    if (!mapping) continue;
+    const profiles = [...photoPageSizes(image, orientedQuad).map(size => ({ size, legacy: false })),
+      { size: LETTER_PAGE_SIZE, legacy: true }];
+    for (const scale of scaleAttempts) {
+      const candidateMapping = scale === 1 ? mapping :
+        (u, v) => mapping(0.5 + (u - 0.5) * scale, 0.5 + (v - 0.5) * scale);
+      const sampledImage = { ...image, paperAt: paperBrightnessMap(image, candidateMapping) };
+      for (const profile of profiles) {
+        const singleRegion = pageWatermarkRegions(1, profile.size, profile)[0];
+        const singleVersions = chooseVersions(sampledImage, candidateMapping, singleRegion);
+        const regions = pageWatermarkRegions(4, profile.size, profile);
+        const versions = regions.map(region => chooseVersions(sampledImage, candidateMapping, region));
+        // One exposed quadrant is enough to seed the others. Averaging in
+        // obscured quadrants can rank an incorrect orientation above it.
+        const score = Math.max(...versions.map(refinementScore));
+        hypotheses.push({ image: sampledImage, mapping: candidateMapping, profile,
+          singleRegion, singleVersions, regions, versions, score });
+      }
+    }
+  }
+  // Rank public finder/timing evidence before sampling full matrices. Keep
+  // one page-wide limit so adding orientations cannot quadruple decode work.
+  hypotheses.sort((a, b) => Math.max(b.singleVersions[0]?.score ?? 0, b.score) -
+    Math.max(a.singleVersions[0]?.score ?? 0, a.score));
+  const budget = { remaining: 64 }, singles = [], quadrants = [];
   let bestCodes = [];
-  for (const scale of scaleAttempts) {
-    const candidateMapping = scale === 1 ? mapping :
-      (u, v) => mapping(0.5 + (u - 0.5) * scale, 0.5 + (v - 0.5) * scale);
-    const sampledImage = { ...image, paperAt: paperBrightnessMap(image, candidateMapping) };
-    for (const profile of profiles) {
-      const singleRegion = pageWatermarkRegions(1, profile.size, profile)[0];
-      const single = decodeRegion(sampledImage, candidateMapping, singleRegion);
-      if (single) return [single];
-      const codes = [];
-      for (const region of pageWatermarkRegions(4, profile.size, profile)) {
-        const found = decodeRegion(sampledImage, candidateMapping, region);
-        if (found && !codes.some(other => other.seal === found.seal)) codes.push(found);
-      }
-      if (codes.length > bestCodes.length) bestCodes = codes;
-      if (codes.length === 4) return codes;
+  for (const { image: sampledImage, mapping, profile, singleRegion, singleVersions,
+    regions, versions, score } of hypotheses) {
+    const single = decodeRegion(sampledImage, mapping, singleRegion, singleVersions, budget);
+    if (single) return [single];
+    const codes = [];
+    for (let i = 0; i < regions.length; i++) {
+      const found = decodeRegion(sampledImage, mapping, regions[i], versions[i], budget);
+      if (found && !codes.some(other => other.seal === found.seal)) codes.push(found);
+    }
+    if (codes.length > bestCodes.length) bestCodes = codes;
+    if (codes.length === 4) return codes;
+    if (deep && !image.bounds && !profile.legacy) {
+      singles.push({ mapping, region: singleRegion, versions: singleVersions });
+      quadrants.push({ mapping, regions, versions, codes, score });
     }
   }
-  if (!deep || image.bounds || bestCodes.length === 4) return bestCodes;
-
-  // Actual printers can shrink or shear the PDF's content independently of
-  // the sheet. Only static uploads and manually captured photos request this
-  // bounded, finer alignment search; ordinary camera frames stay lightweight.
-  // Start with the page's most likely size and lower-right quadrant, which is
-  // least likely to be crossed by headings. Successful version recovery in one
-  // quadrant makes the other three fast without assuming matching payloads.
-  const photoProfiles = profiles.filter(profile => !profile.legacy).slice(0, 2);
-  let budget = 36;
-  let best = bestCodes;
-  for (const scale of [0.97, 1]) {
-    const pageMap = scale === 1 ? mapping :
-      (u, v) => mapping(0.5 + (u - 0.5) * scale, 0.5 + (v - 0.5) * scale);
-    const sample = { ...image, paperAt: paperBrightnessMap(image, pageMap) };
-    for (const profile of photoProfiles) {
-      const regions = pageWatermarkRegions(4, profile.size, profile);
-      const found = [...best];
-      let seededVersion = best[0]?.code?.version ?? null;
-      for (const index of [3, 2, 1, 0]) {
-        const region = regions[index];
-        const coarse = chooseVersions(sample, pageMap, region).map(v => v.version);
-        const versions = [];
-        const add = version => {
-          if (version >= 7 && version <= 40 && !versions.includes(version))
-            versions.push(version);
-        };
-        if (seededVersion) for (const d of [0, -1, 1, -2, 2])
-          add(seededVersion + d);
-        for (const version of coarse.slice(0, 5))
-          for (const d of [0, -1, 1, -2, 2]) add(version + d);
-        // A wider set is only needed when corner-based version scoring is
-        // misleading. The version's own BCH fields must still agree.
-        for (const version of [27, 26, 28, 25, 29, 24, 30, 23, 31, 22, 32])
-          add(version);
-        for (const version of versions.slice(0, seededVersion ? 9 : 15)) {
-          if (budget-- <= 0) break;
-          const recovered = recoverRefinedQrRegion(image, pageMap, region, version);
-          if (!recovered) continue;
-          seededVersion = version;
-          if (!found.some(other => other.seal === recovered.seal))
-            found.push(recovered);
-          break;
-        }
-        if (budget <= 0) break;
-      }
-      if (found.length > best.length) best = found;
-      if (best.length >= 4) return best;
-      if (budget <= 0) break;
-      // One rectangular code may also need independent alignment refinement.
-      if (!best.length) {
-        const region = pageWatermarkRegions(1, profile.size, profile)[0];
-        const versions = [];
-        const add = version => {
-          if (version >= 7 && version <= 40 && !versions.includes(version))
-            versions.push(version);
-        };
-        for (const item of chooseVersions(sample, pageMap, region))
-          for (const d of [0, -1, 1, -2, 2]) add(item.version + d);
-        for (const version of versions.slice(0, 8)) {
-          if (budget-- <= 0) break;
-          const recovered = recoverRefinedQrRegion(image, pageMap, region, version);
-          if (recovered) return [recovered];
-        }
-      }
-    }
-    if (budget <= 0) break;
-  }
-  return best;
+  return deep && !image.bounds ? refinePage(image, singles, quadrants, bestCodes) : bestCodes;
 }

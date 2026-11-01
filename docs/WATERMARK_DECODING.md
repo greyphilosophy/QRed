@@ -61,6 +61,13 @@ dimensions from its apparent aspect ratio, then checks each candidate's
 signatures. Legacy 3%-inset page-aligned marks are also attempted. A rendered
 PDF has its actual page bounds available; a printed photograph never does.
 
+Photographs are tried in all four quarter-turn orientations, including
+landscape paper formats. Only the page-coordinate mapping changes; the
+original pixels and the returned QR locations stay in camera coordinates.
+Orientation is resolved before reconstructing any QR function patterns.
+Full-matrix decoding is capped at 64 candidates for the whole page, shared
+across orientations, to keep rotation support from multiplying scan work.
+
 For each expected 1/4-page region, candidate QR versions 1..40 are checked
 against visible finder and timing patterns. The expected modules are sampled
 at multiple points per cell in the photograph and classified as neutral-gray
@@ -71,6 +78,14 @@ must reconstruct any missing codewords. A virtual quiet border is added when
 passing a reconstructed square matrix to patched jsQR. Successful scanning
 requires recovering the complete QRed transport, and normal digest/signature
 verification still makes the trust decision.
+
+Still-photo refinement reserves up to 16 attempts for single-code layouts
+and 36 for quadrant layouts across all orientation, size and scale candidates.
+Finder/timing evidence ranks these candidates before local alignment fitting;
+four-quadrant failures cannot consume the single-code budget. Live scanning
+delivers every recovered chunk from a page in one batch while its original
+camera frame is still available, so later frames cannot become comparison
+photos for earlier chunks.
 
 ### Printed-paper findings, October 31, 2026
 

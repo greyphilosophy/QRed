@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import jsQR from "jsqr";
 import { createQrFrameScanner } from "./qr/scanQrImage.js";
 import { scanPageAlignedImage } from "./qr/pageAlignedScan.js";
+import { createQRedSeals } from "./qredSealer.js";
+import { createQRedQrData } from "./qredQr.js";
 import { applyCameraQualityControls, applyContinuousCameraFocus, decodeCanvasFrame, findPreferredZoomCamera, getPreferredCameraStream, isCameraFrameReady, manualCapturePendingAction, MANUAL_CAPTURE_PENDING_TIMEOUT_MS, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
 
 vi.mock("jsqr", () => ({ default: vi.fn() }));
@@ -362,6 +364,36 @@ describe("decodeCanvasFrame", () => {
       .toEqual({ status: "found-multiple", texts });
     expect(scanPageAlignedImage).toHaveBeenCalledTimes(1);
     expect(jsQR).not.toHaveBeenCalled();
+  });
+
+  it("delivers every live-page chunk before a different camera frame replaces its photo", async () => {
+    const { seals } = await createQRedSeals({
+      privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes",
+      publicKey: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q",
+      content: "Camera frame ownership. ".repeat(180), encodingStrategy: "plaintext",
+      timestamp: "2026-10-31T12:00:00Z",
+      pageContext: { pageNumber: 1, pageCount: 1 }, preferFourQrPage: true,
+    });
+    expect(seals).toHaveLength(4);
+    const { canvas, ctx, video } = frame();
+    vi.mocked(jsQR).mockReturnValue(null);
+    vi.mocked(scanPageAlignedImage).mockClear().mockReturnValueOnce(seals.map(seal => {
+      const { bytes, version } = createQRedQrData(seal);
+      return { seal, code: { data: "QRED.ORG", correctedData: bytes, version, pageAligned: true } };
+    }));
+    const scanQrFrame = createQrFrameScanner();
+    let action;
+    for (let i = 0; i < 20; i++) {
+      action = decodeCanvasFrame(video, canvas, { scanQrFrame, returnPayload: true });
+      if (action.status !== "continue") break;
+    }
+    expect(action).toEqual({ status: "found-multiple", texts: seals });
+    // The next video frame is unrelated. No payload from the old frame may
+    // be emitted against this canvas and offered as its comparison photo.
+    ctx.getImageData.mockReturnValue({ data: new Uint8ClampedArray(320 * 240 * 4).fill(255) });
+    expect(decodeCanvasFrame(video, canvas, { scanQrFrame, returnPayload: true }))
+      .toEqual({ status: "continue" });
+    expect(scanPageAlignedImage).toHaveBeenCalledTimes(1);
   });
 
   it("gives manual photo feedback when no QR is found", () => {

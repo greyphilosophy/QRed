@@ -140,6 +140,20 @@ function enlargedPhoto(source, factor = 5) {
   return { data, width, height };
 }
 
+function rotatePhoto(image, turns) {
+  const width = turns % 2 ? image.height : image.width;
+  const height = turns % 2 ? image.width : image.height;
+  const data = new Uint8ClampedArray(image.data.length);
+  for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
+    const [xx, yy] = turns === 1 ? [image.height - 1 - y, x]
+      : turns === 2 ? [image.width - 1 - x, image.height - 1 - y]
+      : [y, image.width - 1 - x];
+    const offset = (y * image.width + x) * 4;
+    data.set(image.data.subarray(offset, offset + 4), (yy * width + xx) * 4);
+  }
+  return { data, width, height };
+}
+
 function sampleAtPagePoint(image, x, y) {
   const { bounds, scale, width, data } = image;
   const sx = Math.floor((x - bounds.x) * scale);
@@ -300,7 +314,7 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
       .resolves.toMatchObject({ status: "VALID", content });
   }, 60000);
 
-  it("[WM-11] recovers independently warped 2x2 modules using only photographed alignment patterns", async () => {
+  it.each([0, 1])("[WM-11] recovers independently warped 2x2 modules after %i quarter-turns using only photographed alignment patterns", async turns => {
     const content = "Physical printer warp signed-page challenge. ".repeat(120).trimEnd();
     // Match QRed's real 1-or-4 watermark policy: four v27 symbols, as in the
     // independently photographed 0.75-inch-margin print test. The verifier
@@ -316,7 +330,7 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
       width: 1200, height: 1600, text: false, finderBlocked: false,
       printerScale: 0.97, printerWarp: 0.035,
     });
-    const recovered = scanPageAlignedImage(photo, { deep: true });
+    const recovered = scanPageAlignedImage(turns ? rotatePhoto(photo, turns) : photo, { deep: true });
     expect(new Set(recovered.map(item => item.seal))).toEqual(new Set(seals));
     expect(recovered.some(item => item.code.refined)).toBe(true);
     for (const item of recovered) {
@@ -326,6 +340,35 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     await expect(verifyQRedSeals(recovered.map(item => item.seal).toReversed(), publicKey))
       .resolves.toMatchObject({ status: "VALID", content });
   }, 90000);
+
+  it.each([1, 2, 3])("[WM-01] recovers a full signed page after %i quarter-turns with an obscured finder", async turns => {
+    const content = "Review photograph orientation and local grid refinement. ".repeat(28).trimEnd();
+    const { seals } = await signed(content);
+    const image = rotatePhoto(printAndPhotograph(seals, { width: 900, height: 1200 }), turns);
+    const recovered = scanPageAlignedImage(image);
+    expect(recovered.map(item => item.seal)).toEqual(seals);
+    await expect(verifyQRedSeals(recovered.map(item => item.seal), publicKey))
+      .resolves.toMatchObject({ status: "VALID", content });
+  }, 60000);
+
+  it.each([0, 1])("[WM-11] gives a warped single watermark its own bounded refinement attempts after %i quarter-turns", async turns => {
+    const content = "Review photograph orientation and local grid refinement. ".repeat(28).trimEnd();
+    const { seals } = await signed(content);
+    expect(seals).toHaveLength(1);
+    const original = printAndPhotograph(seals, {
+      width: 1200, height: 1600, text: false, finderBlocked: false,
+      printerScale: 0.965, printerWarp: 0.015, tilted: false,
+    });
+    const photo = turns ? rotatePhoto(original, turns) : original;
+    // The ordinary geometry really fails. Deep recovery must discover both
+    // the page format and QR version from pixels, without expected bytes.
+    expect(scanPageAlignedImage(photo)).toEqual([]);
+    const recovered = scanPageAlignedImage(photo, { deep: true });
+    expect(recovered.map(item => item.seal)).toEqual(seals);
+    expect(recovered[0].code.refined).toBe(true);
+    await expect(verifyQRedSeals(recovered.map(item => item.seal), publicKey))
+      .resolves.toMatchObject({ status: "VALID", content });
+  }, 60000);
 
   it("[WM-12] decodes a physically margin-safe A4 watermark from pixels alone", async () => {
     const content = "A4 paper; real 54pt (0.75in) QR clearance on all four sides. ".repeat(10).trimEnd();
@@ -337,6 +380,18 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     const found = scanPageAlignedImage(photo).map(item => item.seal);
     expect(found).toContain(seals[0]);
     await expect(verifyQRedSeals(found, publicKey))
+      .resolves.toMatchObject({ status: "VALID", content });
+  }, 60000);
+
+  it("[WM-01, WM-12] reads an upright QR grid printed on landscape Letter paper", async () => {
+    const content = "Landscape paper keeps the QR grid in its printed orientation. ".repeat(10).trimEnd();
+    const { seals } = await signed(content);
+    const photo = printAndPhotograph(seals, {
+      width: 1100, height: 850, pageFormat: { width: 792, height: 612 },
+    });
+    const recovered = scanPageAlignedImage(photo).map(item => item.seal);
+    expect(recovered).toEqual(seals);
+    await expect(verifyQRedSeals(recovered, publicKey))
       .resolves.toMatchObject({ status: "VALID", content });
   }, 60000);
 
