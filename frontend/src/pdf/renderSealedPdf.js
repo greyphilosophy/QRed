@@ -150,13 +150,14 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
   // here, losing the navigation code despite ample space elsewhere.
   //
   // After the *signed watermark* passes, reuse its geometry and search the
-  // original page for a non-overlapping navigation code. Accept the combined
-  // layout only if the complete, unchanged signed payload AND entry QR pass
+  // original page for a navigation code. It may overlap full-page watermark
+  // modules, but never original ink or legacy square quiet zones. Accept it
+  // only if the complete, unchanged signed payload AND entry QR pass
   // exactly the same preflight as every other watermark layout.
   if (rendered.watermarkLayout?.[0] && !rendered.watermarkLayout[0].entry) {
     const { findEntryForWatermark } = await import("./watermark.js");
     const prior = plannedWatermarkLayout[0];
-    const entry = await findEntryForWatermark(file, prior.boxes);
+    const entry = await findEntryForWatermark(file, prior.boxes, { pageAligned: prior.pageAligned });
     if (entry) {
       plannedWatermarkLayout[0] = { ...prior, entry };
       try {

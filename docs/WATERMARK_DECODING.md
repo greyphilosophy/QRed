@@ -33,8 +33,16 @@ A4, A3 and US Legal use the same physical clearances, not percentages.
 Each module is independently scaled horizontally and vertically while the
 original document remains the same physical size. Legacy square fallbacks
 retain 54-point edge clearance. The optional small navigation QR also keeps
-that clearance and is omitted when no safe location exists or it would overlap
-the page-filling watermark. Earlier page-aligned 3%-inset seals remain
+that clearance. After the full-page watermark passes preflight, the sealer
+looks for a blank area of the original first page and tries a small white-backed
+navigation panel with corner targeting brackets. This panel may cover watermark
+modules, but never original text, artwork or annotations. It retains the link
+QR's four-module quiet zone. The complete combined page must recover every
+exact signed chunk in both clean and softened/shaded renders, and the link
+itself must decode in both conditions. If either fails, keep the already-verified
+full-page watermark without the optional panel. Legacy square quiet zones are
+still excluded from navigation placement. No covered-area percentage is treated
+as a guarantee of error correction. Earlier page-aligned 3%-inset seals remain
 supported by the verifier's legacy geometry profile.
 Automatic and Watermark modes first try this full-page geometry whenever its
 modules meet the minimum printed size. A shaded table heading, logo or broad
