@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { createQrFrameScanner, scanQrImage } from "./qr/scanQrImage.js";
+import { scanQrImage } from "./qr/scanQrImage.js";
 import { decodeSeal } from "./qredVerifier.js";
-import { decodePhoto, qrScanAction } from "./qr/decodePhoto.js";
-import { preparePhotoScanner, scanPhotoInWorker } from "./qr/photoScanClient.js";
+import { decodePhoto, qrFrameAction } from "./qr/decodePhoto.js";
+import { createLiveScanWorker, preparePhotoScanner, scanPhotoInWorker } from "./qr/photoScanClient.js";
 import { getPreferredCameraStream, applyCameraQualityControls } from "./qr/cameraControls.js";
 export { QR_CAMERA_CONSTRAINTS, findPreferredMainCamera, getPreferredCameraStream,
   applyCameraQualityControls, applyContinuousCameraFocus } from "./qr/cameraControls.js";
 export { qrScanAction } from "./qr/decodePhoto.js";
 import { startCameraSession } from "./qr/cameraSession.js";
+import { observePageScanGuide } from "./qr/pageScanGuide.js";
 import "./qrScanner.css";
 
 /**
@@ -16,7 +17,7 @@ import "./qrScanner.css";
  *
  * Three states:
  * 1. Idle — shows the AR viewport and "Start scanning" button (user-initiated camera access)
- * 2. Scanning — camera feed + jsQR loop; collection mode waits for all pages
+ * 2. Scanning — camera feed + worker decoding; collection mode waits for all pages
  * 3. Result — displays the scanned QR text, "New scan" resumes scanning
  */
 export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSealDetected, returnPayload = false, resultPanel,
@@ -38,11 +39,10 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
       && collectionProgress.activeSeal === scannedText) setMode("result");
   }, [mode, scannedText, collectionProgress]);
 
-  const scanButtonLabel = mode === "scanning" ? (readingPhoto ? "Reading photo…" : "Scan photo") : mode === "result" ? "Scan again" : "Start scanning";
+  const scanButtonLabel = mode === "scanning" ? (readingPhoto ? "Cancel and resume camera" : "Capture photo") : mode === "result" ? "Scan again" : "Start scanning";
   const controls = React.createElement("div", { className: "ar-controls" },
     React.createElement("button", {
       className: "ar-button ar-button-primary",
-      disabled: readingPhoto,
       onClick: () => {
         if (mode === "scanning") {
           setCaptureRequest((request) => request + 1);
@@ -74,7 +74,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
   }
 
   if (mode === "scanning") {
-    return React.createElement("section", { className: "ar-display", "aria-label": "QRed AR scanner" },
+    return React.createElement("section", { className: "ar-display ar-display-scanning", "aria-label": "QRed AR scanner" },
       React.createElement(ScannerView, {
         onScan: handleScan,
         onClose: () => setMode("idle"),
@@ -123,7 +123,7 @@ export function manualCapturePendingAction(startedAt, now = performance.now()) {
   if (now - startedAt < MANUAL_CAPTURE_PENDING_TIMEOUT_MS) return null;
   return {
     status: "feedback",
-    message: "The camera is open, but this browser is not delivering photo frames yet. Wait a moment, then try Scan photo again; if this keeps happening, close and reopen the scanner or check camera permissions.",
+    message: "The camera is open, but this browser is not delivering photo frames yet. Wait a moment, then try Capture photo again; if this keeps happening, close and reopen the scanner or check camera permissions.",
   };
 }
 
@@ -144,29 +144,26 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
   if (!image) return options.manual
     ? { status: "pending", message: "Camera is preparing the photo. Hold steady…" }
     : { status: "continue" };
-  // Synchronous entry point retained for decoder tests. The UI sends manual
-  // captures to the worker and only runs bounded live-frame attempts here.
+  // Synchronous entry point retained for decoder tests. The UI sends both
+  // live frames and explicit still captures to their background workers.
   if (options.manual) return decodePhoto(image, options);
   const { data, width, height } = image;
   const code = options.scanQrFrame ? options.scanQrFrame(data, width, height)
     : scanQrImage(data, width, height, { tryRescaling: false });
-  if (code?.codes) {
-    const texts = code.codes.map(result => qrScanAction(data, width, height, result, options))
-      .filter(action => action.status === "found").map(action => action.text);
-    return texts.length ? { status: "found-multiple", texts } : { status: "continue" };
-  }
-  return qrScanAction(data, width, height, code, options);
+  return qrFrameAction(image, code, options);
 }
 
 function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPayload }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const guideAreaRef = useRef(null);
+  const guideRef = useRef(null);
   const handleScanActionRef = useRef(() => false);
   const pendingManualCaptureRef = useRef(false);
   const pendingManualCaptureStartedAtRef = useRef(null);
   const cameraReadyRef = useRef(false);
   const photoScanRef = useRef(null);
-  const capturePhotoRef = useRef(() => {});
+  const photoActionRef = useRef(() => {});
   const [error, setError] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const [cameraReady, setCameraReady] = useState(false);
@@ -179,9 +176,14 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
 
   useEffect(() => {
     const seen = new Set();
-    const scanQrFrame = createQrFrameScanner();
     let camera;
+    const stopGuide = observePageScanGuide(videoRef.current, guideAreaRef.current, guideRef.current);
     preparePhotoScanner();
+    const liveScan = createLiveScanWorker({
+      returnPayload,
+      onResult: action => handleScanActionRef.current(action),
+      onError: error => { camera.stop(); setError(error.message); },
+    });
 
     handleScanActionRef.current = (scanAction) => {
       if (scanAction.status === "found-multiple") {
@@ -222,6 +224,8 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
 
     function capturePhoto() {
       if (photoScanRef.current) return;
+      // A queued live result must never be attached to the new still photo.
+      liveScan.reset();
       const image = captureCameraFrame(videoRef.current, canvasRef.current);
       if (!image) {
         handleScanActionRef.current({ status: "pending", message: "Camera is preparing the photo. Hold steady…" });
@@ -233,7 +237,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       const controller = new AbortController();
       photoScanRef.current = controller;
       onReadingPhoto(true);
-      setFeedback("Reading photo… You can close the scanner to cancel.");
+      setFeedback("Reading photo… You can cancel and resume the camera.");
       scanPhotoInWorker(image, { returnPayload, signal: controller.signal }).then(action => {
         if (photoScanRef.current !== controller) return;
         setFeedback(null);
@@ -246,7 +250,14 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
         onReadingPhoto(false);
       });
     }
-    capturePhotoRef.current = capturePhoto;
+    photoActionRef.current = () => {
+      if (!photoScanRef.current) { capturePhoto(); return; }
+      const controller = photoScanRef.current;
+      photoScanRef.current = null;
+      controller.abort();
+      onReadingPhoto(false);
+      setFeedback(null);
+    };
 
     function scanFrame() {
       // Preserve the photographed canvas until its worker result is collected.
@@ -261,7 +272,10 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
         pendingManualCaptureRef.current = false;
         pendingManualCaptureStartedAtRef.current = null;
       }
-      handleScanActionRef.current(timeout || decodeCanvasFrame(video, canvas, { returnPayload, scanQrFrame }));
+      if (timeout) { handleScanActionRef.current(timeout); return; }
+      if (!frameReady || liveScan.busy) return;
+      const image = captureCameraFrame(video, canvas);
+      if (image) liveScan.scan(image);
     }
 
     camera = startCameraSession({
@@ -269,8 +283,11 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       requestStream: getPreferredCameraStream,
       prepareStream: applyCameraQualityControls,
       onFrame: scanFrame,
-      onError: (error, stage) => setError((stage === "play" ? "Camera preview could not start: " : "Camera access needed: ")
-        + (error.message || "environment camera")),
+      onError: (error, stage) => {
+        liveScan.stop();
+        setError((stage === "play" ? "Camera preview could not start: " : "Camera access needed: ")
+          + (error.message || "environment camera"));
+      },
     });
 
     return () => {
@@ -278,16 +295,18 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       pendingManualCaptureStartedAtRef.current = null;
       cameraReadyRef.current = false;
       handleScanActionRef.current = () => false;
-      capturePhotoRef.current = () => {};
+      photoActionRef.current = () => {};
       photoScanRef.current?.abort();
       photoScanRef.current = null;
       onReadingPhoto(false);
       camera.stop();
+      liveScan.stop();
+      stopGuide();
     };
   }, [onScan, returnPayload, onReadingPhoto]);
 
   useEffect(() => {
-    if (captureRequest > 0 && !error) capturePhotoRef.current();
+    if (captureRequest > 0 && !error) photoActionRef.current();
   }, [captureRequest, error]);
 
   if (error) {
@@ -304,15 +323,18 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       playsInline: true,
       autoPlay: true,
     }),
-    React.createElement("div", { className: "ar-reticle ar-reticle-live", "aria-hidden": "true" },
-      React.createElement("span", null),
-      React.createElement("span", null),
-      React.createElement("span", null),
-      React.createElement("span", null)
+    React.createElement("div", { className: "page-scan-guide-area", ref: guideAreaRef, "aria-hidden": "true" },
+      React.createElement("div", { className: "page-scan-guide", ref: guideRef, hidden: true },
+        React.createElement("span", null),
+        React.createElement("span", null),
+        React.createElement("span", null),
+        React.createElement("span", null)
+      )
     ),
     React.createElement("canvas", { ref: canvasRef, style: { display: "none" } }),
     !cameraReady ? React.createElement(CameraLoadingIndicator, { message: feedback || "Starting camera…" }) : null,
-    feedback && cameraReady ? React.createElement("div", { className: "ar-scan-feedback", role: "status", "aria-live": "polite" }, feedback) : null,
+    cameraReady ? React.createElement("div", { className: "ar-scan-feedback", role: "status", "aria-live": "polite" },
+      feedback || "Keep all four page corners visible. Avoid glare.") : null,
     React.createElement("button", { className: "ar-close", onClick: onClose }, "Close")
   );
 }

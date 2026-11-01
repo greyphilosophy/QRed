@@ -114,19 +114,9 @@
       flex-shrink: 0;
     }
 
-    .viewfinder .scan-line {
-      position: absolute;
-      left: 5%;
-      right: 5%;
-      height: 2px;
-      background: var(--primary);
-      opacity: 0.7;
-      animation: scan-line 2.5s ease-in-out infinite;
-    }
-
-    @keyframes scan-line {
-      0%, 100% { top: 15%; }
-      50% { top: 80%; }
+    .page-scan-hint { color: var(--text-dim); text-align: center; margin-bottom: 1rem; }
+    @media (orientation: portrait) {
+      .viewfinder { aspect-ratio: 3 / 4; }
     }
 
     .placeholder {
@@ -331,12 +321,15 @@
       <div class="viewfinder" id="viewfinder">
         <video id="cameraVideo" playsinline autoplay></video>
         <canvas id="scanCanvas" hidden></canvas>
-        <div class="scan-line" id="scanLine"></div>
+        <div class="page-scan-guide-area" id="pageGuideArea" aria-hidden="true" hidden>
+          <div class="page-scan-guide" id="pageGuide" hidden><span></span><span></span><span></span><span></span></div>
+        </div>
         <div class="placeholder" id="placeholder">
           <div class="icon">&#9679;</div>
           <div>Tap <strong>Scan QR Code</strong> to open camera</div>
         </div>
       </div>
+      <p class="page-scan-hint" id="pageGuideHint" hidden>Keep all four page corners visible. Avoid glare.</p>
 
       <div class="controls">
         <button class="btn btn-primary" id="btnScan">Scan QR Code</button>
@@ -392,10 +385,10 @@
 
   <script type="module">
     import { startCameraSession } from "./src/qr/cameraSession.js";
+    import { observePageScanGuide } from "./src/qr/pageScanGuide.js";
     import { getPreferredCameraStream, applyCameraQualityControls } from "./src/qr/cameraControls.js";
-    import { createQrFrameScanner } from "./src/qr/scanQrImage.js";
-    import { isQRedEntryLink } from "./src/qr/hiddenPayload.js";
-    import { decodeSeal as decodeQRedSeal, verifyQRedSeals, qredPayloadFromPhotoScanResult } from "./src/qredVerifier.js";
+    import { createLiveScanWorker, preparePhotoScanner } from "./src/qr/photoScanClient.js";
+    import { decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
     import { mountPhotoTextVerification } from "./src/verifier/mountPhotoTextVerification.jsx";
     import { createScanPhotoCollection } from "./src/verifier/scanPhotos.js";
     import { mountPdfSealInput } from "./src/verifier/mountPdfSealInput.jsx";
@@ -442,6 +435,7 @@
     updatePhotoComparison([]);
     var pdfInput = mountPdfSealInput(document.getElementById("pdfSealInput"), processScannedSeal);
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(function() {});
+    preparePhotoScanner();
 
     // Camera handling
     var btnScan = document.getElementById("btnScan");
@@ -481,7 +475,6 @@
       document.getElementById("placeholder").style.display = "flex";
       document.getElementById("cameraVideo").style.display = "none";
       document.getElementById("scanCanvas").style.display = "none";
-      document.getElementById("scanLine").style.display = "none";
       statusBar.classList.remove("visible");
     };
 
@@ -548,13 +541,34 @@
       var video = document.getElementById("cameraVideo");
       var canvas = document.getElementById("scanCanvas");
       var placeholder = document.getElementById("placeholder");
-      var scanLine = document.getElementById("scanLine");
+      var guideArea = document.getElementById("pageGuideArea");
 
       placeholder.style.display = "none";
-      scanLine.style.display = "block";
       video.style.display = "block";
+      guideArea.hidden = false;
+      document.getElementById("pageGuideHint").hidden = false;
+      state.stopPageGuide = observePageScanGuide(video, guideArea, document.getElementById("pageGuide"));
 
-      var scanQrFrame = createQrFrameScanner();
+      function cameraError(err) {
+        stopScanning();
+        btnScan.textContent = "Scan QR Code";
+        statusText.textContent = "Camera error: " + err.message;
+        placeholder.style.display = "flex";
+        placeholder.innerHTML = "<div class='icon'>&#128247;</div><div>" + escapeHtml(err.message) + "</div>";
+      }
+      var liveScan = createLiveScanWorker({
+        returnPayload: true,
+        onResult: function(action) {
+          if (action.status === "found-multiple") {
+            // Collect every piece against this frame before the canvas is reused.
+            action.texts.forEach(function(text) { processScannedSeal(text, canvas); });
+          } else if (action.status === "found") {
+            processScannedSeal(action.text, canvas);
+          }
+        },
+        onError: cameraError,
+      });
+      state.liveScan = liveScan;
       state.isScanning = true;
       state.camera = startCameraSession({
         video: video,
@@ -564,28 +578,15 @@
         onFrame: function() {
           if (!video.videoWidth || !video.videoHeight) return;
           statusBar.classList.add("visible");
+          if (liveScan.busy) return;
           if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
           if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
           var ctx = canvas.getContext("2d");
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          var code = scanQrFrame(imageData.data, canvas.width, canvas.height);
-          if (code) {
-            var payload = qredPayloadFromPhotoScanResult(imageData.data, canvas.width, canvas.height, code);
-            if (isQRedEntryLink(payload)) {
-              statusText.textContent = "Point at the document seal or pale watermark. Include the whole square in view.";
-            } else {
-              processScannedSeal(payload, canvas);
-            }
-          }
+          liveScan.scan(imageData);
         },
-        onError: function(err) {
-          stopScanning();
-          btnScan.textContent = "Scan QR Code";
-          statusText.textContent = "Camera error: " + err.message;
-          placeholder.style.display = "flex";
-          placeholder.innerHTML = "<div class='icon'>&#128247;</div><div>" + escapeHtml(err.message) + "</div>";
-        },
+        onError: cameraError,
       });
     }
 
@@ -593,6 +594,12 @@
       state.isScanning = false;
       state.camera?.stop();
       state.camera = null;
+      state.liveScan?.stop();
+      state.liveScan = null;
+      state.stopPageGuide?.();
+      state.stopPageGuide = null;
+      document.getElementById("pageGuideArea").hidden = true;
+      document.getElementById("pageGuideHint").hidden = true;
       statusBar.classList.remove("visible");
     }
 

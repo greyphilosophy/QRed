@@ -50,3 +50,57 @@ export function scanPhotoInWorker(image, { signal, returnPayload = false } = {})
     } catch (error) { finish(error); }
   });
 }
+
+// No frame queue: callers keep the submitted canvas unchanged until onResult
+// runs, and check busy before drawing the next camera frame into that canvas.
+export function createLiveScanWorker({ onResult, onError, returnPayload = false }) {
+  let worker = null, busy = false, stopped = false;
+  function reset() {
+    if (worker) {
+      worker.onmessage = worker.onerror = worker.onmessageerror = null;
+      worker.terminate();
+      worker = null;
+    }
+    busy = false;
+  }
+  function stop() { stopped = true; reset(); }
+  function fail(current, error) {
+    if (worker !== current || stopped) return;
+    stop();
+    onError(error);
+  }
+  return {
+    get busy() { return busy; },
+    reset,
+    stop,
+    scan(image) {
+      if (stopped || busy) return false;
+      try {
+        if (!worker) {
+          const current = new Worker(workerUrl, { type: "module" });
+          worker = current;
+          current.onmessage = ({ data }) => {
+            if (worker !== current || stopped || !busy) return;
+            if (data.error) { fail(current, new Error(data.error)); return; }
+            busy = false;
+            try { onResult(data.action); }
+            catch (error) { fail(current, error); }
+          };
+          current.onerror = event => {
+            event.preventDefault();
+            fail(current, new Error("Live scanning could not finish. Reopen the scanner and try again."));
+          };
+          current.onmessageerror = () => fail(current, new Error("The live scan result could not be read."));
+        }
+        busy = true;
+        worker.postMessage({ image: { data: image.data, width: image.width, height: image.height }, returnPayload, live: true },
+          [image.data.buffer]);
+        return true;
+      } catch (error) {
+        stop();
+        onError(error);
+        return false;
+      }
+    },
+  };
+}

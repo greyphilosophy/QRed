@@ -1,7 +1,7 @@
-import { scanQrImage } from "./scanQrImage.js";
+import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
 import { isQRedEntryLink } from "./hiddenPayload.js";
-import { VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult,
+import { decodeSeal, VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult,
   qredTextFromScanResult } from "../qredVerifier.js";
 
 export function qrScanAction(data, width, height, code, { returnPayload = false } = {}) {
@@ -10,6 +10,16 @@ export function qrScanAction(data, width, height, code, { returnPayload = false 
     ? qredPayloadFromPhotoScanResult(data, width, height, code)
     : qredTextFromPhotoScanResult(data, width, height, code);
   return text && !isQRedEntryLink(text) ? { status: "found", text } : { status: "continue" };
+}
+
+export function qrFrameAction(image, code, options = {}) {
+  const { data, width, height } = image;
+  if (code?.codes) {
+    const texts = code.codes.map(result => qrScanAction(data, width, height, result, options))
+      .filter(action => action.status === "found").map(action => action.text);
+    return texts.length ? { status: "found-multiple", texts } : { status: "continue" };
+  }
+  return qrScanAction(data, width, height, code, options);
 }
 
 // The same decoder serves a chosen photo and a manually captured camera frame.
@@ -21,15 +31,18 @@ export function decodePhoto(image, { returnPayload = false } = {}) {
     throw new Error("This photo cannot be scanned at its current size. Choose a smaller photo.");
   }
   if (returnPayload) {
+    const preview = scanWatermarkPreview(data, width, height);
+    const payload = preview && qredPayloadFromPhotoScanResult(data, width, height, preview);
+    // A complete single-code seal can skip the expensive alignment search.
+    // Navigation/ordinary QRs must not hide a watermark, and one chunk must
+    // not stop recovery of a four-code page. Trust is checked by the normal
+    // verification session after either decoding path returns its payload.
+    if (decodeSeal(payload)?.total_chunks === 1) return { status: "found", text: payload };
     const aligned = scanPageAlignedImage(image, { deep: true });
     if (aligned.length) return { status: "found-multiple", texts: aligned.map(result => result.seal) };
   }
   const code = scanQrImage(data, width, height);
-  if (code?.codes) {
-    const texts = code.codes.map(result => qrScanAction(data, width, height, result, { returnPayload }))
-      .filter(action => action.status === "found").map(action => action.text);
-    return texts.length ? { status: "found-multiple", texts } : { status: "continue" };
-  }
+  if (code?.codes) return qrFrameAction(image, code, { returnPayload });
   if (!code?.data) return { status: "feedback", message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For older seals, try framing the individual QR instead." };
   if (code.data === VISIBLE_QR_TEXT || /QRED[34]:/.test(code.data)
     || isQRedEntryLink(code.data) || code.data.includes("qred.org")) {

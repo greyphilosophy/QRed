@@ -3,7 +3,13 @@
 ## Current State
 As of November 2026, both scanner pages prefer the rear main camera at 1× with a 1920×1080 ideal frame. Unknown camera labels retain the browser's environment-camera choice. The flashlight control has been removed. Full-page watermarks need the entire frame; the older center-crop and lower-resolution proposals below should not be applied to manual page captures.
 
-Manual camera photos and selected images use a background worker for exhaustive recovery. The page shows a reading status and supports cancellation (close the camera or cancel the selected photo). The worker receives transferred pixels, preserves all recovered page chunks, and terminates on completion or cancellation. Its public code is prepared for offline use through the existing service worker; photographs stay on the device. Live scanning retains bounded attempts between frames. Physical lens selection still needs testing on supported phones because camera labels and controls vary by browser.
+Both live camera views decode in a background worker with one frame in flight and no queued frames. The submitted canvas stays unchanged until every recovered seal has been collected with its original photo. Closing the scanner terminates the worker; capturing a still photo first discards any pending live result. The public worker code is prepared for offline use through the existing service worker; photographs stay on the device. Physical lens selection still needs testing on supported phones because camera labels and controls vary by browser.
+
+The **Capture photo** button and selected images use a separate worker for exhaustive recovery. The page shows a reading status. **Cancel and resume camera** discards the still-photo result and resumes live scanning on the same camera stream; selected images retain their cancel button. Still-photo workers terminate on completion or cancellation.
+
+Photo recovery now tries the existing watermark filter once at a maximum of 2.5 MP before exhaustive page alignment. Only a complete single-code QRed seal can finish this first attempt; navigation codes and multipart pages continue through full page recovery. The original-resolution pixels remain available to the existing fallbacks, and the normal verification session still checks the signature.
+
+Both live camera views show a steady, page-shaped guide with corner and glare advice. The guide fits inside the visible camera image, adapts to phone rotation, and does not crop the scanned frame or saved photo. Live attempts explicitly disable exhaustive alignment refinement; selected images and an explicit Capture photo action retain that longer, cancellable recovery path.
 
 The audit and phases below record the earlier optimization plan, not a current inventory of missing features.
 

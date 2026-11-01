@@ -699,7 +699,7 @@ class TestCameraFrameScanning:
         (() => {
             const camera = CAMERA_FIXTURE;
             // Freeze the scanner's cooldown clock for the button case, so
-            // only Scan photo can produce the result after the blank frame.
+            // only Capture photo can produce the result after the blank frame.
             if (camera.manual) performance.now = () => 1000;
             Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: {
                 enumerateDevices: async () => [],
@@ -743,7 +743,7 @@ class TestCameraFrameScanning:
                 context.drawImage(video, 0, 0);
                 return context.getImageData(0, 0, canvas.width, canvas.height).data.some((value, i) => i % 4 !== 3 && value < 128);
             }""", timeout=5000)
-            page.get_by_role("button", name="Scan photo", exact=True).click()
+            page.get_by_role("button", name="Capture photo", exact=True).click()
         expect(page.get_by_role("heading", name="QR captured", exact=True)).to_be_visible(timeout=10000)
         _open_verification_key(page, TestRenderedQrImageUploads.PUBLIC_KEY)
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible()

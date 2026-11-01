@@ -1,6 +1,6 @@
 /* @vitest-environment jsdom */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { scanPhotoInWorker } from "./photoScanClient.js";
+import { createLiveScanWorker, scanPhotoInWorker } from "./photoScanClient.js";
 
 let worker;
 beforeEach(() => {
@@ -45,4 +45,70 @@ it.each(["decode", "load", "message", "transfer"])("releases the worker on a %s 
   if (kind === "message") worker.onmessageerror();
   await expect(pending).rejects.toBeInstanceOf(Error);
   expect(worker.terminate).toHaveBeenCalledTimes(1);
+});
+
+it("keeps one live frame in flight without queuing older frames, and reuses the worker", () => {
+  const onResult = vi.fn(), onError = vi.fn();
+  const live = createLiveScanWorker({ onResult, onError, returnPayload: true });
+  const first = image(), ignored = image(), latest = image();
+  expect(live.scan(first)).toBe(true);
+  expect(live.busy).toBe(true);
+  expect(live.scan(ignored)).toBe(false);
+  expect(worker.postMessage).toHaveBeenCalledTimes(1);
+  expect(worker.postMessage).toHaveBeenCalledWith({ image: first, returnPayload: true, live: true }, [first.data.buffer]);
+  const action = { status: "found-multiple", texts: ["one", "two", "three", "four"] };
+  worker.onmessage({ data: { action } });
+  expect(onResult).toHaveBeenCalledWith(action);
+  expect(live.busy).toBe(false);
+  expect(live.scan(latest)).toBe(true);
+  expect(worker.postMessage).toHaveBeenLastCalledWith({ image: latest, returnPayload: true, live: true }, [latest.data.buffer]);
+  expect(Worker).toHaveBeenCalledTimes(1);
+  expect(onError).not.toHaveBeenCalled();
+  live.stop();
+});
+
+it("discards a live result on reset, then starts a fresh worker without reviving the old frame", () => {
+  const first = worker, second = { postMessage: vi.fn(), terminate: vi.fn() };
+  Worker.mockReturnValueOnce(first).mockReturnValueOnce(second);
+  const onResult = vi.fn(), onError = vi.fn();
+  const live = createLiveScanWorker({ onResult, onError });
+  live.scan(image());
+  const late = first.onmessage;
+  live.reset();
+  expect(first.terminate).toHaveBeenCalledTimes(1);
+  expect(live.busy).toBe(false);
+  live.scan(image());
+  late({ data: { action: { status: "found", text: "stale" } } });
+  expect(live.busy).toBe(true);
+  expect(onResult).not.toHaveBeenCalled();
+  second.onmessage({ data: { action: { status: "continue" } } });
+  expect(onResult).toHaveBeenCalledTimes(1);
+  expect(onResult).toHaveBeenCalledWith({ status: "continue" });
+  live.stop();
+});
+
+it("stops a live session permanently and ignores its queued result", () => {
+  const onResult = vi.fn();
+  const live = createLiveScanWorker({ onResult, onError: vi.fn() });
+  live.scan(image());
+  const late = worker.onmessage;
+  live.stop(); live.stop();
+  late({ data: { action: { status: "found", text: "stale" } } });
+  expect(onResult).not.toHaveBeenCalled();
+  expect(live.scan(image())).toBe(false);
+  expect(worker.terminate).toHaveBeenCalledTimes(1);
+});
+
+it.each(["decode", "load", "message", "transfer"])("stops live decoding on a %s error", kind => {
+  const onError = vi.fn(), onResult = vi.fn();
+  const live = createLiveScanWorker({ onResult, onError });
+  if (kind === "transfer") worker.postMessage.mockImplementation(() => { throw new Error("transfer failed"); });
+  live.scan(image());
+  if (kind === "decode") worker.onmessage({ data: { error: "Invalid frame" } });
+  if (kind === "load") worker.onerror({ preventDefault: vi.fn() });
+  if (kind === "message") worker.onmessageerror();
+  expect(onError).toHaveBeenCalledTimes(1);
+  expect(onResult).not.toHaveBeenCalled();
+  expect(worker.terminate).toHaveBeenCalledTimes(1);
+  expect(live.scan(image())).toBe(false);
 });

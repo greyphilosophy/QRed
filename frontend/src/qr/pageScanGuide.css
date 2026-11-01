@@ -1,0 +1,27 @@
+.page-scan-guide-area {
+  position: absolute;
+  inset: 1rem;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.page-scan-guide {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, .55);
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, .45);
+  pointer-events: none;
+}
+
+.page-scan-guide span {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border: solid #bfdbfe;
+  filter: drop-shadow(0 1px 2px #0f172a);
+}
+
+.page-scan-guide span:nth-child(1) { border-width: 3px 0 0 3px; left: -2px; top: -2px; }
+.page-scan-guide span:nth-child(2) { border-width: 3px 3px 0 0; right: -2px; top: -2px; }
+.page-scan-guide span:nth-child(3) { border-width: 0 0 3px 3px; left: -2px; bottom: -2px; }
+.page-scan-guide span:nth-child(4) { border-width: 0 3px 3px 0; right: -2px; bottom: -2px; }
