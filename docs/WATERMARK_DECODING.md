@@ -47,6 +47,14 @@ or a heavily cropped sheet, may be unlocatable. In those cases QRed retains
 conventional finder-based scanning; placing the document on a contrasting
 surface makes page-aligned scanning easier.
 
+Photo color is measured relative to the paper: 25 central probes estimate
+bounded red/blue channel gains, rejecting dark text, clipped highlights and
+inconsistent or saturated colors. The edge detector and foreground mask
+use these gains without relaxing the colored-ink cutoff. A warm yellow cast
+must not turn the whole sheet into foreground. Gains are applied when pixels
+are read, so this step does not allocate another full-resolution photograph.
+PDF rasters retain their existing path.
+
 High-resolution photos are not blindly rejected at 12 megapixels. The page
 edge detector instead runs on a bounded (~1.5 MP) preview and maps the
 detected corners **back to the original full-resolution pixels**, which are
@@ -82,7 +90,26 @@ verification still makes the trust decision.
 Still-photo refinement reserves up to 16 attempts for single-code layouts
 and 36 for quadrant layouts across all orientation, size and scale candidates.
 Finder/timing evidence ranks these candidates before local alignment fitting;
-four-quadrant failures cannot consume the single-code budget. Live scanning
+four-quadrant failures cannot consume the single-code budget. A version
+observed at 97% scale can also seed the full-size single-code mapping; both
+starting grids consume that same 16-region allowance. Each region attempt
+keeps the established nine-sample alignment/recovery pass, with **at most
+one** foreground-resistant retry (at most 104 grid fits across both layouts).
+The retry compares exposed pixels in public alignment markers, requires
+17 of their 25 cells, scales residual tolerance to the observed module pitch,
+and continues local distortion to the outer symbol edge. Tied alignment
+scores prefer the nearer starting position instead of drifting to the first
+edge of a flat correlation peak.
+
+The retry samples 25 interior pixels per data module and averages its five
+brightest observations. This prevents dark text from biasing both the cell
+decision and its Gaussian local brightness reference. Wide within-cell
+brightness ranges, fully dark cells and ambiguous decisions become erasures;
+they are not assumed to be dark QR ink. The original narrow sampling pass
+remains first because the wider sampling can degrade clean or faint-text
+prints. Neither pass relaxes QR parity, transport, digest or signature checks.
+
+Live scanning
 delivers every recovered chunk from a page in one batch while its original
 camera frame is still available, so later frames cannot become comparison
 photos for earlier chunks.
@@ -139,6 +166,26 @@ result.** More real prints at 150, 300 and 600 DPI, darker underlying text,
 different printers and varied lighting are still needed before merging.
 The user's private original photographs have never been committed to the
 public repository or uploaded into CI.
+
+### Dark-text photograph follow-up
+
+A subsequent original 12 MP photograph of the single-code, dark-text print
+exposed three additional optical problems: warm paper being classified as
+colored foreground, glyph pixels biasing module averages, and a fixed
+seven-pixel residual cutoff rejecting useful high-resolution alignment
+markers. Comparing against the delivered PDF helped diagnose these errors;
+the production decoder receives only photograph pixels and public QR
+structure. Source matrices and private photographs are not test fixtures.
+
+The paper-color calibration and foreground-resistant retry above implement
+those findings. Synthetic regressions require exact signed recovery under
+warm/cool illumination and through dark strokes that defeat mean sampling,
+plus rejection when every module is covered. The previously successful
+four-code photograph still verifies in both upright and quarter-turn views.
+**The new dark-text photograph still does not verify:** its recovered
+candidate differs from the delivered seal and the ordinary verifier rejects
+it. Confidence/erasure classification remains an open physical release
+blocker. A parseable candidate is not a successful printed-page trial.
 
 Live camera frames rotate through this path with a bounded retry budget;
 the PDF page verifier also tries page geometry before ordinary QR-region

@@ -6,6 +6,7 @@ import { hiddenPayloadFromScanResult } from "./hiddenPayload.js";
 import { isChromaticForeground } from "./watermarkFilter.js";
 import { readErasedQrMatrix } from "./qrErasureRecovery.js";
 import { recoverRefinedQrRegion } from "./pageAlignedRecovery.js";
+import { estimatePaperColor, paperColorChannel, photoLuminance } from "./paperColor.js";
 
 // Printer-safe clearance for QRed's visible watermark modules. One PDF point
 // is 1/72 inch, so 54 points = 0.75 inch of blank border on every side.
@@ -71,10 +72,6 @@ function photoPageSizes(image, quad) {
     .slice(0, 4).map(({ size }) => size);
 }
 
-function luminance(data, index) {
-  return (data[index] + data[index + 1] + data[index + 2]) / 3;
-}
-
 function fit(values) {
   if (values.length < 12) return null;
   let sx = 0, sy = 0, sxx = 0, sxy = 0;
@@ -115,7 +112,8 @@ function previewForPaperEdges(image) {
       const px = Math.min(width - 1, Math.max(0, sx + dx));
       const py = Math.min(height - 1, Math.max(0, sy + dy));
       const input = (py * width + px) * 4;
-      for (let channel = 0; channel < 3; channel++) pixels[out + channel] += data[input + channel] / offsets.length;
+      for (let channel = 0; channel < 3; channel++)
+        pixels[out + channel] += paperColorChannel(data, input, channel, image.paperColor) / offsets.length;
     }
     pixels[out + 3] = 255;
   }
@@ -124,7 +122,8 @@ function previewForPaperEdges(image) {
 
 function locatePaperAtResolution(image) {
   const { data, width, height } = image;
-  const at = (x, y) => luminance(data, (y * width + x) * 4);
+  const channelAt = (offset, channel) => paperColorChannel(data, offset, channel, image.paperColor);
+  const at = (x, y) => photoLuminance(image, (y * width + x) * 4);
   const bg = [at(0, 0), at(width - 1, 0), at(0, height - 1), at(width - 1, height - 1)]
     .sort((a, b) => a - b)[1];
   // The center of the sheet may contain text. Sample several center-area
@@ -143,14 +142,14 @@ function locatePaperAtResolution(image) {
   // border exists; old finder-based scanning remains the fallback.
   const cornerOffsets = [[0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1]];
   const deskRgb = [0, 1, 2].map(channel =>
-    cornerOffsets.reduce((sum, [x, y]) => sum + data[(y * width + x) * 4 + channel], 0) / 4);
+    cornerOffsets.reduce((sum, [x, y]) => sum + channelAt((y * width + x) * 4, channel), 0) / 4);
   const deskChroma = Math.max(...deskRgb) - Math.min(...deskRgb);
   const paperChroma = [];
   for (const v of [0.3, 0.4, 0.5, 0.6, 0.7]) {
     for (const u of [0.3, 0.4, 0.5, 0.6, 0.7]) {
       const x = Math.round(u * (width - 1)), y = Math.round(v * (height - 1));
       const index = (y * width + x) * 4;
-      const r = data[index], g = data[index + 1], b = data[index + 2];
+      const r = channelAt(index, 0), g = channelAt(index, 1), b = channelAt(index, 2);
       paperChroma.push(Math.max(r, g, b) - Math.min(r, g, b));
     }
   }
@@ -169,7 +168,7 @@ function locatePaperAtResolution(image) {
     const value = at(x, y);
     if (useChroma) {
       const start = (y * width + x) * 4;
-      const r = data[start], g = data[start + 1], b = data[start + 2];
+      const r = channelAt(start, 0), g = channelAt(start, 1), b = channelAt(start, 2);
       return value > Math.max(45, bg * 0.42) &&
         Math.max(r, g, b) - Math.min(r, g, b) < chromaLimit;
     }
@@ -282,8 +281,8 @@ function paperBrightnessMap(image, mapping) {
       const point = mapping(u, v), x = Math.round(point.x), y = Math.round(point.y);
       if (x < 0 || y < 0 || x >= image.width || y >= image.height) continue;
       const index = (y * image.width + x) * 4;
-      if (isChromaticForeground(image.data, index)) continue;
-      const gray = luminance(image.data, index);
+      if (isChromaticForeground(image.data, index, image.paperColor)) continue;
+      const gray = photoLuminance(image, index);
       if (gray > best) best = gray;
     }
     values[row * count + col] = best;
@@ -307,8 +306,8 @@ function observe(image, mapping, region, size, row, col, ox = 0.5, oy = 0.5) {
   const sx = Math.round(x), sy = Math.round(y);
   if (sx < 0 || sx >= image.width || sy < 0 || sy >= image.height) return null;
   const index = (sy * image.width + sx) * 4;
-  if (isChromaticForeground(image.data, index)) return null;
-  const gray = luminance(image.data, index);
+  if (isChromaticForeground(image.data, index, image.paperColor)) return null;
+  const gray = photoLuminance(image, index);
   const paper = image.paperAt ? image.paperAt(u, v) : 255;
   // Dark text is missing evidence, but a gray watermark under a shadow
   // must never be discarded solely because its absolute luminance is <175.
@@ -516,11 +515,17 @@ function refinementScore(versions) {
 
 function refineSingles(image, singles) {
   let budget = 16;
-  for (const { mapping, region, versions } of singles) {
+  for (const { mapping, fullMapping, region, versions } of singles) {
     for (const version of refinementVersions(versions).slice(0, 8)) {
-      if (budget-- <= 0) break;
-      const recovered = recoverRefinedQrRegion(image, mapping, region, version);
-      if (recovered) return [recovered];
+      // Finder/timing evidence at 97% scale can identify the version even
+      // when the local alignment search needs the full-size starting grid.
+      // Both guesses consume the existing page-wide single-code budget.
+      for (const candidate of mapping === fullMapping ? [mapping] : [mapping, fullMapping]) {
+        if (budget-- <= 0) break;
+        const recovered = recoverRefinedQrRegion(image, candidate, region, version);
+        if (recovered) return [recovered];
+      }
+      if (budget <= 0) break;
     }
     if (budget <= 0) break;
   }
@@ -577,6 +582,10 @@ export function scanPageAlignedImage(image, { deep = false } = {}) {
       image.width < 160 || image.height < 160 ||
       image.width * image.height > MAX_PHOTO_PIXELS ||
       image.data?.length !== image.width * image.height * 4) return [];
+  if (!image.bounds) {
+    const paperColor = estimatePaperColor(image);
+    if (paperColor[0] !== 1 || paperColor[2] !== 1) image = { ...image, paperColor };
+  }
   const quad = locatePaper(image);
   if (!quad) return [];
   // Printing can shrink the PDF's content slightly within the fixed paper
@@ -610,7 +619,7 @@ export function scanPageAlignedImage(image, { deep = false } = {}) {
         // One exposed quadrant is enough to seed the others. Averaging in
         // obscured quadrants can rank an incorrect orientation above it.
         const score = Math.max(...versions.map(refinementScore));
-        hypotheses.push({ image: sampledImage, mapping: candidateMapping, profile,
+        hypotheses.push({ image: sampledImage, mapping: candidateMapping, fullMapping: mapping, profile,
           singleRegion, singleVersions, regions, versions, score });
       }
     }
@@ -621,7 +630,7 @@ export function scanPageAlignedImage(image, { deep = false } = {}) {
     Math.max(a.singleVersions[0]?.score ?? 0, a.score));
   const budget = { remaining: 64 }, singles = [], quadrants = [];
   let bestCodes = [];
-  for (const { image: sampledImage, mapping, profile, singleRegion, singleVersions,
+  for (const { image: sampledImage, mapping, fullMapping, profile, singleRegion, singleVersions,
     regions, versions, score } of hypotheses) {
     const single = decodeRegion(sampledImage, mapping, singleRegion, singleVersions, budget);
     if (single) return [single];
@@ -633,7 +642,7 @@ export function scanPageAlignedImage(image, { deep = false } = {}) {
     if (codes.length > bestCodes.length) bestCodes = codes;
     if (codes.length === 4) return codes;
     if (deep && !image.bounds && !profile.legacy) {
-      singles.push({ mapping, region: singleRegion, versions: singleVersions });
+      singles.push({ mapping, fullMapping, region: singleRegion, versions: singleVersions });
       quadrants.push({ mapping, regions, versions, codes, score });
     }
   }

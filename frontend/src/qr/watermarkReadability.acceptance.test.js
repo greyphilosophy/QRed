@@ -50,6 +50,7 @@ function printAndPhotograph(seals, {
   backdrop = [43, 43, 47], patternedBackdrop = false, shadowed = false,
   printGray = 0.85, paperBase = 246, printerScale = 1,
   pageFormat = pageSize, legacyMargins = false, printerWarp = 0,
+  lightTint = null,
 } = {}) {
   const symbols = seals.map(seal => createQRedQrSymbol(seal));
   if (![0, 1, 4].includes(symbols.length)) throw new Error("Fixture supports 0, 1 or 4 QR chunks");
@@ -115,6 +116,9 @@ function printAndPhotograph(seals, {
     if (finderBlocked && matchedPart === 0 && localRow >= 0 && localRow < 9 &&
         localCol >= 0 && localCol < 9) pixel = ink;
     outputColor(rgba, offset, pixel);
+  }
+  if (lightTint) for (let i = 0; i < rgba.length; i += 4) {
+    for (let channel = 0; channel < 3; channel++) rgba[i + channel] *= lightTint[channel];
   }
   return { data: rgba, width, height };
 }
@@ -369,6 +373,22 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     await expect(verifyQRedSeals(recovered.map(item => item.seal), publicKey))
       .resolves.toMatchObject({ status: "VALID", content });
   }, 60000);
+
+  it.each([
+    ["warm", [1, 0.95, 0.82]],
+    ["cool", [0.82, 0.95, 1]],
+  ])("[WM-03, WM-09] recovers a signed page through dark text under %s lighting", async (_label, lightTint) => {
+    const content = "Review photograph orientation and local grid refinement. ".repeat(28).trimEnd();
+    const { seals } = await signed(content);
+    const photo = printAndPhotograph(seals, {
+      width: 1200, height: 1600, ink: [25, 25, 25], finderBlocked: false,
+      lightTint, patternedBackdrop: true,
+    });
+    const recovered = scanPageAlignedImage(photo, { deep: true });
+    expect(recovered.map(item => item.seal)).toEqual(seals);
+    await expect(verifyQRedSeals(recovered.map(item => item.seal), publicKey))
+      .resolves.toMatchObject({ status: "VALID", content });
+  }, 90000);
 
   it("[WM-12] decodes a physically margin-safe A4 watermark from pixels alone", async () => {
     const content = "A4 paper; real 54pt (0.75in) QR clearance on all four sides. ".repeat(10).trimEnd();

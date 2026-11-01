@@ -5,8 +5,10 @@ import jsQR from "jsqr";
 import { hiddenPayloadFromScanResult } from "./hiddenPayload.js";
 import { readErasedQrMatrix } from "./qrErasureRecovery.js";
 import { refineQrModuleGrid } from "./qrAlignmentRefinement.js";
+import { photoLuminance } from "./paperColor.js";
 
-const OFFSETS = [-0.18, 0, 0.18];
+const OFFSETS = [-0.3, -0.15, 0, 0.15, 0.3];
+const MEAN_OFFSETS = [-0.18, 0, 0.18];
 const RADIUS = 8, SIGMA = 2.8;
 const WEIGHTS = Array.from({ length: RADIUS * 2 + 1 }, (_, i) =>
   Math.exp(-0.5 * ((i - RADIUS) / SIGMA) ** 2));
@@ -15,7 +17,7 @@ function luminance(image, x, y) {
   const sx = Math.round(x), sy = Math.round(y);
   if (sx < 0 || sy < 0 || sx >= image.width || sy >= image.height) return 255;
   const i = (sy * image.width + sx) * 4;
-  return (image.data[i] + image.data[i + 1] + image.data[i + 2]) / 3;
+  return photoLuminance(image, i);
 }
 function finderDark(row, col) {
   return row === 0 || row === 6 || col === 0 || col === 6 ||
@@ -37,21 +39,30 @@ function restoreFunctions(bits, size) {
   }
 }
 
-// Sample the actual printed module centers, averaging nine exposed pixels
-// per cell. An inexpensive separable Gaussian estimates local mid-tone from
-// neighboring modules, independent of absolute photo exposure and shadows.
-function sampleMatrix(image, moduleMap, version) {
+// On the foreground retry, read 25 interior pixels per module and average
+// the brightest fifth. The initial pass keeps its nine-pixel mean. Dark
+// letter strokes must not drag down either the module decision or its local
+// mid-tone estimate. The within-cell range also records foreground evidence
+// for parity recovery, even when a few exposed pixels remain readable.
+export function sampleRefinedQrMatrix(image, moduleMap, version, { foregroundRobust = false } = {}) {
   const size = 17 + 4 * version, count = size * size;
   const mean = new Float32Array(count), blurX = new Float32Array(count);
   const bits = new Uint8Array(count), unknown = new Uint8Array(count);
-  const confidence = new Uint8Array(count);
+  const confidence = new Uint8Array(count), foreground = new Uint8Array(count);
+  const offsets = foregroundRobust ? OFFSETS : MEAN_OFFSETS;
+  const samples = new Float32Array(offsets.length ** 2);
   for (let row = 0; row < size; row++) for (let col = 0; col < size; col++) {
-    let total = 0;
-    for (const oy of OFFSETS) for (const ox of OFFSETS) {
+    let index = 0;
+    for (const oy of offsets) for (const ox of offsets) {
       const p = moduleMap(col + 0.5 + ox, row + 0.5 + oy);
-      total += luminance(image, p.x, p.y);
+      samples[index++] = luminance(image, p.x, p.y);
     }
-    mean[row * size + col] = total / 9;
+    if (foregroundRobust) samples.sort();
+    let total = 0;
+    const exposedCount = foregroundRobust ? 5 : samples.length;
+    for (let i = samples.length - exposedCount; i < samples.length; i++) total += samples[i];
+    mean[row * size + col] = total / exposedCount;
+    foreground[row * size + col] = Number(foregroundRobust && samples[0] < samples[samples.length - 1] * 0.8);
   }
   for (let row = 0; row < size; row++) for (let col = 0; col < size; col++) {
     let total = 0, weight = 0;
@@ -74,9 +85,12 @@ function sampleMatrix(image, moduleMap, version) {
     const index = row * size + col, background = total / weight;
     const delta = background - mean[index];
     bits[index] = Number(delta > 0);
-    if (Math.abs(delta) < 0.6 || mean[index] < background * 0.63) {
+    const ambiguous = Math.abs(delta) < (foregroundRobust ? 1.2 : 0.6);
+    if (ambiguous || mean[index] < background * (foregroundRobust ? 0.8 : 0.63) || foreground[index]) {
       unknown[index] = 1;
-      confidence[index] = Math.max(1, Math.floor(Math.min(9, Math.abs(delta))));
+      confidence[index] = foregroundRobust
+        ? (foreground[index] ? 9 : Math.max(1, Math.floor(9 - Math.abs(delta))))
+        : Math.max(1, Math.floor(Math.min(9, Math.abs(delta))));
     }
   }
   restoreFunctions(bits, size);
@@ -128,11 +142,10 @@ function geometry(map, size) {
 
 // Called only by the bounded static-photo/manual-capture recovery fallback.
 // Each code remains subject to normal hidden-payload and Ed25519 verification.
-export function recoverRefinedQrRegion(image, pageMapping, region, version) {
-  if (version < 7 || version > 40) return null;
-  const refined = refineQrModuleGrid(image, pageMapping, region, version);
+function recoverWithSampling(image, pageMapping, region, version, foregroundRobust) {
+  const refined = refineQrModuleGrid(image, pageMapping, region, version, { foregroundRobust });
   if (!refined || refined.quality < 0.66) return null;
-  const sampled = sampleMatrix(image, refined.moduleMap, version);
+  const sampled = sampleRefinedQrMatrix(image, refined.moduleMap, version, { foregroundRobust });
   if (versionDistance(sampled.bits, version) > 3) return null;
   const imageQr = raster(sampled);
   const ordinary = jsQR(imageQr.data, imageQr.width, imageQr.width,
@@ -149,4 +162,13 @@ export function recoverRefinedQrRegion(image, pageMapping, region, version) {
   };
   seal = hiddenPayloadFromScanResult(code);
   return seal ? { seal, code } : null;
+}
+
+export function recoverRefinedQrRegion(image, pageMapping, region, version) {
+  if (version < 7 || version > 40) return null;
+  // Keep the established narrow-center pass for clean/faint-text prints.
+  // Each bounded region attempt has at most one text-resistant retry; broad
+  // sampling must not replace a working low-noise reconstruction.
+  return recoverWithSampling(image, pageMapping, region, version, false) ||
+    recoverWithSampling(image, pageMapping, region, version, true);
 }

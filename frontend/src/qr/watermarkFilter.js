@@ -1,6 +1,8 @@
 // Separate neutral pale QR ink from paper and opaque document foreground.
 // Colored and dark text are unknown, not QR bits: bridge only from exposed
 // watermark pixels. Never erase the foreground in the document itself.
+import { paperColorChannel } from "./paperColor.js";
+
 // Adjust each pixel against its local paper brightness before looking for ink.
 // This avoids treating shadows across a photographed sheet as QR modules.
 // The high local percentile is robust to pale modules and most printed text.
@@ -43,9 +45,12 @@ function locallyNormalize(luminances, width, height) {
 
 // QRed's printed watermark is neutral gray. Color saturation is foreground
 // evidence even when colored text is brighter than the old "black ink" mask.
-// The generous tolerance allows ordinary camera white-balance shifts.
-export function isChromaticForeground(data, offset) {
-  const r = data[offset], g = data[offset + 1], b = data[offset + 2];
+// Photo callers can compare against a measured paper tint while retaining
+// the same saturation cutoff for genuinely colored foreground.
+export function isChromaticForeground(data, offset, paperColor) {
+  const r = paperColorChannel(data, offset, 0, paperColor);
+  const g = paperColorChannel(data, offset, 1, paperColor);
+  const b = paperColorChannel(data, offset, 2, paperColor);
   const high = Math.max(r, g, b), low = Math.min(r, g, b);
   return high - low >= 26 && (high - low) / Math.max(1, high) > 0.09;
 }

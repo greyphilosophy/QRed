@@ -1,6 +1,7 @@
 // Recover QR module locations from public alignment patterns on a photographed
 // page. No original PDF, signing keys, or expected QR payload enters this path.
 import { alignmentCenters } from "./qrLowLevel.js";
+import { photoLuminance } from "./paperColor.js";
 
 const DARK = new Uint8Array(25);
 for (let row = 0; row < 5; row++) for (let col = 0; col < 5; col++)
@@ -12,34 +13,58 @@ function grayAt(image, x, y) {
   const sx = Math.round(x), sy = Math.round(y);
   if (sx < 0 || sy < 0 || sx >= image.width || sy >= image.height) return 0;
   const index = (sy * image.width + sx) * 4;
-  return (image.data[index] + image.data[index + 1] + image.data[index + 2]) / 3;
+  return photoLuminance(image, index);
 }
 
-function matchScore(image, cx, cy, ux, uy, vx, vy) {
-  let sum = 0, sumSq = 0, sumP = 0, sumPSq = 0, cross = 0, n = 0;
+function matchScore(image, cx, cy, ux, uy, vx, vy, foregroundRobust) {
+  const values = foregroundRobust ? new Float32Array(25) : null;
+  let paper = 0, sum = 0, sumSq = 0, sumP = 0, sumPSq = 0, cross = 0, n = 0;
   for (let row = 0; row < 5; row++) for (let col = 0; col < 5; col++) {
-    const pattern = DARK[row * 5 + col] ? -1 : 1;
+    let best = 0;
     for (const oy of OFFSETS) for (const ox of OFFSETS) {
       const x = cx + (col - 2 + ox) * ux + (row - 2 + oy) * vx;
       const y = cy + (col - 2 + ox) * uy + (row - 2 + oy) * vy;
       const pixel = grayAt(image, x, y);
-      if (!pixel) return -1;
-      sum += pixel; sumSq += pixel * pixel;
-      sumP += pattern; sumPSq += pattern * pattern;
-      cross += pattern * pixel; n++;
+      if (!foregroundRobust) {
+        if (!pixel) return -1;
+        const pattern = DARK[row * 5 + col] ? -1 : 1;
+        sum += pixel; sumSq += pixel * pixel;
+        sumP += pattern; sumPSq += pattern * pattern;
+        cross += pattern * pixel; n++;
+      }
+      if (foregroundRobust) best = Math.max(best, pixel);
+    }
+    if (foregroundRobust) {
+      values[row * 5 + col] = best;
+      paper = Math.max(paper, best);
     }
   }
+  // Letter strokes are darker than the pale watermark. Compare exposed
+  // pixels within each module and discard fully obscured modules, while
+  // requiring at least two thirds of the public pattern as real evidence.
+  for (let i = 0; foregroundRobust && i < values.length; i++) {
+    const pixel = values[i];
+    if (pixel < paper * 0.75) continue;
+    const pattern = DARK[i] ? -1 : 1;
+    sum += pixel; sumSq += pixel * pixel;
+    sumP += pattern; sumPSq += pattern * pattern;
+    cross += pattern * pixel; n++;
+  }
+  if (n < 17) return -1;
   const variance = sumSq - sum * sum / n, patternVariance = sumPSq - sumP * sumP / n;
   return variance > 0 && patternVariance > 0
     ? (cross - sumP * sum / n) / Math.sqrt(variance * patternVariance) : 0;
 }
 
-function locateAlignment(image, expected, ux, uy, vx, vy) {
+function locateAlignment(image, expected, ux, uy, vx, vy, foregroundRobust) {
   let best = { score: -1, x: expected.x, y: expected.y };
   const tryShift = (dx, dy, scale) => {
     const score = matchScore(image, expected.x + dx, expected.y + dy,
-      ux * scale, uy * scale, vx * scale, vy * scale);
-    if (score > best.score) best = { score, x: expected.x + dx, y: expected.y + dy, scale };
+      ux * scale, uy * scale, vx * scale, vy * scale, foregroundRobust);
+    const tied = foregroundRobust && Math.abs(score - best.score) < 1e-7;
+    const closer = dx * dx + dy * dy < (best.x - expected.x) ** 2 + (best.y - expected.y) ** 2;
+    if (score > best.score + (foregroundRobust ? 1e-7 : 0) || (tied && closer))
+      best = { score, x: expected.x + dx, y: expected.y + dy, scale };
   };
   for (const scale of [0.97, 1, 1.03])
     for (let dy = -39; dy <= 39; dy += 3)
@@ -86,10 +111,13 @@ function predicted(aff, col, row) {
   return { x: aff.x[0] * col + aff.x[1] * row + aff.x[2],
     y: aff.y[0] * col + aff.y[1] * row + aff.y[2] };
 }
-function bracket(centers, value) {
+function bracket(centers, value, extrapolate) {
   const n = centers.length;
-  if (value <= centers[0]) return [0, 1, 0];
-  if (value >= centers[n - 1]) return [n - 2, n - 1, 1];
+  // Continue the fitted distortion through the small outer strip beyond the
+  // last alignment marker instead of introducing a flat, displaced border.
+  if (value <= centers[0]) return [0, 1, extrapolate ? (value - centers[0]) / (centers[1] - centers[0]) : 0];
+  if (value >= centers[n - 1]) return [n - 2, n - 1,
+    extrapolate ? (value - centers[n - 2]) / (centers[n - 1] - centers[n - 2]) : 1];
   for (let i = 0; i < n - 1; i++) if (value <= centers[i + 1])
     return [i, i + 1, (value - centers[i]) / (centers[i + 1] - centers[i])];
   return [n - 2, n - 1, 1];
@@ -98,13 +126,18 @@ function bracket(centers, value) {
 // A QR v27 has 22 independent 5x5 alignment patterns. Match them locally,
 // fit a robust affine grid, then interpolate small residual distortions
 // throughout each QR independently. All observations come from the photo.
-export function refineQrModuleGrid(image, pageMapping, region, version) {
+export function refineQrModuleGrid(image, pageMapping, region, version, { foregroundRobust = false } = {}) {
   const centers = alignmentCenters(version);
   if (centers.length < 3) return null;
   const size = 17 + 4 * version, points = [];
   const map = (col, row) => pageMapping(
     region.x + region.width * col / size,
     region.y + region.height * row / size);
+  const middle = map(size / 2, size / 2);
+  const right = map(size / 2 + 1, size / 2), down = map(size / 2, size / 2 + 1);
+  const tolerance = foregroundRobust ? Math.max(7, Math.min(
+    Math.hypot(right.x - middle.x, right.y - middle.y),
+    Math.hypot(down.x - middle.x, down.y - middle.y))) : 7;
   for (let ri = 0; ri < centers.length; ri++)
     for (let ci = 0; ci < centers.length; ci++) {
       const row = centers[ri], col = centers[ci];
@@ -114,7 +147,7 @@ export function refineQrModuleGrid(image, pageMapping, region, version) {
       const expected = map(cc, rr);
       const right = map(cc + 1, rr), down = map(cc, rr + 1);
       const found = locateAlignment(image, expected, right.x - expected.x,
-        right.y - expected.y, down.x - expected.x, down.y - expected.y);
+        right.y - expected.y, down.x - expected.x, down.y - expected.y, foregroundRobust);
       if (found.score >= 0.60) points.push({
         col: cc, row: rr, x: found.x, y: found.y, score: found.score, ri, ci,
       });
@@ -131,7 +164,7 @@ export function refineQrModuleGrid(image, pageMapping, region, version) {
     });
     weights = points.map((p, i) =>
       Math.max(0.002, (p.score - 0.35) ** 2) *
-      Math.min(1, (7 / Math.max(0.001, errors[i])) ** 2));
+      Math.min(1, (tolerance / Math.max(0.001, errors[i])) ** 2));
     const next = fitAffine(points, weights);
     if (!next) break;
     aff = next;
@@ -140,7 +173,7 @@ export function refineQrModuleGrid(image, pageMapping, region, version) {
   for (const p of points) {
     const v = predicted(aff, p.col, p.row);
     const dx = p.x - v.x, dy = p.y - v.y;
-    if (Math.hypot(dx, dy) < 7) grid[p.ri * m + p.ci] = { dx, dy };
+    if (Math.hypot(dx, dy) < tolerance) grid[p.ri * m + p.ci] = { dx, dy };
   }
   const inlierCount = grid.filter(Boolean).length;
   if (inlierCount < 7) return null;
@@ -165,8 +198,8 @@ export function refineQrModuleGrid(image, pageMapping, region, version) {
   const markers = centers.map(c => c + 0.5);
   const moduleMap = (col, row) => {
     const p = predicted(aff, col, row);
-    const [x0, x1, fx] = bracket(markers, col);
-    const [y0, y1, fy] = bracket(markers, row);
+    const [x0, x1, fx] = bracket(markers, col, foregroundRobust);
+    const [y0, y1, fy] = bracket(markers, row, foregroundRobust);
     const a = grid[y0 * m + x0], b = grid[y0 * m + x1];
     const c = grid[y1 * m + x0], d = grid[y1 * m + x1];
     return {
