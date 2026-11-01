@@ -301,7 +301,7 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
   }, 60000);
 
   it("[WM-11] recovers independently warped 2x2 modules using only photographed alignment patterns", async () => {
-    const content = "Physical printer warp signed-page challenge. ".repeat(180).trimEnd();
+    const content = "Physical printer warp signed-page challenge. ".repeat(235).trimEnd();
     const { seals } = await signed(content);
     expect(seals).toHaveLength(4);
     const photo = printAndPhotograph(seals, {
