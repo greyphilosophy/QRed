@@ -9,10 +9,11 @@ import { getPreferredCameraStream, applyCameraQualityControls } from "./qr/camer
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
 import { createQrFrameScanner } from "./qr/scanQrImage.js";
-import { isQRedEntryLink } from "./qr/hiddenPayload.js";
+import { createLiveScanWorker } from "./qr/photoScanClient.js";
+import { qrFrameAction } from "./qr/decodePhoto.js";
 import * as verifier from "./qredVerifier.js";
 import { createQRedSeals } from "./qredSealer.js";
-import { createQRedQrSymbol } from "./qredQr.js";
+import { createQRedQrData, createQRedQrSymbol } from "./qredQr.js";
 import { readSigningKeyFile } from "./signingKeys.js";
 import { createVerificationSession } from "./verifier/verificationSession.js";
 import { createScanPhotoCollection } from "./verifier/scanPhotos.js";
@@ -41,8 +42,20 @@ function raster(symbol) {
 function loadStandalone(overrides = {}) {
   document.documentElement.innerHTML = readFileSync("verifier.html", "utf8");
   const source = document.querySelector('script[type="module"]').textContent.replace(/^\s*import .+;$/gm, "");
+  // jsdom has no real Worker. Keep the real client and QR decoder, delivering
+  // results asynchronously; the built-browser tests exercise the actual worker.
+  vi.stubGlobal("Worker", class {
+    scan = (overrides.createQrFrameScanner || createQrFrameScanner)();
+    stopped = false;
+    postMessage({ image, returnPayload }) {
+      const action = qrFrameAction(image, this.scan(image.data, image.width, image.height), { returnPayload });
+      queueMicrotask(() => { if (!this.stopped) this.onmessage?.({ data: { action } }); });
+    }
+    terminate() { this.stopped = true; }
+  });
   const bindings = {
-    getPreferredCameraStream, applyCameraQualityControls, authProvider, startCameraSession, observePageScanGuide, createQrFrameScanner, isQRedEntryLink, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
+    getPreferredCameraStream, applyCameraQualityControls, authProvider, startCameraSession, observePageScanGuide, createLiveScanWorker, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
+    preparePhotoScanner: vi.fn(),
     createScanPhotoCollection: callback => createScanPhotoCollection(callback, async () => new Blob(["frame"], { type: "image/png" })),
     mountPhotoTextVerification: () => ({ update: vi.fn() }),
     mountPdfSealInput: () => ({ update: vi.fn() }),
@@ -157,6 +170,7 @@ it("the standalone camera yields between retries and recovers a historical frame
   video.onloadedmetadata();
   expect(scan).toHaveBeenCalledTimes(1);
   expect(scan.mock.results[0].value).toBeNull();
+  await Promise.resolve();
 
   // Rendering frames during the cooldown must not do more decoding work.
   now += 124;
@@ -167,6 +181,7 @@ it("the standalone camera yields between retries and recovers a historical frame
     const callsBefore = scan.mock.calls.length;
     nextFrame();
     expect(scan).toHaveBeenCalledTimes(callsBefore + 1);
+    await Promise.resolve();
   }
   await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("QR_CONTENT"));
   expect(document.getElementById("resultContent").textContent).toContain("QRED1?");
@@ -194,8 +209,10 @@ it("keeps one camera session for multipart seals and resolves the default key af
   fireEvent.click(document.getElementById("btnScan"));
   await waitFor(() => expect(typeof video.onloadedmetadata).toBe("function"));
   video.onloadedmetadata();
+  await Promise.resolve();
   expect(document.getElementById("statusText").textContent).toContain("1 of 2 QR seals");
   now += 125; nextFrame();
+  await Promise.resolve();
   expect(document.querySelectorAll(".seal-item")).toHaveLength(1);
   expect(stop).not.toHaveBeenCalled();
   expect(fetch).not.toHaveBeenCalled();
@@ -205,4 +222,39 @@ it("keeps one camera session for multipart seals and resolves the default key af
   expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
   expect(stop).toHaveBeenCalledTimes(1);
   expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it("collects a page-aligned batch from one live camera frame", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  vi.stubGlobal("requestAnimationFrame", vi.fn());
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  const content = "Four-code camera page. ".repeat(160).trimEnd();
+  const sealed = await createQRedSeals({ content, privateKey, publicKey,
+    encodingStrategy: "plaintext", preferFourQrPage: true,
+    pageContext: { pageNumber: 1, pageCount: 1 } });
+  expect(sealed.seals).toHaveLength(4);
+  const codes = sealed.seals.map(seal => {
+    const { bytes, version } = createQRedQrData(seal);
+    return { data: "QRED.ORG", correctedData: bytes, version };
+  });
+  const snapshot = vi.fn(async () => new Blob(["frame"], { type: "image/png" }));
+  loadStandalone({ createQrFrameScanner: () => () => ({ codes }),
+    createScanPhotoCollection: callback => createScanPhotoCollection(callback, snapshot) });
+  const frame = { width: 320, height: 240, data: new Uint8ClampedArray(320 * 240 * 4) };
+  const video = document.getElementById("cameraVideo");
+  Object.defineProperties(video, { videoWidth: { value: frame.width }, videoHeight: { value: frame.height } });
+  vi.spyOn(video, "play").mockResolvedValue();
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage() {}, getImageData: () => frame });
+  Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: {
+    getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop() {} }] }),
+  } });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ public_key: publicKey, key_id: sealed.key_id }) }));
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(typeof video.onloadedmetadata).toBe("function"));
+  video.onloadedmetadata();
+  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
+  expect(document.getElementById("resultContent").textContent).toBe(content);
+  expect(document.querySelectorAll(".seal-item")).toHaveLength(4);
+  expect(snapshot).toHaveBeenCalledTimes(4);
+  for (const [source] of snapshot.mock.calls) expect(source).toBe(document.getElementById("scanCanvas"));
 });

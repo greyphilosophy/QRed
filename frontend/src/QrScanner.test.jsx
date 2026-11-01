@@ -4,13 +4,22 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, describe, expect, it, vi } from "vitest";
 import jsQR from "jsqr";
 import { createQrFrameScanner } from "./qr/scanQrImage.js";
-import { scanPhotoInWorker } from "./qr/photoScanClient.js";
+import { createLiveScanWorker, scanPhotoInWorker } from "./qr/photoScanClient.js";
 import { scanPageAlignedImage } from "./qr/pageAlignedScan.js";
 import { createQRedSeals } from "./qredSealer.js";
 import { createQRedQrData } from "./qredQr.js";
 import { applyCameraQualityControls, applyContinuousCameraFocus, decodeCanvasFrame, findPreferredMainCamera, getPreferredCameraStream, isCameraFrameReady, manualCapturePendingAction, MANUAL_CAPTURE_PENDING_TIMEOUT_MS, QrScanner, qrScanAction, QR_CAMERA_CONSTRAINTS } from "./QrScanner.jsx";
 
-vi.mock("./qr/photoScanClient.js", () => ({ preparePhotoScanner: vi.fn(), scanPhotoInWorker: vi.fn() }));
+vi.mock("./qr/photoScanClient.js", () => ({
+  preparePhotoScanner: vi.fn(), scanPhotoInWorker: vi.fn(),
+  createLiveScanWorker: vi.fn(() => {
+    const client = { busy: false };
+    client.scan = vi.fn(() => { client.busy = true; return true; });
+    client.reset = vi.fn(() => { client.busy = false; });
+    client.stop = vi.fn(() => { client.busy = false; });
+    return client;
+  }),
+}));
 vi.mock("jsqr", () => ({ default: vi.fn() }));
 vi.mock("./qr/pageAlignedScan.js", async importOriginal => {
   const actual = await importOriginal();
@@ -226,7 +235,7 @@ describe("QrScanner manual photo capture", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Start scanning" }));
 
-    expect(screen.getByRole("button", { name: "Scan photo" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Capture photo" })).toBeTruthy();
     await waitFor(() => expect(screen.getByText(/Camera access needed: denied/)).toBeTruthy());
   });
 
@@ -287,7 +296,7 @@ describe("QrScanner manual photo capture", () => {
     });
 
     now.mockReturnValue(1000);
-    fireEvent.click(screen.getByRole("button", { name: "Scan photo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Capture photo" }));
     expect(screen.getByRole("status", { name: /Camera is preparing the photo/ })).toBeTruthy();
 
     now.mockReturnValue(1000 + MANUAL_CAPTURE_PENDING_TIMEOUT_MS);
@@ -326,7 +335,7 @@ describe("QrScanner manual photo capture", () => {
     expect(screen.getByRole("status", { name: /Starting camera/ })).toBeTruthy();
   });
 
-  it.each([false, true])("preserves the manual frame while decoding and handles cancellation=%s", async cancel => {
+  it.each(["finish", "close", "resume"])("preserves the manual frame while decoding and handles %s", async outcome => {
     let nextFrame, finish;
     vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation(callback => { nextFrame = callback; return 1; });
     vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(() => {});
@@ -348,28 +357,44 @@ describe("QrScanner manual photo capture", () => {
     Object.defineProperties(document.querySelector("video"), {
       readyState: { value: 2 }, videoWidth: { value: 320 }, videoHeight: { value: 240 },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Scan photo" }));
-    expect(screen.getByRole("button", { name: "Reading photo…" }).disabled).toBe(true);
+    act(() => { now += 500; nextFrame(); });
+    const live = createLiveScanWorker.mock.results.at(-1).value;
+    expect(live.scan).toHaveBeenCalledTimes(1);
+    const liveDraws = context.drawImage.mock.calls.length;
+    act(() => { now += 500; nextFrame(); });
+    expect(context.drawImage).toHaveBeenCalledTimes(liveDraws);
+    fireEvent.click(screen.getByRole("button", { name: "Capture photo" }));
+    expect(screen.getByRole("button", { name: "Cancel and resume camera" }).disabled).toBe(false);
+    expect(createLiveScanWorker.mock.results.at(-1).value.reset).toHaveBeenCalledTimes(1);
     const canvas = document.querySelector("canvas");
     const draws = context.drawImage.mock.calls.length;
     act(() => { now += 500; nextFrame(); });
     expect(context.drawImage).toHaveBeenCalledTimes(draws);
     const signal = scanPhotoInWorker.mock.calls[0][1].signal;
-    if (cancel) {
+    if (outcome === "close") {
       fireEvent.click(screen.getByRole("button", { name: "Close" }));
       expect(signal.aborted).toBe(true);
       expect(screen.getByRole("button", { name: "Start scanning" }).disabled).toBe(false);
+    } else if (outcome === "resume") {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel and resume camera" }));
+      expect(signal.aborted).toBe(true);
+      expect(screen.getByRole("button", { name: "Capture photo" }).disabled).toBe(false);
+      act(() => { now += 500; nextFrame(); });
+      expect(context.drawImage).toHaveBeenCalledTimes(draws + 1);
+      expect(live.scan).toHaveBeenCalledTimes(2);
+      expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
+      expect(stop).not.toHaveBeenCalled();
     }
     await act(async () => finish({ status: "found", text: "https://example.test" }));
-    if (cancel) {
+    if (outcome !== "finish") {
       expect(onSealDetected).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: "Start scanning" }));
+      if (outcome === "close") fireEvent.click(screen.getByRole("button", { name: "Start scanning" }));
       expect(scanPhotoInWorker).toHaveBeenCalledTimes(1);
     } else {
       expect(onSealDetected).toHaveBeenCalledWith("https://example.test", canvas);
       expect(screen.getByRole("button", { name: "Scan again" }).disabled).toBe(false);
     }
-    expect(stop).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(outcome === "resume" ? 0 : 1);
   });
 });
 
@@ -406,7 +431,7 @@ describe("decodeCanvasFrame", () => {
     expect(manualCapturePendingAction(startedAt, startedAt + MANUAL_CAPTURE_PENDING_TIMEOUT_MS - 1)).toBeNull();
     expect(manualCapturePendingAction(startedAt, startedAt + MANUAL_CAPTURE_PENDING_TIMEOUT_MS)).toEqual({
       status: "feedback",
-      message: "The camera is open, but this browser is not delivering photo frames yet. Wait a moment, then try Scan photo again; if this keeps happening, close and reopen the scanner or check camera permissions.",
+      message: "The camera is open, but this browser is not delivering photo frames yet. Wait a moment, then try Capture photo again; if this keeps happening, close and reopen the scanner or check camera permissions.",
     });
   });
 

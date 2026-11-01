@@ -12,6 +12,16 @@ export function qrScanAction(data, width, height, code, { returnPayload = false 
   return text && !isQRedEntryLink(text) ? { status: "found", text } : { status: "continue" };
 }
 
+export function qrFrameAction(image, code, options = {}) {
+  const { data, width, height } = image;
+  if (code?.codes) {
+    const texts = code.codes.map(result => qrScanAction(data, width, height, result, options))
+      .filter(action => action.status === "found").map(action => action.text);
+    return texts.length ? { status: "found-multiple", texts } : { status: "continue" };
+  }
+  return qrScanAction(data, width, height, code, options);
+}
+
 // The same decoder serves a chosen photo and a manually captured camera frame.
 // Browser callers run this synchronous work in photoScan.worker.js.
 export function decodePhoto(image, { returnPayload = false } = {}) {
@@ -32,11 +42,7 @@ export function decodePhoto(image, { returnPayload = false } = {}) {
     if (aligned.length) return { status: "found-multiple", texts: aligned.map(result => result.seal) };
   }
   const code = scanQrImage(data, width, height);
-  if (code?.codes) {
-    const texts = code.codes.map(result => qrScanAction(data, width, height, result, { returnPayload }))
-      .filter(action => action.status === "found").map(action => action.text);
-    return texts.length ? { status: "found-multiple", texts } : { status: "continue" };
-  }
+  if (code?.codes) return qrFrameAction(image, code, { returnPayload });
   if (!code?.data) return { status: "feedback", message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For older seals, try framing the individual QR instead." };
   if (code.data === VISIBLE_QR_TEXT || /QRED[34]:/.test(code.data)
     || isQRedEntryLink(code.data) || code.data.includes("qred.org")) {

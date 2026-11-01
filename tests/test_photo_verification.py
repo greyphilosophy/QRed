@@ -132,14 +132,18 @@ def test_photo_comparison_reads_real_pixels_offline(browser, sealed_text, path, 
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
 @pytest.mark.parametrize("preload", [True, False], ids=["ready-offline", "load-after-scan"])
 def test_watermark_scan_captures_original_page_and_compares_automatically(browser, sealed_text, path, preload, tmp_path):
-    context = browser.new_context(service_workers="block", viewport={"width": 430, "height": 932})
+    context = browser.new_context(service_workers="allow", viewport={"width": 430, "height": 932})
     try:
+        base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
+        guard = OfflineNetworkGuard(context, base_url)
         context.route("**/api/keys/default", lambda route: route.fulfill(json={
             "public_key": PUBLIC_KEY, "key_id": "da522162396ab2d0",
         }))
-        base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
         page = context.new_page()
         page.goto(base_url + path, wait_until="networkidle")
+        # Live decoding now loads the same public worker as still-photo scans.
+        # Exercise the production offline cache while guarding actual traffic.
+        wait_for_offline_resources(page, photo=True)
         if path == "/verify.htm":
             # Preload the issuer key locally before entering airplane mode.
             page.locator("#publicKeyFileInput").set_input_files({
@@ -149,7 +153,9 @@ def test_watermark_scan_captures_original_page_and_compares_automatically(browse
         if preload:
             page.get_by_role("button", name="Load text recognition", exact=True).click()
             expect(page.get_by_role("button", name="Text recognition ready", exact=True)).to_be_visible(timeout=60000)
-            context.set_offline(True)
+            page.wait_for_load_state("networkidle")
+            guard.check_instrumentation(page)
+            guard.block()
 
         # The original camera view includes readable black text and a pale QR.
         # Altering the paper does not alter the authentic reference in the seal.
@@ -170,8 +176,6 @@ def test_watermark_scan_captures_original_page_and_compares_automatically(browse
             window.__syntheticCameraFrame = frame;
         }"""
         page.evaluate(awaitable_source, url)
-        requests = []
-        context.on("request", lambda request: requests.append(request.url) if request.url.startswith("http") else None)
         page.get_by_role("button", name="Start scanning" if path == "/" else "Scan QR Code", exact=True).click()
         expect(page.locator(".verification-result h3" if path == "/" else "#resultStatus")).to_have_text("VALID", timeout=30000)
         expect(page.locator(".photo-stage img")).to_be_visible(timeout=30000)
@@ -199,8 +203,7 @@ def test_watermark_scan_captures_original_page_and_compares_automatically(browse
             return { black, pale, corner: Array.from(pixels.slice(0, 3)) };
         }""")
         assert colours == {"black": True, "pale": True, "corner": [255, 255, 255]}
-        if preload:
-            assert requests == [], "Unexpected network activity during offline capture: " + repr(requests)
+        guard.assert_quiet()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), page.evaluate("""() =>
             [...document.querySelectorAll('body *')].filter(el => el.getBoundingClientRect().right > innerWidth)
               .map(el => ({tag: el.tagName, id: el.id, classes: el.className, width: el.getBoundingClientRect().width})).slice(0, 15)

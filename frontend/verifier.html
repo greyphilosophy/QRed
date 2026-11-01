@@ -387,9 +387,8 @@
     import { startCameraSession } from "./src/qr/cameraSession.js";
     import { observePageScanGuide } from "./src/qr/pageScanGuide.js";
     import { getPreferredCameraStream, applyCameraQualityControls } from "./src/qr/cameraControls.js";
-    import { createQrFrameScanner } from "./src/qr/scanQrImage.js";
-    import { isQRedEntryLink } from "./src/qr/hiddenPayload.js";
-    import { decodeSeal as decodeQRedSeal, verifyQRedSeals, qredPayloadFromPhotoScanResult } from "./src/qredVerifier.js";
+    import { createLiveScanWorker, preparePhotoScanner } from "./src/qr/photoScanClient.js";
+    import { decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
     import { mountPhotoTextVerification } from "./src/verifier/mountPhotoTextVerification.jsx";
     import { createScanPhotoCollection } from "./src/verifier/scanPhotos.js";
     import { mountPdfSealInput } from "./src/verifier/mountPdfSealInput.jsx";
@@ -436,6 +435,7 @@
     updatePhotoComparison([]);
     var pdfInput = mountPdfSealInput(document.getElementById("pdfSealInput"), processScannedSeal);
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(function() {});
+    preparePhotoScanner();
 
     // Camera handling
     var btnScan = document.getElementById("btnScan");
@@ -549,7 +549,26 @@
       document.getElementById("pageGuideHint").hidden = false;
       state.stopPageGuide = observePageScanGuide(video, guideArea, document.getElementById("pageGuide"));
 
-      var scanQrFrame = createQrFrameScanner();
+      function cameraError(err) {
+        stopScanning();
+        btnScan.textContent = "Scan QR Code";
+        statusText.textContent = "Camera error: " + err.message;
+        placeholder.style.display = "flex";
+        placeholder.innerHTML = "<div class='icon'>&#128247;</div><div>" + escapeHtml(err.message) + "</div>";
+      }
+      var liveScan = createLiveScanWorker({
+        returnPayload: true,
+        onResult: function(action) {
+          if (action.status === "found-multiple") {
+            // Collect every piece against this frame before the canvas is reused.
+            action.texts.forEach(function(text) { processScannedSeal(text, canvas); });
+          } else if (action.status === "found") {
+            processScannedSeal(action.text, canvas);
+          }
+        },
+        onError: cameraError,
+      });
+      state.liveScan = liveScan;
       state.isScanning = true;
       state.camera = startCameraSession({
         video: video,
@@ -559,28 +578,15 @@
         onFrame: function() {
           if (!video.videoWidth || !video.videoHeight) return;
           statusBar.classList.add("visible");
+          if (liveScan.busy) return;
           if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
           if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
           var ctx = canvas.getContext("2d");
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          var code = scanQrFrame(imageData.data, canvas.width, canvas.height);
-          if (code) {
-            var payload = qredPayloadFromPhotoScanResult(imageData.data, canvas.width, canvas.height, code);
-            if (isQRedEntryLink(payload)) {
-              statusText.textContent = "Include the whole page to read its pale watermark. Keep all four corners visible.";
-            } else {
-              processScannedSeal(payload, canvas);
-            }
-          }
+          liveScan.scan(imageData);
         },
-        onError: function(err) {
-          stopScanning();
-          btnScan.textContent = "Scan QR Code";
-          statusText.textContent = "Camera error: " + err.message;
-          placeholder.style.display = "flex";
-          placeholder.innerHTML = "<div class='icon'>&#128247;</div><div>" + escapeHtml(err.message) + "</div>";
-        },
+        onError: cameraError,
       });
     }
 
@@ -588,6 +594,8 @@
       state.isScanning = false;
       state.camera?.stop();
       state.camera = null;
+      state.liveScan?.stop();
+      state.liveScan = null;
       state.stopPageGuide?.();
       state.stopPageGuide = null;
       document.getElementById("pageGuideArea").hidden = true;

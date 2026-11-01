@@ -135,3 +135,82 @@ def test_large_photo_can_be_cancelled_then_another_seal_verified_offline(browser
         guard.assert_quiet()
     finally:
         context.close()
+
+
+@pytest.mark.parametrize("path", ["/", "/verify.htm"])
+def test_live_worker_has_no_backlog_and_capture_can_resume_the_same_camera_offline(browser, path):
+    context = browser.new_context(service_workers="allow", viewport={"width": 393, "height": 873})
+    try:
+        guard = OfflineNetworkGuard(context)
+        page = context.new_page()
+        page.goto(BASE_URL + path, wait_until="networkidle")
+        wait_for_offline_resources(page, photo=True)
+        page.evaluate("""() => {
+            window.liveTest = { requests: 0, responses: 0, pending: 0, maxPending: 0,
+                readsWhileBusy: 0, opens: 0, ticks: 0, terminated: 0 };
+            const NativeWorker = window.Worker;
+            window.Worker = class extends NativeWorker {
+                pending = false;
+                constructor(...args) {
+                    super(...args);
+                    this.addEventListener('message', () => {
+                        if (this.pending) {
+                            this.pending = false; liveTest.pending--; liveTest.responses++;
+                        }
+                    });
+                }
+                postMessage(message, transfer) {
+                    if (message.live) {
+                        this.pending = true; liveTest.requests++; liveTest.pending++;
+                        liveTest.maxPending = Math.max(liveTest.maxPending, liveTest.pending);
+                    }
+                    super.postMessage(message, transfer);
+                }
+                terminate() {
+                    if (this.pending) { this.pending = false; liveTest.pending--; }
+                    liveTest.terminated++;
+                    super.terminate();
+                }
+            };
+            const read = CanvasRenderingContext2D.prototype.getImageData;
+            CanvasRenderingContext2D.prototype.getImageData = function(...args) {
+                if (this.canvas.matches('.ar-camera canvas, #scanCanvas') && liveTest.pending) liveTest.readsWhileBusy++;
+                return read.apply(this, args);
+            };
+            const canvas = document.createElement('canvas'); canvas.width = 1080; canvas.height = 1920;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#454545'; ctx.fillRect(0, 0, 1080, 1920);
+            ctx.fillStyle = '#fafafa'; ctx.fillRect(100, 350, 880, 1160);
+            ctx.fillStyle = '#333'; ctx.font = '24px sans-serif';
+            for (let row = 0; row < 24; row++) ctx.fillText('Synthetic page with text but no QR seal.', 150, 440 + row * 36);
+            const stream = canvas.captureStream(10);
+            window.liveTestStream = stream;
+            navigator.mediaDevices.getUserMedia = async () => { liveTest.opens++; return stream; };
+            navigator.mediaDevices.enumerateDevices = async () => [];
+            setInterval(() => liveTest.ticks++, 25);
+        }""")
+        guard.block()
+        page.get_by_role("button", name="Start scanning" if path == "/" else "Scan QR Code", exact=True).click()
+        page.wait_for_function("liveTest.responses >= 2", timeout=15000)
+        if path == "/":
+            page.get_by_role("button", name="Capture photo", exact=True).click()
+            expect(page.get_by_role("button", name="Cancel and resume camera", exact=True)).to_be_visible()
+            assert page.evaluate("liveTest.pending") == 0
+            ticks = page.evaluate("liveTest.ticks")
+            page.wait_for_function("ticks => liveTest.ticks > ticks + 2", arg=ticks, timeout=2000)
+            before = page.evaluate("liveTest.requests")
+            page.get_by_role("button", name="Cancel and resume camera", exact=True).click()
+            expect(page.get_by_role("button", name="Capture photo", exact=True)).to_be_visible()
+            page.wait_for_function("before => liveTest.requests > before", arg=before, timeout=3000)
+        assert page.evaluate("liveTestStream.getTracks().every(track => track.readyState === 'live')")
+        state = page.evaluate("liveTest")
+        assert state["opens"] == 1
+        assert state["maxPending"] == 1
+        assert state["readsWhileBusy"] == 0
+        page.get_by_role("button", name="Close" if path == "/" else "Stop", exact=True).click()
+        assert page.evaluate("liveTestStream.getTracks().every(track => track.readyState === 'ended')")
+        assert page.evaluate("liveTest.pending") == 0
+        assert page.evaluate("liveTest.terminated") >= 1
+        guard.assert_quiet()
+    finally:
+        context.close()
