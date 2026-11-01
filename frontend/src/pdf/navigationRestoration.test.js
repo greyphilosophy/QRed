@@ -72,7 +72,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
-async function makeInvoice() {
+async function makeInvoice(narrowMargins = false) {
   // Synthetic invoice-like page; no real customer's document is committed.
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([612, 792]);
@@ -80,7 +80,7 @@ async function makeInvoice() {
   // intentionally omit the navigation QR instead.
   page.drawRectangle({ x: 260, y: 360, width: 125, height: 120, color: rgb(0, 0, 0) });
   page.drawText("SAMPLE INVOICE", { x: 420, y: 660, size: 11 });
-  page.drawText("Example Customer", { x: 36, y: 660, size: 11 });
+  page.drawText("Example Customer", { x: narrowMargins ? 32 : 36, y: 660, size: 11 });
   page.drawText("Paid in full", { x: 36, y: 580, size: 11 });
   page.drawText("Thank you", { x: 260, y: 140, size: 10 });
   return new File([await pdf.save()], "synthetic-restore-navigation.pdf", { type: "application/pdf" });
@@ -115,12 +115,12 @@ it("restores a decodable navigation QR after recovering a readable signed waterm
     .resolves.toMatchObject({ status: "VALID", page_number: 1, page_count: 1 });
 }, 60000);
 
-it("tries and verifies a smaller square after the full-page rectangle fails preflight", async () => {
+it.each([false, true])("verifies a smaller square after the rectangle fails (narrow margins: %s)", async narrowMargins => {
   preflight.forceSquare = false;
   preflight.failFirstEntry = false;
   preflight.failFirstAligned = true;
   const result = await sealPdfInBrowser({
-    file: await makeInvoice(), privateKey, publicKey, pageScalingStrategy: "automatic",
+    file: await makeInvoice(narrowMargins), privateKey, publicKey, pageScalingStrategy: "automatic",
   });
   expect(preflight.layouts[0]).toBe("page-aligned");
   expect(preflight.layouts.slice(1)).not.toContain("page-aligned");

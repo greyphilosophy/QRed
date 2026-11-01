@@ -2,10 +2,10 @@ import { BlendMode, rgb, StandardFonts } from "pdf-lib";
 import QRCode from "qrcode";
 import { createQRedQrSymbol } from "../qredQr.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
-import { MIN_WATERMARK_MARGIN_POINTS, pageWatermarkRegions, scanPageAlignedImage } from "../qr/pageAlignedScan.js";
+import { DEFAULT_WATERMARK_MARGIN_POINTS, pageWatermarkRegions, scanPageAlignedImage } from "../qr/pageAlignedScan.js";
 import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
 import { renderPdfPage, withPdfDocument } from "./readPdfText.js";
-import { planWatermarks } from "./watermarkPlacement.js";
+import { planWatermarks, watermarkMarginForPage } from "./watermarkPlacement.js";
 import { scanAllSealsFromPage, scanFramedSealFromPage, simulatePrintPhoto } from "./watermarkPreflight.js";
 
 export { planWatermarks } from "./watermarkPlacement.js";
@@ -25,7 +25,7 @@ export function createEntryQrSymbol() {
 // Fifteen-percent black survives more printer gray-tone loss than the old 6%.
 // Keep it pale enough to preserve the readability of underlying black text.
 export const WATERMARK_GRAY = 0.85;
-const MARGIN = MIN_WATERMARK_MARGIN_POINTS;
+const MARGIN = DEFAULT_WATERMARK_MARGIN_POINTS;
 const ENTRY_WIDTH = 70, ENTRY_HEIGHT = 52;
 
 // Count every visible nonwhite pixel, including graphics and annotations.
@@ -127,7 +127,8 @@ export async function planPdfWatermarks(file, pageSealResults, pageIndices = pag
       // A failed full-page grid contains every possible fallback square.
       // Its footprint must not exclude those candidates; overlap exclusion
       // applies only when retrying another content-avoiding square layout.
-      const options = { excludeBoxes: previous?.pageAligned ? null : previous?.boxes ?? null };
+      const options = { excludeBoxes: previous?.pageAligned ? null : previous?.boxes ?? null,
+        marginPoints: watermarkMarginForPage(image) };
       let boxes = null, pageAligned = false;
       // A standard page-relative grid uses all available paper, not arbitrary
       // blank squares. An entry QR would overlap it, so the signed data wins.
@@ -137,7 +138,7 @@ export async function planPdfWatermarks(file, pageSealResults, pageIndices = pag
           // Only the standardized page-relative geometry can be decoded
           // without the signer sharing its placement. Four *legacy squares*
           // must not be mislabeled as four aligned quadrants.
-          const standard = pageWatermarkRegions(symbols.length, image.bounds).map(region => ({
+          const standard = pageWatermarkRegions(symbols.length, image.bounds, options).map(region => ({
             x: image.bounds.x + region.x * image.bounds.width,
             y: image.bounds.y + (1 - region.y - region.height) * image.bounds.height,
             width: region.width * image.bounds.width,

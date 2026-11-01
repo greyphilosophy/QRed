@@ -11,12 +11,12 @@ import { planWatermarks } from "../pdf/watermarkPlacement.js";
 import { stampWatermarks } from "../pdf/watermark.js";
 import { renderPdfPage, withPdfDocument } from "../pdf/readPdfText.js";
 import { scanPdfPage } from "../verifier/scanPdf.js";
-import { MIN_WATERMARK_MARGIN_POINTS, pageWatermarkRegions, scanPageAlignedImage } from "./pageAlignedScan.js";
+import { DEFAULT_WATERMARK_MARGIN_POINTS, pageWatermarkRegions, scanPageAlignedImage } from "./pageAlignedScan.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
 const pageSize = { width: 612, height: 792 };
-const margin = MIN_WATERMARK_MARGIN_POINTS;
+const margin = DEFAULT_WATERMARK_MARGIN_POINTS;
 
 function blankPage() {
   const width = pageSize.width, height = pageSize.height;
@@ -50,12 +50,12 @@ function printAndPhotograph(seals, {
   backdrop = [43, 43, 47], patternedBackdrop = false, shadowed = false,
   printGray = 0.85, paperBase = 246, printerScale = 1,
   pageFormat = pageSize, legacyMargins = false, printerWarp = 0,
-  lightTint = null,
+  lightTint = null, marginPoints = margin,
 } = {}) {
   const symbols = seals.map(seal => createQRedQrSymbol(seal));
   if (![0, 1, 4].includes(symbols.length)) throw new Error("Fixture supports 0, 1 or 4 QR chunks");
   const boxes = symbols.length
-    ? pageWatermarkRegions(symbols.length, pageFormat, { legacy: legacyMargins })
+    ? pageWatermarkRegions(symbols.length, pageFormat, { legacy: legacyMargins, marginPoints })
       .map(region => ({ x: region.x, y: region.y, w: region.width, h: region.height }))
     : [];
   // Projective mapping: x=(a+b*u+c*v)/(1+k*u+l*v),
@@ -465,6 +465,25 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     });
     expect(scanPageAlignedImage(photo).map(item => item.seal)).toContain(seals[0]);
   }, 60000);
+
+  it.each([
+    ["Letter single", pageSize, 1],
+    ["A4 single", { width: 595.28, height: 841.89 }, 1],
+    ["Letter quartet", pageSize, 4],
+    ["A4 quartet", { width: 595.28, height: 841.89 }, 4],
+  ])("[WM-12] verifies a half-inch %s photograph without margin metadata", async (_name, pageFormat, count) => {
+    const content = count === 1 ? "Content-aware watermark with half-inch margins. ".repeat(10).trimEnd()
+      : "Four-quadrant signed page\n" + "QRed evidence-".repeat(700);
+    const { seals } = await signed(content);
+    expect(seals).toHaveLength(count);
+    const photo = printAndPhotograph(seals, {
+      width: 1200, height: 1600, marginPoints: 36, pageFormat, printerScale: 0.97,
+    });
+    const { seals: recovered } = await scanPdfPage(rotatePhoto(photo, 2));
+    expect(new Set(recovered)).toEqual(new Set(seals));
+    await expect(verifyQRedSeals(recovered, publicKey))
+      .resolves.toMatchObject({ status: "VALID", content });
+  }, 90000);
 
   it("[WM-04, WM-05] reconstructs FOUR adjacent QR grids with no internal quiet zones", async () => {
     const content = "Four-quadrant signed page\n" + "QRed evidence-".repeat(700);

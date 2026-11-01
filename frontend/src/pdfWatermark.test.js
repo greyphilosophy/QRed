@@ -161,8 +161,8 @@ describe("experimental PDF watermarks", () => {
     expect(result.watermarkLayout.every(layout => layout.pageAligned)).toBe(true);
     for (const layout of result.watermarkLayout) {
       expect(layout.boxes).toHaveLength(1);
-      expect(layout.boxes[0]).toMatchObject({ x: 54, width: 504, height: 684 });
-      expect(layout.boxes[0].y).toBeCloseTo(54);
+      expect(layout.boxes[0]).toMatchObject({ x: 36, width: 540, height: 720 });
+      expect(layout.boxes[0].y).toBeCloseTo(36);
     }
     expect(result.pageSealStrings.map(seals => seals.length)).toEqual([1, 1]);
     const pdf = await PDFDocument.load(await result.blob.arrayBuffer());

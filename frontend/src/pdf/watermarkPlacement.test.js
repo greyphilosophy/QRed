@@ -37,9 +37,42 @@ describe("page-aware watermark placement", () => {
     const boxes = planWatermarks(image, Array(count).fill(quadrantSymbol));
     expect(boxes).toHaveLength(count);
     for (const box of boxes) {
-      expect(box.width).toBeCloseTo(count === 1 ? 504 : 252);
-      expect(box.height).toBeCloseTo(count === 1 ? 684 : 342);
+      expect(box.width).toBeCloseTo(count === 1 ? 540 : 270);
+      expect(box.height).toBeCloseTo(count === 1 ? 720 : 360);
     }
+  });
+
+  it.each([
+    ["left", { x: 32, y: 300, width: 12, height: 60 }],
+    ["right", { x: 574, y: 300, width: 12, height: 60 }],
+    ["top", { x: 250, y: 754, width: 60, height: 12 }],
+    ["bottom", { x: 250, y: 30, width: 60, height: 12 }],
+  ])("uses half-inch margins when original visible ink reaches the %s edge band", (_edge, graphic) => {
+    const [box] = planWatermarks(pageWithGraphic(graphic), [symbol]);
+    expect(box.x).toBeCloseTo(36);
+    expect(box.y).toBeCloseTo(36);
+    expect(box.width).toBeCloseTo(540);
+    expect(box.height).toBeCloseTo(720);
+  });
+
+  it("keeps the generous margin for blank, wider-margin and isolated-speck pages", () => {
+    for (const graphic of [null, { x: 40, y: 300, width: 50, height: 50 },
+      { x: 1, y: 1, width: 1, height: 1 }]) {
+      const [box] = planWatermarks(pageWithGraphic(graphic), [symbol]);
+      expect(box.x).toBeCloseTo(54);
+      expect(box.y).toBeCloseTo(54);
+      expect(box.width).toBeCloseTo(504);
+      expect(box.height).toBeCloseTo(684);
+    }
+  });
+
+  it("keeps a half-inch floor even for artwork running to the page edge", () => {
+    const [box] = planWatermarks(pageWithGraphic({ x: 0, y: 0, width: 612, height: 792 },
+      { bounds: { x: 71, y: -37, width: 612, height: 792 }, shade: 240 }), [symbol]);
+    expect(box.x).toBeCloseTo(71 + 36);
+    expect(box.y).toBeCloseTo(-37 + 36);
+    expect(box.width).toBeCloseTo(540);
+    expect(box.height).toBeCloseTo(720);
   });
 
   it("keeps the same physical placement when the PDF crop origin changes", () => {
