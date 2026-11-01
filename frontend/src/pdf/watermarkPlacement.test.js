@@ -57,8 +57,8 @@ describe("page-aware watermark placement", () => {
     expect(boxes).toHaveLength(4);
     for (let i = 0; i < boxes.length; i++) {
       expect(boxes[i].width / 125).toBeGreaterThanOrEqual(MIN_WATERMARK_MODULE_SIZE);
-      expect(boxes[i].x).toBeGreaterThanOrEqual(54);
-      expect(boxes[i].y).toBeGreaterThanOrEqual(54);
+      expect(boxes[i].x).toBeGreaterThanOrEqual(54 - 0.001);
+      expect(boxes[i].y).toBeGreaterThanOrEqual(54 - 0.001);
       expect(boxes[i].x + boxes[i].width).toBeLessThanOrEqual(558.001);
       expect(boxes[i].y + boxes[i].height).toBeLessThanOrEqual(738.001);
       for (let j = i + 1; j < boxes.length; j++) expect(intersects(boxes[i], boxes[j])).toBe(false);

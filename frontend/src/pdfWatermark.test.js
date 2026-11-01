@@ -136,7 +136,14 @@ describe("experimental PDF watermarks", () => {
     const pdf = await PDFDocument.load(await result.blob.arrayBuffer());
     expect(pdf.getPages().map(page => page.getSize())).toEqual([{ width: 612, height: 792 }, { width: 612, height: 792 }]);
     const sourceText = await extractPdfText(file);
-    expect((await extractPdfText(result.blob)).replace(/\n?Verify at qred\.org/g, "")).toBe(sourceText);
+    // The optional navigation caption can sit near a PDF text baseline.
+    // PDF.js may insert one separating space when extracting that caption;
+    // compare the unchanged source text after stripping that presentation
+    // whitespace, never after changing any actual words or signed data.
+    const sealedText = (await extractPdfText(result.blob))
+      .replace(/\n?Verify at qred\.org/g, "")
+      .replace(/[ \t]+(?=\n|$)/g, "");
+    expect(sealedText).toBe(sourceText);
     for (let index = 0; index < 2; index++) {
       const original = render(await file.arrayBuffer(), index + 1);
       const printed = render(await result.blob.arrayBuffer(), index + 1);
