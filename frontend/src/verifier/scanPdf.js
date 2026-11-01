@@ -87,7 +87,7 @@ export async function scanPdfPage(image, { onSeal = () => {}, signal, pageAligne
   // provided pixels; the original PDF's layout is never required.
   if (pageAligned) {
     signal?.throwIfAborted();
-    const aligned = scanPageAlignedImage(image);
+    const aligned = scanPageAlignedImage(image, { deep: !image.bounds });
     for (const { seal } of aligned) {
       if (!decodeSeal(seal) || seals.has(seal)) continue;
       seals.add(seal);

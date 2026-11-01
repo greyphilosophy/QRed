@@ -49,7 +49,7 @@ function printAndPhotograph(seals, {
   tilted = true, finderBlocked = true, text = true,
   backdrop = [43, 43, 47], patternedBackdrop = false, shadowed = false,
   printGray = 0.85, paperBase = 246, printerScale = 1,
-  pageFormat = pageSize, legacyMargins = false,
+  pageFormat = pageSize, legacyMargins = false, printerWarp = 0,
 } = {}) {
   const symbols = seals.map(seal => createQRedQrSymbol(seal));
   if (![0, 1, 4].includes(symbols.length)) throw new Error("Fixture supports 0, 1 or 4 QR chunks");
@@ -84,8 +84,13 @@ function printAndPhotograph(seals, {
     // Physical printer content is not guaranteed to occupy the same region
     // of the paper as the source PDF. Keep the paper corners unchanged while
     // independently shrinking the printed content.
-    const sheetU = 0.5 + (u - 0.5) / printerScale;
-    const sheetV = 0.5 + (v - 0.5) / printerScale;
+    const baseU = 0.5 + (u - 0.5) / printerScale;
+    const baseV = 0.5 + (v - 0.5) / printerScale;
+    // Printer/camera distortion that differs across a single sheet, rather
+    // than a uniform 97% shrink. This must be calibrated from visible QR
+    // alignment patterns, not from a saved PDF or a global page homography.
+    const sheetU = baseU + printerWarp * (baseV - 0.5) * (baseU - 0.5);
+    const sheetV = baseV + printerWarp * (baseU - 0.5) ** 2;
     let localRow = -1, localCol = -1, matchedPart = -1;
     for (let part = 0; part < symbols.length; part++) {
       const box = boxes[part];
@@ -294,6 +299,25 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     await expect(verifyQRedSeals(recovered, publicKey))
       .resolves.toMatchObject({ status: "VALID", content });
   }, 60000);
+
+  it("[WM-11] recovers independently warped 2x2 modules using only photographed alignment patterns", async () => {
+    const content = "Physical printer warp signed-page challenge. ".repeat(300).trimEnd();
+    const { seals } = await signed(content);
+    expect(seals).toHaveLength(4);
+    const photo = printAndPhotograph(seals, {
+      width: 1200, height: 1600, text: false, finderBlocked: false,
+      printerScale: 0.97, printerWarp: 0.035,
+    });
+    const recovered = scanPageAlignedImage(photo, { deep: true });
+    expect(new Set(recovered.map(item => item.seal))).toEqual(new Set(seals));
+    expect(recovered.some(item => item.code.refined)).toBe(true);
+    for (const item of recovered) {
+      expect(item.code.version).toBeGreaterThanOrEqual(7);
+      expect(item.code.pageAligned).toBe(true);
+    }
+    await expect(verifyQRedSeals(recovered.map(item => item.seal).toReversed(), publicKey))
+      .resolves.toMatchObject({ status: "VALID", content });
+  }, 90000);
 
   it("[WM-12] decodes a physically margin-safe A4 watermark from pixels alone", async () => {
     const content = "A4 paper; real 54pt (0.75in) QR clearance on all four sides. ".repeat(10).trimEnd();

@@ -243,7 +243,7 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
   // Return them in one action rather than repeatedly recovering only the
   // first quadrant from the same frame.
   if (manual && returnPayload) {
-    const aligned = scanPageAlignedImage(imageData);
+    const aligned = scanPageAlignedImage(imageData, { deep: true });
     if (aligned.length) return { status: "found-multiple", texts: aligned.map(result => result.seal) };
   }
   const code = !manual && options.scanQrFrame

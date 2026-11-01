@@ -5,6 +5,7 @@ import jsQR from "jsqr";
 import { hiddenPayloadFromScanResult } from "./hiddenPayload.js";
 import { isChromaticForeground } from "./watermarkFilter.js";
 import { readErasedQrMatrix } from "./qrErasureRecovery.js";
+import { recoverRefinedQrRegion } from "./pageAlignedRecovery.js";
 
 // Printer-safe clearance for QRed's visible watermark modules. One PDF point
 // is 1/72 inch, so 54 points = 0.75 inch of blank border on every side.
@@ -499,7 +500,7 @@ function decodeRegion(image, mapping, region) {
  * established from visible paper edges, not from metadata or a signing layout.
  * "pageAligned: false" is handled by callers as the legacy fallback path.
  */
-export function scanPageAlignedImage(image) {
+export function scanPageAlignedImage(image, { deep = false } = {}) {
   if (!image || !Number.isInteger(image.width) || !Number.isInteger(image.height) ||
       image.width < 160 || image.height < 160 ||
       image.width * image.height > MAX_PHOTO_PIXELS ||
@@ -537,5 +538,73 @@ export function scanPageAlignedImage(image) {
       if (codes.length === 4) return codes;
     }
   }
-  return bestCodes;
+  if (!deep || image.bounds || bestCodes.length === 4) return bestCodes;
+
+  // Actual printers can shrink or shear the PDF's content independently of
+  // the sheet. Only static uploads and manually captured photos request this
+  // bounded, finer alignment search; ordinary camera frames stay lightweight.
+  // Start with the page's most likely size and lower-right quadrant, which is
+  // least likely to be crossed by headings. Successful version recovery in one
+  // quadrant makes the other three fast without assuming matching payloads.
+  const photoProfiles = profiles.filter(profile => !profile.legacy).slice(0, 2);
+  let budget = 36;
+  let best = bestCodes;
+  for (const scale of [0.97, 1]) {
+    const pageMap = scale === 1 ? mapping :
+      (u, v) => mapping(0.5 + (u - 0.5) * scale, 0.5 + (v - 0.5) * scale);
+    const sample = { ...image, paperAt: paperBrightnessMap(image, pageMap) };
+    for (const profile of photoProfiles) {
+      const regions = pageWatermarkRegions(4, profile.size, profile);
+      const found = [...best];
+      let seededVersion = best[0]?.code?.version ?? null;
+      for (const index of [3, 2, 1, 0]) {
+        const region = regions[index];
+        const coarse = chooseVersions(sample, pageMap, region).map(v => v.version);
+        const versions = [];
+        const add = version => {
+          if (version >= 7 && version <= 40 && !versions.includes(version))
+            versions.push(version);
+        };
+        if (seededVersion) for (const d of [0, -1, 1, -2, 2])
+          add(seededVersion + d);
+        for (const version of coarse.slice(0, 5))
+          for (const d of [0, -1, 1, -2, 2]) add(version + d);
+        // A wider set is only needed when corner-based version scoring is
+        // misleading. The version's own BCH fields must still agree.
+        for (const version of [27, 26, 28, 25, 29, 24, 30, 23, 31, 22, 32])
+          add(version);
+        for (const version of versions.slice(0, seededVersion ? 9 : 15)) {
+          if (budget-- <= 0) break;
+          const recovered = recoverRefinedQrRegion(image, pageMap, region, version);
+          if (!recovered) continue;
+          seededVersion = version;
+          if (!found.some(other => other.seal === recovered.seal))
+            found.push(recovered);
+          break;
+        }
+        if (budget <= 0) break;
+      }
+      if (found.length > best.length) best = found;
+      if (best.length >= 4) return best;
+      if (budget <= 0) break;
+      // One rectangular code may also need independent alignment refinement.
+      if (!best.length) {
+        const region = pageWatermarkRegions(1, profile.size, profile)[0];
+        const versions = [];
+        const add = version => {
+          if (version >= 7 && version <= 40 && !versions.includes(version))
+            versions.push(version);
+        };
+        for (const item of chooseVersions(sample, pageMap, region))
+          for (const d of [0, -1, 1, -2, 2]) add(item.version + d);
+        for (const version of versions.slice(0, 8)) {
+          if (budget-- <= 0) break;
+          const recovered = recoverRefinedQrRegion(image, pageMap, region, version);
+          if (recovered) return [recovered];
+        }
+      }
+    }
+    if (budget <= 0) break;
+  }
+  return best;
 }

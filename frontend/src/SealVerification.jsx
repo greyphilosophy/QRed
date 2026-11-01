@@ -111,7 +111,7 @@ export function SealVerification({ verification }) {
       // A single photographed sheet can contain four adjacent watermark
       // chunks. Recover them all without asking the user to upload the same
       // image four times. Keep the page photo once for later comparison.
-      const aligned = scanPageAlignedImage(pixels);
+      const aligned = scanPageAlignedImage(pixels, { deep: true });
       if (request !== imageRead.current) return;
       if (aligned.length) {
         aligned.forEach(({ seal }, index) => addSeal(seal, index === 0 ? canvas : null));
