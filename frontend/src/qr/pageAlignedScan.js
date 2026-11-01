@@ -6,7 +6,21 @@ import { hiddenPayloadFromScanResult } from "./hiddenPayload.js";
 import { isChromaticForeground } from "./watermarkFilter.js";
 import { readErasedQrMatrix } from "./qrErasureRecovery.js";
 
-const PAPER_INSET = 0.03;
+// Printer-safe clearance for QRed's visible watermark modules. One PDF point
+// is 1/72 inch, so 54 points = 0.75 inch of blank border on every side.
+export const MIN_WATERMARK_MARGIN_POINTS = 54;
+const LEGACY_PAPER_INSET = 0.03;
+export const LETTER_PAGE_SIZE = Object.freeze({ width: 612, height: 792 });
+// Printed documents do not carry metadata revealing the original paper size.
+// A verifier therefore tries plausible physical page formats and accepts only
+// an exact, cryptographically verified seal (not a guessed placement).
+const PHOTO_PAGE_FORMATS = [
+  LETTER_PAGE_SIZE,
+  { width: 595.28, height: 841.89 }, // A4
+  { width: 841.89, height: 1190.55 }, // A3
+  { width: 612, height: 1008 },       // US Legal
+  { width: 792, height: 1224 },       // US Tabloid/Ledger
+];
 // Allow current 12–48 MP phone stills without duplicating their full raster.
 // Only the page-edge detector uses a small preview. QR module evidence is
 // ALWAYS sampled from the original full-resolution pixels.
@@ -15,16 +29,45 @@ const MAX_GEOMETRY_PIXELS = 1_500_000;
 const MODULE_RENDER_PIXELS = 4;
 const FINDER_LOCATIONS = ["topRight", "bottomLeft"];
 
-export function pageWatermarkRegions(count) {
-  if (count === 1) return [{ x: PAPER_INSET, y: PAPER_INSET, width: 1 - PAPER_INSET * 2, height: 1 - PAPER_INSET * 2 }];
+// Margins refer to the ORIGINAL PDF page in points, not the photographed
+// pixels. In particular, 54pt must NOT become "3%" on every paper size.
+// Legacy 3%-inset documents stay readable through an explicit scan fallback.
+export function pageWatermarkRegions(count, pageSize = LETTER_PAGE_SIZE, { legacy = false } = {}) {
+  const { width, height } = pageSize ?? {};
+  if (!Number.isFinite(width) || !Number.isFinite(height) ||
+      width <= MIN_WATERMARK_MARGIN_POINTS * 2 ||
+      height <= MIN_WATERMARK_MARGIN_POINTS * 2) {
+    throw new Error("Page is too small for 0.75-inch watermark margins.");
+  }
+  const marginX = legacy ? LEGACY_PAPER_INSET : MIN_WATERMARK_MARGIN_POINTS / width;
+  const marginY = legacy ? LEGACY_PAPER_INSET : MIN_WATERMARK_MARGIN_POINTS / height;
+  const innerWidth = 1 - marginX * 2, innerHeight = 1 - marginY * 2;
+  if (count === 1) {
+    return [{ x: marginX, y: marginY, width: innerWidth, height: innerHeight }];
+  }
   if (count !== 4) throw new Error("Page-aligned watermarks use one or four QR symbols.");
-  const half = (1 - PAPER_INSET * 2) / 2;
+  const halfWidth = innerWidth / 2, halfHeight = innerHeight / 2;
   return Array.from({ length: 4 }, (_, i) => ({
-    x: PAPER_INSET + (i % 2) * half,
-    y: PAPER_INSET + Math.floor(i / 2) * half,
-    width: half,
-    height: half,
+    x: marginX + (i % 2) * halfWidth,
+    y: marginY + Math.floor(i / 2) * halfHeight,
+    width: halfWidth,
+    height: halfHeight,
   }));
+}
+
+function photoPageSizes(image, quad) {
+  if (image.bounds) return [image.bounds];
+  const [tl, tr, br, bl] = quad;
+  const measured = (distance(tl, tr) + distance(bl, br)) /
+    Math.max(1, distance(tl, bl) + distance(tr, br));
+  // Approximate image aspect ratio is only a RANKING clue because camera
+  // perspective, curl and skew change the observed edge lengths. A4 and A3
+  // require separate trials despite having the same aspect ratio.
+  const ranked = PHOTO_PAGE_FORMATS
+    .map(size => ({ size, deviation: Math.abs(size.width / size.height - measured) }))
+    .sort((a, b) => a.deviation - b.deviation);
+  return ranked.filter(({ deviation }, i) => i === 0 || deviation <= 0.15)
+    .slice(0, 4).map(({ size }) => size);
 }
 
 function luminance(data, index) {
@@ -470,20 +513,29 @@ export function scanPageAlignedImage(image) {
   // geometry fails. This handles uniform 97% shrink; off-axis and local
   // distortion still require independent QR finder/timing calibration.
   const scaleAttempts = image.bounds ? [1] : [1, 0.97];
+  // Keep legacy 3%-inset documents verifiable while new seals use 54pt.
+  // The new safe layout is always attempted before the backward-compatible
+  // one, and any result still needs the complete signed payload.
+  const formats = photoPageSizes(image, quad);
+  const profiles = [...formats.map(size => ({ size, legacy: false })),
+    { size: LETTER_PAGE_SIZE, legacy: true }];
   let bestCodes = [];
   for (const scale of scaleAttempts) {
     const candidateMapping = scale === 1 ? mapping :
       (u, v) => mapping(0.5 + (u - 0.5) * scale, 0.5 + (v - 0.5) * scale);
     const sampledImage = { ...image, paperAt: paperBrightnessMap(image, candidateMapping) };
-    const single = decodeRegion(sampledImage, candidateMapping, pageWatermarkRegions(1)[0]);
-    if (single) return [single];
-    const codes = [];
-    for (const region of pageWatermarkRegions(4)) {
-      const found = decodeRegion(sampledImage, candidateMapping, region);
-      if (found && !codes.some(other => other.seal === found.seal)) codes.push(found);
+    for (const profile of profiles) {
+      const singleRegion = pageWatermarkRegions(1, profile.size, profile)[0];
+      const single = decodeRegion(sampledImage, candidateMapping, singleRegion);
+      if (single) return [single];
+      const codes = [];
+      for (const region of pageWatermarkRegions(4, profile.size, profile)) {
+        const found = decodeRegion(sampledImage, candidateMapping, region);
+        if (found && !codes.some(other => other.seal === found.seal)) codes.push(found);
+      }
+      if (codes.length > bestCodes.length) bestCodes = codes;
+      if (codes.length === 4) return codes;
     }
-    if (codes.length > bestCodes.length) bestCodes = codes;
-    if (codes.length === 4) return codes;
   }
   return bestCodes;
 }

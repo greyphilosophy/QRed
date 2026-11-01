@@ -2,7 +2,7 @@ import { BlendMode, rgb, StandardFonts } from "pdf-lib";
 import QRCode from "qrcode";
 import { createQRedQrSymbol } from "../qredQr.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
-import { pageWatermarkRegions, scanPageAlignedImage } from "../qr/pageAlignedScan.js";
+import { MIN_WATERMARK_MARGIN_POINTS, pageWatermarkRegions, scanPageAlignedImage } from "../qr/pageAlignedScan.js";
 import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
 import { renderPdfPage, withPdfDocument } from "./readPdfText.js";
 import { planWatermarks } from "./watermarkPlacement.js";
@@ -15,7 +15,7 @@ export const ENTRY_QR_SIZE = 36;
 // Fifteen-percent black survives more printer gray-tone loss than the old 6%.
 // Keep it pale enough to preserve the readability of underlying black text.
 export const WATERMARK_GRAY = 0.85;
-const MARGIN = 18;
+const MARGIN = MIN_WATERMARK_MARGIN_POINTS;
 const ENTRY_WIDTH = 70, ENTRY_HEIGHT = 52;
 
 // Count every visible nonwhite pixel, including graphics and annotations.
@@ -123,7 +123,7 @@ export async function planPdfWatermarks(file, pageSealResults, pageIndices = pag
           // Only the standardized page-relative geometry can be decoded
           // without the signer sharing its placement. Four *legacy squares*
           // must not be mislabeled as four aligned quadrants.
-          const standard = pageWatermarkRegions(symbols.length).map(region => ({
+          const standard = pageWatermarkRegions(symbols.length, image.bounds).map(region => ({
             x: image.bounds.x + region.x * image.bounds.width,
             y: image.bounds.y + (1 - region.y - region.height) * image.bounds.height,
             width: region.width * image.bounds.width,

@@ -17,11 +17,17 @@ four balanced chunks, including existing digest and chunk indices. The
 1/4 choice applies to newly watermarked PDF pages, not to existing seals,
 non-PDF documents, or explicitly selected footer layouts.
 
-For one QR, a defined `0.03..0.97` region of the page becomes the entire
-symbol; in 2×2 mode this region is divided into four adjoining rectangles.
+For one QR, the symbol fills the interior of a **minimum 0.75-inch
+(54 PDF-point) blank border on all four paper edges**; in 2×2 mode that
+same printer-safe interior is divided into four adjacent rectangles. For
+US Letter the QR-safe area is 7.0 × 9.5 inches. A4, A3 and US Legal use
+54 points of clearance too, not a fixed percentage of page dimensions.
 Each module is independently scaled horizontally and vertically while the
-original document remains the same physical size. A small optional
-navigation QR is omitted when it would overlap the page-filling watermark.
+original document remains the same physical size. An optional small
+navigation QR must also remain at least 54 points inside the page edges;
+it is omitted when no safe location exists or it would overlap the
+page-filling watermark. Earlier page-aligned 3%-inset seals remain
+supported by the verifier's legacy geometry profile.
 Large opaque graphics may cause a content-avoiding square placement or footer
 fallback. The stamp is considered viable only after exact-byte preflight
 on a full-page PDF render and a softened/shaded simulation.
@@ -47,6 +53,13 @@ detected corners **back to the original full-resolution pixels**, which are
 still used to estimate the QR modules. If that scan fails, legacy QR-region
 discovery runs on a separately bounded (~8 MP) copy so it never repeatedly
 clones a complete 12–48 MP original photograph.
+
+A photographed sheet has no trustworthy embedded paper-size metadata.
+The verifier ranks plausible US Letter, US Legal, A4, A3 and Tabloid page
+dimensions from its apparent aspect ratio, then checks each candidate's
+**physical 54-point inset** against finder/timing evidence and recovered
+signatures. Legacy 3%-inset page-aligned marks are also attempted. A rendered
+PDF has its actual page bounds available; a printed photograph never does.
 
 For each expected 1/4-page region, candidate QR versions 1..40 are checked
 against visible finder and timing patterns. The expected modules are sampled

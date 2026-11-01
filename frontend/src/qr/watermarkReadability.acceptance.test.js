@@ -11,12 +11,12 @@ import { planWatermarks } from "../pdf/watermarkPlacement.js";
 import { stampWatermarks } from "../pdf/watermark.js";
 import { renderPdfPage, withPdfDocument } from "../pdf/readPdfText.js";
 import { scanPdfPage } from "../verifier/scanPdf.js";
-import { scanPageAlignedImage } from "./pageAlignedScan.js";
+import { MIN_WATERMARK_MARGIN_POINTS, pageWatermarkRegions, scanPageAlignedImage } from "./pageAlignedScan.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
 const pageSize = { width: 612, height: 792 };
-const margin = 18;
+const margin = MIN_WATERMARK_MARGIN_POINTS;
 
 function blankPage() {
   const width = pageSize.width, height = pageSize.height;
@@ -49,14 +49,14 @@ function printAndPhotograph(seals, {
   tilted = true, finderBlocked = true, text = true,
   backdrop = [43, 43, 47], patternedBackdrop = false, shadowed = false,
   printGray = 0.85, paperBase = 246, printerScale = 1,
+  pageFormat = pageSize, legacyMargins = false,
 } = {}) {
   const symbols = seals.map(seal => createQRedQrSymbol(seal));
   if (![0, 1, 4].includes(symbols.length)) throw new Error("Fixture supports 0, 1 or 4 QR chunks");
-  const boxes = symbols.length === 1
-    ? [{ x: 0.03, y: 0.03, w: 0.94, h: 0.94 }]
-    : symbols.map((_, i) => ({
-      x: 0.03 + (i % 2) * 0.47, y: 0.03 + Math.floor(i / 2) * 0.47, w: 0.47, h: 0.47,
-    }));
+  const boxes = symbols.length
+    ? pageWatermarkRegions(symbols.length, pageFormat, { legacy: legacyMargins })
+      .map(region => ({ x: region.x, y: region.y, w: region.width, h: region.height }))
+    : [];
   // Projective mapping: x=(a+b*u+c*v)/(1+k*u+l*v),
   //                     y=(d+e*u+f*v)/(1+k*u+l*v).
   const a = 26, b = width - 65, c = tilted ? 11 : 0;
@@ -155,10 +155,46 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     expect(box.y + box.height).toBeLessThanOrEqual(pageSize.height - margin + 0.001);
   });
 
+  it("[WM-12] provides at least 0.75-inch clearance for every QR region on different paper sizes", () => {
+    const sizes = [
+      { width: 612, height: 792 },       // US Letter
+      { width: 595.28, height: 841.89 }, // A4
+      { width: 612, height: 1008 },      // US Legal
+      { width: 841.89, height: 1190.55 }, // A3
+    ];
+    for (const size of sizes) {
+      for (const count of [1, 4]) {
+        const regions = pageWatermarkRegions(count, size);
+        expect(regions).toHaveLength(count);
+        const boxes = regions.map(region => ({
+          left: region.x * size.width, right: (1 - region.x - region.width) * size.width,
+          top: region.y * size.height, bottom: (1 - region.y - region.height) * size.height,
+        }));
+        for (const box of boxes) {
+          expect(box.left).toBeGreaterThanOrEqual(margin - 0.001);
+          expect(box.right).toBeGreaterThanOrEqual(margin - 0.001);
+          expect(box.top).toBeGreaterThanOrEqual(margin - 0.001);
+          expect(box.bottom).toBeGreaterThanOrEqual(margin - 0.001);
+        }
+        const first = regions[0], last = regions.at(-1);
+        expect(first.x * size.width).toBeCloseTo(54, 3);
+        expect(first.y * size.height).toBeCloseTo(54, 3);
+        expect((1 - last.x - last.width) * size.width).toBeCloseTo(54, 3);
+        expect((1 - last.y - last.height) * size.height).toBeCloseTo(54, 3);
+      }
+    }
+  });
+
+  it("[WM-12] refuses four version-40 watermarks if 0.75-inch margins make modules too small", () => {
+    const symbols = Array.from({ length: 4 }, () => ({ modules: { size: 177 } }));
+    expect(() => planWatermarks(blankPage(), symbols))
+      .toThrow(/too dense|footer layout/i);
+  });
+
   it("[WM-02] actually PRINTS the stretched module grid at its rectangular coordinates", async () => {
     const payload = (await signed("Rectangular watermark renderer check.")).seals[0];
     const qr = createQRedQrSymbol(payload);
-    const box = { x: 18, y: 18, width: 576, height: 756 };
+    const box = { x: 54, y: 54, width: 504, height: 684 };
     const pdf = await PDFDocument.create();
     pdf.addPage([pageSize.width, pageSize.height]);
     await stampWatermarks(pdf, [{ boxes: [box], pageAligned: true }], [{ seals: [payload] }]);
@@ -257,6 +293,29 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     expect(new Set(recovered)).toEqual(new Set(seals));
     await expect(verifyQRedSeals(recovered, publicKey))
       .resolves.toMatchObject({ status: "VALID", content });
+  }, 60000);
+
+  it("[WM-12] decodes a physically margin-safe A4 watermark from pixels alone", async () => {
+    const content = "A4 paper; real 54pt (0.75in) QR clearance on all four sides. ".repeat(10).trimEnd();
+    const { seals } = await signed(content);
+    expect(seals).toHaveLength(1);
+    const photo = printAndPhotograph(seals, {
+      width: 720, height: 1050, pageFormat: { width: 595.28, height: 841.89 },
+    });
+    const found = scanPageAlignedImage(photo).map(item => item.seal);
+    expect(found).toContain(seals[0]);
+    await expect(verifyQRedSeals(found, publicKey))
+      .resolves.toMatchObject({ status: "VALID", content });
+  }, 60000);
+
+  it("[WM-12] decodes legacy 3%-margin sealed pages after the margin change", async () => {
+    const content = "Earlier rectangular QRed print with legacy three-percent inset. ".repeat(8).trimEnd();
+    const { seals } = await signed(content);
+    expect(seals).toHaveLength(1);
+    const photo = printAndPhotograph(seals, {
+      legacyMargins: true, finderBlocked: false, text: false,
+    });
+    expect(scanPageAlignedImage(photo).map(item => item.seal)).toContain(seals[0]);
   }, 60000);
 
   it("[WM-04, WM-05] reconstructs FOUR adjacent QR grids with no internal quiet zones", async () => {

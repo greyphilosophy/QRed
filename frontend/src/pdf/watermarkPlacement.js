@@ -1,9 +1,9 @@
-import { pageWatermarkRegions } from "../qr/pageAlignedScan.js";
+import { MIN_WATERMARK_MARGIN_POINTS, pageWatermarkRegions } from "../qr/pageAlignedScan.js";
 
 // Predict watermark obstruction from the ORIGINAL page. Layout selection only
 // queries these maps: it does not stamp, render, or decode trial watermarks.
 const MAX_ANALYSIS_EDGE = 384;
-const MARGIN = 18;
+const MARGIN = MIN_WATERMARK_MARGIN_POINTS;
 const GAP = 12;
 const ENTRY_GAP = 8;
 export const MIN_WATERMARK_MODULE_SIZE = 1.5;
@@ -146,7 +146,7 @@ export function planWatermarks(image, symbols, entry = null, { excludeBoxes = nu
   const map = analyzeWatermarkPage(image), { bounds } = image;
   if (preferPageAligned && !entry && !excludeBoxes &&
       (symbols.length === 1 || symbols.length === 4)) {
-    const regions = pageWatermarkRegions(symbols.length);
+    const regions = pageWatermarkRegions(symbols.length, bounds);
     const boxes = regions.map(region => ({
       x: bounds.x + region.x * bounds.width,
       y: bounds.y + (1 - region.y - region.height) * bounds.height,

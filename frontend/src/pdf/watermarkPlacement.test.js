@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { planWatermarks, MIN_WATERMARK_MODULE_SIZE } from "./watermarkPlacement.js";
 
 const symbol = { modules: { size: 177 } };
+const quadrantSymbol = { modules: { size: 125 } }; // v27
 function pageWithGraphic(graphic, { bounds = { x: 0, y: 0, width: 612, height: 792 }, shade = 0 } = {}) {
   const width = bounds.width, height = bounds.height;
   const data = new Uint8ClampedArray(width * height * 4).fill(255);
@@ -24,10 +25,10 @@ describe("page-aware watermark placement", () => {
     const [box] = planWatermarks(pageWithGraphic(graphic, { shade }), [symbol]);
     expect(intersects(box, graphic)).toBe(false);
     expect(box.width / 185).toBeGreaterThanOrEqual(MIN_WATERMARK_MODULE_SIZE);
-    expect(box.x).toBeGreaterThanOrEqual(18);
-    expect(box.y).toBeGreaterThanOrEqual(18);
-    expect(box.x + box.width).toBeLessThanOrEqual(594.001);
-    expect(box.y + box.height).toBeLessThanOrEqual(774.001);
+    expect(box.x).toBeGreaterThanOrEqual(54);
+    expect(box.y).toBeGreaterThanOrEqual(54);
+    expect(box.x + box.width).toBeLessThanOrEqual(558.001);
+    expect(box.y + box.height).toBeLessThanOrEqual(738.001);
   });
 
   it("keeps the same physical placement when the PDF crop origin changes", () => {
@@ -50,20 +51,31 @@ describe("page-aware watermark placement", () => {
     }
   });
 
-  it("fits four version-40 symbols in a nonoverlapping 2x2 grid on letter paper", () => {
-    const boxes = planWatermarks(pageWithGraphic(null), [symbol, symbol, symbol, symbol]);
+  it("fits four version-27 symbols inside a 0.75-inch margin on letter paper", () => {
+    const boxes = planWatermarks(pageWithGraphic(null),
+      [quadrantSymbol, quadrantSymbol, quadrantSymbol, quadrantSymbol]);
     expect(boxes).toHaveLength(4);
     for (let i = 0; i < boxes.length; i++) {
-      expect(boxes[i].width / 185).toBeGreaterThanOrEqual(MIN_WATERMARK_MODULE_SIZE);
+      expect(boxes[i].width / 125).toBeGreaterThanOrEqual(MIN_WATERMARK_MODULE_SIZE);
+      expect(boxes[i].x).toBeGreaterThanOrEqual(54);
+      expect(boxes[i].y).toBeGreaterThanOrEqual(54);
+      expect(boxes[i].x + boxes[i].width).toBeLessThanOrEqual(558.001);
+      expect(boxes[i].y + boxes[i].height).toBeLessThanOrEqual(738.001);
       for (let j = i + 1; j < boxes.length; j++) expect(intersects(boxes[i], boxes[j])).toBe(false);
     }
     expect(boxes[0].y).toBeGreaterThan(boxes[2].y);
     expect(boxes[1].x).toBeGreaterThan(boxes[0].x);
   });
 
+  it("rejects four version-40 symbols when safe-margin modules would be too small", () => {
+    expect(() => planWatermarks(pageWithGraphic(null), [symbol, symbol, symbol, symbol]))
+      .toThrow(/too dense/i);
+  });
+
   it("does not call four content-avoiding squares a standardized page-filling grid", () => {
     const image = pageWithGraphic({ x: 254, y: 335, width: 106, height: 120 });
-    const boxes = planWatermarks(image, [symbol, symbol, symbol, symbol], null,
+    const boxes = planWatermarks(image,
+      [quadrantSymbol, quadrantSymbol, quadrantSymbol, quadrantSymbol], null,
       { preferPageAligned: false });
     expect(boxes).toHaveLength(4);
     for (const box of boxes) expect(box.width).toBeCloseTo(box.height);

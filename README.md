@@ -12,7 +12,10 @@ Image-only pages carry a signed grayscale visual reference; blank pages carry an
 explicit signed blank-page marker. Text pages use spare capacity for line positions
 and an approximate visual reference, without adding QR codes. Experimental
 watermark mode uses one page-filling QR or splits overflow into four balanced
-quadrant QRs. Explicit footer mode retains ordinary QR counts up to four. See [page references](docs/PAGE_REFERENCES.md) and
+quadrant QRs, with **at least 0.75 inch of watermark clearance at every paper
+edge**. This may rule out four dense v40 symbols on US Letter. The original
+PDF content itself remains unchanged and may still reach closer to an edge;
+for best results print at 100% / Actual size. Explicit footer mode retains ordinary QR counts up to four. See [page references](docs/PAGE_REFERENCES.md) and
 [Compact seals v3](docs/COMPACT_SEALS_V3.md) for scope, compatibility, and tests.
 Supported PDF forms are automatically flattened before text extraction and
 signing. Text fields and dropdowns are checked against their saved appearances;
