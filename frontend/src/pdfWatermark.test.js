@@ -138,7 +138,14 @@ describe("experimental PDF watermarks", () => {
     const pdf = await PDFDocument.load(await result.blob.arrayBuffer());
     expect(pdf.getPages().map(page => page.getSize())).toEqual([{ width: 612, height: 792 }, { width: 612, height: 792 }]);
     const sourceText = await extractPdfText(file);
-    expect((await extractPdfText(result.blob)).replace(/\n?Verify at qred\.org/g, "")).toBe(sourceText);
+    // The optional navigation caption can sit near a PDF text baseline.
+    // PDF.js may insert one separating space when extracting that caption;
+    // compare the unchanged source text after stripping that presentation
+    // whitespace, never after changing any actual words or signed data.
+    const sealedText = (await extractPdfText(result.blob))
+      .replace(/\n?Verify at qred\.org/g, "")
+      .replace(/[ \t]+(?=\n|$)/g, "");
+    expect(sealedText).toBe(sourceText);
     for (let index = 0; index < 2; index++) {
       const original = render(await file.arrayBuffer(), index + 1);
       const printed = render(await result.blob.arrayBuffer(), index + 1);
@@ -319,7 +326,7 @@ describe("experimental PDF watermarks", () => {
     const [width, height] = options.size ?? [612, 792];
     const legal = width === 612 && height === 792;
     expect((await PDFDocument.load(await blob.arrayBuffer())).getPage(0).getSize()).toEqual({ width, height: legal ? 1008 : height });
-    expect(pageSealStrings[0].length).toBeLessThanOrEqual(2);
+    expect([1, 4]).toContain(pageSealStrings[0].length);
     expect((await verifyQRedSeals(pageSealStrings[0], publicKey)).status).toBe("VALID");
     // The smaller shrink-footer codes need print resolution for dense payloads.
     const scale = legal ? 2 : 300 / 72;
@@ -330,7 +337,9 @@ describe("experimental PDF watermarks", () => {
       // A half-page crop includes a truncated neighboring QR when there are
       // two seals. Scan each complete code and its included quiet zone instead.
       const part = crop(printed, {
-        x: margin + (layout.qrOffsetX ?? 10) + index * (layout.qrSize + layout.gap), y: margin + (layout.qrOffsetY ?? 10),
+        x: margin + (layout.qrOffsetX ?? 10) + (index % layout.columns) * (layout.qrSize + layout.gap),
+        y: margin + (layout.qrOffsetY ?? 10) +
+          (layout.rows - Math.floor(index / layout.columns) - 1) * (layout.qrSize + layout.gap),
         width: layout.qrSize, height: layout.qrSize,
       }, scale);
       return hiddenPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));

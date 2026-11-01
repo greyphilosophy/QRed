@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { encodeIdentity } from "./attestation.js";
 import { qredPayloadCapacity } from "./qredQr.js";
 import { encodeEnvelope, sealEnvelopeOverhead } from "./sealFormat.js";
-import { recordCapacity, recordQrCount } from "./sealBudget.js";
+import { MAX_PDF_SEALS, recordCapacity, recordQrCount } from "./sealBudget.js";
 
 it.each([false, true].flatMap(attested => [false, true].map(multiple => [attested, multiple])))( "matches encoded envelope overhead (Attested: %s, multipage: %s)", (attested, multiple) => {
     const identity = { provider: "google", email: "test@example.org", subject: "123", name: "Test signer", name_source: "google" };
@@ -21,7 +21,8 @@ it.each([false, true].flatMap(attested => [false, true].map(multiple => [atteste
 
 it("agrees with the QR encoder at the single and multipart capacity boundaries", () => {
   expect(recordCapacity(1)).toBe(qredPayloadCapacity(40));
-  for (const count of [1, 2, 3]) {
+  expect(MAX_PDF_SEALS).toBe(4);
+  for (const count of [1, 2, 3, 4]) {
     expect(recordQrCount(recordCapacity(count))).toBe(count);
     expect(recordQrCount(recordCapacity(count) + 1)).toBe(count + 1);
   }

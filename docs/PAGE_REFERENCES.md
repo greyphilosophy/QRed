@@ -9,7 +9,7 @@ salted commitments; the existing attestation protocol signs the new binary body.
 
 ## Budget and representation
 
-The PDF stamper limits each page to two QR codes. Required text determines the
+The PDF stamper limits each page to four QR codes. Required text determines the
 code count. Optional evidence never increases it. The planner measures actual
 plaintext/zlib/gzip bytes, including record overhead and the 40-byte header per
 chunk. It tries line boxes (8 bytes per nonblank line), finer line starts (2 bytes),

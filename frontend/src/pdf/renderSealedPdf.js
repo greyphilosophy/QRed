@@ -1,5 +1,5 @@
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
-import { qredQrPngDataUrl } from "../qredQr.js";
+import { createQRedQrSymbol, qredQrPngDataUrl } from "../qredQr.js";
 import { LEGAL_FOOTER_HEIGHT, resolvePageScalingStrategy, applyPageScaling, visiblePageGeometry } from "./pageScaling.js";
 import { planQrStampLayout, planQrStampLayoutForFooterBand } from "./qrLayout.js";
 
@@ -58,6 +58,14 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
       const layout = resolvedPageScalingStrategy === "legal-footer"
         ? planQrStampLayoutForFooterBand(width, qrImages.length, { footerBandHeight: LEGAL_FOOTER_HEIGHT })
         : planQrStampLayout(width, qrImages.length);
+      // Four dense v40 symbols can fit mathematically in a three-inch footer
+      // while becoming too small to photograph. Never silently emit such a
+      // fallback if the original-page 2x2 watermarks failed their preflight.
+      const minModulePoints = Math.min(...qrValues.map(value =>
+        layout.qrSize / (createQRedQrSymbol(value).modules.size + 8)));
+      if (minModulePoints < 0.9) {
+        throw new Error(`PDF page ${pageIndex + 1} has too many dense QR seals for a readable footer. Use a verified watermark layout or split this page's content.`);
+      }
       const footerMargin = resolvedPageScalingStrategy === "legal-footer" ? 0 : PANEL_MARGIN;
       const footerHeight = resolvedPageScalingStrategy === "legal-footer" ? LEGAL_FOOTER_HEIGHT : footerMargin + layout.panelHeight;
       page = await applyPageScaling(pdf, pageIndex, page, resolvedPageScalingStrategy, footerHeight);

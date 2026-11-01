@@ -2,6 +2,7 @@ import jsQR from "jsqr";
 import { hiddenPayloadFromScanResult, isQRedEntryLink } from "./hiddenPayload.js";
 import { filterWatermark, normalizeWatermarkLuminance } from "./watermarkFilter.js";
 import { scanModuleAwareQr } from "./moduleAwareScan.js";
+import { scanPageAlignedImage } from "./pageAlignedScan.js";
 
 // Keep each decode bounded, including large photo uploads. Retry only when the
 // original scale fails: dense printed codes can land badly on the pixel grid.
@@ -66,13 +67,16 @@ function isValidImage(data, width, height) {
     && data?.length === width * height * 4;
 }
 
-function scanAttempts(width, height, tryRescaling = true, tryWatermark = true) {
+function scanAttempts(width, height, tryRescaling = true, tryWatermark = true, includeModuleAware = false) {
   const attempts = scanSizes(width, height, tryRescaling);
   if (tryWatermark) {
     const scale = Math.min(1, Math.sqrt(MAX_WATERMARK_PIXELS / (width * height)));
     const w = Math.max(1, Math.floor(width * scale)), h = Math.max(1, Math.floor(height * scale));
     const radius = Math.max(1, Math.min(4, Math.round(Math.max(w, h) / 550)));
     attempts.push([w, h, radius]);
+    // In camera mode, spend only one frame on module-aware color recovery.
+    // Still photos have a separately budgeted final module-aware attempt.
+    if (includeModuleAware) attempts.push([w, h, radius, true]);
     attempts.push([w, h, radius + 1]);
     if (radius > 1) attempts.push([w, h, radius - 1]);
     for (const factor of [0.9, 1.25]) {
@@ -115,7 +119,7 @@ function decodePrepared(prepared, width, height, moduleAware = false) {
 }
 
 function scanAtSize(data, width, height, size) {
-  return decodePrepared(prepareAtSize(data, width, height, size), width, height);
+  return decodePrepared(prepareAtSize(data, width, height, size), width, height, Boolean(size[3]));
 }
 
 /** Return QR geometry in the original image's coordinates, even after a retry.
@@ -149,8 +153,10 @@ export function scanQrImage(data, width, height, { tryRescaling = true, tryWater
   return entryLink;
 }
 
-/** One decode per live frame. A miss advances the scale for the next frame,
+/** One scan attempt per live frame. A miss advances the scale for the next frame,
  * letting the camera loop yield to rendering and input between retries.
+ * A page-aligned attempt returns all codes together in { codes }, so callers
+ * can collect them before the originating camera frame is overwritten.
  * Give each camera session its own scanner; still images use scanQrImage.
  */
 export function createQrFrameScanner() {
@@ -163,10 +169,16 @@ export function createQrFrameScanner() {
     if (width !== previousWidth || height !== previousHeight) {
       previousWidth = width;
       previousHeight = height;
-      sizes = scanAttempts(width, height);
+      sizes = [...scanAttempts(width, height, true, true, true), "pageAligned"];
       nextSize = 0;
     }
     if (!sizes.length) return null;
+    if (sizes[nextSize] === "pageAligned") {
+      const codes = scanPageAlignedImage({ data, width, height })
+        .map(({ code }) => code).filter(usableResult);
+      nextSize = codes.length ? 0 : (nextSize + 1) % sizes.length;
+      return codes.length ? { codes } : null;
+    }
     const code = scanAtSize(data, width, height, sizes[nextSize]);
     nextSize = usableResult(code) ? 0 : (nextSize + 1) % sizes.length;
     return code;

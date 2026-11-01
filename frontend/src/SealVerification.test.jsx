@@ -10,12 +10,17 @@ import { createQRedSeals } from "./qredSealer.js";
 import App from "./App.jsx";
 import { useSealVerification } from "./SealVerification.jsx";
 import { decodeSeal } from "./qredVerifier.js";
+import { scanPageAlignedImage } from "./qr/pageAlignedScan.js";
 
 vi.mock("./trustedAuthorities.json", () => ({ default: { da522162396ab2d0: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q" } }));
 
 const scanner = vi.hoisted(() => ({ props: null }));
 vi.mock("./QrScanner.jsx", () => ({ QrScanner: (props) => { scanner.props = props; return null; } }));
 vi.mock("./PdfSealForm.jsx", () => ({ PdfSealForm: () => null }));
+vi.mock("./qr/pageAlignedScan.js", async importOriginal => {
+  const actual = await importOriginal();
+  return { ...actual, scanPageAlignedImage: vi.fn(actual.scanPageAlignedImage) };
+});
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 
@@ -165,4 +170,51 @@ it("does not collect an uploaded image that finishes opening after the user clea
   await act(async () => opened());
   expect(screen.queryByText(/No QR code found/)).toBeNull();
   expect(scanner.props.collectionProgress).toBeNull();
+});
+
+
+it("collects all four signed chunks from one uploaded page photograph", async () => {
+  // QRed signs canonicalized text (which trims the trailing space).
+  const content = "Entire printed page photo: one image, four watermark chunks. ".repeat(70).trimEnd();
+  const { seals } = await createQRedSeals({
+    content, privateKey, publicKey, encodingStrategy: "plaintext",
+    timestamp: "2026-10-31T12:00:00Z",
+    pageContext: { pageNumber: 1, pageCount: 1 },
+    preferFourQrPage: true,
+  });
+  expect(seals).toHaveLength(4);
+  vi.mocked(scanPageAlignedImage).mockReturnValueOnce(seals.map(seal => ({ seal })));
+  vi.stubGlobal("Image", class {
+    naturalWidth = 600;
+    naturalHeight = 800;
+    decode() { return Promise.resolve(); }
+  });
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL() { return "blob:synthetic-quad-page"; }
+    static revokeObjectURL() {}
+  });
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+    drawImage() {},
+    getImageData() {
+      return { data: new Uint8ClampedArray(600 * 800 * 4).fill(255),
+        width: 600, height: 800 };
+    },
+  });
+  vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(callback =>
+    callback(new Blob(["one-page"], { type: "image/png" })));
+  render(<App />);
+  fireEvent.change(screen.getByLabelText("Choose QR image"), {
+    target: { files: [new File(["synthetic"], "whole-page.png", { type: "image/png" })] },
+  });
+  // QRed displays the local-key picker only after a QRed v3 seal is
+  // collected. The previous test tried to open it before uploading a seal.
+  await screen.findByLabelText("Open issuer public key file");
+  selectKey(publicKey);
+  await screen.findByText(/Public key opened/);
+  expect(await screen.findByRole("heading", { name: "VALID" })).toBeTruthy();
+  await waitFor(() => expect(scanner.props.collectionProgress).toMatchObject({
+    collected: 4, total: 4, finished: true,
+  }));
+  expect(screen.getByText("Page 1 of 1")).toBeTruthy();
+  expect(document.querySelector(".verification-result pre").textContent).toBe(content);
 });

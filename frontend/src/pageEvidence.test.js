@@ -8,6 +8,7 @@ import { decodeSeal, verifyQRedSeals } from "./qredVerifier.js";
 import { attestationMessage, pageCommitment } from "./attestation.js";
 import { bytesToHex, concatenate, decodeBase64Url, encodeBase64Url, encodeEnvelope, sealString, sha256 } from "./sealFormat.js";
 import { evidenceBodyBudget, planPageEvidence } from "./pdf/pageEvidencePlan.js";
+import { MAX_PDF_SEALS } from "./sealBudget.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
@@ -115,12 +116,12 @@ describe("optional evidence budget", () => {
     const count = (size, attested) => size <= 2945 ? 1 : Math.ceil(size / (attested ? 2921 : 2905));
     for (const attested of [false, true]) for (const multiple of [false, true]) {
       const baseHeader = (attested ? 83 : 85) + (multiple ? (attested ? 20 : 36) : 0);
-      for (let length = 1; length < 5800; length += 13) {
+      for (let length = 1; length < 11500; length += 13) {
         const budget = evidenceBodyBudget(length, { attested, multiple });
         if (!budget) continue;
         for (const identitySize of attested ? [16, 150, 360, 673] : [0]) {
           expect(count(budget + baseHeader + identitySize, attested)).toBeLessThanOrEqual(count(length + baseHeader + identitySize, attested));
-          expect(count(budget + baseHeader + identitySize, attested)).toBeLessThanOrEqual(2);
+          expect(count(budget + baseHeader + identitySize, attested)).toBeLessThanOrEqual(MAX_PDF_SEALS);
         }
       }
     }
@@ -134,12 +135,12 @@ describe("optional evidence budget", () => {
     const sealed = await createQRedSeals({ content: base.text, pageEvidence: plan.body, pageContext, privateKey, publicKey, encodingStrategy: "plaintext" });
     expect(sealed.seals).toHaveLength(1);
   });
-  it("omits optional evidence at a capacity boundary and rejects a third PDF code", async () => {
+  it("omits optional evidence at a capacity boundary and rejects a fifth PDF code", async () => {
     const text = "x".repeat(2860);
     const plan = await planPageEvidence({ ...base, text, lines: [], image, blank: false }, { encodingStrategy: "plaintext" });
     expect(plan.pageEvidence).toBeNull();
     const sealed = await createQRedSeals({ content: text, pageContext, privateKey, publicKey, encodingStrategy: "plaintext" });
     expect(sealed.seals).toHaveLength(1);
-    await expect(createQRedSeals({ content: "x".repeat(6000), pageContext, privateKey, publicKey, encodingStrategy: "plaintext" })).rejects.toThrow("two-QR limit");
+    await expect(createQRedSeals({ content: "x".repeat(12000), pageContext, privateKey, publicKey, encodingStrategy: "plaintext" })).rejects.toThrow("4-QR limit");
   });
 });
