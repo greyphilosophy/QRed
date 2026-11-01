@@ -98,6 +98,12 @@ one** foreground-resistant retry (at most 104 grid fits across both layouts).
 The four strongest viable single-code orientation/format hypotheses each
 get their first version before the search widens to nearby versions. A small
 score advantage must not let the wrong orientation consume every retry.
+For versions 7–40, either visible BCH-protected version field also supports
+the coarse ranking: at most three mismatched, obscured or ambiguous bits
+among its 18 cells add a ranking hint. Both unreadable fields leave the
+finder/timing fallback available. This prevents a slight camera roll from
+promoting nearby wrong QR sizes until the refinement budget is exhausted;
+the 16/36 attempt limits and normal signature verification are unchanged.
 The retry compares exposed pixels in public alignment markers, requires
 17 of their 25 cells, scales residual tolerance to the observed module pitch,
 and continues local distortion to the outer symbol edge. Tied alignment
@@ -218,6 +224,18 @@ continue past an unsupported grid candidate. These are four orientations of
 one photograph, not four independent print trials. There are now two
 successful printer-safe physical pages (the earlier quartet and this
 dark-text single), while the broader 9/10 physical release gate remains open.
+
+Small-angle regression checks digitally rotate the same full-resolution
+dark-text photograph by **−5°, −2°, +2° and +5°**, with bilinear resampling
+and every paper corner visible. All four recover the exact delivered seal
+through production `scanPdfPage` and return **VALID**. The −5° view failed
+before the version-field ranking hint: finder/timing sampling ranked a wrong
+size first, so the bounded search never tried the correct Letter/v28 grid.
+The original orientation, three quarter-turns and earlier four-code photo
+still verify. Public tests cover small-angle roll on synthetic signed warped
+pages and a misleading coarse grid whose readable version field selects the
+right size. Digital rotations add camera-roll regression evidence, not new
+physical print trials or new perspective/lighting conditions.
 
 Live camera frames rotate through this path with a bounded retry budget;
 the PDF page verifier also tries page geometry before ordinary QR-region

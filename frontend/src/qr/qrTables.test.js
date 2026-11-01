@@ -10,7 +10,7 @@ import Utils from "qrcode/lib/core/utils";
 import Version from "qrcode/lib/core/version";
 import { describe, expect, it } from "vitest";
 import {
-  alignmentCenters, decodeFormatInfo, EC_BLOCKS_BY_LEVEL, EC_CODEWORDS_BY_LEVEL,
+  alignmentCenters, decodeFormatInfo, encodedVersion, EC_BLOCKS_BY_LEVEL, EC_CODEWORDS_BY_LEVEL,
   formatBitPositions, functionMask, QR_MODULE_COUNT_BY_VERSION, readFormatBits, TOTAL_CODEWORDS,
 } from "./qrLowLevel.js";
 
@@ -51,6 +51,7 @@ describe("QR tables across all supported versions", () => {
     expect(alignmentCenters(version)).toEqual(Alignment.getRowColCoords(version));
     expect(decoder.alignmentPatternCenters).toEqual(alignmentCenters(version));
     expect(decoder.infoBits).toBe(version < 7 ? null : Version.getEncodedBits(version));
+    if (version >= 7) expect(encodedVersion(version)).toBe(Version.getEncodedBits(version));
     const dataModules = functionMask(size, version).flat().filter(reserved => !reserved).length;
     expect(Math.floor(dataModules / 8)).toBe(total);
 

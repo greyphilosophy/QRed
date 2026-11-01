@@ -158,6 +158,34 @@ function rotatePhoto(image, turns) {
   return { data, width, height };
 }
 
+// Camera roll with bilinear resampling; expand the canvas so the entire sheet
+// remains visible. Production receives no rotation or renderer coordinates.
+function rollPhoto(image, degrees) {
+  const angle = degrees * Math.PI / 180, c = Math.cos(angle), s = Math.sin(angle);
+  const width = Math.ceil(image.width * Math.abs(c) + image.height * Math.abs(s));
+  const height = Math.ceil(image.height * Math.abs(c) + image.width * Math.abs(s));
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const dx = x - (width - 1) / 2, dy = y - (height - 1) / 2;
+    const sx = c * dx + s * dy + (image.width - 1) / 2;
+    const sy = -s * dx + c * dy + (image.height - 1) / 2;
+    const ix = Math.floor(sx), iy = Math.floor(sy), fx = sx - ix, fy = sy - iy;
+    const offset = (y * width + x) * 4;
+    if (ix < 0 || iy < 0 || ix + 1 >= image.width || iy + 1 >= image.height) {
+      outputColor(data, offset, [43, 43, 47]);
+      continue;
+    }
+    for (let channel = 0; channel < 3; channel++) {
+      const at = (px, py) => image.data[(py * image.width + px) * 4 + channel];
+      data[offset + channel] =
+        (at(ix, iy) * (1 - fx) + at(ix + 1, iy) * fx) * (1 - fy) +
+        (at(ix, iy + 1) * (1 - fx) + at(ix + 1, iy + 1) * fx) * fy;
+    }
+    data[offset + 3] = 255;
+  }
+  return { data, width, height };
+}
+
 function sampleAtPagePoint(image, x, y) {
   const { bounds, scale, width, data } = image;
   const sx = Math.floor((x - bounds.x) * scale);
@@ -371,6 +399,19 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     expect(recovered.map(item => item.seal)).toEqual(seals);
     expect(recovered[0].code.refined).toBe(true);
     await expect(verifyQRedSeals(recovered.map(item => item.seal), publicKey))
+      .resolves.toMatchObject({ status: "VALID", content });
+  }, 60000);
+
+  it.each([-5, -2, 2, 5])("[WM-11] verifies a warped signed page with %i degrees of camera roll", async degrees => {
+    const content = "Review photograph orientation and local grid refinement. ".repeat(28).trimEnd();
+    const { seals } = await signed(content);
+    const photo = rollPhoto(printAndPhotograph(seals, {
+      width: 1200, height: 1600, text: false, finderBlocked: false,
+      printerScale: 0.965, printerWarp: 0.015, tilted: false,
+    }), degrees);
+    const recovered = await scanPdfPage(photo);
+    expect(recovered.seals).toEqual(seals);
+    await expect(verifyQRedSeals(recovered.seals, publicKey))
       .resolves.toMatchObject({ status: "VALID", content });
   }, 60000);
 

@@ -6,6 +6,7 @@ import { hiddenPayloadFromScanResult } from "./hiddenPayload.js";
 import { readErasedQrMatrix } from "./qrErasureRecovery.js";
 import { refineQrModuleGrid } from "./qrAlignmentRefinement.js";
 import { photoLuminance } from "./paperColor.js";
+import { encodedVersion } from "./qrLowLevel.js";
 
 const OFFSETS = [-0.3, -0.15, 0, 0.15, 0.3];
 const MEAN_OFFSETS = [-0.18, 0, 0.18];
@@ -101,12 +102,6 @@ export function sampleRefinedQrMatrix(image, moduleMap, version, { foregroundRob
 
 // QR versions >=7 encode the 6-bit version in two copies of an 18-bit
 // BCH-protected field. Wrong grid dimensions fail before RS or signature work.
-function encodedVersion(version) {
-  let remainder = version << 12;
-  for (let bit = 17; bit >= 12; bit--)
-    if ((remainder >>> bit) & 1) remainder ^= 0x1f25 << (bit - 12);
-  return (version << 12) | remainder;
-}
 function versionDistance(bits, version) {
   const size = 17 + 4 * version, encoded = encodedVersion(version);
   let topRight = 0, bottomLeft = 0;

@@ -61,6 +61,14 @@ export function decodeFormatInfo(matrix) {
   return { ecLevelBits: Math.floor(best.index / 8), maskPattern: best.index % 8 };
 }
 
+// Public BCH-protected version field, present in both corners for v7–v40.
+export function encodedVersion(version) {
+  let remainder = version << 12;
+  for (let bit = 17; bit >= 12; bit--)
+    if ((remainder >>> bit) & 1) remainder ^= 0x1f25 << (bit - 12);
+  return (version << 12) | remainder;
+}
+
 export function alignmentCenters(version) {
   if (version === 1) return [];
   const count = Math.floor(version / 7) + 2;

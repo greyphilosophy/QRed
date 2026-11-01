@@ -7,6 +7,7 @@ import { isChromaticForeground } from "./watermarkFilter.js";
 import { readErasedQrMatrix } from "./qrErasureRecovery.js";
 import { recoverRefinedQrRegion } from "./pageAlignedRecovery.js";
 import { estimatePaperColor, paperColorChannel, photoLuminance } from "./paperColor.js";
+import { encodedVersion } from "./qrLowLevel.js";
 
 // Printer-safe clearance for QRed's visible watermark modules. One PDF point
 // is 1/72 inch, so 54 points = 0.75 inch of blank border on every side.
@@ -378,11 +379,35 @@ function scoreVersion(image, mapping, region, version) {
   return finderScore * 0.58 + timingScore * 0.42;
 }
 
-function chooseVersions(image, mapping, region) {
+function versionPatternMatches(image, mapping, region, version) {
+  if (version < 7) return false;
+  const size = 17 + 4 * version;
+  const contrast = finderContrast(image, mapping, region, size);
+  if (!contrast) return false;
+  const encoded = encodedVersion(version), errors = [0, 0];
+  for (let i = 0; i < 18; i++) {
+    const row = Math.floor(i / 3), col = size - 11 + i % 3;
+    for (let copy = 0; copy < 2; copy++) {
+      const gray = observe(image, mapping, region, size, copy ? col : row, copy ? row : col);
+      // Missing/ambiguous pixels spend the same allowance as an error;
+      // covered fields cannot promote an otherwise unsupported version.
+      if (gray === null || Math.abs(gray - contrast.threshold) < 1 ||
+          (gray < contrast.threshold) !== Boolean((encoded >>> i) & 1)) errors[copy]++;
+    }
+  }
+  return Math.min(...errors) <= 3;
+}
+
+export function chooseVersions(image, mapping, region) {
   const candidates = [];
   for (let version = 1; version <= 40; version++) {
     const score = scoreVersion(image, mapping, region, version);
-    if (score > 0.58) candidates.push({ version, score });
+    // Slight camera roll can move coarse finder/timing samples across ink
+    // edges and favor a neighboring size. Let either public BCH version
+    // field support the ranking BEFORE the bounded alignment retries. This
+    // is a positive hint only: obscured fields retain the existing fallback.
+    if (score > 0.58) candidates.push({ version,
+      score: score + (versionPatternMatches(image, mapping, region, version) ? 0.2 : 0) });
   }
   return candidates.sort((a, b) => b.score - a.score).slice(0, 5);
 }
