@@ -1,8 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createQrFrameScanner, scanQrImage } from "./qr/scanQrImage.js";
-import { scanPageAlignedImage } from "./qr/pageAlignedScan.js";
-import { decodeSeal, VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult, qredTextFromScanResult } from "./qredVerifier.js";
-import { isQRedEntryLink } from "./qr/hiddenPayload.js";
+import { decodeSeal } from "./qredVerifier.js";
+import { decodePhoto, qrScanAction } from "./qr/decodePhoto.js";
+import { preparePhotoScanner, scanPhotoInWorker } from "./qr/photoScanClient.js";
+import { getPreferredCameraStream, applyCameraQualityControls } from "./qr/cameraControls.js";
+export { QR_CAMERA_CONSTRAINTS, findPreferredMainCamera, getPreferredCameraStream,
+  applyCameraQualityControls, applyContinuousCameraFocus } from "./qr/cameraControls.js";
+export { qrScanAction } from "./qr/decodePhoto.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import "./qrScanner.css";
 
@@ -20,7 +24,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
   const [captureRequest, setCaptureRequest] = useState(0);
-  const [torchEnabled, setTorchEnabled] = useState(false);
+  const [readingPhoto, setReadingPhoto] = useState(false);
   const handleScan = useCallback((text, frame) => {
     onSealDetected?.(text, frame);
     setScannedText(text);
@@ -34,25 +38,21 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
       && collectionProgress.activeSeal === scannedText) setMode("result");
   }, [mode, scannedText, collectionProgress]);
 
-  const scanButtonLabel = mode === "scanning" ? "Scan photo" : mode === "result" ? "Scan again" : "Start scanning";
+  const scanButtonLabel = mode === "scanning" ? (readingPhoto ? "Reading photo…" : "Scan photo") : mode === "result" ? "Scan again" : "Start scanning";
   const controls = React.createElement("div", { className: "ar-controls" },
     React.createElement("button", {
       className: "ar-button ar-button-primary",
+      disabled: readingPhoto,
       onClick: () => {
         if (mode === "scanning") {
           setCaptureRequest((request) => request + 1);
           return;
         }
         setScannedText(null);
+        setCaptureRequest(0);
         setMode("scanning");
       },
     }, scanButtonLabel),
-    mode === "scanning" ? React.createElement("button", {
-      "aria-pressed": torchEnabled,
-      className: "ar-button ar-button-secondary",
-      onClick: () => setTorchEnabled((enabled) => !enabled),
-      type: "button",
-    }, torchEnabled ? "Flashlight on" : "Flashlight off") : null,
     onOpenPdfStampTool ? React.createElement("button", {
       "aria-label": "Open PDF stamping tool",
       "aria-controls": "pdf-stamp-tool",
@@ -79,7 +79,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
         onScan: handleScan,
         onClose: () => setMode("idle"),
         captureRequest,
-        torchEnabled,
+        onReadingPhoto: setReadingPhoto,
         returnPayload,
       }),
       collectionProgress ? React.createElement("p", { className: "ar-collection-progress", role: "status", "aria-live": "polite" }, collectionProgress.message) : null,
@@ -112,94 +112,6 @@ function ResultPanel({ scannedText }) {
   );
 }
 
-export const QR_CAMERA_CONSTRAINTS = {
-  video: {
-    facingMode: { ideal: "environment" },
-    width: { ideal: 1280 },
-    height: { ideal: 720 },
-  },
-};
-
-export function qrScanAction(imageData, width, height, code, { returnPayload = false } = {}) {
-  if (!code?.data) return { status: "continue" };
-
-  const text = returnPayload
-    ? qredPayloadFromPhotoScanResult(imageData, width, height, code)
-    : qredTextFromPhotoScanResult(imageData, width, height, code);
-
-  if (text && !isQRedEntryLink(text)) return { status: "found", text };
-  return { status: "continue" };
-}
-
-export function findPreferredZoomCamera(devices = []) {
-  return devices.find((device) => device.kind === "videoinput" && /(telephoto|zoom|\b[23]x\b)/i.test(device.label || "")) || null;
-}
-
-export async function getPreferredCameraStream(mediaDevices = navigator.mediaDevices) {
-  const stream = await mediaDevices.getUserMedia(QR_CAMERA_CONSTRAINTS);
-  if (typeof mediaDevices.enumerateDevices !== "function") return stream;
-
-  let preferredCamera;
-  try {
-    preferredCamera = findPreferredZoomCamera(await mediaDevices.enumerateDevices());
-  } catch {
-    return stream;
-  }
-  const [currentTrack] = stream.getVideoTracks?.() || [];
-  if (!preferredCamera?.deviceId || currentTrack?.label === preferredCamera.label) return stream;
-
-  try {
-    const preferredStream = await mediaDevices.getUserMedia({
-      video: {
-        ...QR_CAMERA_CONSTRAINTS.video,
-        deviceId: { exact: preferredCamera.deviceId },
-      },
-    });
-    stream.getTracks().forEach((track) => track.stop());
-    return preferredStream;
-  } catch {
-    return stream;
-  }
-}
-
-export async function applyContinuousCameraFocus(stream) {
-  return applyCameraQualityControls(stream);
-}
-
-export async function applyCameraQualityControls(stream, options = {}) {
-  const [track] = stream?.getVideoTracks?.() || [];
-  if (!track || typeof track.applyConstraints !== "function") return;
-
-  const capabilities = typeof track.getCapabilities === "function" ? track.getCapabilities() : {};
-  const advanced = [];
-  if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes("continuous")) {
-    advanced.push({ focusMode: "continuous" });
-  }
-  if (Array.isArray(capabilities.exposureMode) && capabilities.exposureMode.includes("continuous")) {
-    advanced.push({ exposureMode: "continuous" });
-  }
-  if (Array.isArray(capabilities.whiteBalanceMode) && capabilities.whiteBalanceMode.includes("continuous")) {
-    advanced.push({ whiteBalanceMode: "continuous" });
-  }
-  if (typeof options.enableTorch === "boolean" && capabilities.torch) {
-    advanced.push({ torch: options.enableTorch });
-  }
-  if (typeof capabilities.zoom?.max === "number") {
-    const minZoom = typeof capabilities.zoom.min === "number" ? capabilities.zoom.min : 1;
-    const targetZoom = Math.max(minZoom, Math.min(options.zoomTarget || 2, capabilities.zoom.max));
-    if (targetZoom > minZoom) advanced.push({ zoom: targetZoom });
-  }
-
-  if (advanced.length > 0) {
-    try {
-      await track.applyConstraints({ advanced });
-    } catch {
-      // Some mobile browsers advertise camera controls but reject them.
-      // Keep scanning with the selected environment camera rather than failing.
-    }
-  }
-}
-
 export const MANUAL_CAPTURE_PENDING_TIMEOUT_MS = 4000;
 
 export function isCameraFrameReady(video, canvas) {
@@ -215,77 +127,46 @@ export function manualCapturePendingAction(startedAt, now = performance.now()) {
   };
 }
 
-export function decodeCanvasFrame(video, canvas, options = {}) {
-  const manual = Boolean(options.manual);
-  const returnPayload = Boolean(options.returnPayload);
-  if (!isCameraFrameReady(video, canvas)) {
-    return manual ? { status: "pending", message: "Camera is preparing the photo. Hold steady…" } : { status: "continue" };
-  }
-
+export function captureCameraFrame(video, canvas) {
+  if (!isCameraFrameReady(video, canvas)) return null;
   const ctx = canvas.getContext("2d");
-  if (!ctx) return { status: "continue" };
+  if (!ctx) return null;
+  const width = video.videoWidth, height = video.videoHeight;
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+  ctx.drawImage(video, 0, 0, width, height);
+  const pixels = ctx.getImageData(0, 0, width, height);
+  return { data: pixels.data, width, height };
+}
 
-  const vWidth = video.videoWidth;
-  const vHeight = video.videoHeight;
-
-  // Cache canvas dimensions — only resize when video dimensions actually change
-  const canvasNeedResize = canvas.width !== vWidth || canvas.height !== vHeight;
-  if (canvasNeedResize) {
-    canvas.width = vWidth;
-    canvas.height = vHeight;
-  }
-
-  // Use the whole native frame for decoding and its saved page image.
-  // The reticle is only an aiming guide. Keep recovery in this same frame.
-  ctx.drawImage(video, 0, 0, vWidth, vHeight);
-  const imageData = ctx.getImageData(0, 0, vWidth, vHeight);
-  // A manual full-page photo may contain all four adjacent watermark chunks.
-  // Return them in one action rather than repeatedly recovering only the
-  // first quadrant from the same frame.
-  if (manual && returnPayload) {
-    const aligned = scanPageAlignedImage(imageData, { deep: true });
-    if (aligned.length) return { status: "found-multiple", texts: aligned.map(result => result.seal) };
-  }
-  const code = !manual && options.scanQrFrame
-    ? options.scanQrFrame(imageData.data, vWidth, vHeight)
-    : scanQrImage(imageData.data, vWidth, vHeight, { tryRescaling: manual });
-
+export function decodeCanvasFrame(video, canvas, options = {}) {
+  const image = captureCameraFrame(video, canvas);
+  if (!image) return options.manual
+    ? { status: "pending", message: "Camera is preparing the photo. Hold steady…" }
+    : { status: "continue" };
+  // Synchronous entry point retained for decoder tests. The UI sends manual
+  // captures to the worker and only runs bounded live-frame attempts here.
+  if (options.manual) return decodePhoto(image, options);
+  const { data, width, height } = image;
+  const code = options.scanQrFrame ? options.scanQrFrame(data, width, height)
+    : scanQrImage(data, width, height, { tryRescaling: false });
   if (code?.codes) {
-    const texts = code.codes.map(result =>
-      qrScanAction(imageData.data, vWidth, vHeight, result, { returnPayload }))
+    const texts = code.codes.map(result => qrScanAction(data, width, height, result, options))
       .filter(action => action.status === "found").map(action => action.text);
     return texts.length ? { status: "found-multiple", texts } : { status: "continue" };
   }
-
-  if (manual && !code?.data) {
-    return { status: "feedback", message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For older seals, try framing the individual QR instead." };
-  }
-  if (manual && (code.data === VISIBLE_QR_TEXT || /QRED[34]:/.test(code.data) || isQRedEntryLink(code.data) || code.data.includes("qred.org"))) {
-    const text = returnPayload
-      ? qredPayloadFromPhotoScanResult(imageData.data, vWidth, vHeight, code)
-      : qredTextFromPhotoScanResult(imageData.data, vWidth, vHeight, code);
-    if (text && !isQRedEntryLink(text)) return { status: "found", text };
-    if (isQRedEntryLink(text) && code.data !== VISIBLE_QR_TEXT) {
-      return { status: "feedback", message: "That code opens qred.org. Include the full printed page against a contrasting background to recover its pale watermark." };
-    }
-    if (code.data === VISIBLE_QR_TEXT) {
-      return { status: "feedback", message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again." };
-    }
-    return { status: "found", text: qredTextFromScanResult(code) };
-  }
-
-  return qrScanAction(imageData.data, vWidth, vHeight, code, { returnPayload });
+  return qrScanAction(data, width, height, code, options);
 }
 
-function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayload }) {
+function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPayload }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const handleScanActionRef = useRef(() => false);
   const pendingManualCaptureRef = useRef(false);
   const pendingManualCaptureStartedAtRef = useRef(null);
   const cameraReadyRef = useRef(false);
-  const streamRef = useRef(null);
-  const torchEnabledRef = useRef(torchEnabled);
+  const photoScanRef = useRef(null);
+  const capturePhotoRef = useRef(() => {});
   const [error, setError] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const [cameraReady, setCameraReady] = useState(false);
@@ -300,6 +181,7 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
     const seen = new Set();
     const scanQrFrame = createQrFrameScanner();
     let camera;
+    preparePhotoScanner();
 
     handleScanActionRef.current = (scanAction) => {
       if (scanAction.status === "found-multiple") {
@@ -338,30 +220,54 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
       return false;
     };
 
+    function capturePhoto() {
+      if (photoScanRef.current) return;
+      const image = captureCameraFrame(videoRef.current, canvasRef.current);
+      if (!image) {
+        handleScanActionRef.current({ status: "pending", message: "Camera is preparing the photo. Hold steady…" });
+        return;
+      }
+      pendingManualCaptureRef.current = false;
+      pendingManualCaptureStartedAtRef.current = null;
+      markCameraReady(true);
+      const controller = new AbortController();
+      photoScanRef.current = controller;
+      onReadingPhoto(true);
+      setFeedback("Reading photo… You can close the scanner to cancel.");
+      scanPhotoInWorker(image, { returnPayload, signal: controller.signal }).then(action => {
+        if (photoScanRef.current !== controller) return;
+        setFeedback(null);
+        handleScanActionRef.current(action);
+      }).catch(error => {
+        if (photoScanRef.current === controller && error.name !== "AbortError") setFeedback(error.message);
+      }).finally(() => {
+        if (photoScanRef.current !== controller) return;
+        photoScanRef.current = null;
+        onReadingPhoto(false);
+      });
+    }
+    capturePhotoRef.current = capturePhoto;
+
     function scanFrame() {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
+      // Preserve the photographed canvas until its worker result is collected.
+      if (photoScanRef.current) return;
+      const video = videoRef.current, canvas = canvasRef.current;
       const frameReady = isCameraFrameReady(video, canvas);
       if (frameReady) markCameraReady(true);
-      const timedOutManualCapture = pendingManualCaptureRef.current && !frameReady
-        ? manualCapturePendingAction(pendingManualCaptureStartedAtRef.current)
-        : null;
-      const scanAction = timedOutManualCapture
-        || (pendingManualCaptureRef.current && frameReady
-          ? decodeCanvasFrame(video, canvas, { manual: true, returnPayload })
-          : decodeCanvasFrame(video, canvas, { returnPayload, scanQrFrame }));
-      if (pendingManualCaptureRef.current && (frameReady || timedOutManualCapture)) {
+      if (pendingManualCaptureRef.current && frameReady) { capturePhoto(); return; }
+      const timeout = pendingManualCaptureRef.current
+        ? manualCapturePendingAction(pendingManualCaptureStartedAtRef.current) : null;
+      if (timeout) {
         pendingManualCaptureRef.current = false;
         pendingManualCaptureStartedAtRef.current = null;
       }
-      handleScanActionRef.current(scanAction);
+      handleScanActionRef.current(timeout || decodeCanvasFrame(video, canvas, { returnPayload, scanQrFrame }));
     }
 
     camera = startCameraSession({
       video: videoRef.current,
       requestStream: getPreferredCameraStream,
-      prepareStream: stream => applyCameraQualityControls(stream, { enableTorch: torchEnabledRef.current }),
-      onStream: stream => { streamRef.current = stream; },
+      prepareStream: applyCameraQualityControls,
       onFrame: scanFrame,
       onError: (error, stage) => setError((stage === "play" ? "Camera preview could not start: " : "Camera access needed: ")
         + (error.message || "environment camera")),
@@ -372,21 +278,17 @@ function ScannerView({ onScan, onClose, captureRequest, torchEnabled, returnPayl
       pendingManualCaptureStartedAtRef.current = null;
       cameraReadyRef.current = false;
       handleScanActionRef.current = () => false;
+      capturePhotoRef.current = () => {};
+      photoScanRef.current?.abort();
+      photoScanRef.current = null;
+      onReadingPhoto(false);
       camera.stop();
     };
-  }, [onScan, returnPayload]);
+  }, [onScan, returnPayload, onReadingPhoto]);
 
   useEffect(() => {
-    torchEnabledRef.current = torchEnabled;
-    if (streamRef.current) applyCameraQualityControls(streamRef.current, { enableTorch: torchEnabled });
-  }, [torchEnabled]);
-
-  useEffect(() => {
-    if (captureRequest <= 0 || error) return;
-
-    const scanAction = decodeCanvasFrame(videoRef.current, canvasRef.current, { manual: true, returnPayload });
-    handleScanActionRef.current(scanAction);
-  }, [captureRequest, error, onScan]);
+    if (captureRequest > 0 && !error) capturePhotoRef.current();
+  }, [captureRequest, error]);
 
   if (error) {
     return React.createElement("div", { className: "ar-error" },

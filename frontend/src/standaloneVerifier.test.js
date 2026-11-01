@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { fireEvent, waitFor } from "@testing-library/react";
 import jsQR from "jsqr";
 import { PNG } from "pngjs";
+import { getPreferredCameraStream, applyCameraQualityControls } from "./qr/cameraControls.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import { createQrFrameScanner } from "./qr/scanQrImage.js";
 import { isQRedEntryLink } from "./qr/hiddenPayload.js";
@@ -40,7 +41,7 @@ function loadStandalone(overrides = {}) {
   document.documentElement.innerHTML = readFileSync("verifier.html", "utf8");
   const source = document.querySelector('script[type="module"]').textContent.replace(/^\s*import .+;$/gm, "");
   const bindings = {
-    authProvider, startCameraSession, createQrFrameScanner, isQRedEntryLink, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
+    getPreferredCameraStream, applyCameraQualityControls, authProvider, startCameraSession, createQrFrameScanner, isQRedEntryLink, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
     createScanPhotoCollection: callback => createScanPhotoCollection(callback, async () => new Blob(["frame"], { type: "image/png" })),
     mountPhotoTextVerification: () => ({ update: vi.fn() }),
     mountPdfSealInput: () => ({ update: vi.fn() }),

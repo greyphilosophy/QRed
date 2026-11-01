@@ -1,0 +1,47 @@
+import { scanQrImage } from "./scanQrImage.js";
+import { scanPageAlignedImage } from "./pageAlignedScan.js";
+import { isQRedEntryLink } from "./hiddenPayload.js";
+import { VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult,
+  qredTextFromScanResult } from "../qredVerifier.js";
+
+export function qrScanAction(data, width, height, code, { returnPayload = false } = {}) {
+  if (!code?.data) return { status: "continue" };
+  const text = returnPayload
+    ? qredPayloadFromPhotoScanResult(data, width, height, code)
+    : qredTextFromPhotoScanResult(data, width, height, code);
+  return text && !isQRedEntryLink(text) ? { status: "found", text } : { status: "continue" };
+}
+
+// The same decoder serves a chosen photo and a manually captured camera frame.
+// Browser callers run this synchronous work in photoScan.worker.js.
+export function decodePhoto(image, { returnPayload = false } = {}) {
+  const { data, width, height } = image;
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0
+    || width * height > 80_000_000 || data?.length !== width * height * 4) {
+    throw new Error("This photo cannot be scanned at its current size. Choose a smaller photo.");
+  }
+  if (returnPayload) {
+    const aligned = scanPageAlignedImage(image, { deep: true });
+    if (aligned.length) return { status: "found-multiple", texts: aligned.map(result => result.seal) };
+  }
+  const code = scanQrImage(data, width, height);
+  if (code?.codes) {
+    const texts = code.codes.map(result => qrScanAction(data, width, height, result, { returnPayload }))
+      .filter(action => action.status === "found").map(action => action.text);
+    return texts.length ? { status: "found-multiple", texts } : { status: "continue" };
+  }
+  if (!code?.data) return { status: "feedback", message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For older seals, try framing the individual QR instead." };
+  if (code.data === VISIBLE_QR_TEXT || /QRED[34]:/.test(code.data)
+    || isQRedEntryLink(code.data) || code.data.includes("qred.org")) {
+    const text = returnPayload
+      ? qredPayloadFromPhotoScanResult(data, width, height, code)
+      : qredTextFromPhotoScanResult(data, width, height, code);
+    if (text && !isQRedEntryLink(text)) return { status: "found", text };
+    if (isQRedEntryLink(text) && code.data !== VISIBLE_QR_TEXT) {
+      return { status: "feedback", message: "That code opens qred.org. Include the full printed page against a contrasting background to recover its pale watermark." };
+    }
+    if (code.data === VISIBLE_QR_TEXT) return { status: "feedback", message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again." };
+    return { status: "found", text: qredTextFromScanResult(code) };
+  }
+  return qrScanAction(data, width, height, code, { returnPayload });
+}

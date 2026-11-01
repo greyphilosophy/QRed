@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { scanQrImage } from "./qr/scanQrImage.js";
-import { scanPageAlignedImage } from "./qr/pageAlignedScan.js";
-import { decodeSeal, qredPayloadFromPhotoScanResult, VISIBLE_QR_TEXT } from "./qredVerifier.js";
+import { preparePhotoScanner, scanPhotoInWorker } from "./qr/photoScanClient.js";
+import { decodeSeal, VISIBLE_QR_TEXT } from "./qredVerifier.js";
 import { isQRedEntryLink } from "./qr/hiddenPayload.js";
 import { readSigningKeyFile } from "./signingKeys.js";
 import { createVerificationSession } from "./verifier/verificationSession.js";
@@ -66,10 +65,14 @@ export function useSealVerification() {
 export function SealVerification({ verification }) {
   const [openingKey, setOpeningKey] = useState(false);
   const [keyFileStatus, setKeyFileStatus] = useState("");
+  const [readingImage, setReadingImage] = useState(false);
   const imageRead = useRef(0);
+  const imageScan = useRef(null);
+  useEffect(() => { preparePhotoScanner(); }, []);
   useEffect(() => {
     imageRead.current += 1;
-    return () => { imageRead.current += 1; };
+    setReadingImage(false);
+    return () => { imageRead.current += 1; imageScan.current?.abort(); };
   }, [verification.session]);
   const { seals, setPublicKey, results, notice, setNotice, busy, addSeal } = verification;
   const hasLocalSeals = seals.some(seal => decodeSeal(seal)?.version === "3");
@@ -95,37 +98,53 @@ export function SealVerification({ verification }) {
     const input = event.target;
     const file = input.files?.[0];
     if (!file) return;
+    input.value = "";
+    imageScan.current?.abort();
+    const controller = new AbortController();
+    imageScan.current = controller;
     const request = ++imageRead.current;
     const url = URL.createObjectURL(file);
+    let canvas;
+    setReadingImage(true);
+    setNotice("");
     try {
       const image = new Image();
       image.src = url;
       await image.decode();
       if (request !== imageRead.current) return;
-      const canvas = document.createElement("canvas");
+      if (!image.naturalWidth || !image.naturalHeight || image.naturalWidth * image.naturalHeight > 80_000_000) {
+        throw new Error("This photo cannot be scanned at its current size. Choose a smaller photo.");
+      }
+      canvas = document.createElement("canvas");
       canvas.width = image.naturalWidth;
       canvas.height = image.naturalHeight;
       const context = canvas.getContext("2d");
       context.drawImage(image, 0, 0);
       const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+      image.src = "";
       // A single photographed sheet can contain four adjacent watermark
       // chunks. Recover them all without asking the user to upload the same
       // image four times. Keep the page photo once for later comparison.
-      const aligned = scanPageAlignedImage(pixels, { deep: true });
+      const action = await scanPhotoInWorker(pixels, { returnPayload: true, signal: controller.signal });
       if (request !== imageRead.current) return;
-      if (aligned.length) {
-        aligned.forEach(({ seal }, index) => addSeal(seal, index === 0 ? canvas : null));
-        return;
-      }
-      const code = scanQrImage(pixels.data, pixels.width, pixels.height);
-      if (!code) throw new Error("No readable QR seal found. Include the entire page against a contrasting background, or choose a clear close-up of an older QR seal.");
-      addSeal(qredPayloadFromPhotoScanResult(pixels.data, pixels.width, pixels.height, code), canvas);
+      if (action.status === "found-multiple") action.texts.forEach((seal, index) => addSeal(seal, index === 0 ? canvas : null));
+      else if (action.status === "found") addSeal(action.text, canvas);
+      else setNotice(action.message || "No readable seal found. Try another photo.");
     } catch (error) {
-      if (request === imageRead.current) setNotice(error.message);
+      if (request === imageRead.current && error.name !== "AbortError") setNotice(error.message);
     } finally {
       URL.revokeObjectURL(url);
-      input.value = "";
+      if (canvas) canvas.width = canvas.height = 0;
+      if (request === imageRead.current) { imageScan.current = null; setReadingImage(false); }
     }
+  }
+
+  function cancelImageScan() {
+    imageRead.current += 1;
+    imageScan.current?.abort();
+    imageScan.current = null;
+    setReadingImage(false);
+    setNotice("Photo scan cancelled.");
   }
 
   return <section className="verification-card" aria-label="Seal verification">
@@ -146,6 +165,10 @@ export function SealVerification({ verification }) {
     </div>}
     <label htmlFor="qr-image">Choose QR image</label>
     <input id="qr-image" type="file" accept="image/*" onChange={readImage} />
+    {readingImage && <div>
+      <p role="status">Reading photo… Large page watermarks can take a moment.</p>
+      <button type="button" onClick={cancelImageScan}>Cancel photo scan</button>
+    </div>}
     <PdfSealInput onSeal={addSeal} session={verification.session} />
     <button type="button" onClick={verification.clear}>Clear collected seals</button>
     <div aria-live="polite">
