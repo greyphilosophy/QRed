@@ -147,6 +147,14 @@ def test_guided_pages_find_changed_word_and_clear_without_persistence(browser, s
         assert persistent_state(page) == baseline
         page.screenshot(path=str(tmp_path / "page-2-difference.png"), full_page=True)
 
+        # A different page, even with the same signed text, cannot replace page 2.
+        camera_paper(page, TEXT, sealed_text[0]["qr"])
+        review.get_by_role("button", name="Retake this page", exact=True).click()
+        page.get_by_role("dialog").get_by_role("button", name="Use this view").click()
+        expect(page.get_by_role("dialog").get_by_role("alert")).to_contain_text("does not match Page 2", timeout=30000)
+        expect(review.locator(".photo-differences")).to_contain_text("Monday")
+        page.get_by_role("button", name="Cancel retake", exact=True).click()
+
         # A retake stays in QRed's camera and replaces the old image and verdict.
         camera_paper(page, TEXT, sealed_text[1]["qr"])
         review.get_by_role("button", name="Retake this page", exact=True).click()
@@ -158,7 +166,7 @@ def test_guided_pages_find_changed_word_and_clear_without_persistence(browser, s
 
         # A deletion and an unreadable page must never become a matching result.
         for text, expected in [(TEXT.replace("Payment due Friday", ""), "Differences found"), ("", "No text could be read")]:
-            camera_paper(page, text, None)
+            camera_paper(page, text, sealed_text[1]["qr"])
             review.get_by_role("button", name="Retake this page", exact=True).click()
             page.get_by_role("dialog").get_by_role("button", name="Use this view").click()
             expect(review.locator(".photo-summary")).to_contain_text(expected, timeout=60000)
@@ -169,6 +177,7 @@ def test_guided_pages_find_changed_word_and_clear_without_persistence(browser, s
         expect(page.locator(".verification-result")).to_have_count(0)
         assert "Monday" not in page.locator("body").inner_text()
         assert page.evaluate("window.__cameraTracks.every(track => track.readyState === 'ended')")
+        expect(page.get_by_role("status").filter(has_text="Check cleared. Camera off.")).to_be_visible()
         assert downloads == []
         assert persistent_state(page) == baseline
         guard.assert_quiet()
@@ -194,5 +203,104 @@ def test_missing_ocr_resource_stops_before_camera_and_retries(browser):
         context.unroute("**/ocr/v1/eng.traineddata.gz")
         page.get_by_role("button", name="Retry text recognition", exact=True).click()
         expect(page.get_by_role("button", name="Offline text checking ready", include_hidden=True)).to_have_count(1, timeout=60000)
+    finally:
+        context.close()
+
+@pytest.mark.parametrize("layout", ["automatic", "legal-footer"])
+def test_real_stamped_pages_separate_markings_and_detect_edits(browser, tmp_path, layout):
+    """Use QRed's actual renderer: its pale background and navigation stamp matter."""
+    from reportlab.pdfgen import canvas
+    from browser_helpers import stamp_and_save, show_file_inputs
+
+    source = io.BytesIO()
+    pdf = canvas.Canvas(source, pagesize=(612, 792))
+    for _ in range(2):
+        pdf.setFont("Helvetica", 24)
+        for index, line in enumerate(TEXT.splitlines()):
+            pdf.drawString(60, 700 - index * 60, line)
+        pdf.showPage()
+    pdf.save()
+    context = browser.new_context(service_workers="allow", viewport={"width": 390, "height": 844})
+    page = context.new_page()
+    try:
+        context.route("**/api/keys/default", lambda route: route.fulfill(json={"public_key": PUBLIC_KEY}))
+        base = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
+        page.goto(base, wait_until="networkidle")
+        page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Private key (offline)", exact=True).click()
+        page.get_by_label("Private Key", exact=True).fill("txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=")
+        page.get_by_label("Page layout", exact=True).select_option(layout)
+        stamped, _ = stamp_and_save(page, {"name": "invoice.pdf", "mimeType": "application/pdf", "buffer": source.getvalue()}, tmp_path / "sealed.pdf")
+
+        for variant in ["unchanged", "changed", "light addition"]:
+            opened = stamped
+            if variant != "unchanged":
+                opened = tmp_path / (variant.replace(" ", "-") + ".pdf")
+                mutation = """
+                  import fs from 'node:fs';
+                  import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+                  const [source, target, variant] = process.argv.slice(1);
+                  const pdf = await PDFDocument.load(fs.readFileSync(source));
+                  const page = pdf.getPage(1), offset = page.getHeight() - 792;
+                  const font = await pdf.embedFont(StandardFonts.Helvetica);
+                  if (variant === 'changed') {
+                    const left = 60 + font.widthOfTextAtSize('Payment due ', 24);
+                    page.drawRectangle({x:left-2,y:offset+510,width:105,height:38,color:rgb(1,1,1)});
+                    page.drawText('Monday',{x:left,y:offset+520,size:24,font,color:rgb(0,0,0)});
+                  }
+                  const ink = variant === 'changed' ? 0 : .7;
+                  page.drawText('Paid',{x:60,y:offset+430,size:24,font,color:rgb(ink,ink,ink)});
+                  fs.writeFileSync(target,await pdf.save());
+                """
+                subprocess.run(["node", "--input-type=module", "-e", mutation, str(stamped), str(opened), variant],
+                               cwd=ROOT / "frontend", check=True, capture_output=True)
+            page.goto(base, wait_until="networkidle")
+            show_file_inputs(page)
+            page.get_by_label("Open PDF to verify", exact=True).set_input_files(opened)
+            expect(page.locator(".page-check-list button")).to_have_count(2, timeout=90000)
+            expect(page.locator(".page-check-status.queued, .page-check-status.reading")).to_have_count(0, timeout=60000)
+            page.locator(".page-check-list button").nth(1).click()
+            review = page.get_by_role("region", name="Review Page 2 of 2", exact=True)
+            if variant == "unchanged":
+                expect(review.locator(".photo-summary")).not_to_contain_text("No text")
+                expect(review.locator(".photo-differences")).to_be_empty()
+                page.locator(".page-check-list button").nth(0).click()
+                first = page.get_by_role("region", name="Review Page 1 of 2", exact=True)
+                expect(first.locator(".photo-differences")).to_be_empty()
+                expect(first.locator(".photo-markings")).to_contain_text(re.compile(r"Verify at [qg]red\.org"))
+            elif variant == "changed":
+                expect(review.locator(".photo-differences")).to_contain_text("Friday")
+                expect(review.locator(".photo-differences")).to_contain_text("Monday")
+                expect(review.locator(".photo-differences")).to_contain_text("Paid")
+            else:
+                # A contrast fallback must never turn an unreadable light addition
+                # into an unqualified agreement. It needs explicit visual review.
+                expect(review.locator(".photo-summary")).not_to_have_text("Recognized text matches the signed text")
+            page.screenshot(path=str(tmp_path / (layout + "-" + variant.replace(" ", "-") + ".png")), full_page=True)
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("path", ["/", "/verify.htm"])
+def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_text, path, tmp_path):
+    context = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="allow")
+    try:
+        page = context.new_page()
+        context.route("**/api/keys/default", lambda route: route.fulfill(json={"public_key": PUBLIC_KEY}))
+        page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000") + path, wait_until="networkidle")
+        if path != "/":
+            page.locator("#publicKeyFileInput").set_input_files({"name": "key.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode()})
+        expect(page.get_by_text("Camera images stay in this session.", exact=False)).to_be_visible()
+        camera_paper(page, TEXT.replace("Friday", "Monday"), sealed_text[1]["qr"])
+        page.get_by_role("button", name="Check document", exact=True).click()
+        expect(page.locator(".ar-collection-progress, #statusText").filter(has_text="Page 2 captured. Show page 1.")).to_be_visible(timeout=45000)
+        page.get_by_role("button", name="Check this page now", exact=True).click()
+        review = page.get_by_role("region", name="Review Page 2 of 2", exact=True)
+        expect(review.locator(".photo-differences")).to_contain_text("Monday", timeout=60000)
+        expect(review.get_by_role("heading", name=re.compile("Page 2"))).to_be_focused()
+        crop = review.get_by_role("img", name="Magnified photo difference").first.bounding_box()
+        assert crop["y"] >= 0 and crop["y"] + crop["height"] < 844, crop
+        expect(page.get_by_text("Other pages have not been checked.", exact=False)).to_be_visible()
+        page.screenshot(path=str(tmp_path / "difference-first.png"))
     finally:
         context.close()

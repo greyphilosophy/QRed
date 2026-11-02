@@ -181,7 +181,7 @@ from the phone's gallery. Use **Capture page** on the homepage if live recovery
 needs a longer still-image attempt.
 
 After collection, every captured page with authenticated signed text is checked
-automatically, one at a time. **Review captured pages** stops scanning and checks a
+automatically, one at a time. **Check this page now** stops scanning and checks a
 partial collection without requiring the rest of the document. Other pages remain
 explicitly unchecked. Page buttons retain their individual results, and the first
 reading that needs review opens automatically. A valid seal is labelled **Seal
@@ -191,12 +191,21 @@ Differences show the signed wording, the independently recognized wording, and a
 magnified photo region where a reliable location is available. Red highlights mark
 different/extra readings; amber marks uncertainty. Matching-word highlights are
 optional. Missing text is listed without inventing a photo location. **Retake this
-page** uses QRed's browser camera and replaces the superseded capture and result.
+page** uses QRed's browser camera. It reads the seal again and only replaces the
+superseded capture and result if its bytes match the authenticated page collection.
+An unreadable seal or another page leaves the previous check intact.
 
 This is OCR-assisted text comparison, not authentication of every pixel,
 handwriting, images, or layout. OCR can miss or misread text, even confidently.
 Check important numbers and unmarked areas. Blur, skew, columns, watermark seals,
-and QRed's added captions can produce differences. Case, punctuation, numbers,
+and QRed's added captions can affect recognition. If the original yields no text,
+a contrast-assisted reading can recover dark text over a pale watermark. Such a
+reading always needs visual review: pale writing may also have disappeared from
+that working copy. The original photo remains available. Navigation captions
+beside decoded QRed codes (including a visible q/g OCR ambiguity) and readings inside those codes are shown
+separately as markings to inspect, never silently treated as authenticated text.
+Additional wording and the same caption elsewhere remain part of the comparison.
+Case, punctuation, numbers,
 signs, and repeated words are preserved; only whitespace and canonical Unicode
 composition are ignored. The reader never receives the signed text as a recognition
 hint. Confidence is a review heuristic, not a probability of authenticity.
@@ -211,7 +220,7 @@ as secondary entry points.
 **Finish & clear** ends the check, stops the camera and OCR worker, revokes image
 URLs, and releases captured images, recognized words, signed contents, and results.
 Late asynchronous results cannot restore a cleared check. Navigating away also
-ends the check; refreshing does not restore document history. Start another check
+ends the check; refreshing does not restore document history. The screen confirms “Check cleared. Camera off.” Start another check
 from the cleared screen. QRed does not upload this data, save it to the photo
 library, or write it to persistent browser storage. This is application-level
 cleanup, not a promise of forensic erasure from the browser or operating system.

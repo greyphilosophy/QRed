@@ -335,6 +335,8 @@
       <div class="controls">
         <button class="btn btn-primary" id="btnScan">Check document</button>
       </div>
+      <p class="page-scan-hint">Camera images stay in this session. QRed does not save them to your photo library or upload them.</p>
+      <p id="clearNotice" role="status"></p>
 
       <div class="status-bar" id="statusBar">
         <div class="status-dot active" id="statusDot"></div>
@@ -434,6 +436,7 @@
       var snapshot = collection.getSnapshot();
       photoComparison.update(results || snapshot.results, snapshot.session, state.scanImages, state.isScanning, {
         verifying: snapshot.busy,
+        seals: snapshot.seals,
         onReplacePhoto: function(id, file) {
           if (collection.getSnapshot().session === snapshot.session) scanPhotos.replacePage(id, file);
         }
@@ -457,6 +460,7 @@
     var publicKeyFileStatus = document.getElementById("publicKeyFileStatus");
 
     btnScan.onclick = async function() {
+      document.getElementById("clearNotice").textContent = "";
       if (state.isScanning) {
         stopScanning();
         btnScan.textContent = "Check document";
@@ -474,7 +478,7 @@
         if (generation !== state.startGeneration) return;
         btnScan.disabled = false;
         startScanning();
-        btnScan.textContent = "Review captured pages";
+        btnScan.textContent = "Check this page now";
       }
     };
 
@@ -501,6 +505,8 @@
       document.getElementById("cameraVideo").style.display = "none";
       document.getElementById("scanCanvas").style.display = "none";
       statusBar.classList.remove("visible");
+      document.getElementById("clearNotice").textContent = "Check cleared. Camera off.";
+      btnScan.focus();
     };
 
     window.addEventListener("pagehide", function() { btnNewScan.onclick(); });
@@ -652,6 +658,7 @@
       var progress = snapshot.progress;
       if (!progress) return;
       statusText.textContent = progress.message;
+      if (state.isScanning) btnScan.textContent = progress.pagesCollected > 1 ? "Check captured pages now" : "Check this page now";
       var collected = progress.pagesCollected || progress.collected;
       var total = progress.pagesTotal || progress.total;
       progressFill.style.width = Math.min(100, collected / total * 100) + "%";

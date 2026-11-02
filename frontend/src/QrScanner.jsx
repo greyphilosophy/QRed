@@ -21,14 +21,16 @@ import "./qrScanner.css";
  * 3. Result — shows collection progress and can resume scanning
  */
 export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSealDetected, returnPayload = false, resultPanel,
-  collectSeals = false, collectionProgress, beforeScan, onScanningChange }) {
+  collectSeals = false, collectionProgress, beforeScan, onScanningChange, completionNotice = "" }) {
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
   const [captureRequest, setCaptureRequest] = useState(0);
   const [readingPhoto, setReadingPhoto] = useState(false);
   const [preparing, setPreparing] = useState(false), [preparationError, setPreparationError] = useState("");
   const startGeneration = useRef(0);
+  const startButton = useRef(null);
   useEffect(() => () => { startGeneration.current++; }, []);
+  useEffect(() => { if (completionNotice) startButton.current?.focus(); }, [completionNotice]);
   useEffect(() => { onScanningChange?.(mode === "scanning"); }, [mode, onScanningChange]);
   const handleScan = useCallback((text, frame) => {
     onSealDetected?.(text, frame);
@@ -47,6 +49,8 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
   const controls = React.createElement("div", { className: "ar-controls" },
     React.createElement("button", {
       className: "ar-button ar-button-primary",
+      ref: startButton,
+      "aria-describedby": completionNotice ? "check-clear-note" : undefined,
       disabled: preparing,
       onClick: async () => {
         if (mode === "scanning") {
@@ -71,7 +75,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
         setMode("result");
         document.getElementById("document-check")?.scrollIntoView({ behavior: "smooth" });
       },
-    }, "Review captured pages") : null,
+    }, collectionProgress?.pagesCollected > 1 ? "Check captured pages now" : "Check this page now") : null,
     onOpenPdfStampTool && mode !== "scanning" ? React.createElement("button", {
       "aria-label": "Open PDF stamping tool",
       "aria-controls": "pdf-stamp-tool",
@@ -118,6 +122,8 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
         React.createElement("p", { className: "eyebrow" }, "QRed AR verifier"),
         React.createElement("h1", null, "Check a printed document"),
         React.createElement("p", null, "Frame each whole page. QRed checks the seal and helps you find changed text."),
+        React.createElement("p", { className: "camera-privacy" }, "Camera images stay in this session. QRed does not save them to your photo library or upload them."),
+        completionNotice ? React.createElement("p", { id: "check-clear-note", role: "status" }, completionNotice) : null,
         preparationError ? React.createElement("p", { role: "alert" }, preparationError + " Try Check document again while connected.") : null
       )
     ),

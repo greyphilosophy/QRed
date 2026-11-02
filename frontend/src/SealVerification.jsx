@@ -23,7 +23,7 @@ export function useSealVerification() {
   useEffect(() => () => { photoCollection.clear(); textChecks.dispose(); }, [photoCollection, textChecks]);
   const clear = useCallback(() => {
     textChecks.clear(); photoCollection.clear(); collection.clear();
-    setNotice(""); setScanning(false);
+    setNotice("Check cleared. Camera off."); setScanning(false);
   }, [textChecks, photoCollection, collection]);
   useEffect(() => {
     // Also clear a page restored from the back/forward cache.
@@ -161,8 +161,8 @@ export function SealVerification({ verification }) {
 
   return <section className="verification-card" aria-label="Seal verification" id="document-check">
     <div className="verification-actions"><button type="button" onClick={verification.clear}>Finish &amp; clear</button></div>
-    {notice && <p role="status">{notice}</p>}
-    <PhotoTextVerification results={results} session={verification.session} checks={verification.textChecks}
+    {notice && notice !== "Check cleared. Camera off." && <p role="status">{notice}</p>}
+    <PhotoTextVerification results={results} seals={seals} session={verification.session} checks={verification.textChecks}
       scanPhotos={verification.scanImages?.photos} captureNotice={verification.scanImages?.notice}
       scanning={verification.scanning} verifying={busy} onReplacePhoto={verification.replacePhoto} />
     {hasLocalSeals && <div>

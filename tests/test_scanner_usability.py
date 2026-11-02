@@ -85,7 +85,7 @@ def test_main_camera_at_one_times_zoom_without_flashlight(browser, path):
             assert geometry["animation"] == "none"
             assert geometry["pointerEvents"] == "none"
         expect(page.get_by_text("Keep all four page corners visible. Avoid glare.", exact=True)).to_be_visible()
-        page.get_by_role("button", name="Close" if path == "/" else "Review captured pages", exact=True).click()
+        page.get_by_role("button", name="Close" if path == "/" else "Check this page now", exact=True).click()
         expect(page.locator(".page-scan-guide")).not_to_be_visible()
         assert page.evaluate("cameraTest.stopped") == ["tele", "main"]
     finally:
@@ -212,7 +212,7 @@ def test_live_worker_has_no_backlog_and_capture_can_resume_the_same_camera_offli
         assert state["opens"] == 1
         assert state["maxPending"] == 1
         assert state["readsWhileBusy"] == 0
-        page.get_by_role("button", name="Close" if path == "/" else "Review captured pages", exact=True).click()
+        page.get_by_role("button", name="Close" if path == "/" else "Check this page now", exact=True).click()
         assert page.evaluate("liveTestStream.getTracks().every(track => track.readyState === 'ended')")
         assert page.evaluate("liveTest.pending") == 0
         assert page.evaluate("liveTest.terminated") >= 1

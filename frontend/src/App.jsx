@@ -40,7 +40,8 @@ function App() {
       <QrScanner
         key={verification.session}
         returnPayload
-        beforeScan={() => verification.textChecks.prepare()}
+        beforeScan={() => { verification.setNotice(""); return verification.textChecks.prepare(); }}
+        completionNotice={verification.notice === "Check cleared. Camera off." ? verification.notice : ""}
         onScanningChange={verification.setScanning}
         collectSeals
         collectionProgress={verification.progress}

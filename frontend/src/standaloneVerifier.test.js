@@ -185,7 +185,7 @@ it("the standalone camera yields between retries and ignores a retired padding p
   }
   expect(document.getElementById("resultStatus").textContent).toBe("");
   expect(document.getElementById("resultContent").textContent).not.toContain("QRED1?");
-  expect(document.getElementById("btnScan").textContent).toBe("Review captured pages");
+  expect(document.getElementById("btnScan").textContent).toBe("Check this page now");
 });
 
 it.each([

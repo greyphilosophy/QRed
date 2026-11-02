@@ -25,11 +25,19 @@ it("checks all captured pages without extra clicks and opens page 2's changed wo
   expect(within(review).getAllByText("Monday", { exact: false }).length).toBeGreaterThan(0);
   expect(within(review).getAllByText("Friday", { exact: false }).length).toBeGreaterThan(0);
   expect(within(review).getByRole("img", { name: "Magnified photo difference" })).toBeTruthy();
+  await waitFor(() => expect(document.activeElement).toBe(within(review).getByRole("heading", { name: /Page 2/ })));
   expect(screen.getByRole("button", { name: /Page 1 of 2.*Recognized text matches/ })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Load text recognition" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: /Page 1 of 2.*Recognized text matches/ }));
   expect(screen.getByRole("region", { name: "Review Page 1 of 2" })).toBeTruthy();
   expect(ocr.read).toHaveBeenCalledTimes(2);
+});
+it("opens a later difference ahead of an earlier uncertain reading", async () => {
+  ocr.read.mockImplementation(async canvas => [{ ...word(canvas.text), confidence: canvas.text === "Friday" ? 70 : 99 }]);
+  render(<PhotoTextVerification results={[page, other]} scanPhotos={[capture(1, "first", "Friday"), capture(2, "second", "Monday")]} />);
+  const review = await screen.findByRole("region", { name: "Review Page 2 of 2" });
+  await waitFor(() => expect(document.activeElement).toBe(within(review).getByRole("heading", { name: /Page 2/ })));
+  expect(within(review).getAllByText("Monday", { exact: false }).length).toBeGreaterThan(0);
 });
 it.each(["INVALID", "UNVERIFIED", "INCOMPLETE", "ERROR"])("does not compare %s reference text", status => {
   render(<PhotoTextVerification results={[{ ...page, status }]} scanPhotos={[capture(1, "first", "Friday")]} />);

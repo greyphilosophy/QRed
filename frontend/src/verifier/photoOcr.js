@@ -1,10 +1,11 @@
 import { createWorker } from "tesseract.js";
+import { preparePhotoReading } from "./photoReading.js";
 
 // These versioned resources are copied from locked dependencies at build time.
 // Never use Tesseract's default CDN paths: all resources belong to this origin.
 export const OCR_ASSET_PATH = "/ocr/v1";
 
-export function createPhotoOcrReader(workerFactory = createWorker) {
+export function createPhotoOcrReader(workerFactory = createWorker, prepareImage = preparePhotoReading) {
   let worker = null, pending = null, generation = 0;
   let progress = () => {};
 
@@ -39,10 +40,21 @@ export function createPhotoOcrReader(workerFactory = createWorker) {
     async read(canvas, onProgress) {
       const current = await prepare(onProgress);
       // The signed text is deliberately never supplied to the recognition engine.
-      const { data } = await current.recognize(canvas, {}, { text: true, blocks: true });
-      return (data.blocks || []).flatMap(block => (block.paragraphs || [])
-        .flatMap(paragraph => (paragraph.lines || []).flatMap(line => line.words || [])))
-        .map(({ text, confidence, bbox }) => ({ text, confidence, bbox }));
+      const recognize = async image => {
+        const { data } = await current.recognize(image, {}, { text: true, blocks: true });
+        return (data.blocks || []).flatMap(block => (block.paragraphs || [])
+          .flatMap(paragraph => (paragraph.lines || []).flatMap(line => line.words || [])))
+          .map(({ text, confidence, bbox }) => ({ text, confidence, bbox }));
+      };
+      let words = await recognize(canvas);
+      const prepared = prepareImage(canvas);
+      try {
+        // Preserve every reading from the original. Only use the contrast copy
+        // when segmentation found no text at all, and label its limitations.
+        const contrastAssisted = words.length === 0;
+        if (contrastAssisted) words = await recognize(prepared.canvas);
+        return { words, codes: prepared.codes, contrastAssisted };
+      } finally { if (prepared.canvas) prepared.canvas.width = prepared.canvas.height = 0; }
     },
     dispose() {
       generation += 1;

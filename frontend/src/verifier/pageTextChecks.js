@@ -1,5 +1,5 @@
 import { createPhotoOcrReader, openPagePhoto } from "./photoOcr.js";
-import { comparePhotoText } from "./photoTextComparison.js";
+import { comparePageReading } from "./photoReading.js";
 
 // One OCR worker, one page at a time. All document data belongs to this session;
 // nothing here uses a network, download, or persistent-storage API.
@@ -54,7 +54,7 @@ export function createPageTextChecks({ reader = createPhotoOcrReader(), open = o
         current.canvas = canvas;
         const words = await reader.read(canvas, () => {});
         if (!valid()) return;
-        record.comparison = comparePhotoText(record.page.content, words, canvas);
+        record.comparison = comparePageReading(record.page.content, words, canvas);
         record.width = canvas.width; record.height = canvas.height;
         record.url = createUrl(record.file);
         record.state = record.comparison.status;

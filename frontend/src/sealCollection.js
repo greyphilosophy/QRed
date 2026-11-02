@@ -60,8 +60,10 @@ export function sealCollectionProgress(seals, results = []) {
       && JSON.stringify(item.identity) === JSON.stringify(result.identity));
     const pages = new Set(members.map(item => item.page_number));
     const complete = pages.size === result.page_count;
+    let nextPage = 1;
+    while (pages.has(nextPage)) nextPage++;
     const message = complete ? `All ${result.page_count} pages collected.`
-      : `${pages.size} of ${result.page_count} pages collected. Keep scanning.`;
+      : `Page ${result.page_number} captured. Show page ${nextPage}. ${pages.size} of ${result.page_count} pages collected.`;
     return { ...progress, pagesCollected: pages.size, pagesTotal: result.page_count,
       complete, finished: complete,
       message: message + (members.some(item => !item.metadata_authenticated) ? " Page counts are unverified." : "") };
