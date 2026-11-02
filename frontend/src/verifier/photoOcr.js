@@ -1,5 +1,5 @@
 import { createWorker } from "tesseract.js";
-import { preparePhotoReading } from "./photoReading.js";
+import { captionLineCandidates, isPrintedCaption, preparePhotoReading } from "./photoReading.js";
 
 // These versioned resources are copied from locked dependencies at build time.
 // Never use Tesseract's default CDN paths: all resources belong to this origin.
@@ -53,6 +53,42 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
         // when segmentation found no text at all, and label its limitations.
         const contrastAssisted = words.length === 0;
         if (contrastAssisted) words = await recognize(prepared.canvas);
+        const candidates = captionLineCandidates(words, prepared.codes);
+        if (candidates.length) {
+          const removed = new Set(), replacements = new Map();
+          await current.setParameters({ tessedit_pageseg_mode: "7" });
+          try {
+            for (const line of candidates) {
+              const left = Math.max(0, Math.floor(line.x0) - 8), top = Math.max(0, Math.floor(line.y0) - 8);
+              const width = Math.min(canvas.width - left, Math.ceil(line.x1) - left + 8);
+              const height = Math.min(canvas.height - top, Math.ceil(line.y1) - top + 8);
+              if (width * height > 250000) continue;
+              const detail = document.createElement("canvas");
+              detail.width = width * 2; detail.height = height * 2;
+              try {
+                detail.getContext("2d").drawImage(canvas, left, top, width, height, 0, 0, detail.width, detail.height);
+                const caption = await recognize(detail);
+                if (!isPrintedCaption(caption)) continue;
+                const mapped = caption.map(word => ({ ...word, bbox: {
+                  x0: left + word.bbox.x0 / 2, x1: left + word.bbox.x1 / 2,
+                  y0: top + word.bbox.y0 / 2, y1: top + word.bbox.y1 / 2,
+                } }));
+                const x0 = Math.min(...mapped.map(w => w.bbox.x0)), x1 = Math.max(...mapped.map(w => w.bbox.x1));
+                // Preserve every original word outside the newly read caption.
+                // In particular, never drop a nearby addition the crop missed.
+                const replaced = line.indices.filter(i => {
+                  const center = (words[i].bbox.x0 + words[i].bbox.x1) / 2;
+                  return center >= x0 && center <= x1;
+                });
+                if (replaced.length) {
+                  replaced.forEach(i => removed.add(i));
+                  replacements.set(Math.min(...replaced), mapped);
+                }
+              } finally { detail.width = detail.height = 0; }
+            }
+          } finally { if (worker === current) await current.setParameters({ tessedit_pageseg_mode: "3" }); }
+          words = words.flatMap((word, index) => replacements.get(index) || (removed.has(index) ? [] : [word]));
+        }
         return { words, codes: prepared.codes, contrastAssisted };
       } finally { if (prepared.canvas) prepared.canvas.width = prepared.canvas.height = 0; }
     },

@@ -59,3 +59,26 @@ it("preserves readings from the original instead of replacing them with a cleane
   expect(copy.width).toBe(0);
   reader.dispose();
 });
+it("independently enlarges a misread caption while preserving a nearby added word", async () => {
+  const word = (text, x0, y0, x1) => ({ text, confidence: 95, bbox: { x0, y0, x1, y1: y0 + 12 } });
+  const pack = words => ({ data: { blocks: [{ paragraphs: [{ lines: [{ words }] }] }] } });
+  const original = [word("Friday", 10, 10, 60), word(">", 170, 280, 180), word("2", 90, 280, 100), word("Paid", 190, 280, 210)];
+  const caption = [word("Verify", 16, 16, 76), word("at", 86, 16, 106), word("qred.org", 116, 16, 196)];
+  const engine = worker();
+  engine.recognize.mockResolvedValueOnce(pack(original)).mockResolvedValueOnce(pack(caption));
+  const copies = [];
+  vi.stubGlobal("document", { createElement: () => {
+    const canvas = { width: 0, height: 0, getContext: () => ({ drawImage: vi.fn() }) };
+    copies.push(canvas); return canvas;
+  } });
+  const reader = createPhotoOcrReader(() => Promise.resolve(engine), () => ({ canvas: {},
+    codes: [{ x0: 100, y0: 200, x1: 160, y1: 260 }] }));
+  try {
+    const result = await reader.read({ width: 600, height: 800 });
+    expect(result.words.map(word => word.text)).toEqual(["Friday", "Verify", "at", "qred.org", "Paid"]);
+    expect(result.words[1].bbox.x0).toBe(90);
+    expect(engine.recognize).toHaveBeenCalledTimes(2);
+    expect(engine.setParameters).toHaveBeenLastCalledWith({ tessedit_pageseg_mode: "3" });
+    expect(copies.every(canvas => canvas.width === 0 && canvas.height === 0)).toBe(true);
+  } finally { reader.dispose(); vi.unstubAllGlobals(); }
+});

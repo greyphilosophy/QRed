@@ -43,10 +43,37 @@ export function preparePhotoReading(source) {
 // Only identify the caption beside a decoded QRed code. Allow the observed q/g
 // OCR ambiguity, but never correct it: the original spelling and crop remain
 // visible for review. The same phrase elsewhere and extra words stay in the diff.
+export const isPrintedCaption = words => /^Verify at [qg]red\.org$/.test(words.map(word => word.text).join(" "));
+function nearCaption(box, code) {
+  const size = Math.max(code.x1 - code.x0, code.y1 - code.y0);
+  return box && box.y1 - box.y0 < size * .3 && box.x0 >= code.x0 - size && box.x1 <= code.x1 + size &&
+    ((box.y0 >= code.y1 && box.y1 < code.y1 + size * .7) || (box.y1 <= code.y0 && box.y0 > code.y0 - size * .7) ||
+      (box.x0 >= code.x1 && box.x1 < code.x1 + size && box.y0 >= code.y0 && box.y1 <= code.y1));
+}
+
+// A full-page OCR pass can mistake a tiny caption for vertical text. Find small
+// nearby lines for an independent enlarged read, without supplying expected text.
+export function captionLineCandidates(words, codes) {
+  const lines = [], used = new Set();
+  for (const code of codes) for (let index = 0; index < words.length; index++) {
+    if (used.has(index) || !nearCaption(words[index].bbox, code)) continue;
+    const first = words[index].bbox, center = (first.y0 + first.y1) / 2;
+    const indices = words.flatMap((word, i) => !used.has(i) && nearCaption(word.bbox, code) &&
+      Math.abs((word.bbox.y0 + word.bbox.y1) / 2 - center) < Math.max(first.y1 - first.y0, word.bbox.y1 - word.bbox.y0) * .6 ? [i] : []);
+    indices.forEach(i => used.add(i));
+    const ordered = [...indices].sort((a, b) => words[a].bbox.x0 - words[b].bbox.x0);
+    if (isPrintedCaption(ordered.map(i => words[i]))) continue;
+    const boxes = indices.map(i => words[i].bbox);
+    lines.push({ indices, x0: Math.min(...boxes.map(b => b.x0)), y0: Math.min(...boxes.map(b => b.y0)),
+      x1: Math.max(...boxes.map(b => b.x1)), y1: Math.max(...boxes.map(b => b.y1)) });
+    if (lines.length === 8) return lines;
+  }
+  return lines;
+}
+
 export function possiblePrintedMarkings(words, codes) {
   const groups = [], used = new Set();
   for (const box of codes) {
-    const size = Math.max(box.x1 - box.x0, box.y1 - box.y0);
     const inside = words.flatMap((word, index) => {
       const b = word.bbox;
       if (!b || used.has(index)) return [];
@@ -61,13 +88,8 @@ export function possiblePrintedMarkings(words, codes) {
     if (inside.length) { groups.push(inside); inside.forEach(index => used.add(index)); }
     for (let index = 0; index < words.length - 2; index++) {
       const phrase = words.slice(index, index + 3);
-      if (!/^Verify at [qg]red\.org$/.test(phrase.map(word => word.text).join(" "))) continue;
-      const near = phrase.every(word => {
-        const b = word.bbox;
-        return b && b.y1 - b.y0 < size * .3 && b.x0 >= box.x0 - size && b.x1 <= box.x1 + size &&
-          ((b.y0 >= box.y1 && b.y1 < box.y1 + size * .7) || (b.y1 <= box.y0 && b.y0 > box.y0 - size * .7) ||
-            (b.x0 >= box.x1 && b.x1 < box.x1 + size && b.y0 >= box.y0 && b.y1 <= box.y1));
-      });
+      if (!isPrintedCaption(phrase)) continue;
+      const near = phrase.every(word => nearCaption(word.bbox, box));
       if (near && ![index, index + 1, index + 2].some(i => used.has(i))) {
         groups.push([index, index + 1, index + 2]);
         [index, index + 1, index + 2].forEach(i => used.add(i));
