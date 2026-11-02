@@ -10,7 +10,7 @@ import { PageCameraCapture, confirmsPageSeal } from "./PageCameraCapture.jsx";
 
 const camera = vi.hoisted(() => ({ stop: vi.fn(), options: null, snapshot: vi.fn(), scan: vi.fn() }));
 vi.mock("../qr/cameraSession.js", () => ({ startCameraSession: options => { camera.options = options; return { stop: camera.stop }; } }));
-vi.mock("../qr/photoScanClient.js", () => ({ scanPhotoInWorker: camera.scan }));
+vi.mock("../qr/photoScanClient.js", () => ({ scanPhotoInWorker: camera.scan, createLiveScanWorker: () => ({ busy: false, scan: vi.fn(), reset: vi.fn(), stop: vi.fn() }) }));
 vi.mock("./scanPhotos.js", () => ({ snapshotScanPhoto: camera.snapshot }));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); });
 const signed = await createQRedSeals({ content: "Friday", privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=",
@@ -26,7 +26,7 @@ it("captures through the browser stream and releases the canvas and camera witho
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: vi.fn(), getImageData: vi.fn(() => ({})) });
   const storage = vi.spyOn(Storage.prototype, "setItem"), download = vi.spyOn(HTMLAnchorElement.prototype, "click");
   const view = render(<PageCameraCapture pageLabel="Page 2" seals={signed.seals} onCapture={capture} onClose={close} />);
-  ready(); fireEvent.click(screen.getByRole("button", { name: "Use this view" }));
+  ready(); fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
   await waitFor(() => expect(capture).toHaveBeenCalledWith(file));
   expect(camera.stop).toHaveBeenCalled(); expect(close).toHaveBeenCalled();
   expect(camera.snapshot.mock.calls[0][0].width).toBe(0);
@@ -39,7 +39,7 @@ it("discards a retake that finishes after the session is closed", async () => {
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: vi.fn(), getImageData: vi.fn(() => ({})) });
   const capture = vi.fn(), view = render(<PageCameraCapture pageLabel="Page 2" seals={signed.seals} onCapture={capture} onClose={vi.fn()} />);
   camera.scan.mockResolvedValue({ status: "found", text: signed.seals[0] });
-  ready(); fireEvent.click(screen.getByRole("button", { name: "Use this view" }));
+  ready(); fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
   await waitFor(() => expect(finish).toBeTypeOf("function"));
   view.unmount(); await act(async () => finish(new Blob(["late"])));
   expect(capture).not.toHaveBeenCalled(); expect(camera.stop).toHaveBeenCalled();
@@ -56,17 +56,17 @@ it("rejects an identifier-only match, missing seals, and a different authenticat
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: vi.fn(), getImageData: vi.fn(() => ({})) });
   const capture = vi.fn();
   render(<PageCameraCapture pageLabel="Page 2" seals={signed.seals} onCapture={capture} onClose={vi.fn()} />);
-  ready(); fireEvent.click(screen.getByRole("button", { name: "Use this view" }));
+  ready(); fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
   expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("does not match Page 2"));
   expect(capture).not.toHaveBeenCalled(); expect(camera.snapshot).not.toHaveBeenCalled();
-  expect(screen.getByRole("button", { name: "Use this view" }).disabled).toBe(false);
+  expect(screen.getByRole("button", { name: "Capture now" }).disabled).toBe(false);
 });
 it("aborts the seal reader when a retake is cancelled", async () => {
   let finish;
   camera.scan.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: vi.fn(), getImageData: vi.fn(() => ({})) });
   const capture = vi.fn(), view = render(<PageCameraCapture pageLabel="Page 2" seals={signed.seals} onCapture={capture} onClose={vi.fn()} />);
-  ready(); fireEvent.click(screen.getByRole("button", { name: "Use this view" }));
+  ready(); fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
   const signal = camera.scan.mock.calls[0][1].signal;
   view.unmount(); expect(signal.aborted).toBe(true);
   await act(async () => finish({text: signed.seals[0]}));

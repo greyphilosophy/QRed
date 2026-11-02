@@ -239,7 +239,7 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
             setInterval(() => frame.getContext('2d').drawImage(image, 0, 0), 100);
         }""", full_page)
         reference.get_by_role("button", name="Retake this page for visual review", exact=True).click()
-        page.get_by_role("dialog").get_by_role("button", name="Use this view").click()
+        page.get_by_role("dialog").get_by_role("button", name="Capture now").click()
         photo = reference.get_by_role("img", name="Page photo beside the signed visual reference")
         # The earlier QR-only scan is 432 px tall; wait for the user's full-page
         # replacement to finish decoding rather than observing the first image.

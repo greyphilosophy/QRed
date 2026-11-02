@@ -53,7 +53,7 @@ export function scanPhotoInWorker(image, { signal, returnPayload = false } = {})
 
 // No frame queue: callers keep the submitted canvas unchanged until onResult
 // runs, and check busy before drawing the next camera frame into that canvas.
-export function createLiveScanWorker({ onResult, onError, returnPayload = false }) {
+export function createLiveScanWorker({ onResult, onError, returnPayload = false, requirePageQuality = false, onQuality }) {
   let worker = null, busy = false, stopped = false;
   function reset() {
     if (worker) {
@@ -83,7 +83,7 @@ export function createLiveScanWorker({ onResult, onError, returnPayload = false 
             if (worker !== current || stopped || !busy) return;
             if (data.error) { fail(current, new Error(data.error)); return; }
             busy = false;
-            try { onResult(data.action); }
+            try { if (data.quality) onQuality?.(data.quality); onResult(data.action); }
             catch (error) { fail(current, error); }
           };
           current.onerror = event => {
@@ -93,7 +93,8 @@ export function createLiveScanWorker({ onResult, onError, returnPayload = false 
           current.onmessageerror = () => fail(current, new Error("The live scan result could not be read."));
         }
         busy = true;
-        worker.postMessage({ image: { data: image.data, width: image.width, height: image.height }, returnPayload, live: true },
+        const qualityOptions = requirePageQuality ? { requirePageQuality, frameTime: performance.now() } : {};
+        worker.postMessage({ image: { data: image.data, width: image.width, height: image.height }, returnPayload, live: true, ...qualityOptions },
           [image.data.buffer]);
         return true;
       } catch (error) {

@@ -3,7 +3,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { startCameraSession } from "../qr/cameraSession.js";
 import { getPreferredCameraStream, applyCameraQualityControls } from "../qr/cameraControls.js";
 import { snapshotScanPhoto } from "./scanPhotos.js";
-import { scanPhotoInWorker } from "../qr/photoScanClient.js";
+import { createLiveScanWorker, scanPhotoInWorker } from "../qr/photoScanClient.js";
+import { observePageScanGuide } from "../qr/pageScanGuide.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { bytesEqual, qrPayloadBytes } from "../sealFormat.js";
 
@@ -20,20 +21,58 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
   const video = useRef(null), camera = useRef(null), generation = useRef(0);
   const scan = useRef(null);
   const dialog = useRef(null);
+  const guideArea = useRef(null), guide = useRef(null), live = useRef(null), busyRef = useRef(false);
   const [ready, setReady] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const [quality, setQuality] = useState(null);
   useEffect(() => {
     const previous = document.activeElement;
     dialog.current?.focus();
+    const canvas = document.createElement("canvas"), epoch = generation.current;
+    const stopGuide = observePageScanGuide(video.current, guideArea.current, guide.current);
+    live.current = createLiveScanWorker({ returnPayload: true, requirePageQuality: true,
+      onQuality: value => { setQuality(value); stopGuide.update(value); },
+      onResult: action => {
+        if (action.text || action.texts?.length) acceptFrame(action, canvas, epoch);
+      }, onError: cause => setError(cause.message) });
     camera.current = startCameraSession({ video: video.current, requestStream: getPreferredCameraStream,
       prepareStream: applyCameraQualityControls,
-      onFrame: () => { if (video.current?.videoWidth) setReady(true); },
+      onFrame: () => {
+        const source = video.current;
+        if (!source?.videoWidth) return;
+        setReady(true);
+        if (busyRef.current || live.current.busy) return;
+        canvas.width = source.videoWidth; canvas.height = source.videoHeight;
+        const context = canvas.getContext("2d");
+        context.drawImage(source, 0, 0);
+        live.current.scan(context.getImageData(0, 0, canvas.width, canvas.height));
+      },
       onError: cause => setError(`Camera could not open. ${cause.message}`) });
-    return () => { generation.current++; scan.current?.abort(); camera.current?.stop(); previous?.focus?.(); };
+    return () => {
+      generation.current++; scan.current?.abort(); live.current?.stop(); camera.current?.stop();
+      canvas.width = canvas.height = 0; stopGuide(); previous?.focus?.();
+    };
   }, []);
+  async function acceptFrame(action, canvas, epoch) {
+    busyRef.current = true; setBusy(true);
+    try {
+      if (!confirmsPageSeal(action, seals)) {
+        throw new Error(action.text || action.texts?.length
+          ? `This seal does not match ${pageLabel}. Show that page, including its seal. Your previous check is unchanged.`
+          : `The page seal could not be read. Include the whole page and its seal, then try again. Your previous check is unchanged.`);
+      }
+      const file = await snapshotScanPhoto(canvas);
+      if (epoch !== generation.current) return;
+      camera.current.stop(); live.current.stop();
+      onCapture(file); onClose();
+      if (typeof navigator.vibrate === "function") navigator.vibrate(80);
+    } catch (cause) { if (epoch === generation.current) setError(cause.message); }
+    finally { if (epoch === generation.current) { busyRef.current = false; setBusy(false); } }
+  }
   async function capture() {
     const epoch = generation.current, source = video.current;
-    if (!source?.videoWidth || busy) return;
-    setBusy(true); setError("");
+    if (!source?.videoWidth || busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError("");
+    live.current.reset();
     scan.current = new AbortController();
     const canvas = document.createElement("canvas");
     canvas.width = source.videoWidth; canvas.height = source.videoHeight;
@@ -43,17 +82,12 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
       const action = await scanPhotoInWorker(context.getImageData(0, 0, canvas.width, canvas.height),
         { returnPayload: true, signal: scan.current.signal });
       if (epoch !== generation.current) return;
-      if (!confirmsPageSeal(action, seals)) {
-        throw new Error(action.text || action.texts?.length
-          ? `This seal does not match ${pageLabel}. Show that page, including its seal. Your previous check is unchanged.`
-          : `The page seal could not be read. Include the whole page and its seal, then try again. Your previous check is unchanged.`);
-      }
-      const file = await snapshotScanPhoto(canvas);
-      if (epoch !== generation.current) return;
-      camera.current.stop();
-      onCapture(file); onClose();
-    } catch (cause) { if (epoch === generation.current) { setError(cause.message); setBusy(false); } }
-    finally { canvas.width = canvas.height = 0; }
+      await acceptFrame(action, canvas, epoch);
+    } catch (cause) { if (epoch === generation.current) setError(cause.message); }
+    finally {
+      canvas.width = canvas.height = 0;
+      if (epoch === generation.current) { busyRef.current = false; setBusy(false); }
+    }
   }
   return <div className="page-camera-backdrop"><section className="page-camera" role="dialog" aria-modal="true"
     aria-label={`Retake ${pageLabel}`} tabIndex={-1} ref={dialog} onKeyDown={event => {
@@ -65,11 +99,16 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
         } else if (!event.shiftKey && document.activeElement === buttons.at(-1)) { event.preventDefault(); buttons[0]?.focus(); }
       }
     }}>
-    <h3>Retake {pageLabel}</h3><p>Include all four page corners and the seal. Keep the text upright and avoid glare.</p>
-    <video ref={video} playsInline autoPlay muted />
+    <h3>Retake {pageLabel}</h3><p>Include all four page corners and hold steady for automatic capture. You can also use Capture now.</p>
+    <div style={{ position: "relative" }}><video ref={video} playsInline autoPlay muted />
+      <div className="page-scan-guide-area" ref={guideArea} aria-hidden="true"><div className="page-scan-guide" ref={guide} hidden>
+        <span /><span /><span /><span />
+      </div></div></div>
+    {!busy && quality && <p role="status">{quality.message}</p>}
+    {!busy && quality?.state === "hold" && <progress className="capture-readiness" max="1" value={quality.progress} aria-label="Steady hold before automatic capture" />}
     {busy && <p role="status">Checking the page seal…</p>}
     {error && <p role="alert">{error}</p>}
-    <div className="photo-actions"><button type="button" disabled={!ready || busy} onClick={capture}>Use this view</button>
+    <div className="photo-actions"><button type="button" disabled={!ready || busy} onClick={capture}>Capture now</button>
       <button type="button" onClick={onClose}>Cancel retake</button></div>
     <p className="photo-note">This image is used temporarily in QRed. It is not saved to your photo library.</p>
   </section></div>;

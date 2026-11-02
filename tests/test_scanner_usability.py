@@ -84,8 +84,8 @@ def test_main_camera_at_one_times_zoom_without_flashlight(browser, path):
             assert geometry["ratio"] == pytest.approx(4 / 3 if width > height else 3 / 4, abs=0.01)
             assert geometry["animation"] == "none"
             assert geometry["pointerEvents"] == "none"
-        expect(page.get_by_text("Keep all four page corners visible. Avoid glare.", exact=True)).to_be_visible()
-        page.get_by_role("button", name="Close" if path == "/" else "Check this page now", exact=True).click()
+        expect(page.get_by_text("Show all four page corners. Try a contrasting background, or use Capture now.", exact=True)).to_be_visible()
+        page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
         expect(page.locator(".page-scan-guide")).not_to_be_visible()
         assert page.evaluate("cameraTest.stopped") == ["tele", "main"]
     finally:
@@ -198,21 +198,21 @@ def test_live_worker_has_no_backlog_and_capture_can_resume_the_same_camera_offli
         page.get_by_role("button", name="Check document", exact=True).click()
         page.wait_for_function("liveTest.responses >= 2", timeout=15000)
         if path == "/":
-            page.get_by_role("button", name="Capture page", exact=True).click()
+            page.get_by_role("button", name="Capture now", exact=True).click()
             expect(page.get_by_role("button", name="Cancel and resume camera", exact=True)).to_be_visible()
             assert page.evaluate("liveTest.pending") == 0
             ticks = page.evaluate("liveTest.ticks")
             page.wait_for_function("ticks => liveTest.ticks > ticks + 2", arg=ticks, timeout=2000)
             before = page.evaluate("liveTest.requests")
             page.get_by_role("button", name="Cancel and resume camera", exact=True).click()
-            expect(page.get_by_role("button", name="Capture page", exact=True)).to_be_visible()
+            expect(page.get_by_role("button", name="Capture now", exact=True)).to_be_visible()
             page.wait_for_function("before => liveTest.requests > before", arg=before, timeout=3000)
         assert page.evaluate("liveTestStream.getTracks().every(track => track.readyState === 'live')")
         state = page.evaluate("liveTest")
         assert state["opens"] == 1
         assert state["maxPending"] == 1
         assert state["readsWhileBusy"] == 0
-        page.get_by_role("button", name="Close" if path == "/" else "Check this page now", exact=True).click()
+        page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
         assert page.evaluate("liveTestStream.getTracks().every(track => track.readyState === 'ended')")
         assert page.evaluate("liveTest.pending") == 0
         assert page.evaluate("liveTest.terminated") >= 1

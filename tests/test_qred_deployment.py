@@ -732,6 +732,10 @@ class TestCameraFrameScanning:
                     context.fillRect(0, 0, canvas.width, canvas.height);
                     const stream = canvas.captureStream(10);
                     window.showCameraSeal = () => {
+                        context.fillStyle = '#373737';
+                        context.fillRect(0, 0, canvas.width, canvas.height);
+                        context.fillStyle = 'white';
+                        context.fillRect(canvas.width * .04, canvas.height * .04, canvas.width * .92, canvas.height * .92);
                         // Crop the existing PDF fixture with its quiet zone,
                         // then put its corners beyond the old center 50% ROI.
                         context.drawImage(image, 75, 0, 825, 825, camera.left, camera.top, camera.size, camera.size);
@@ -760,7 +764,7 @@ class TestCameraFrameScanning:
                 context.drawImage(video, 0, 0);
                 return context.getImageData(0, 0, canvas.width, canvas.height).data.some((value, i) => i % 4 !== 3 && value < 128);
             }""", timeout=5000)
-            page.get_by_role("button", name="Capture page", exact=True).click()
+            page.get_by_role("button", name="Capture now", exact=True).click()
         show_seal_details(page)
         expect(page.get_by_role("heading", name="Pages captured", exact=True)).to_be_visible(timeout=10000)
         _open_verification_key(page, TestRenderedQrImageUploads.PUBLIC_KEY)
@@ -811,7 +815,9 @@ class TestContinuousSealScanning:
                         context.fillRect(0, 0, 550, 550);
                         // Preserve the saved-PDF pixels and their quiet zone.
                         context.drawImage(image, 0, 0);
+                        const displayed = new Promise(resolve => document.querySelector('video').requestVideoFrameCallback(resolve));
                         stream.getVideoTracks()[0].requestFrame();
+                        await displayed;
                     };
                     return stream;
                 },
@@ -825,6 +831,9 @@ class TestContinuousSealScanning:
         page.locator("video").first.scroll_into_view_if_needed()
         progress = page.locator(".ar-collection-progress" if route == "/" else "#statusText")
         page.evaluate("window.showSealFrame(0)")
+        # These are intentional footer close-ups, not whole-page photographs.
+        # The manual override keeps multipart seal collection available.
+        page.get_by_role("button", name="Capture now", exact=True).click()
         _open_verification_key(page, DEMO_PUBLIC_KEY)
         expect(progress).to_contain_text("1 of 2 pages collected", timeout=20000)
         # Repeated camera frames must not add duplicate pieces or stop the stream.
@@ -832,9 +841,11 @@ class TestContinuousSealScanning:
         expect(progress).to_contain_text("1 of 2 pages collected")
         assert page.evaluate("window.cameraStream.getTracks().every(track => track.readyState === 'live')")
         page.evaluate("window.showSealFrame(1)")
+        page.get_by_role("button", name="Capture now", exact=True).click()
         expect(progress).to_contain_text("1 of 2 QR seals", timeout=20000)
         assert page.evaluate("window.cameraOpenCount") == 1
         page.evaluate("window.showSealFrame(2)")
+        page.get_by_role("button", name="Capture now", exact=True).click()
         summary = page.locator(".verification-card .collection-progress" if route == "/" else "#resultMeta .collection-progress")
         expect(summary).to_have_text("All 2 pages collected.", timeout=20000)
         page.wait_for_function("window.cameraStream.getTracks().every(track => track.readyState === 'ended')")
@@ -852,6 +863,7 @@ class TestContinuousSealScanning:
             page.wait_for_function("window.cameraOpenCount === 2 && document.querySelector('video')?.readyState >= 2")
             page.locator("video").first.scroll_into_view_if_needed()
             page.evaluate("window.showSealFrame(0)")
+            page.get_by_role("button", name="Capture now", exact=True).click()
             expect(progress).to_contain_text("1 of 2 pages collected", timeout=20000)
         else:
             expect(page.locator("#resultStatus")).to_have_text("Seal authenticated")

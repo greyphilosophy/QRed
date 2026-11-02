@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from playwright.sync_api import expect
 from browser_helpers import OfflineNetworkGuard, wait_for_offline_resources
 
@@ -71,17 +71,23 @@ def prepare_reader(page):
     expect(page.get_by_role("button", name="Offline text checking ready", exact=True)).to_be_visible(timeout=60000)
 
 
-def camera_paper(page, text, qr_bytes):
+def camera_paper(page, text, qr_bytes, *, border=True, blur=0):
     paper = Image.open(io.BytesIO(page_image(text)["buffer"]))
     if qr_bytes:
         qr = Image.open(io.BytesIO(base64.b64decode(qr_bytes))).convert("L")
         qr = qr.point(lambda value: 224 if value < 128 else 255).resize((900, 900), Image.Resampling.NEAREST)
         paper.paste(qr.convert("RGB"), (150, 620))
+    if border:
+        frame = Image.new("RGB", (1440, 1920), (55, 55, 55))
+        frame.paste(paper, (120, 160))
+        paper = frame
+    if blur:
+        paper = paper.filter(ImageFilter.GaussianBlur(blur))
     output = io.BytesIO(); paper.save(output, format="PNG")
     page.evaluate("""async url => {
         const image = new Image(); image.src = url; await image.decode();
         if (!window.__syntheticCameraFrame) {
-            const frame = document.createElement('canvas'); frame.width = 1200; frame.height = 1600;
+            const frame = document.createElement('canvas');
             window.__syntheticCameraFrame = frame;
             window.__cameraTracks = [];
             navigator.mediaDevices.getUserMedia = async () => {
@@ -97,6 +103,7 @@ def camera_paper(page, text, qr_bytes):
         }
         window.__syntheticPaper = image;
         const frame = window.__syntheticCameraFrame;
+        frame.width = image.naturalWidth; frame.height = image.naturalHeight;
         frame.getContext('2d').drawImage(image, 0, 0);
     }""", "data:image/png;base64," + base64.b64encode(output.getvalue()).decode())
 
@@ -148,27 +155,28 @@ def test_guided_pages_find_changed_word_and_clear_without_persistence(browser, s
         page.screenshot(path=str(tmp_path / "page-2-difference.png"), full_page=True)
 
         # A different page, even with the same signed text, cannot replace page 2.
-        camera_paper(page, TEXT, sealed_text[0]["qr"])
+        # No visible border exercises the manual quality override on retakes.
+        camera_paper(page, TEXT, sealed_text[0]["qr"], border=False)
         review.get_by_role("button", name="Retake this page", exact=True).click()
-        page.get_by_role("dialog").get_by_role("button", name="Use this view").click()
+        page.get_by_role("dialog").get_by_role("button", name="Capture now").click()
         expect(page.get_by_role("dialog").get_by_role("alert")).to_contain_text("does not match Page 2", timeout=30000)
         expect(review.locator(".photo-differences")).to_contain_text("Monday")
         page.get_by_role("button", name="Cancel retake", exact=True).click()
 
         # A retake stays in QRed's camera and replaces the old image and verdict.
-        camera_paper(page, TEXT, sealed_text[1]["qr"])
+        camera_paper(page, TEXT, sealed_text[1]["qr"], border=False)
         review.get_by_role("button", name="Retake this page", exact=True).click()
         dialog = page.get_by_role("dialog")
-        expect(dialog.get_by_role("button", name="Use this view")).to_be_enabled()
-        dialog.get_by_role("button", name="Use this view").click()
+        expect(dialog.get_by_role("button", name="Capture now")).to_be_enabled()
+        dialog.get_by_role("button", name="Capture now").click()
         expect(review.locator(".photo-summary")).to_have_text("Recognized text matches the signed text", timeout=60000)
         expect(review.locator(".photo-differences")).not_to_contain_text("Monday")
 
         # A deletion and an unreadable page must never become a matching result.
         for text, expected in [(TEXT.replace("Payment due Friday", ""), "Differences found"), ("", "No text could be read")]:
-            camera_paper(page, text, sealed_text[1]["qr"])
+            camera_paper(page, text, sealed_text[1]["qr"], border=False)
             review.get_by_role("button", name="Retake this page", exact=True).click()
-            page.get_by_role("dialog").get_by_role("button", name="Use this view").click()
+            page.get_by_role("dialog").get_by_role("button", name="Capture now").click()
             expect(review.locator(".photo-summary")).to_contain_text(expected, timeout=60000)
 
         page.get_by_role("button", name="Finish & clear", exact=True).click()

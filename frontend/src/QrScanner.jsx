@@ -45,7 +45,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
       && collectionProgress.activeSeal === scannedText) setMode("result");
   }, [mode, scannedText, collectionProgress]);
 
-  const scanButtonLabel = preparing ? "Preparing check…" : mode === "scanning" ? (readingPhoto ? "Cancel and resume camera" : "Capture page") : mode === "result" ? "Scan more pages" : "Check document";
+  const scanButtonLabel = preparing ? "Preparing check…" : mode === "scanning" ? (readingPhoto ? "Cancel and resume camera" : "Capture now") : mode === "result" ? "Scan more pages" : "Check document";
   const controls = React.createElement("div", { className: "ar-controls" },
     React.createElement("button", {
       className: "ar-button ar-button-primary",
@@ -70,7 +70,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
         setMode("scanning");
       },
     }, scanButtonLabel),
-    mode === "scanning" && collectSeals ? React.createElement("button", {
+    mode === "scanning" && collectSeals && collectionProgress?.pagesCollected > 0 ? React.createElement("button", {
       className: "ar-button ar-button-secondary", onClick: () => {
         setMode("result");
         document.getElementById("document-check")?.scrollIntoView({ behavior: "smooth" });
@@ -104,6 +104,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
         captureRequest,
         onReadingPhoto: setReadingPhoto,
         returnPayload,
+        autoCapture: collectSeals,
       }),
       collectionProgress ? React.createElement("p", { className: "ar-collection-progress", role: "status", "aria-live": "polite" }, collectionProgress.message) : null,
       controls
@@ -121,7 +122,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
       React.createElement("div", { className: "ar-copy" },
         React.createElement("p", { className: "eyebrow" }, "QRed AR verifier"),
         React.createElement("h1", null, "Check a printed document"),
-        React.createElement("p", null, "Frame each whole page. QRed checks the seal and helps you find changed text."),
+        React.createElement("p", null, "Frame each whole page and hold steady. QRed captures automatically, then checks the seal and printed text."),
         React.createElement("p", { className: "camera-privacy" }, "Camera images stay in this session. QRed does not save them to your photo library or upload them."),
         completionNotice ? React.createElement("p", { id: "check-clear-note", role: "status" }, completionNotice) : null,
         preparationError ? React.createElement("p", { role: "alert" }, preparationError + " Try Check document again while connected.") : null
@@ -149,7 +150,7 @@ export function manualCapturePendingAction(startedAt, now = performance.now()) {
   if (now - startedAt < MANUAL_CAPTURE_PENDING_TIMEOUT_MS) return null;
   return {
     status: "feedback",
-    message: "The camera is open, but this browser is not delivering photo frames yet. Wait a moment, then try Capture page again; if this keeps happening, close and reopen the scanner or check camera permissions.",
+    message: "The camera is open, but this browser is not delivering photo frames yet. Wait a moment, then try Capture now again; if this keeps happening, close and reopen the scanner or check camera permissions.",
   };
 }
 
@@ -179,7 +180,7 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
   return qrFrameAction(image, code, options);
 }
 
-function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPayload }) {
+function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPayload, autoCapture }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const guideAreaRef = useRef(null);
@@ -193,6 +194,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
   const [error, setError] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const [cameraReady, setCameraReady] = useState(false);
+  const [quality, setQuality] = useState(null);
 
   function markCameraReady(ready) {
     if (cameraReadyRef.current === ready) return;
@@ -202,38 +204,47 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
 
   useEffect(() => {
     const seen = new Set();
+    let captureReported = false;
     const capturedCanvas = canvasRef.current;
     let camera;
     const stopGuide = observePageScanGuide(videoRef.current, guideAreaRef.current, guideRef.current);
     preparePhotoScanner();
     const liveScan = createLiveScanWorker({
       returnPayload,
+      requirePageQuality: autoCapture,
+      onQuality: quality => {
+        setQuality(quality); stopGuide.update(quality);
+        if (!quality.ready && captureReported) { captureReported = false; setFeedback(null); }
+      },
       onResult: action => handleScanActionRef.current(action),
       onError: error => { camera.stop(); setError(error.message); },
     });
 
     handleScanActionRef.current = (scanAction) => {
       if (scanAction.status === "found-multiple") {
-        let shouldStop = false;
+        captureReported = true;
+        let shouldStop = false, added = false;
         for (const text of scanAction.texts) {
           if (seen.has(text)) continue;
           seen.add(text);
+          added = true;
           // All chunks share the same captured page photograph.
           if (!onScan(text, canvasRef.current)) { shouldStop = true; break; }
         }
-        setFeedback(null);
+        setFeedback(added ? "Page captured. Show the next page." : "This page is already captured. Show the next page.");
+        if (added && typeof navigator.vibrate === "function") navigator.vibrate(80);
         if (shouldStop) { camera.stop(); return true; }
         return false;
       }
       if (scanAction.status === "found") {
-        if (seen.has(scanAction.text)) return false;
+        captureReported = true;
+        if (seen.has(scanAction.text)) { setFeedback("This page is already captured. Show the next page."); return false; }
         seen.add(scanAction.text);
-        // Haptic feedback on successful decode
-        if (typeof navigator.vibrate === "function") {
-          navigator.vibrate(80);
-        }
-        setFeedback(null);
-        if (onScan(scanAction.text, canvasRef.current)) return false;
+        // onScan copies the original pixels before the feedback can shake the camera.
+        const keepScanning = onScan(scanAction.text, canvasRef.current);
+        if (typeof navigator.vibrate === "function") navigator.vibrate(80);
+        setFeedback("Page captured. Show the next page.");
+        if (keepScanning) return false;
         camera.stop();
         return true;
       }
@@ -331,7 +342,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       if (capturedCanvas) capturedCanvas.width = capturedCanvas.height = 0;
       stopGuide();
     };
-  }, [onScan, returnPayload, onReadingPhoto]);
+  }, [onScan, returnPayload, onReadingPhoto, autoCapture]);
 
   useEffect(() => {
     if (captureRequest > 0 && !error) photoActionRef.current();
@@ -362,7 +373,11 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
     React.createElement("canvas", { ref: canvasRef, style: { display: "none" } }),
     !cameraReady ? React.createElement(CameraLoadingIndicator, { message: feedback || "Starting camera…" }) : null,
     cameraReady ? React.createElement("div", { className: "ar-scan-feedback", role: "status", "aria-live": "polite" },
-      feedback || "Keep all four page corners visible. Avoid glare.") : null,
+      quality && !feedback ? React.createElement("span", null, quality.message) : null,
+      feedback ? React.createElement("span", null, feedback) : null,
+      !quality && !feedback ? "Keep all four page corners visible. Avoid glare." : null,
+      quality?.state === "hold" ? React.createElement("progress", { className: "capture-readiness", max: 1,
+        value: quality.progress, "aria-label": "Steady hold before automatic capture" }) : null) : null,
     React.createElement("button", { className: "ar-close", onClick: onClose }, "Close")
   );
 }

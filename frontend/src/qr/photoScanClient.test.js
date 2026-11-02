@@ -87,6 +87,20 @@ it("discards a live result on reset, then starts a fresh worker without reviving
   live.stop();
 });
 
+it("requests quality checks on the submitted frame and reports guidance before its seal result", () => {
+  const order = [], onQuality = vi.fn(() => order.push("quality")), onResult = vi.fn(() => order.push("seal"));
+  const live = createLiveScanWorker({ onQuality, onResult, onError: vi.fn(), requirePageQuality: true });
+  const frame = image();
+  live.scan(frame);
+  expect(worker.postMessage.mock.calls[0][0]).toMatchObject({ image: frame, requirePageQuality: true, frameTime: expect.any(Number) });
+  const quality = { state: "framing", ready: false, corners: null }, action = { status: "continue" };
+  worker.onmessage({ data: { quality, action } });
+  expect(onQuality).toHaveBeenCalledWith(quality);
+  expect(onResult).toHaveBeenCalledWith(action);
+  expect(order).toEqual(["quality", "seal"]);
+  live.stop();
+});
+
 it("stops a live session permanently and ignores its queued result", () => {
   const onResult = vi.fn();
   const live = createLiveScanWorker({ onResult, onError: vi.fn() });

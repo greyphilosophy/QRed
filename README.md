@@ -133,7 +133,7 @@ what the browser exposes. There is no flashlight control.
 Live scanning uses a background worker with one frame in flight and no queued
 frames. It rotates through bounded attempts and disables lengthy alignment
 refinement so the operator can adjust the camera. Selected images and
-**Capture page** use a cancellable worker with longer recovery fallbacks.
+**Capture now** use a cancellable worker with longer recovery fallbacks.
 A fast bounded attempt comes first; original-resolution pixels remain available
 for harder pages. **Cancel and resume camera** returns from still-photo recovery
 to the same camera stream. Signature verification still checks the recovered
@@ -175,10 +175,23 @@ The configured/default public key is for verification only. The stamping tool do
 
 On the homepage or `verify.htm`, choose **Check document** and allow camera access.
 QRed prepares its local English text reader before opening the camera. Frame each
-whole page upright, in good light. The same temporary frame is used for seal
+whole page upright, in good light, against a contrasting background. QRed detects
+the paper edges and waits for a sharp boundary and a steady hold of at least
+600 ms across several frames before reading its seal. The outline follows the
+detected page; live guidance explains when to move back, move closer, or wait for
+focus. These are capture heuristics, not proof of document completeness or text
+legibility. A sharp photograph of poorly printed, covered, or missing text still
+proceeds to comparison. The same temporary frame is used for seal
 recovery and printed-text comparison; no photograph needs to be saved or selected
-from the phone's gallery. Use **Capture page** on the homepage if live recovery
-needs a longer still-image attempt.
+from the phone's gallery. Frames are not stacked, enhanced, or cropped to create
+the retained evidence image. Only one frame is in flight; it stays unchanged
+until its seal result is associated with it.
+
+Use **Capture now** on either verifier if the edges cannot be detected or live
+recovery needs a longer still-image attempt. This overrides the automatic capture
+conditions, not signature verification. Retakes use the same automatic capture
+and manual fallback. Physical phone/print trials are still needed to tune the
+capture thresholds across cameras, lighting, backgrounds, and paper conditions.
 
 After collection, every captured page with authenticated signed text is checked
 automatically, one at a time. **Check this page now** stops scanning and checks a

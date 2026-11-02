@@ -1,0 +1,64 @@
+import { describe, expect, it } from "vitest";
+import { createPageCaptureGate, inspectPageFrame, STEADY_CAPTURE_MS } from "./pageCaptureQuality.js";
+
+function paper({ x = 90, y = 100, width = 600, height = 800, desk = 55, ink = false, blur = 0 } = {}) {
+  const image = { width: 800, height: 1000, data: new Uint8ClampedArray(800 * 1000 * 4) };
+  for (let row = 0; row < image.height; row++) for (let col = 0; col < image.width; col++) {
+    const offset = (row * image.width + col) * 4;
+    const edgeDistance = Math.min(col - x, x + width - col, row - y, y + height - row);
+    const coverage = blur ? 1 / (1 + Math.exp(-edgeDistance / blur)) : edgeDistance >= 0 ? 1 : 0;
+    let value = desk + (245 - desk) * coverage;
+    // An intentionally unreadable block of printing must not prevent capture.
+    if (ink && col > x + 40 && col < x + width - 40 && row > y + 100 && row < y + 200) value = 130;
+    image.data[offset] = image.data[offset + 1] = image.data[offset + 2] = value;
+    image.data[offset + 3] = 255;
+  }
+  return image;
+}
+
+describe("automatic whole-page capture", () => {
+  it("waits for several steady frames and a real hold interval", () => {
+    const gate = createPageCaptureGate(), image = paper();
+    expect(gate.update(image, 0)).toMatchObject({ state: "hold", ready: false, progress: 0 });
+    expect(gate.update(image, 200).ready).toBe(false);
+    expect(gate.update(image, 400).ready).toBe(false);
+    expect(gate.update(image, STEADY_CAPTURE_MS)).toMatchObject({ state: "ready", ready: true, progress: 1 });
+  });
+  it.each([{ x: 0 }, { y: 0 }, { width: 800 }, { desk: 245 }])("does not invent a whole-page capture for %j", options => {
+    expect(inspectPageFrame(paper(options)).state).toBe("framing");
+  });
+  it("asks to move closer for a page too small to read", () => {
+    expect(inspectPageFrame(paper({ x: 220, y: 280, width: 360, height: 440 })).state).toBe("small");
+  });
+  it("waits for focus on a blurred photograph", () => {
+    expect(inspectPageFrame(paper({ blur: 5 })).state).toBe("soft");
+  });
+  it("accepts a sharp photograph even with unreadable printing or no text", () => {
+    expect(inspectPageFrame(paper({ ink: true })).state).toBe("clear");
+    expect(inspectPageFrame(paper()).state).toBe("clear");
+  });
+  it("finds a tilted page rather than requiring a perfect rectangle", () => {
+    const image = paper(), corners = [{x:110,y:70},{x:720,y:150},{x:650,y:900},{x:90,y:820}];
+    for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
+      const inside = corners.every((a, i) => {
+        const b = corners[(i+1)%4];
+        return (b.x-a.x)*(y-a.y) - (b.y-a.y)*(x-a.x) >= 0;
+      });
+      const at = (y * image.width + x) * 4;
+      image.data[at] = image.data[at+1] = image.data[at+2] = inside ? 245 : 55;
+    }
+    const measured = inspectPageFrame(image);
+    expect(measured.state).toBe("clear");
+    measured.corners.forEach((p, i) => {
+      expect(p.x).toBeCloseTo(corners[i].x / image.width, 1);
+      expect(p.y).toBeCloseTo(corners[i].y / image.height, 1);
+    });
+  });
+  it("starts the hold again after movement, a scene change, or a long frame gap", () => {
+    for (const [image, time] of [[paper({ x: 120 }), 600], [paper({ ink: true }), 600], [paper(), 2400]]) {
+      const gate = createPageCaptureGate();
+      gate.update(paper(), 0); gate.update(paper(), 200); gate.update(paper(), 400);
+      expect(gate.update(image, time)).toMatchObject({ ready: false, progress: 0 });
+    }
+  });
+});
