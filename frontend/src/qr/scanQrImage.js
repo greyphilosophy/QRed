@@ -1,4 +1,5 @@
 import jsQR from "jsqr";
+import { maskQrCode } from "./maskQrCode.js";
 import { qredPayloadFromScanResult, isQRedEntryLink } from "./qrPayload.js";
 import { filterWatermark, normalizeWatermarkLuminance } from "./watermarkFilter.js";
 import { scanModuleAwareQr } from "./moduleAwareScan.js";
@@ -91,15 +92,31 @@ function scanAttempts(width, height, tryRescaling = true, tryWatermark = true, i
   return attempts;
 }
 
+function locatedEntry(code) {
+  return isQRedEntryLink(code?.data) &&
+    ["topLeftCorner", "topRightCorner", "bottomLeftCorner", "bottomRightCorner"]
+      .every(name => Number.isFinite(code.location?.[name]?.x) && Number.isFinite(code.location?.[name]?.y));
+}
+
 function usableResult(code) {
   return Boolean(qredPayloadFromScanResult(code)) || (Boolean(code?.data) && !isQRedEntryLink(code.data));
 }
 
 // Prepare a resolution only once. The module-aware retry consumes the exact
 // same normalized ink and filtered pixels as ordinary watermark decoding.
-function prepareAtSize(data, width, height, [targetWidth, targetHeight, radius]) {
+function prepareAtSize(data, width, height, [targetWidth, targetHeight, radius], entryToSkip = null) {
   const originalSize = targetWidth === width && targetHeight === height;
-  const observed = originalSize ? data : resizeRgba(data, width, height, targetWidth, targetHeight);
+  let observed = originalSize ? data : resizeRgba(data, width, height, targetWidth, targetHeight);
+  if (entryToSkip) {
+    // Navigation is not evidence. Erase it only in this bounded working copy;
+    // recovery, overlays and verification still use the original photograph.
+    if (originalSize) observed = new Uint8ClampedArray(observed);
+    const location = Object.fromEntries(Object.entries(entryToSkip.location).map(([name, point]) => [name, {
+      x: ((point.x + 0.5) * targetWidth / width) - 0.5,
+      y: ((point.y + 0.5) * targetHeight / height) - 0.5,
+    }]));
+    maskQrCode(observed, targetWidth, targetHeight, { location });
+  }
   if (!radius) return { observed, pixels: observed, targetWidth, targetHeight, originalSize, radius };
   const normalized = normalizeWatermarkLuminance(observed, targetWidth, targetHeight);
   const pixels = filterWatermark(observed, targetWidth, targetHeight, radius, normalized);
@@ -122,8 +139,8 @@ function decodePrepared(prepared, width, height, moduleAware = false) {
   };
 }
 
-function scanAtSize(data, width, height, size) {
-  return decodePrepared(prepareAtSize(data, width, height, size), width, height, Boolean(size[3]));
+function scanAtSize(data, width, height, size, entryToSkip = null) {
+  return decodePrepared(prepareAtSize(data, width, height, size, entryToSkip), width, height, Boolean(size[3]));
 }
 
 // Try the established 2.5 MP watermark filter once before exhaustive photo
@@ -139,20 +156,31 @@ export function scanWatermarkPreview(data, width, height) {
 export function scanQrImage(data, width, height, { tryRescaling = true, tryWatermark = true, maxAttempts = Infinity } = {}) {
   if (!isValidImage(data, width, height)) return null;
   let entryLink = null;
+  let entryToSkip = null;
   let preparedWatermark = null;
   let attempts = 0;
   // A bounded preflight should try raw, pixel-filtered, then module-aware
   // rather than exhausting its budget on similar pixel-filter radii.
   const regularBudget = tryWatermark && Number.isFinite(maxAttempts) && maxAttempts >= 3
     ? maxAttempts - 1 : maxAttempts;
-  for (const size of scanAttempts(width, height, tryRescaling, tryWatermark)) {
+  const sizes = scanAttempts(width, height, tryRescaling, tryWatermark);
+  for (let index = 0; index < sizes.length; index++) {
+    const size = sizes[index];
     if (attempts >= regularBudget) break;
-    const prepared = prepareAtSize(data, width, height, size);
+    const prepared = prepareAtSize(data, width, height, size, entryToSkip);
     if (prepared.radius && !preparedWatermark) preparedWatermark = prepared;
     const code = decodePrepared(prepared, width, height);
     attempts++;
     if (usableResult(code)) return code;
     if (code?.data) entryLink ??= code;
+    if (!entryToSkip && locatedEntry(code)) {
+      entryToSkip = code;
+      preparedWatermark = prepared.radius && Number.isFinite(maxAttempts)
+        ? prepareAtSize(data, width, height, size, entryToSkip) : null;
+      // Retry this scale once for ordinary footer seals. A bounded watermark
+      // preflight keeps its filtered/module-aware slots, with the link masked.
+      if (!tryWatermark || !Number.isFinite(maxAttempts)) sizes.splice(index + 1, 0, size);
+    }
   }
   // Count the fallback against the same budget as ordinary scan attempts.
   // Preflight callers can reserve one attempt by setting maxAttempts = 3.
@@ -175,6 +203,7 @@ export function createQrFrameScanner() {
   let previousHeight;
   let sizes;
   let nextSize = 0;
+  let entryToSkip = null;
   return (data, width, height) => {
     if (!isValidImage(data, width, height)) return null;
     if (width !== previousWidth || height !== previousHeight) {
@@ -182,6 +211,7 @@ export function createQrFrameScanner() {
       previousHeight = height;
       sizes = [...scanAttempts(width, height, true, true, true), "pageAligned"];
       nextSize = 0;
+      entryToSkip = null;
     }
     if (!sizes.length) return null;
     if (sizes[nextSize] === "pageAligned") {
@@ -192,8 +222,16 @@ export function createQrFrameScanner() {
       nextSize = codes.length ? 0 : (nextSize + 1) % sizes.length;
       return codes.length ? { codes } : null;
     }
-    const code = scanAtSize(data, width, height, sizes[nextSize]);
-    nextSize = usableResult(code) ? 0 : (nextSize + 1) % sizes.length;
+    const skippingEntry = entryToSkip;
+    const code = scanAtSize(data, width, height, sizes[nextSize], skippingEntry);
+    entryToSkip = null;
+    if (!skippingEntry && locatedEntry(code)) {
+      // One decode per frame: use the next fresh frame for a single masked
+      // retry. Discard the old position afterward, even if the camera moved.
+      entryToSkip = code;
+    } else {
+      nextSize = usableResult(code) ? 0 : (nextSize + 1) % sizes.length;
+    }
     return code;
   };
 }

@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 import { describe, expect, it } from "vitest";
 import { createQrFrameScanner, scanQrImage } from "./scanQrImage.js";
 import { qredPayloadFromPhotoScanResult, verifyQRedSeals } from "../qredVerifier.js";
+import { qredPayloadFromScanResult } from "./qrPayload.js";
 
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 
@@ -69,7 +70,7 @@ describe("scanning rendered production PDF seals", () => {
     const image = fixture(name);
     const scan = createQrFrameScanner();
     let code = scan(image.data, image.width, image.height);
-    for (let retry = 0; retry < 3 && !code; retry += 1) {
+    for (let retry = 0; retry < 3 && !qredPayloadFromScanResult(code); retry += 1) {
       code = scan(image.data, image.width, image.height);
     }
     expect(code?.binaryData?.length).toBeGreaterThan(0);

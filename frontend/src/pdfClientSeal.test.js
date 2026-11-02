@@ -11,7 +11,7 @@ import { PNG } from "pngjs";
 import { describe, expect, it } from "vitest";
 import { extractPdfText, LEGAL_FOOTER_HEIGHT, planQrStampLayout, planQrStampLayoutForFooterBand, qrPngBytes, sealPdfInBrowser } from "./pdfClientSeal.js";
 import { qrScanAction } from "./QrScanner.jsx";
-import { scanQrImage } from "./qr/scanQrImage.js";
+import { createQrFrameScanner, scanQrImage } from "./qr/scanQrImage.js";
 import { createQRedQrData, qredQrPngDataUrl, qredRasterPlan, qredByteHeaderBits } from "./qredQr.js";
 import { qredPayloadFromPhotoScanResult, verifyQRedSeals } from "./qredVerifier.js";
 
@@ -101,7 +101,8 @@ describe("browser PDF sealing", () => {
     const png = new PNG({ width: page.width, height: footerHeight });
     PNG.bitblt(page, png, 0, page.height - footerHeight, page.width, footerHeight, 0, 0);
     const pixels = new Uint8ClampedArray(png.data);
-    const qr = jsQR(pixels, png.width, png.height);
+    const original = new Uint8ClampedArray(pixels);
+    const qr = scanQrImage(pixels, png.width, png.height);
     expect(qredPayloadFromScanResult(qr)).toMatch(/#QRED3:/);
     const payload = qredPayloadFromPhotoScanResult(pixels, png.width, png.height, qr);
     const result = await verifyQRedSeals([payload], publicKey);
@@ -110,6 +111,13 @@ describe("browser PDF sealing", () => {
       expect(result.content).toContain(line);
     }
     expect(result.content).not.toContain("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    const live = createQrFrameScanner();
+    let livePayload;
+    for (let frame = 0; frame < 3 && !livePayload; frame++) {
+      livePayload = qredPayloadFromScanResult(live(pixels, png.width, png.height));
+    }
+    expect(livePayload).toBe(payload);
+    expect(Buffer.from(pixels).equals(Buffer.from(original))).toBe(true);
   });
 
   it("extracts text inside embedded form objects", async () => {

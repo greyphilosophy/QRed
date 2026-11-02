@@ -110,8 +110,9 @@ more than the retired padding format. At that version, M/Q/H capacities are
 The verifier reads the decoder's standard `binaryData` message. Erasure recovery
 parses the byte-mode header and declared length from corrected codewords; it
 never searches beyond a terminator. Rectangular page watermarks retain the same
-layout and optical recovery. Navigation is a separate `https://qred.org/` QR
-when it fits, with “Verify at QRED.ORG” text on every sealed page.
+layout and optical recovery. Navigation uses a separate `https://qred.org/` QR on the first page: required in
+its footer when using footer seals, or placed on its watermark when it fits.
+Every sealed page retains the “Verify at QRED.ORG” text.
 
 Copyable strings use `https://qred.org/#QRED3:<Base64URL-of-binary-payload>`.
 A custom bootstrap URL changes only the copyable link. Image recovery returns

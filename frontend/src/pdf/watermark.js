@@ -1,5 +1,4 @@
-import { BlendMode, rgb, StandardFonts } from "pdf-lib";
-import QRCode from "qrcode";
+import { rgb, StandardFonts } from "pdf-lib";
 import { createQRedQrSymbol } from "../qredQr.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
 import { DEFAULT_WATERMARK_MARGIN_POINTS, pageWatermarkRegions, scanPageAlignedImage } from "../qr/pageAlignedScan.js";
@@ -10,18 +9,10 @@ import { scanAllSealsFromPage, scanFramedSealFromPage, simulatePrintPhoto } from
 
 export { planWatermarks } from "./watermarkPlacement.js";
 
-// Uppercase URL uses QR alphanumeric mode. The URL standard treats scheme
-// and host case-insensitively; omitting the trailing slash allows V1/Q.
-export const ENTRY_URL = "HTTPS://QRED.ORG";
-export const ENTRY_QR_SIZE = 36;
+export { ENTRY_URL, ENTRY_QR_SIZE, createEntryQrSymbol } from "./navigationQr.js";
+import { ENTRY_URL, ENTRY_QR_SIZE, createEntryQrSymbol } from "./navigationQr.js";
+import { drawQrSymbol } from "./qrDrawing.js";
 
-// Enforce the compact layout instead of relying on the QR library's automatic
-// choice (which can silently change if its segmentation defaults change).
-export function createEntryQrSymbol() {
-  return QRCode.create([{ data: ENTRY_URL, mode: "alphanumeric" }], {
-    version: 1, errorCorrectionLevel: "Q",
-  });
-}
 // Fifteen-percent black survives more printer gray-tone loss than the old 6%.
 // Keep it pale enough to preserve the readability of underlying black text.
 export const WATERMARK_GRAY = 0.85;
@@ -91,30 +82,6 @@ export async function findEntryForWatermark(file, boxes, { pageAligned = false, 
     try { return findEntryPlacement(image, { avoidBoxes: pageAligned ? [] : boxes, textOnly }); }
     catch { return null; }
   });
-}
-
-function drawSymbol(page, symbol, box, gray, multiply = false, pageAligned = false) {
-  const count = symbol.modules.size;
-  const unitX = box.width / (count + (pageAligned ? 0 : 8));
-  const unitY = box.height / (count + (pageAligned ? 0 : 8));
-  // The QR module grid is generated once and scaled separately in X and Y.
-  // The original PDF page, including its actual text, is never stretched.
-  const paths = [];
-  for (let row = 0; row < count; row++) {
-    let column = 0;
-    while (column < count) {
-      if (!symbol.modules.get(row, column)) { column++; continue; }
-      const start = column;
-      while (column < count && symbol.modules.get(row, column)) column++;
-      const run = column - start;
-      paths.push(`M${(start * unitX).toFixed(4)} ${(row * unitY).toFixed(4)}h${(run * unitX).toFixed(4)}v${unitY.toFixed(4)}h-${(run * unitX).toFixed(4)}z`);
-    }
-  }
-  // Multiply leaves black text black, even over an opaque white PDF background.
-  // One vector path per symbol keeps printed modules sharp at any resolution.
-  page.drawSvgPath(paths.join(""), { x: box.x + (pageAligned ? 0 : 4 * unitX),
-    y: box.y + box.height - (pageAligned ? 0 : 4 * unitY),
-    scale: 1, color: rgb(gray, gray, gray), blendMode: multiply ? BlendMode.Multiply : BlendMode.Normal });
 }
 
 async function documentWatermarkMargin(source) {
@@ -202,7 +169,7 @@ export async function stampWatermarks(pdf, layouts, pageSealResults) {
   for (let index = 0; index < layouts.length; index++) {
     if (!layouts[index]) continue;
     pageSealResults[index].seals.forEach((value, part) => {
-      drawSymbol(pdf.getPage(index), createQRedQrSymbol(value), layouts[index].boxes[part], WATERMARK_GRAY, true,
+      drawQrSymbol(pdf.getPage(index), createQRedQrSymbol(value), layouts[index].boxes[part], WATERMARK_GRAY, true,
         Boolean(layouts[index].pageAligned));
     });
   }
@@ -221,7 +188,7 @@ export async function stampWatermarks(pdf, layouts, pageSealResults) {
       page.drawLine({ start, end: { x: x + (left ? 6 : -6), y }, thickness: 0.6, color: rgb(0, 0, 0) });
       page.drawLine({ start, end: { x, y: y + (bottom ? 6 : -6) }, thickness: 0.6, color: rgb(0, 0, 0) });
     }
-    drawSymbol(page, createEntryQrSymbol(),
+    drawQrSymbol(page, createEntryQrSymbol(),
       { x: entry.x + (entry.width - ENTRY_QR_SIZE) / 2, y: entry.y + 12, width: ENTRY_QR_SIZE, height: ENTRY_QR_SIZE }, 0);
   }
   const captionBox = entry ?? layouts[0]?.entryText;

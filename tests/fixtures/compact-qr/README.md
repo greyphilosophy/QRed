@@ -7,9 +7,9 @@ The generated 300 dpi fixtures use timestamp `2026-10-20T17:55:14.123Z` for repr
 Public demo/test key: `eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=`.
 The fixture generator deliberately uses the repository's public test seed.
 
-- `invoice-footer-300dpi.png`: invoice footer, including its 2.75-inch QR.
+- `invoice-footer-300dpi.png`: invoice footer, including its 2.75-inch seal QR and separate half-inch navigation QR.
 - `invoice-full-300dpi.png`: the same saved PDF's full first page.
-- `inventory-footer-300dpi.png`: first inventory page’s footer.
+- `inventory-footer-300dpi.png`: first inventory page’s footer, including its navigation QR.
 - `inventory-four-inch-300dpi.png`: first page's signed multipage record,
   placed at four inches in a controlled PDF and rasterized.
 - `manifest-seal-{1,2}-300dpi.png`: two QR crops from one saved PDF page.

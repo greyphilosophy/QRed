@@ -46,7 +46,7 @@ export function decodePhoto(image, { returnPayload = false } = {}) {
   if (!code) return { status: "feedback", message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For footer seals, try framing the individual QR instead." };
   const text = qredTextFromScanResult(code);
   if (isQRedEntryLink(text)) {
-    return { status: "feedback", message: "That code opens qred.org. Include the full printed page against a contrasting background to recover its pale watermark." };
+    return { status: "feedback", message: "That code opens qred.org. Include the full printed page against a contrasting background for its pale watermark, or frame an individual larger footer seal." };
   }
   return qrScanAction(data, width, height, code, { returnPayload });
 }

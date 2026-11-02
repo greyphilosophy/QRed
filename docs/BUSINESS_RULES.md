@@ -28,7 +28,7 @@ This document summarizes the current business rules for QRed as implemented and 
 10. QR-count ties prefer fewer encoded payload bytes, then plaintext.
 11. Explicit strategies may request plaintext, zlib, or gzip.
 12. Payloads that exceed a single seal's capacity are divided into numbered chunks.
-13. Printed payload QR codes contain the binary seal record without a URL. Navigation codes, when placed, open `https://qred.org/`; every page retains the printed “Verify at QRED.ORG” instruction.
+13. Printed payload QR codes contain the binary seal record without a URL. A separate navigation code opens `https://qred.org/` from the first page. It is required in first-page footer layouts and optional on watermarks; every page retains the printed “Verify at QRED.ORG” instruction.
 14. Payload QR codes use standard byte-mode messages with ordinary terminators and padding. The scanner reads decoded message bytes and does not recover data from padding. Retired padding-format images require re-sealing.
 15. The `/verify.htm` route may remain available as a human-facing verifier page, but newly generated QR payloads must not add `/verify.htm` unless a future compatibility requirement explicitly requires it.
 

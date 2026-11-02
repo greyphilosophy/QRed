@@ -47,3 +47,23 @@ it("rejects invalid frames without consuming a retry", () => {
   scan(new Uint8ClampedArray(200 * 200 * 4), 200, 200);
   expect(vi.mocked(jsQR).mock.lastCall.slice(1, 3)).toEqual([200, 200]);
 });
+
+it("uses one fresh frame to skip a navigation QR, then discards its old position", () => {
+  const scan = createQrFrameScanner();
+  const pixels = new Uint8ClampedArray(200 * 200 * 4);
+  const location = { topLeftCorner: { x: 20, y: 20 }, topRightCorner: { x: 50, y: 20 },
+    bottomLeftCorner: { x: 20, y: 50 }, bottomRightCorner: { x: 50, y: 50 } };
+  jsQR.mockReturnValueOnce({ data: "HTTPS://QRED.ORG", location });
+  scan(pixels, 200, 200);
+  expect(jsQR).toHaveBeenCalledTimes(1);
+  const nextFrame = new Uint8ClampedArray(pixels).fill(80);
+  scan(nextFrame, 200, 200);
+  expect(jsQR).toHaveBeenCalledTimes(2);
+  const retry = jsQR.mock.lastCall[0];
+  expect(retry[(25 * 200 + 25) * 4]).toBe(255);
+  expect(retry[0]).toBe(80);
+  expect(nextFrame.every(value => value === 80)).toBe(true);
+  scan(nextFrame, 200, 200);
+  expect(jsQR).toHaveBeenCalledTimes(3);
+  expect(jsQR.mock.lastCall[0][(25 * 180 + 25) * 4]).toBe(80);
+});

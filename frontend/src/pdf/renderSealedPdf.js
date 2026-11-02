@@ -1,7 +1,9 @@
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { createQRedQrSymbol, qredQrPngDataUrl } from "../qredQr.js";
-import { LEGAL_FOOTER_HEIGHT, resolvePageScalingStrategy, applyPageScaling, visiblePageGeometry } from "./pageScaling.js";
-import { planQrStampLayout, planQrStampLayoutForFooterBand } from "./qrLayout.js";
+import { resolvePageScalingStrategy, applyPageScaling, visiblePageGeometry } from "./pageScaling.js";
+import { planFooterLayout } from "./qrLayout.js";
+import { createEntryQrSymbol } from "./navigationQr.js";
+import { drawQrSymbol } from "./qrDrawing.js";
 
 export async function qrPngBytes(value) {
   const dataUrl = await qredQrPngDataUrl(value, { margin: 4, width: 360 });
@@ -41,7 +43,6 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
     const pages = pdf.getPages();
     if (pages.length !== pageSealResults.length) throw new Error("PDF page count changed while sealing");
 
-    const PANEL_MARGIN = 18;
     const PANEL_PADDING = 10;
     const watermarkLayout = plannedWatermarkLayout?.map((layout, index) => footerPages.includes(index + 1) ? null : layout) ?? null;
     if (watermarkLayout?.some(Boolean)) {
@@ -55,19 +56,11 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
       const qrImages = await Promise.all(qrValues.map(async (value) => pdf.embedPng(await qrPngBytes(value))));
       const { width, height } = visiblePageGeometry(page);
       const resolvedPageScalingStrategy = resolvePageScalingStrategy(tryWatermarks ? "automatic" : pageScalingStrategy, width, height);
-      let layout = resolvedPageScalingStrategy === "legal-footer"
-        ? planQrStampLayoutForFooterBand(width, qrImages.length, { footerBandHeight: LEGAL_FOOTER_HEIGHT })
-        : planQrStampLayout(width, qrImages.length);
       const caption = "Verify at qred.org";
-      let captionAbove = !layout.labelBeside;
-      if (layout.labelBeside && layout.qrOffsetX + layout.gridWidth + 12 +
-          font.widthOfTextAtSize(caption, 9) > width - PANEL_MARGIN) {
-        // A full-width grid still needs a visible verification instruction.
-        // Reserve a caption strip instead of dropping it or crossing a QR.
-        layout = { ...planQrStampLayoutForFooterBand(width, qrImages.length,
-          { footerBandHeight: LEGAL_FOOTER_HEIGHT - 18 }), panelHeight: LEGAL_FOOTER_HEIGHT };
-        captionAbove = true;
-      }
+      const layout = planFooterLayout(width, qrImages.length, {
+        legal: resolvedPageScalingStrategy === "legal-footer", navigation: pageIndex === 0,
+        captionWidth: font.widthOfTextAtSize(caption, 9),
+      });
       // Four dense v40 symbols can fit mathematically in a three-inch footer
       // while becoming too small to photograph. Never silently emit such a
       // fallback if the original-page 2x2 watermarks failed their preflight.
@@ -76,22 +69,11 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
       if (minModulePoints < 0.9) {
         throw new Error(`PDF page ${pageIndex + 1} has too many dense QR seals for a readable footer. Use a verified watermark layout or split this page's content.`);
       }
-      const footerMargin = resolvedPageScalingStrategy === "legal-footer" ? 0 : PANEL_MARGIN;
-      const footerHeight = resolvedPageScalingStrategy === "legal-footer" ? LEGAL_FOOTER_HEIGHT : footerMargin + layout.panelHeight;
+      const { footerMargin, footerHeight } = layout;
       page = await applyPageScaling(pdf, pageIndex, page, resolvedPageScalingStrategy, footerHeight);
       page.drawRectangle({ x: footerMargin, y: footerMargin, width: layout.panelWidth, height: layout.panelHeight, color: rgb(1, 1, 1), opacity: 0.94 });
-      const captionX = !captionAbove
-        ? layout.qrOffsetX + layout.gridWidth + 12
-        : footerMargin + (layout.qrOffsetX ?? PANEL_PADDING);
-      page.drawText(caption, {
-        x: captionX,
-        y: !captionAbove
-          ? layout.qrOffsetY + (layout.gridHeight / 2)
-          : footerMargin + layout.panelHeight - (layout.labelBeside ? 12 : PANEL_PADDING + 9),
-        size: 9,
-        font,
-        color: rgb(0.05, 0.12, 0.22),
-      });
+      page.drawText(caption, { ...layout.caption, size: 9, font, color: rgb(0.05, 0.12, 0.22) });
+      if (layout.entry) drawQrSymbol(page, createEntryQrSymbol(), layout.entry, 0);
       qrImages.forEach((image, index) => {
         const column = index % layout.columns;
         const row = Math.floor(index / layout.columns);

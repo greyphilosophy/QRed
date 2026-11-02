@@ -509,7 +509,7 @@ describe("decodeCanvasFrame", () => {
 
     expect(decodeCanvasFrame(video, canvas, { manual: true })).toEqual({
       status: "feedback",
-      message: "That code opens qred.org. Include the full printed page against a contrasting background to recover its pale watermark.",
+      message: "That code opens qred.org. Include the full printed page against a contrasting background for its pale watermark, or frame an individual larger footer seal.",
     });
   });
 

@@ -2,7 +2,7 @@
 
 QRed is an open standard and reference implementation for tamper-evident document sealing and verification.
 
-QRed encodes the signed contents of a document into one or more QR code seals printed alongside the document. Seal QR codes carry the signed binary record in an ordinary QR byte segment. A separate navigation QR, when it fits, opens qred.org; the printed “Verify at QRED.ORG” instruction remains available on every sealed page.
+QRed encodes the signed contents of a document into one or more QR code seals printed alongside the document. Seal QR codes carry the signed binary record in an ordinary QR byte segment. A separate navigation QR opens qred.org from the first page: it is required in footer layouts and included on watermark pages when it fits; the printed “Verify at QRED.ORG” instruction remains available on every sealed page.
 
 No app installation is required.
 
@@ -62,7 +62,12 @@ Letter-to-legal stamping preserves the original letter content at its original
 size and uses the added three-inch footer for QR seals. One or two seals are
 2.75 inches square, including their quiet zones, with a quarter-inch bottom
 print margin. Larger sets use the grid that allows the largest codes within
-that same footer. The caption sits beside the codes where space permits.
+that same footer. If the first page uses footer seals, its footer also includes
+a separate half-inch navigation QR opening `https://qred.org/`. The layout uses
+an empty grid cell or reserves a separate column, keeping all quiet zones clear
+and enforcing the existing minimum seal-module size. Later footer pages retain
+the **Verify at qred.org** caption without repeating the navigation QR. The
+caption sits beside the codes where space permits, otherwise above them.
 
 **Automatic**, the default **Page layout**, tries pale watermarks first on each
 text page and falls back to a clear footer only on pages where they cannot be
@@ -345,7 +350,7 @@ curl -I https://www.qred.org/verify.htm
 
 ## Bootstrap URL and verifier route
 
-QRed payload QR codes encode only the binary seal record in a standard byte segment, with ordinary terminator and padding bytes. They do not contain a bootstrap URL or data hidden after the terminator. A separate navigation QR opens `https://qred.org/` when space and watermark recovery permit; every sealed page retains the printed “Verify at QRED.ORG” instruction. The `/verify.htm` path remains a human-facing verifier route. Retired padding-format QR images must be re-sealed; deploy the stamper and all verifier routes together and refresh saved offline copies.
+QRed payload QR codes encode only the binary seal record in a standard byte segment, with ordinary terminator and padding bytes. They do not contain a bootstrap URL or data hidden after the terminator. A separate navigation QR opens `https://qred.org/` from the first page, in its footer when using footer seals or on its watermark when space and recovery permit; every sealed page retains the printed “Verify at QRED.ORG” instruction. The `/verify.htm` path remains a human-facing verifier route. Retired padding-format QR images must be re-sealed; deploy the stamper and all verifier routes together and refresh saved offline copies.
 
 # Motivation
 
