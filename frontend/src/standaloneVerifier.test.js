@@ -20,7 +20,7 @@ import { createScanPhotoCollection } from "./verifier/scanPhotos.js";
 import { signAsync } from "@noble/ed25519";
 import { AUTH_PROVIDERS, authProvider } from "./authProviders.js";
 import { attestationMessage, pageCommitment } from "./attestation.js";
-import { decodeBase64Url, encodeBase64Url } from "./sealFormat.js";
+import { decodeBase64Url, encodeBase64Url, qrPayloadBytes } from "./sealFormat.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
@@ -120,14 +120,14 @@ it("opens a saved issuer key in the standalone verifier and rejects invalid file
   expect(document.getElementById("issuerKeyControls").hidden).toBe(true);
 });
 
-it("the standalone camera recovers hidden payload bytes before verifying and renders metadata safely", async () => {
+it("the standalone camera recovers standard byte payloads before verifying and renders metadata safely", async () => {
   vi.stubGlobal("crypto", webcrypto);
   vi.stubGlobal("requestAnimationFrame", vi.fn());
   vi.stubGlobal("cancelAnimationFrame", vi.fn());
   const timestamp = "2026-10-20T17:55:14.123Z";
   const { seals } = await createQRedSeals({ content: "Standalone camera document", timestamp, privateKey, publicKey });
   const frame = raster(createQRedQrSymbol(seals[0]));
-  expect(jsQR(frame.data, frame.width, frame.height).data).toBe("QRED.ORG");
+  expect(jsQR(frame.data, frame.width, frame.height).binaryData).toEqual(Array.from(qrPayloadBytes(seals[0])));
 
   loadStandalone();
   const video = document.getElementById("cameraVideo");
@@ -147,7 +147,7 @@ it("the standalone camera recovers hidden payload bytes before verifying and ren
   expect(document.getElementById("resultMeta").querySelector("img")).toBeNull();
 });
 
-it("the standalone camera yields between retries and recovers a historical frame without verifying its retired format", async () => {
+it("the standalone camera yields between retries and ignores a retired padding payload", async () => {
   vi.stubGlobal("crypto", webcrypto);
   let nextFrame;
   vi.stubGlobal("requestAnimationFrame", vi.fn((callback) => { nextFrame = callback; return 1; }));
@@ -183,8 +183,9 @@ it("the standalone camera yields between retries and recovers a historical frame
     expect(scan).toHaveBeenCalledTimes(callsBefore + 1);
     await Promise.resolve();
   }
-  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("QR_CONTENT"));
-  expect(document.getElementById("resultContent").textContent).toContain("QRED1?");
+  expect(document.getElementById("resultStatus").textContent).toBe("");
+  expect(document.getElementById("resultContent").textContent).not.toContain("QRED1?");
+  expect(document.getElementById("btnScan").textContent).toBe("Stop");
 });
 
 it("keeps one camera session for multipart seals and resolves the default key after reconstruction", async () => {
@@ -234,8 +235,8 @@ it("collects a page-aligned batch from one live camera frame", async () => {
     pageContext: { pageNumber: 1, pageCount: 1 } });
   expect(sealed.seals).toHaveLength(4);
   const codes = sealed.seals.map(seal => {
-    const { bytes, version } = createQRedQrData(seal);
-    return { data: "QRED.ORG", correctedData: bytes, version };
+    const { payloadBytes, version } = createQRedQrData(seal);
+    return { data: "", binaryData: Array.from(payloadBytes), version };
   });
   const snapshot = vi.fn(async () => new Blob(["frame"], { type: "image/png" }));
   loadStandalone({ createQrFrameScanner: () => () => ({ codes }),

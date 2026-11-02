@@ -1,9 +1,10 @@
+import { encodeChunk, qrPayloadBytes, sealString, utf8 } from "../sealFormat.js";
 import { describe, expect, it } from "vitest";
 import QRCode from "qrcode";
 import { filterWatermark } from "./watermarkFilter.js";
 import { scanModuleAwareQr } from "./moduleAwareScan.js";
 import { createQRedQrSymbol } from "../qredQr.js";
-import { hiddenPayloadFromScanResult } from "./hiddenPayload.js";
+import { qredPayloadFromScanResult } from "./qrPayload.js";
 
 function photographedQr({ text = true, blank = false, symbol, inkColor = null } = {}) {
   const qr = symbol ?? QRCode.create("QRED.ORG", { version: 10, errorCorrectionLevel: "L" });
@@ -43,27 +44,27 @@ describe("module-aware watermark recovery", () => {
     expect(code?.location?.topLeftFinderPattern).toBeDefined();
   });
 
-  it("preserves the complete hidden signed-seal payload, not just QRED.ORG", () => {
-    const payload = "signed-page-evidence-".repeat(30);
+  it("preserves the complete binary seal message", () => {
+    const payload = sealString(encodeChunk(new Uint8Array(32).fill(23), 0, 2, utf8.encode("signed-page-evidence-".repeat(30))));
     const symbol = createQRedQrSymbol(payload);
     const { rgba, width, height } = photographedQr({ symbol });
     const filtered = filterWatermark(rgba, width, height, 3);
     const code = scanModuleAwareQr(rgba, filtered, width, height);
-    expect(code?.data).toBe("QRED.ORG");
-    expect(hiddenPayloadFromScanResult(code)).toBe(payload);
+    expect(code?.binaryData).toEqual(Array.from(qrPayloadBytes(payload)));
+    expect(qredPayloadFromScanResult(code)).toBe(payload);
   });
 
   it.each([
     ["bright yellow", [255, 245, 100]],
     ["light cyan", [100, 235, 240]],
-  ])("recovers the complete hidden data through %s foreground crossing most module centers", (_name, inkColor) => {
-    const payload = "colored-ink-evidence-".repeat(30);
+  ])("recovers the complete byte message through %s foreground crossing most module centers", (_name, inkColor) => {
+    const payload = sealString(encodeChunk(new Uint8Array(32).fill(23), 0, 2, utf8.encode("colored-ink-evidence-".repeat(30))));
     const symbol = createQRedQrSymbol(payload);
     const { rgba, width, height } = photographedQr({ symbol, inkColor });
     const filtered = filterWatermark(rgba, width, height, 3);
     const code = scanModuleAwareQr(rgba, filtered, width, height);
-    expect(code?.data).toBe("QRED.ORG");
-    expect(hiddenPayloadFromScanResult(code)).toBe(payload);
+    expect(code?.binaryData).toEqual(Array.from(qrPayloadBytes(payload)));
+    expect(qredPayloadFromScanResult(code)).toBe(payload);
   });
 
   it("does not fabricate a QR from shadowed blank paper", () => {

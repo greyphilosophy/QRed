@@ -80,12 +80,12 @@ describe("compact browser QRed sealing", () => {
     expect(decodeEnvelope(concatenate(seals.map(seal => decodeSeal(seal).data))).signature.length).toBe(64);
   });
 
-  it.each([[2860, [40]], [2861, [28, 28]], [5500, [40, 39]]])("keeps minimum count and beneficial balancing at %i bytes", async (length, versions) => {
+  it.each([[2860, [40]], [2868, [40]], [2869, [28, 28]], [5500, [40, 39]]])("keeps minimum count and beneficial balancing at %i bytes", async (length, versions) => {
     const { seals } = await createQRedSeals({ ...keys, content: "x".repeat(length), encodingStrategy: "plaintext" });
     expect(seals.map(seal => createQRedQrData(seal).version)).toEqual(versions);
   });
 
-  it.each([[27000, 10], [29000, 11]])("balances %i bytes across %i chunks with fixed-size coordinates", async (length, count) => {
+  it.each([[27000, 10], [29100, 11]])("balances %i bytes across %i chunks with fixed-size coordinates", async (length, count) => {
     const content = "x".repeat(length);
     const { seals } = await createQRedSeals({ ...keys, content, encodingStrategy: "plaintext" });
     expect(seals).toHaveLength(count);

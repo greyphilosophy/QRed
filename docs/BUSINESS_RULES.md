@@ -5,7 +5,7 @@ This document summarizes the current business rules for QRed as implemented and 
 ## Scope and Intent
 
 1. QRed exists to make printed documents tamper-evident by embedding a signed representation of certified document contents into QR-code seals printed with the document.
-2. A recipient must be able to verify certified contents with commonly available smartphone hardware and a modern mobile browser, but hidden payload recovery requires the verifier to scan the QR image rather than relying on the phone camera URL handoff.
+2. A recipient must be able to verify certified contents with commonly available smartphone hardware and a modern mobile browser, with the verifier interpreting ordinary binary QR messages as signed document seals.
 3. QRed verification must not require recipients to install a dedicated mobile application.
 4. The sealed document should carry the information needed to validate its certified contents after the payload seals have been acquired.
 5. QRed is an open, publicly documented, interoperable format so independent implementations can generate and validate compatible documents.
@@ -22,14 +22,14 @@ This document summarizes the current business rules for QRed as implemented and 
    - strips leading and trailing empty lines.
 5. The canonical text is signed by the issuing authority using Ed25519.
 6. The signed payload is encoded into one or more machine-readable payload seals.
-7. Automatic mode evaluates plaintext and zlib candidates carried as scanner-safe hidden payloads, using gzip as a fallback when zlib is unavailable.
+7. Automatic mode evaluates plaintext and zlib candidates carried as ordinary QR byte segments, using gzip as a fallback when zlib is unavailable.
 8. Only reversible candidates are selectable.
 9. Automatic mode chooses the candidate that requires the fewest QR codes.
 10. QR-count ties prefer fewer encoded payload bytes, then plaintext.
 11. Explicit strategies may request plaintext, zlib, or gzip.
 12. Payloads that exceed a single seal's capacity are divided into numbered chunks.
-13. Printed payload QR codes expose the shortest production verifier origin currently required for scanning: `https://qred.org/`.
-14. Payload QR codes present the bootstrap URL (`https://qred.org/`) to ordinary scanners and store signed payload bytes in hidden QR codewords. Ordinary camera apps deliver only the visible URL; payload data does not appear as a URL marker, path, or fragment and is recoverable only by a QRed-aware scanner reading the QR image.
+13. Printed payload QR codes contain the binary seal record without a URL. A separate navigation code opens `https://qred.org/` from the first page. It is required in first-page footer layouts and optional on watermarks; every page retains the printed “Verify at QRED.ORG” instruction.
+14. Payload QR codes use standard byte-mode messages with ordinary terminators and padding. The scanner reads decoded message bytes and does not recover data from padding. Retired padding-format images require re-sealing.
 15. The `/verify.htm` route may remain available as a human-facing verifier page, but newly generated QR payloads must not add `/verify.htm` unless a future compatibility requirement explicitly requires it.
 
 ## Payload and Metadata Rules
@@ -54,7 +54,7 @@ This document summarizes the current business rules for QRed as implemented and 
 
 ## Verification Rules
 
-1. The verification workflow loads the verifier from the short `https://qred.org/` origin when needed, then uses a QRed-aware scanner to read one or more payload QR images, recover hidden signed data, reconstruct the payload, validate payload completeness, verify the signature, display certified contents, and report a result.
+1. The verification workflow loads the verifier from the short `https://qred.org/` origin when needed, then uses a QRed-aware scanner to read one or more payload QR images, recover signed message bytes, reconstruct the payload, validate payload completeness, verify the signature, display certified contents, and report a result.
 2. Payload reconstruction requires all chunks for the same document or grouping namespace.
 3. Missing chunks produce an `INCOMPLETE` result.
 4. Malformed, unsupported, or unreadable seal data produces an `ERROR` result when it cannot be reconstructed.
@@ -80,7 +80,7 @@ This document summarizes the current business rules for QRed as implemented and 
 
 ## Deployment and Operations Rules
 
-1. Generated QR payloads are expected to expose `https://qred.org/` as their visible production bootstrap URL. The hidden signed payload bytes are not part of the ordinary scan result and require QRed-aware QR-image scanning.
+1. Deploy the byte-mode stamper and all verifier routes together, and refresh offline copies. Navigation links use `https://qred.org/`; the binary seal contains no URL.
 2. Production should use Cloudflare Pages for the frontend verifier deployment.
 3. GoDaddy forwarding must not be used as the primary production mechanism for `qred.org` verification traffic.
 4. If API-backed production features are enabled, the frontend Worker must be configured with the backend API origin or the browser build must be configured with the backend API base URL.

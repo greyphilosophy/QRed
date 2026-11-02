@@ -4,7 +4,7 @@ import { createQRedQrSymbol } from "../qredQr.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { recoverRefinedQrRegion, sampleRefinedQrMatrix } from "./pageAlignedRecovery.js";
 import { readErasedQrMatrix } from "./qrErasureRecovery.js";
-import { hiddenPayloadFromScanResult } from "./hiddenPayload.js";
+import { bytePayloadFromCodewords, qredPayloadFromScanResult } from "./qrPayload.js";
 
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
 
@@ -42,8 +42,8 @@ it("recovers the exact signed payload through letter strokes that corrupt mean s
   const recover = foregroundRobust => {
     const sampled = sampleRefinedQrMatrix(image, moduleMap, symbol.version, { foregroundRobust });
     const recovered = readErasedQrMatrix(sampled.bits, sampled.unknown, symbol.version, sampled.confidence);
-    return recovered && hiddenPayloadFromScanResult({ data: "QRED.ORG", version: symbol.version,
-      correctedData: recovered.correctedData });
+    return recovered && qredPayloadFromScanResult({ data: "", version: symbol.version,
+      binaryData: bytePayloadFromCodewords(recovered.dataCodewords, symbol.version) });
   };
   expect(recover(false)).not.toBe(seals[0]);
   const recovered = recover(true);

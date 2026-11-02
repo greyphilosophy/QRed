@@ -7,9 +7,9 @@ const testHtmlPath = resolve(process.cwd(), "test.html");
 const lowLevelPath = resolve(process.cwd(), "src/qr/qrLowLevel.js");
 
 describe("frontend/test.html script integrity", () => {
-  it("does not declare the hidden payload helper twice and uses shared module", () => {
+  it("does not declare the QR payload helper twice and uses shared module", () => {
     const html = readFileSync(testHtmlPath, "utf8");
-    const matches = html.match(/function extractHiddenQRedPayload\(/g) ?? [];
+    const matches = html.match(/function extractQrBytePayload\(/g) ?? [];
     expect(matches).toHaveLength(0);
     expect(html.length).toBeLessThan(12000);
     // shared low-level module exists

@@ -109,7 +109,7 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, la
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text(text)
 
-        # Also exercise file reading, image decoding and hidden-payload
+        # Also exercise file reading, image decoding and byte-payload
         # recovery from real stamped-PDF pixels while networking is blocked.
         page.get_by_role("button", name="Clear collected seals", exact=True).click()
         fixture_key = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="

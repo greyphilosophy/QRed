@@ -113,7 +113,7 @@ describe("signed binary page references", () => {
 
 describe("optional evidence budget", () => {
   it("never increases the text's QR count, including unknown Google identity sizes", () => {
-    const count = (size, attested) => size <= 2945 ? 1 : Math.ceil(size / (attested ? 2921 : 2905));
+    const count = (size, attested) => size <= 2953 ? 1 : Math.ceil(size / (attested ? 2929 : 2913));
     for (const attested of [false, true]) for (const multiple of [false, true]) {
       const baseHeader = (attested ? 83 : 85) + (multiple ? (attested ? 20 : 36) : 0);
       for (let length = 1; length < 11500; length += 13) {
@@ -131,7 +131,7 @@ describe("optional evidence budget", () => {
     const evidence = decodePageEvidence(plan.body);
     expect(evidence.layout.mode).toBe(3);
     expect(evidence.visual.indices.length).toBeGreaterThan(1000);
-    expect(plan.body.length + 85).toBeLessThanOrEqual(2945);
+    expect(plan.body.length + 85).toBeLessThanOrEqual(2953);
     const sealed = await createQRedSeals({ content: base.text, pageEvidence: plan.body, pageContext, privateKey, publicKey, encodingStrategy: "plaintext" });
     expect(sealed.seals).toHaveLength(1);
   });

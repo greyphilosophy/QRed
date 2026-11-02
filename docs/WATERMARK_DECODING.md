@@ -7,6 +7,15 @@ watermarks remain compatible. See [quantitative acceptance requirements](WATERMA
 Synthetic tests do not establish printer or phone reliability; broader
 physical acceptance remains tracked in the requirements above.
 
+When the first page uses a footer, that footer contains a separate 36-point
+navigation QR for `HTTPS://QRED.ORG`, with a four-module quiet zone. Payload
+seals remain ordinary binary QR messages. Footer planning uses a spare grid cell
+or reserves a navigation column, retaining the minimum module-size guard and
+printed verification caption. Later footer pages do not repeat the link QR.
+Photo scans can mask a detected navigation code in a bounded working copy;
+live scans use at most one subsequent fresh frame for that retry and then discard
+the old link position. Original evidence pixels remain unchanged.
+
 ## Encoding and placement
 
 The sealer retains standard QRed compressed payload bytes and signatures.

@@ -40,8 +40,7 @@ export function scanModuleAwareQr(originalRgba, filteredRgba, width, height, nor
       filteredRgba.length !== width * height * 4) return null;
 
   const normalized = normalizedImage ?? normalizeWatermarkLuminance(originalRgba, width, height);
-  // jsQR has already been patched for QRed to retain corrected hidden bytes.
-  // Extend that same tested decoder with a synchronous per-module callback;
+  // Extend jsQR with a synchronous per-module callback;
   // no second QR implementation, and no dependence on the original PDF.
   const code = jsQR(filteredRgba, width, height, {
     inversionAttempts: "dontInvert",

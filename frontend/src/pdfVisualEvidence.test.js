@@ -10,7 +10,7 @@ import { decodeBase64Url, encodeBase64Url } from "./sealFormat.js";
 import { renderPdfPage, withPdfDocument } from "./pdf/readPdfText.js";
 import { visiblePageGeometry } from "./pdf/pageScaling.js";
 import { scanQrImage } from "./qr/scanQrImage.js";
-import { hiddenPayloadFromScanResult } from "./qr/hiddenPayload.js";
+import { qredPayloadFromScanResult } from "./qr/qrPayload.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
@@ -70,7 +70,7 @@ describe("PDF visual references", () => {
       expect(changedOutsideSeal).toBe(0);
       expect(changedInsideSeal).toBeGreaterThan(1000);
       // Scan the whole page, with no hint about where the QR has moved.
-      const payload = hiddenPayloadFromScanResult(scanQrImage(printed.data, printed.width, printed.height));
+      const payload = qredPayloadFromScanResult(scanQrImage(printed.data, printed.width, printed.height));
       expect(payload).toBe(pageSealStrings[0][0]);
       const verified = await verifyQRedSeals([payload], publicKey);
       expect(verified).toEqual(expected); // Includes page hash, text, line positions and visual reference.

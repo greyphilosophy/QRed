@@ -1,16 +1,16 @@
 import { expect, it } from "vitest";
-import { PDFDocument, rgb } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { createQRedSeals } from "../qredSealer.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
-import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
+import { qredPayloadFromScanResult } from "../qr/qrPayload.js";
 import { scanPdfPage } from "../verifier/scanPdf.js";
 import { renderSealedPdf } from "./renderSealedPdf.js";
 import { extractPdfText } from "../pdfClientSeal.js";
 import { renderPdfPage, withPdfDocument } from "./readPdfText.js";
 import { ENTRY_URL, checkWatermarks } from "./watermark.js";
 import { simulatePrintPhoto } from "./watermarkPreflight.js";
-import { planQrStampLayoutForFooterBand } from "./qrLayout.js";
+import { planFooterLayout } from "./qrLayout.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
@@ -121,7 +121,9 @@ it("reserves readable instruction text above a full-width three-code footer", as
   expect((await extractPdfText(result.blob)).match(/Verify at qred\.org/g)).toHaveLength(1);
   await withPdfDocument(result.blob, async document => {
     const image = await renderPdfPage(document, 1, 300 / 72);
-    const layout = planQrStampLayoutForFooterBand(612, 3, { footerBandHeight: 198 });
+    const font = await pdf.embedFont(StandardFonts.Helvetica);
+    const layout = planFooterLayout(612, 3, { legal: true, navigation: true,
+      captionWidth: font.widthOfTextAtSize("Verify at qred.org", 9) });
     const { items } = await (await document.getPage(1)).getTextContent();
     const caption = items.find(item => item.str === "Verify at qred.org");
     expect(caption.transform[5]).toBeGreaterThan(layout.qrOffsetY + layout.gridHeight + 3);
@@ -130,9 +132,11 @@ it("reserves readable instruction text above a full-width three-code footer", as
     const recovered = signed.seals.map((_seal, index) => {
       const qr = crop(image, { x: layout.qrOffsetX + index * (layout.qrSize + layout.gap),
         y: layout.qrOffsetY, width: layout.qrSize, height: layout.qrSize });
-      return hiddenPayloadFromScanResult(scanQrImage(qr.data, qr.width, qr.height));
+      return qredPayloadFromScanResult(scanQrImage(qr.data, qr.width, qr.height));
     });
     expect(recovered).toEqual(signed.seals);
+    const entry = crop(image, layout.entry);
+    expect(scanQrImage(entry.data, entry.width, entry.height, { tryWatermark: false })?.data).toBe(ENTRY_URL);
     await expect(verifyQRedSeals(recovered, publicKey)).resolves.toMatchObject({ status: "VALID", content });
   });
 }, 60000);

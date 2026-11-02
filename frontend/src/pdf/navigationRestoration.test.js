@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PDFDocument, rgb } from "pdf-lib";
 import { extractPdfText, sealPdfInBrowser } from "../pdfClientSeal.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
-import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
+import { qredPayloadFromScanResult } from "../qr/qrPayload.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { renderPdfPage, withPdfDocument } from "./readPdfText.js";
 import { ENTRY_URL, findEntryForWatermark, findEntryPlacement } from "./watermark.js";
@@ -112,7 +112,7 @@ it("restores a decodable navigation QR after recovering a readable signed waterm
     expect(scanQrImage(entry.data, entry.width, entry.height, { tryWatermark: false })?.data)
       .toBe(ENTRY_URL);
     const qr = crop(image, layout.boxes[0]);
-    expect(hiddenPayloadFromScanResult(scanQrImage(qr.data, qr.width, qr.height,
+    expect(qredPayloadFromScanResult(scanQrImage(qr.data, qr.width, qr.height,
       { tryRescaling: false, maxAttempts: 3 }))).toBe(result.pageSealStrings[0][0]);
   });
   await expect(verifyQRedSeals(result.pageSealStrings[0], publicKey))
@@ -174,7 +174,7 @@ it("retains verification text and the full-page watermark when its navigation QR
   });
 }, 60000);
 
-it("keeps the verification instruction in a footer when neither overlay is readable", async () => {
+it("keeps the verification instruction and navigation QR in a footer when neither overlay is readable", async () => {
   preflight.forceSquare = false;
   preflight.failEntryText = true;
   const result = await sealPdfInBrowser({ file: await makeInvoice(), privateKey, publicKey });
@@ -184,7 +184,10 @@ it("keeps the verification instruction in a footer when neither overlay is reada
   expect(result.footerReasons[1]).toContain("verification instruction");
   expect((await extractPdfText(result.blob)).match(/Verify at qred\.org/g)).toHaveLength(1);
   await withPdfDocument(result.blob, async doc => {
-    const scanned = await scanPdfPage(await renderPdfPage(doc, 1));
+    const image = await renderPdfPage(doc, 1);
+    const entry = crop(image, { x: 228, y: 73, width: 36, height: 36 });
+    expect(scanQrImage(entry.data, entry.width, entry.height, { tryWatermark: false })?.data).toBe(ENTRY_URL);
+    const scanned = await scanPdfPage(image);
     expect(scanned.seals).toEqual(result.pageSealStrings[0]);
     await expect(verifyQRedSeals(scanned.seals, publicKey)).resolves.toMatchObject({ status: "VALID" });
   });

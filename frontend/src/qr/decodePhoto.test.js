@@ -13,8 +13,8 @@ const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
 const image = { width: 320, height: 240, data: new Uint8ClampedArray(320 * 240 * 4) };
 let single, multiple;
 function code(seal) {
-  const { bytes, version } = createQRedQrData(seal);
-  return { data: "QRED.ORG", correctedData: bytes, version };
+  const { payloadBytes, version } = createQRedQrData(seal);
+  return { data: "", binaryData: Array.from(payloadBytes), version };
 }
 beforeAll(async () => {
   const options = { privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey,

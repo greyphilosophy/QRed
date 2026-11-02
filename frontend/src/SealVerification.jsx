@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { preparePhotoScanner, scanPhotoInWorker } from "./qr/photoScanClient.js";
-import { decodeSeal, VISIBLE_QR_TEXT } from "./qredVerifier.js";
-import { isQRedEntryLink } from "./qr/hiddenPayload.js";
+import { decodeSeal } from "./qredVerifier.js";
+import { isQRedEntryLink } from "./qr/qrPayload.js";
 import { readSigningKeyFile } from "./signingKeys.js";
 import { createVerificationSession } from "./verifier/verificationSession.js";
 import { PhotoTextVerification } from "./verifier/PhotoTextVerification.jsx";
@@ -35,12 +35,8 @@ export function useSealVerification() {
   }, []);
 
   const addSeal = useCallback((text, frame, { replaceImage = false } = {}) => {
-    if (isQRedEntryLink(text) && text !== VISIBLE_QR_TEXT) {
+    if (isQRedEntryLink(text)) {
       setNotice("That code opens qred.org. Scan the pale watermark to read the document seal.");
-      return;
-    }
-    if (text === VISIBLE_QR_TEXT) {
-      setNotice("QR found, but its hidden payload could not be read. Move closer or choose a clearer image.");
       return;
     }
     if (!decodeSeal(text)) {

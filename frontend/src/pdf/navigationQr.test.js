@@ -3,7 +3,7 @@ import ECLevel from "qrcode/lib/core/error-correction-level";
 import Mode from "qrcode/lib/core/mode";
 import jsQR from "jsqr";
 import { ENTRY_QR_SIZE, ENTRY_URL, createEntryQrSymbol } from "./watermark.js";
-import { isQRedEntryLink } from "../qr/hiddenPayload.js";
+import { isQRedEntryLink } from "../qr/qrPayload.js";
 
 // Draw the vector modules onto a fixed-size raster with a four-module quiet
 // zone. No uploaded or private PDF data is used in these QR regressions.

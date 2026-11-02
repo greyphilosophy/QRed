@@ -1,3 +1,4 @@
+import { maskQrCode } from "../qr/maskQrCode.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
 import { decodeSeal, qredPayloadFromPhotoScanResult } from "../qredVerifier.js";
 import { scanPageAlignedImage } from "../qr/pageAlignedScan.js";
@@ -9,25 +10,6 @@ const MAX_CODES_PER_PAGE = 64;
 const MAX_LEGACY_SCAN_PIXELS = 8_000_000;
 const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 0));
 
-// Erase only a working raster, after recovery. Keep the original page image
-// for comparison and never infer a seal from PDF metadata or extracted text.
-function maskCode(data, width, height, code, offset) {
-  const points = ["topLeftCorner", "topRightCorner", "bottomLeftCorner", "bottomRightCorner"]
-    .map(name => code.location?.[name])
-    .map(point => point && { x: point.x + offset.x, y: point.y + offset.y });
-  if (points.some(point => !Number.isFinite(point?.x) || !Number.isFinite(point?.y))) return false;
-  const left = Math.max(0, Math.floor(Math.min(...points.map(point => point.x))) - 2);
-  const right = Math.min(width, Math.ceil(Math.max(...points.map(point => point.x))) + 2);
-  const top = Math.max(0, Math.floor(Math.min(...points.map(point => point.y))) - 2);
-  const bottom = Math.min(height, Math.ceil(Math.max(...points.map(point => point.y))) + 2);
-  let changed = false;
-  for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {
-    const i = (y * width + x) * 4;
-    changed ||= data[i] !== 255 || data[i + 1] !== 255 || data[i + 2] !== 255;
-    data[i] = data[i + 1] = data[i + 2] = data[i + 3] = 255;
-  }
-  return changed;
-}
 
 function scanRegions(width, height) {
   // Tight quadrants isolate adjacent dense codes; overlapping halves preserve
@@ -125,7 +107,7 @@ export async function scanPdfPage(image, { onSeal = () => {}, signal, pageAligne
       }
       // Navigation and unrelated QR codes are skipped too, so they cannot hide
       // another seal elsewhere on the page. Bound work on hostile input.
-      if (!maskCode(pixels, legacy.width, legacy.height, code, region)) return { seals: [...seals], limited: true };
+      if (!maskQrCode(pixels, legacy.width, legacy.height, code, region)) return { seals: [...seals], limited: true };
       // Removing an isolated code can make the remaining full-page geometry
       // readable. Revisit it before trying more small views.
       if (regionIndex > 0) { regionIndex = -1; break; }

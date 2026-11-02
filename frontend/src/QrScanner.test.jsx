@@ -184,26 +184,14 @@ describe("QrScanner scan loop decisions", () => {
     expect(qrScanAction(new Uint8ClampedArray(), 0, 0, { data: "QRED.ORG" })).toEqual({ status: "continue" });
   });
 
-  it("stops scanning when jsQR exposes a framed hidden QRed payload", () => {
-    const payload = "https://qred.org/#QRED1?doc=DOC&i=0&n=1&txt=HELLO";
-    const payloadBytes = new TextEncoder().encode(payload);
-    const binaryData = new Uint8Array([
-      0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
-      (payloadBytes.length >> 8) & 0xff,
-      payloadBytes.length & 0xff,
-      ...payloadBytes,
-      0xec,
-      0x11,
-    ]);
-
-    expect(qrScanAction(new Uint8ClampedArray(), 0, 0, { data: "QRED.ORG", binaryData, version: 1 })).toEqual({
-      status: "found",
-      text: payload,
-    });
-    expect(qrScanAction(new Uint8ClampedArray(), 0, 0, { data: "https://qred.org/#QRED1?sig?garbled", binaryData, version: 1 })).toEqual({
-      status: "found",
-      text: payload,
-    });
+  it("stops scanning on a normal binary seal even when there is no UTF-8 text", async () => {
+    const { seals } = await createQRedSeals({ content: "HELLO",
+      privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes",
+      publicKey: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q" });
+    const { payloadBytes, version } = createQRedQrData(seals[0]);
+    expect(qrScanAction(new Uint8ClampedArray(), 0, 0,
+      { data: "", binaryData: payloadBytes, version }, { returnPayload: true }))
+      .toEqual({ status: "found", text: seals[0] });
   });
 
   it("stops scanning on ordinary non-QRed QR content", () => {
@@ -467,8 +455,8 @@ describe("decodeCanvasFrame", () => {
     const { canvas, ctx, video } = frame();
     vi.mocked(jsQR).mockReturnValue(null);
     vi.mocked(scanPageAlignedImage).mockClear().mockReturnValueOnce(seals.map(seal => {
-      const { bytes, version } = createQRedQrData(seal);
-      return { seal, code: { data: "QRED.ORG", correctedData: bytes, version, pageAligned: true } };
+      const { payloadBytes, version } = createQRedQrData(seal);
+      return { seal, code: { data: "", binaryData: Array.from(payloadBytes), version, pageAligned: true } };
     }));
     const scanQrFrame = createQrFrameScanner();
     let action;
@@ -493,7 +481,7 @@ describe("decodeCanvasFrame", () => {
 
     expect(decodeCanvasFrame(video, canvas, { manual: true })).toEqual({
       status: "feedback",
-      message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For older seals, try framing the individual QR instead.",
+      message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For footer seals, try framing the individual QR instead.",
     });
     expect(jsQR.mock.calls.length).toBeGreaterThan(1);
     expect(jsQR.mock.calls.length).toBeLessThanOrEqual(10);
@@ -515,13 +503,13 @@ describe("decodeCanvasFrame", () => {
     expect(jsQR.mock.calls.length).toBeLessThanOrEqual(10);
   });
 
-  it("gives manual photo feedback when a bootstrap QR has no hidden QRed payload", () => {
+  it("gives manual photo feedback for a navigation QR", () => {
     const { canvas, video } = frame();
     vi.mocked(jsQR).mockReturnValue({ data: "QRED.ORG" });
 
     expect(decodeCanvasFrame(video, canvas, { manual: true })).toEqual({
       status: "feedback",
-      message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again.",
+      message: "That code opens qred.org. Include the full printed page against a contrasting background for its pale watermark, or frame an individual larger footer seal.",
     });
   });
 

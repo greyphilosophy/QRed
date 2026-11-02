@@ -66,4 +66,27 @@ describe("bounded watermark scan budget", () => {
     expect(jsQR).toHaveBeenCalledTimes(1);
     expect(scanModuleAwareQr).not.toHaveBeenCalled();
   });
+
+  it.each([1, 2, 3])("counts navigation masking within a %i-attempt budget", budget => {
+    const entry = { data: "HTTPS://QRED.ORG", location: {
+      topLeftCorner: { x: 10, y: 10 }, topRightCorner: { x: 30, y: 10 },
+      bottomLeftCorner: { x: 10, y: 30 }, bottomRightCorner: { x: 30, y: 30 },
+    } };
+    jsQR.mockReturnValueOnce(entry);
+    expect(scanQrImage(pixels, width, height, { tryRescaling: false, maxAttempts: budget })).toBe(entry);
+    expect(jsQR.mock.calls.length + scanModuleAwareQr.mock.calls.length).toBe(budget);
+  });
+
+  it("keeps the final module-aware slot when the filtered attempt finds navigation", () => {
+    jsQR.mockReturnValueOnce(null).mockReturnValueOnce({ data: "HTTPS://QRED.ORG", location: {
+      topLeftCorner: { x: 10, y: 10 }, topRightCorner: { x: 30, y: 10 },
+      bottomLeftCorner: { x: 10, y: 30 }, bottomRightCorner: { x: 30, y: 30 },
+    } });
+    const original = new Uint8ClampedArray(pixels.length);
+    scanQrImage(original, width, height, { tryRescaling: false, maxAttempts: 3 });
+    expect(jsQR).toHaveBeenCalledTimes(2);
+    expect(scanModuleAwareQr).toHaveBeenCalledTimes(1);
+    expect(scanModuleAwareQr.mock.calls[0][0][(20 * width + 20) * 4]).toBe(255);
+    expect(original.every(value => value === 0)).toBe(true);
+  });
 });
