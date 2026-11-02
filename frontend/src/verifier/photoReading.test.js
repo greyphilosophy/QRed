@@ -56,3 +56,11 @@ it("keeps added document words beside a large footer code in the difference list
   expect(result.status).toBe("differences");
   expect(result.differences[0].observed).toBe("Paid");
 });
+it("keeps an oversized OCR box around QR glyphs visible as a marking", () => {
+  const largeCode = { x0: 100, y0: 200, x1: 460, y1: 560 };
+  const glyphs = { text: "j= 5 k=l", confidence: 35, bbox: { x0: 80, y0: 195, x1: 475, y1: 280 } };
+  const result = comparePageReading("Friday", { words: [...text, glyphs], codes: [largeCode] }, dimensions);
+  expect(result.status).toBe("uncertain");
+  expect(result.differences).toEqual([]);
+  expect(result.markings[0].observed).toBe("j= 5 k=l");
+});

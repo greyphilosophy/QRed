@@ -1,4 +1,4 @@
-import jsQR from "jsqr";
+import { scanQrImage } from "../qr/scanQrImage.js";
 import { maskQrCode } from "../qr/maskQrCode.js";
 import { isQRedEntryLink, qredPayloadFromScanResult } from "../qr/qrPayload.js";
 import { decodeSeal } from "../qredVerifier.js";
@@ -22,7 +22,8 @@ export function preparePhotoReading(source) {
   const codes = [];
   try {
     for (let count = 0; count < 8; count++) {
-      const code = jsQR(pixels.data, pixels.width, pixels.height, { inversionAttempts: "dontInvert" });
+      const code = scanQrImage(pixels.data, pixels.width, pixels.height,
+        { tryWatermark: false, maxAttempts: 5 });
       if (!code) break;
       const text = qredPayloadFromScanResult(code) || code.data;
       const points = ["topLeftCorner", "topRightCorner", "bottomLeftCorner", "bottomRightCorner"].map(key => code.location[key]);
@@ -46,13 +47,16 @@ export function possiblePrintedMarkings(words, codes) {
   const groups = [], used = new Set();
   for (const box of codes) {
     const size = Math.max(box.x1 - box.x0, box.y1 - box.y0);
-    // A large footer seal must not swallow nearby document words or only the
-    // first word of its caption. Allow small OCR box overruns, not a growing band.
-    const margin = Math.min(12, size * .2);
     const inside = words.flatMap((word, index) => {
       const b = word.bbox;
-      return b && b.x0 >= box.x0 - margin && b.x1 <= box.x1 + margin &&
-        b.y0 >= box.y0 - margin && b.y1 <= box.y1 + margin && !used.has(index) ? [index] : [];
+      if (!b || used.has(index)) return [];
+      // OCR boxes around QR glyphs can overshoot the ink. Require their center
+      // and most of their area inside the code, never an expanding outside band.
+      const x = (b.x0 + b.x1) / 2, y = (b.y0 + b.y1) / 2;
+      const overlap = Math.max(0, Math.min(b.x1, box.x1) - Math.max(b.x0, box.x0)) *
+        Math.max(0, Math.min(b.y1, box.y1) - Math.max(b.y0, box.y0));
+      return x >= box.x0 && x <= box.x1 && y >= box.y0 && y <= box.y1 &&
+        overlap >= (b.x1 - b.x0) * (b.y1 - b.y0) * .5 ? [index] : [];
     });
     if (inside.length) { groups.push(inside); inside.forEach(index => used.add(index)); }
     for (let index = 0; index < words.length - 2; index++) {
