@@ -716,7 +716,7 @@ class TestCameraFrameScanning:
         (() => {
             const camera = CAMERA_FIXTURE;
             // Freeze the scanner's cooldown clock for the button case, so
-            // only Capture photo can produce the result after the blank frame.
+            // only Capture now can produce the result after the blank frame.
             if (camera.manual) performance.now = () => 1000;
             Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: {
                 enumerateDevices: async () => [],
@@ -755,18 +755,22 @@ class TestCameraFrameScanning:
         page.locator(".ar-camera video").scroll_into_view_if_needed()
         page.evaluate("window.showCameraSeal()")
         if manual:
-            page.wait_for_function("""() => {
+            page.wait_for_function("""({ left, top, size }) => {
                 const video = document.querySelector('.ar-camera video');
                 const canvas = document.createElement('canvas');
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
                 const context = canvas.getContext('2d');
                 context.drawImage(video, 0, 0);
-                return context.getImageData(0, 0, canvas.width, canvas.height).data.some((value, i) => i % 4 !== 3 && value < 128);
-            }""", timeout=5000)
+                // Wait for ink inside the QR region, not the newly added dark
+                // desk: a streamed canvas can display that background first.
+                return context.getImageData(left, top, size, size).data.some((value, i) => i % 4 !== 3 && value < 128);
+            }""", arg={"left": left, "top": top, "size": size}, timeout=5000)
             page.get_by_role("button", name="Capture now", exact=True).click()
         show_seal_details(page)
-        expect(page.get_by_role("heading", name="Pages captured", exact=True)).to_be_visible(timeout=10000)
+        # Manual capture runs the more thorough photo decoder. This checks
+        # recovery, not decoding speed on the host running the browser.
+        expect(page.get_by_role("heading", name="Pages captured", exact=True)).to_be_visible(timeout=30000 if manual else 10000)
         _open_verification_key(page, TestRenderedQrImageUploads.PUBLIC_KEY)
         show_seal_details(page)
         expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_be_visible()
