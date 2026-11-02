@@ -42,3 +42,17 @@ it("shows a possible caption's q/g OCR ambiguity unchanged for manual review", (
   expect(result.markings[0].observed).toBe("Verify at gred.org");
   expect(comparePageReading("Friday", { words: [...text, ...observed] }, dimensions).status).toBe("differences");
 });
+it("keeps a footer caption together when only its first word falls inside a large code's padding", () => {
+  const largeCode = { x0: 100, y0: 200, x1: 460, y1: 560 };
+  const caption = [word("Verify", 480, 350, 30), word("at", 515, 350, 10), word("qred.org", 540, 350, 40)];
+  const result = comparePageReading("Friday", { words: [...text, ...caption], codes: [largeCode] }, dimensions);
+  expect(result.status).toBe("uncertain");
+  expect(result.differences).toEqual([]);
+  expect(result.markings.map(mark => mark.observed)).toContain("Verify at qred.org");
+});
+it("keeps added document words beside a large footer code in the difference list", () => {
+  const largeCode = { x0: 100, y0: 200, x1: 460, y1: 560 };
+  const result = comparePageReading("Friday", { words: [...text, word("Paid", 485, 300, 35)], codes: [largeCode] }, dimensions);
+  expect(result.status).toBe("differences");
+  expect(result.differences[0].observed).toBe("Paid");
+});

@@ -45,7 +45,10 @@ export function preparePhotoReading(source) {
 export function possiblePrintedMarkings(words, codes) {
   const groups = [], used = new Set();
   for (const box of codes) {
-    const size = Math.max(box.x1 - box.x0, box.y1 - box.y0), margin = size * .2;
+    const size = Math.max(box.x1 - box.x0, box.y1 - box.y0);
+    // A large footer seal must not swallow nearby document words or only the
+    // first word of its caption. Allow small OCR box overruns, not a growing band.
+    const margin = Math.min(12, size * .2);
     const inside = words.flatMap((word, index) => {
       const b = word.bbox;
       return b && b.x0 >= box.x0 - margin && b.x1 <= box.x1 + margin &&
