@@ -218,6 +218,10 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
                 window.__syntheticCameraFrame = frame;
             }""", camera_image)
             page.get_by_role("button", name="Check document", exact=True).click()
+            # A footer-only view has no paper boundary. Its intentional manual
+            # capture must still recover the signed visual reference offline.
+            page.wait_for_function("document.querySelector('video')?.readyState >= 2")
+            page.get_by_role("button", name="Capture now", exact=True).click()
             expect(page.locator("#resultStatus")).to_have_text("Seal authenticated", timeout=30000)
         reference = page.get_by_role("region", name="Signed page reference", exact=True)
         expect(reference).to_be_visible()

@@ -4,7 +4,7 @@ import "./pageScanGuide.css";
 // Decoding and retained photographs always use the entire original frame.
 // Keep the guide inside the actual object-fit: contain image, not its letterbox.
 export function observePageScanGuide(video, area, guide) {
-  let quality = null;
+  let quality = null, observedFeedback = null;
   const outline = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   const polygon = document.createElementNS(outline.namespaceURI, "polygon");
   outline.classList.add("page-detected-outline");
@@ -12,6 +12,12 @@ export function observePageScanGuide(video, area, guide) {
   outline.append(polygon); area.append(outline);
   function update() {
     const view = video.getBoundingClientRect(), available = area.getBoundingClientRect();
+    const feedback = area.closest(".ar-camera")?.querySelector(".ar-scan-feedback");
+    if (feedback !== observedFeedback) {
+      if (observedFeedback) observer?.unobserve(observedFeedback);
+      if (feedback) observer?.observe(feedback);
+      observedFeedback = feedback;
+    }
     if (!video.videoWidth || !video.videoHeight || !view.width || !view.height) {
       guide.hidden = true;
       outline.style.display = "none";
@@ -34,7 +40,9 @@ export function observePageScanGuide(video, area, guide) {
     const margin = Math.min(imageWidth, imageHeight) * 0.04;
     const left = Math.max(available.left, imageLeft + margin), top = Math.max(available.top, imageTop + margin);
     const right = Math.min(available.right, imageLeft + imageWidth - margin);
-    const bottom = Math.min(available.bottom, imageTop + imageHeight - margin);
+    const feedbackTop = feedback?.getBoundingClientRect().top;
+    const bottom = Math.min(available.bottom, imageTop + imageHeight - margin,
+      feedbackTop > view.top ? feedbackTop - 12 : Infinity);
     const ratio = window.innerWidth > window.innerHeight ? 4 / 3 : 3 / 4;
     const width = Math.max(0, Math.min(right - left, (bottom - top) * ratio));
     const height = width / ratio;

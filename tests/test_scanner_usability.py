@@ -197,16 +197,15 @@ def test_live_worker_has_no_backlog_and_capture_can_resume_the_same_camera_offli
         guard.block()
         page.get_by_role("button", name="Check document", exact=True).click()
         page.wait_for_function("liveTest.responses >= 2", timeout=15000)
-        if path == "/":
-            page.get_by_role("button", name="Capture now", exact=True).click()
-            expect(page.get_by_role("button", name="Cancel and resume camera", exact=True)).to_be_visible()
-            assert page.evaluate("liveTest.pending") == 0
-            ticks = page.evaluate("liveTest.ticks")
-            page.wait_for_function("ticks => liveTest.ticks > ticks + 2", arg=ticks, timeout=2000)
-            before = page.evaluate("liveTest.requests")
-            page.get_by_role("button", name="Cancel and resume camera", exact=True).click()
-            expect(page.get_by_role("button", name="Capture now", exact=True)).to_be_visible()
-            page.wait_for_function("before => liveTest.requests > before", arg=before, timeout=3000)
+        page.get_by_role("button", name="Capture now", exact=True).click()
+        expect(page.get_by_role("button", name="Cancel and resume camera", exact=True)).to_be_visible()
+        assert page.evaluate("liveTest.pending") == 0
+        ticks = page.evaluate("liveTest.ticks")
+        page.wait_for_function("ticks => liveTest.ticks > ticks + 2", arg=ticks, timeout=2000)
+        before = page.evaluate("liveTest.requests")
+        page.get_by_role("button", name="Cancel and resume camera", exact=True).click()
+        expect(page.get_by_role("button", name="Capture now", exact=True)).to_be_visible()
+        page.wait_for_function("before => liveTest.requests > before", arg=before, timeout=3000)
         assert page.evaluate("liveTestStream.getTracks().every(track => track.readyState === 'live')")
         state = page.evaluate("liveTest")
         assert state["opens"] == 1

@@ -9,7 +9,7 @@ import { getPreferredCameraStream, applyCameraQualityControls } from "./qr/camer
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
 import { createQrFrameScanner } from "./qr/scanQrImage.js";
-import { createLiveScanWorker } from "./qr/photoScanClient.js";
+import { createLiveScanWorker, scanPhotoInWorker } from "./qr/photoScanClient.js";
 import { qrFrameAction } from "./qr/decodePhoto.js";
 import * as verifier from "./qredVerifier.js";
 import { createQRedSeals } from "./qredSealer.js";
@@ -55,7 +55,7 @@ function loadStandalone(overrides = {}) {
   });
   const bindings = {
     getPreferredCameraStream, applyCameraQualityControls, authProvider, startCameraSession, observePageScanGuide, createLiveScanWorker, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
-    preparePhotoScanner: vi.fn(),
+    preparePhotoScanner: vi.fn(), scanPhotoInWorker,
     createScanPhotoCollection: callback => createScanPhotoCollection(callback, async () => new Blob(["frame"], { type: "image/png" })),
     mountPhotoTextVerification: () => ({ update: vi.fn(), prepare: vi.fn().mockResolvedValue(), clear: vi.fn() }),
     mountPdfSealInput: () => ({ update: vi.fn() }),
@@ -185,7 +185,8 @@ it("the standalone camera yields between retries and ignores a retired padding p
   }
   expect(document.getElementById("resultStatus").textContent).toBe("");
   expect(document.getElementById("resultContent").textContent).not.toContain("QRED1?");
-  expect(document.getElementById("btnScan").textContent).toBe("Check this page now");
+  expect(document.getElementById("btnScan").textContent).toBe("Stop camera");
+  expect(document.getElementById("btnCapture").hidden).toBe(false);
 });
 
 it.each([

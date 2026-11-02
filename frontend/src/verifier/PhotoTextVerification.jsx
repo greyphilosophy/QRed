@@ -62,7 +62,9 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
     {snapshot.preparing && <p role="status">Preparing text recognition on this device…</p>}
     {snapshot.error && <div role="alert"><p>{snapshot.error}</p><button onClick={() => checks.prepare().catch(() => {})}>Retry text recognition</button></div>}
     {!pages.length && !validPages.length && <p>Frame each whole page to begin. A seal alone does not check the surrounding printed text.</p>}
-    {scanning && <p role="status">Show the next page, or choose Check this page now to review what you have captured.</p>}
+    {scanning && <p role="status">{pages.length
+      ? "Show the next page, or review the pages captured so far."
+      : "Hold steady for automatic capture, or choose Capture now."}</p>}
     {verifying ? <p role="status">Checking seals… Printed-text results are pending.</p> : <>
       {results.filter(result => result.status !== "VALID").map((result, index) => <p className="photo-summary" key={result.document_id || index}>
         {result.status === "INCOMPLETE" ? "This page needs more seal pieces. Keep scanning." : "This seal has not been authenticated. Printed text has not been checked."}
