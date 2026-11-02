@@ -3,7 +3,7 @@ import { scanQrImage } from "../qr/scanQrImage.js";
 import { simulatePrintPhoto, scanAllSealsFromPage, scanFramedSealFromPage } from "./watermarkPreflight.js";
 
 vi.mock("../qr/scanQrImage.js", () => ({ scanQrImage: vi.fn() }));
-vi.mock("../qr/hiddenPayload.js", () => ({ hiddenPayloadFromScanResult: result => result?.payload ?? null }));
+vi.mock("../qr/qrPayload.js", () => ({ qredPayloadFromScanResult: result => result?.payload ?? null }));
 
 const position = { topLeftCorner: { x: 3, y: 3 }, topRightCorner: { x: 10, y: 3 },
   bottomRightCorner: { x: 10, y: 10 }, bottomLeftCorner: { x: 3, y: 10 } };

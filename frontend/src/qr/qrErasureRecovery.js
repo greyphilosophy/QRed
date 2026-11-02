@@ -445,5 +445,5 @@ export function readErasedQrMatrix(bits, unknown, version, confidence = null, op
     }
     data = recoverRankedErasedCodewords(codewords, version, ecLevelBits, risk);
   }
-  return data && { correctedData: data, interleavedErasures: erased.size };
+  return data && { dataCodewords: data, interleavedErasures: erased.size };
 }

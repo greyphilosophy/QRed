@@ -5,22 +5,17 @@
  * This file keeps only seal parsing, signature verification, and the public API facade.
  */
 import { decodePageEvidence } from "./pageEvidence.js";
-import Utils from "qrcode/lib/core/utils.js";
-import ECCode from "qrcode/lib/core/error-correction-code.js";
-import ECLevel from "qrcode/lib/core/error-correction-level.js";
 import { verifyAsync as verifyEd25519 } from "@noble/ed25519";
 import { decompressBytes, MAX_SEAL_TEXT_BYTES } from "./sealCompression.js";
 import { computeKeyId, decodeBase64Url, sealSignatureMessage } from "./sealSignature.js";
 import { bytesEqual, bytesToHex, concatenate, decodeEnvelope, decodeTransport, MAX_ENVELOPE_BYTES,
   qrPayloadBytes, sha256, strictUtf8 } from "./sealFormat.js";
-import { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset, hiddenPayloadFromScanResult } from "./qr/hiddenPayload.js";
-import { codewordsFromMatrix, deinterleaveDataCodewordsWithQrLib } from "./qr/qrLowLevel.js";
-import { sampleQrMatrix } from "./qr/qrImageRecovery.js";
+import { qredPayloadFromScanResult } from "./qr/qrPayload.js";
 import { tokenizeDocumentText, compareWordSequences, compareDocumentText } from "./qr/qrTextDiff.js";
 import { attestationMessage, pageCommitment } from "./attestation.js";
 import trustedAuthorities from "./trustedAuthorities.json";
 
-export { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset, tokenizeDocumentText, compareWordSequences, compareDocumentText };
+export { tokenizeDocumentText, compareWordSequences, compareDocumentText };
 
 /**
  * classifyOcrWords — given the verified QR text (the expected words) and the
@@ -47,12 +42,7 @@ export function classifyOcrWords(qrText, ocrWords) {
 
 export function qredTextFromScanResult(scanResult) {
   if (!scanResult || typeof scanResult === "string") return scanResult || "";
-  const visibleText = scanResult.data || "";
-  const hiddenPayload = hiddenPayloadFromScanResult(scanResult);
-  if (visibleText === VISIBLE_QR_TEXT || /QRED[34]:/.test(visibleText) || visibleText.includes("qred.org")) {
-    return hiddenPayload || visibleText;
-  }
-  return visibleText;
+  return qredPayloadFromScanResult(scanResult) || scanResult.data || "";
 }
 
 export function qredDisplayTextFromScannedPayload(payload) {
@@ -63,84 +53,14 @@ export function qredDisplayTextFromScannedPayload(payload) {
   return payload || "";
 }
 
-// ── Optimized hidden payload recovery from photo geometry
-// Fast path: try 0.5/0.5 center first (covers >90% of clean photos), only fall back to grid sweep on noisy photos.
-function buildSampleOptions() {
-  const thresholds = [undefined, 128, 96, 112, 144, 160];
-  const offsets = [0.5, 0.45, 0.55, 0.4, 0.6, 0.35, 0.65];
-  const options = [];
-  for (const threshold of thresholds) {
-    for (const rowOffset of offsets) {
-      for (const colOffset of offsets) {
-        const opt = { rowOffset, colOffset };
-        if (threshold !== undefined) opt.threshold = threshold;
-        options.push(opt);
-      }
-    }
-  }
-  return options;
+// Photo geometry is handled by the QR decoder. Only its corrected message
+// bytes are accepted here; the verifier never recovers data from QR padding.
+export function qredTextFromPhotoScanResult(_imageData, _width, _height, scanResult) {
+  return qredDisplayTextFromScannedPayload(qredTextFromScanResult(scanResult));
 }
 
-const ALL_SAMPLE_OPTIONS = buildSampleOptions();
-
-function deinterleaveWithQrLib(interleaved, version, ecLevelBits = 0) {
-  return deinterleaveDataCodewordsWithQrLib(interleaved, version, ecLevelBits, { Utils, ECCode, ECLevel });
-}
-
-export function extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) {
-  // Use the decoder's corrected stream before considering legacy image
-  // sampling. A missing/malformed payload here must not fall back to raw bits.
-  if (scanResult?.correctedData !== undefined) return hiddenPayloadFromScanResult(scanResult);
-  if (!scanResult?.location || !scanResult.version) return null;
-
-  // Fast path — single centered adaptive sample
-  {
-    const matrix = sampleQrMatrix(imageData, width, height, scanResult.location, scanResult.version, { rowOffset: 0.5, colOffset: 0.5 });
-    const { codewords, ecLevelBits } = codewordsFromMatrix(matrix, scanResult.version);
-    const payload = extractHiddenQRedPayload(deinterleaveWithQrLib(codewords, scanResult.version, ecLevelBits), scanResult.version);
-    if (payload) return payload;
-  }
-
-  // Fallback sweep with early-exit: agree 2 frames = done
-  const counts = new Map();
-  for (const options of ALL_SAMPLE_OPTIONS) {
-    if (options.threshold === undefined && options.rowOffset === 0.5 && options.colOffset === 0.5) continue;
-
-    const matrix = sampleQrMatrix(imageData, width, height, scanResult.location, scanResult.version, options);
-    const { codewords, ecLevelBits } = codewordsFromMatrix(matrix, scanResult.version);
-    const payload = extractHiddenQRedPayload(deinterleaveWithQrLib(codewords, scanResult.version, ecLevelBits), scanResult.version);
-    if (!payload) continue;
-
-    const nextCount = (counts.get(payload) || 0) + 1;
-    counts.set(payload, nextCount);
-    if (nextCount >= 2) return payload; // quorum
-  }
-
-  // best-effort single vote
-  let bestPayload = null;
-  let bestCount = 0;
-  for (const [payload, count] of counts) {
-    if (count > bestCount) {
-      bestCount = count;
-      bestPayload = payload;
-    }
-  }
-  return bestPayload;
-}
-
-export function qredTextFromPhotoScanResult(imageData, width, height, scanResult) {
-  const visibleText = qredTextFromScanResult(scanResult);
-  if (!imageData || !width || !height) return qredDisplayTextFromScannedPayload(visibleText);
-  const hiddenPayload = extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) || visibleText;
-  return qredDisplayTextFromScannedPayload(hiddenPayload);
-}
-
-// Like qredTextFromPhotoScanResult, but returns the raw QRed hidden payload (seal string)
-// instead of decoding it into plaintext document content.
-export function qredPayloadFromPhotoScanResult(imageData, width, height, scanResult) {
-  const visibleText = qredTextFromScanResult(scanResult);
-  if (!imageData || !width || !height || scanResult?.data !== VISIBLE_QR_TEXT) return visibleText;
-  return extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) || visibleText;
+export function qredPayloadFromPhotoScanResult(_imageData, _width, _height, scanResult) {
+  return qredTextFromScanResult(scanResult);
 }
 
 // ── Seal parsing + signature verification ──
@@ -208,12 +128,4 @@ export async function verifyQRedSeals(seals, publicKey, authorities = trustedAut
   if (!isValid) return { ...result, status: "INVALID", error_message: "Digital signature verification failed" };
   return { ...result, status: "VALID", signature_valid: true, metadata_authenticated: true,
     ...(metadata.version === "4" ? { identity_authenticated: true } : {}) };
-}
-
-// Re-export kept for test compatibility (module::codewordsFromMatrix etc were re-exported)
-export { sampleQrMatrix, codewordsFromMatrix };
-
-// Back-compat — these used to be re-exported directly from qredVerifier
-export function deinterleaveDataCodewords(interleaved, version, ecLevelBits = 0) {
-  return deinterleaveDataCodewordsWithQrLib(interleaved, version, ecLevelBits, { Utils, ECCode, ECLevel });
 }

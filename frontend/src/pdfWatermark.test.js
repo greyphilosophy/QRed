@@ -11,7 +11,7 @@ import Mode from "qrcode/lib/core/mode";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { extractPdfText, planQrStampLayout, planQrStampLayoutForFooterBand, sealPdfInBrowser } from "./pdfClientSeal.js";
 import { scanQrImage, createQrFrameScanner } from "./qr/scanQrImage.js";
-import { hiddenPayloadFromScanResult, isQRedEntryLink } from "./qr/hiddenPayload.js";
+import { qredPayloadFromScanResult, isQRedEntryLink } from "./qr/qrPayload.js";
 import { verifyQRedSeals } from "./qredVerifier.js";
 import { scanPdfPage } from "./verifier/scanPdf.js";
 import { ENTRY_URL, ENTRY_QR_SIZE, createEntryQrSymbol, planPdfWatermarks } from "./pdf/watermark.js";
@@ -292,7 +292,7 @@ describe("experimental PDF watermarks", () => {
           x: (layout.qrOffsetX ?? 10), y: (layout.qrOffsetY ?? 10),
           width: layout.qrSize, height: layout.qrSize,
         }, scale);
-        payload = hiddenPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
+        payload = qredPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
       } else {
         expect(watermarkLayout[page - 1]).toBeTruthy();
         [payload] = await scanPrintedPage(image);
@@ -316,7 +316,7 @@ describe("experimental PDF watermarks", () => {
         if (!watermarkLayout[0].pageAligned) {
           const live = createQrFrameScanner();
           let livePayload;
-          for (let frame = 0; frame < 7 && !livePayload; frame++) livePayload = hiddenPayloadFromScanResult(live(image.data, image.width, image.height));
+          for (let frame = 0; frame < 7 && !livePayload; frame++) livePayload = qredPayloadFromScanResult(live(image.data, image.width, image.height));
           expect(livePayload).toBe(payload);
         }
       }
@@ -337,7 +337,7 @@ describe("experimental PDF watermarks", () => {
       expect(await extractPdfText(blob)).toContain("Record 1:");
     }
     const image = render(await blob.arrayBuffer(), 1, footerPages.length ? 300 : 144);
-    const payload = hiddenPayloadFromScanResult(scanQrImage(image.data, image.width, image.height));
+    const payload = qredPayloadFromScanResult(scanQrImage(image.data, image.width, image.height));
     expect(payload).toBe(pageSealStrings[0][0]);
     await expect(verifyQRedSeals([payload], publicKey)).resolves.toMatchObject({ status: "VALID" });
   }, 45000);
@@ -367,7 +367,7 @@ describe("experimental PDF watermarks", () => {
           width: layout.qrSize, height: layout.qrSize,
         };
         const part = crop(image, box, scale);
-        return hiddenPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
+        return qredPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
       });
     }
     expect(new Set(payloads)).toEqual(new Set(pageSealStrings[0]));
@@ -402,7 +402,7 @@ describe("experimental PDF watermarks", () => {
           (layout.rows - Math.floor(index / layout.columns) - 1) * (layout.qrSize + layout.gap),
         width: layout.qrSize, height: layout.qrSize,
       }, scale);
-      return hiddenPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
+      return qredPayloadFromScanResult(scanQrImage(part.data, part.width, part.height));
     });
     expect(scanned).toEqual(pageSealStrings[0]);
     await expect(verifyQRedSeals(scanned, publicKey)).resolves.toMatchObject({ status: "VALID" });

@@ -1,5 +1,5 @@
 import { scanQrImage } from "../qr/scanQrImage.js";
-import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
+import { qredPayloadFromScanResult } from "../qr/qrPayload.js";
 
 // A deliberately mild, deterministic approximation of a photographed print.
 // This is a risk screen, not a guarantee for every printer or camera.
@@ -71,7 +71,7 @@ function hideEntryCode(image, entry) {
 // entire sheet. Reproduce that *framed camera view*, with substantial space
 // around the code, rather than accepting a perfectly trimmed known-position
 // QR crop. The scanner receives pixels only; it must still locate and decode
-// the exact hidden signed payload independently.
+// the exact signed byte payload independently.
 export function scanFramedSealFromPage(image, box, expectedSeal, { entry = null } = {}) {
   const { data, width, height, scale, bounds } = image;
   if (!bounds || !Number.isFinite(scale) || scale <= 0 ||
@@ -101,7 +101,7 @@ export function scanFramedSealFromPage(image, box, expectedSeal, { entry = null 
   if (!hideEntryCode(framed, entry)) return false;
   const code = scanQrImage(framed.data, framed.width, framed.height,
     { tryRescaling: false, maxAttempts: 3 });
-  return hiddenPayloadFromScanResult(code) === expectedSeal;
+  return qredPayloadFromScanResult(code) === expectedSeal;
 }
 
 // Verify the exact signed bytes by discovering symbols from the *whole page*.
@@ -119,7 +119,7 @@ export function scanAllSealsFromPage(image, expectedSeals, { entry = null } = {}
     const code = scanQrImage(working.data, working.width, working.height,
       { tryRescaling: false, maxAttempts: 3 });
     if (!code?.location) return false;
-    const payload = hiddenPayloadFromScanResult(code);
+    const payload = qredPayloadFromScanResult(code);
     if (remaining.has(payload)) remaining.delete(payload);
     if (!remaining.size) return true;
     if (!obscureDetectedCode(working, code.location)) return false;

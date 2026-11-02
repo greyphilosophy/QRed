@@ -665,7 +665,7 @@ class TestRenderedQrImageUploads:
         expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("END OF MANIFEST - 56 synthetic line items.")
 
-    def test_verifies_image_with_damaged_hidden_length(self, page: Page):
+    def test_verifies_image_with_damaged_byte_header(self, page: Page):
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
         page.get_by_label("Choose QR image", exact=True).set_input_files({
             "name": "damaged-invoice.png", "mimeType": "image/png", "buffer": _invoice_camera_pixels(damaged=True),
@@ -683,7 +683,7 @@ class TestCameraFrameScanning:
     These cover framing and verification, not physical focus, glare, or moire.
     """
 
-    @pytest.mark.parametrize("damaged", [False, True], ids=["clean", "damaged-hidden-data"])
+    @pytest.mark.parametrize("damaged", [False, True], ids=["clean", "damaged-byte-header"])
     @pytest.mark.parametrize("manual", [False, True], ids=["automatic", "scan-photo"])
     @pytest.mark.parametrize("width,height,left,top,size", [
         (720, 1280, 90, 180, 540),

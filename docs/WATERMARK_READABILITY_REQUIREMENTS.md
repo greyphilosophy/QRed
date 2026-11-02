@@ -13,7 +13,7 @@ pixels both happen before the grid can be recovered. Moving the watermark
 among a few square positions or allowing more QR chunks does not fix this.
 QRed needs to exploit the **paper rectangle as a coordinate reference**,
 occupy more usable page area, and evaluate the exposed pixels in each predicted
-module. Every recovered seal must still pass the existing hidden-payload,
+module. Every recovered seal must still pass the existing byte-payload,
 chunk-digest and Ed25519 verification.
 
 The baseline is the existing finder-based `scanPdfPage` pipeline with

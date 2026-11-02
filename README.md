@@ -2,7 +2,7 @@
 
 QRed is an open standard and reference implementation for tamper-evident document sealing and verification.
 
-QRed encodes the signed contents of a document into one or more QR code seals printed alongside the document. A normal smartphone camera scan of a payload QR only opens the visible bootstrap URL; the hidden signed payload is recovered later by the QRed verifier using its own camera/image scanner to read the QR image itself.
+QRed encodes the signed contents of a document into one or more QR code seals printed alongside the document. Seal QR codes carry the signed binary record in an ordinary QR byte segment. A separate navigation QR, when it fits, opens qred.org; the printed “Verify at QRED.ORG” instruction remains available on every sealed page.
 
 No app installation is required.
 
@@ -328,8 +328,8 @@ Before considering production deployment complete, verify all of the following:
 
 - The homepage loads successfully at `https://qred.org/`.
 - The verifier route loads successfully at `https://qred.org/verify.htm`.
-- The scanner recovers hidden payloads from QR images, collects all chunks, and verifies locally against the selected issuer public key.
-- Generated QRed payload QR codes in sealed PDFs and API responses show `https://qred.org/` to ordinary scanners, and only the QRed-aware scanner can recover the signed payload data hidden in QR codewords.
+- The scanner recovers binary seal messages from QR images, collects all chunks, and verifies locally against the selected issuer public key.
+- Generated payload QR codes contain standard binary messages. QRed interprets those bytes as signed document records; separate navigation codes open `https://qred.org/`.
 
 A quick HTTP check for the required verifier route is:
 
@@ -345,7 +345,7 @@ curl -I https://www.qred.org/verify.htm
 
 ## Bootstrap URL and verifier route
 
-New QRed-generated payload QR codes use `https://qred.org/` as the visible bootstrap URL. Ordinary camera apps pass only that URL to the browser; they do not pass the hidden payload. The signed payload is hidden in QR codewords and is recoverable only when the QRed verifier scans the QR image itself, so it must not be described as a URL marker or fragment. The `/verify.htm` path is retained only as the human-facing verifier route. If the verifier application is reorganized, either keep this route serving the verifier or update the production deployment documentation at the same time.
+QRed payload QR codes encode only the binary seal record in a standard byte segment, with ordinary terminator and padding bytes. They do not contain a bootstrap URL or data hidden after the terminator. A separate navigation QR opens `https://qred.org/` when space and watermark recovery permit; every sealed page retains the printed “Verify at QRED.ORG” instruction. The `/verify.htm` path remains a human-facing verifier route. Retired padding-format QR images must be re-sealed; deploy the stamper and all verifier routes together and refresh saved offline copies.
 
 # Motivation
 
@@ -363,7 +363,7 @@ This allows recipients to verify:
 
 1. A document is converted into a canonical text representation.
 3. The canonical text is digitally signed by the issuing authority.
-4. Automatic encoding compares plaintext with zlib-compressed UTF-8 text, choosing fewer QR codes and then fewer payload bytes. Short text stays uncompressed when that is smaller. Zlib saves 12 wrapper bytes per compressed page compared with gzip. Gzip remains readable and is used as a fallback if zlib compression is unavailable. Compressed bytes are stored directly in the hidden QR carrier; Base64URL is only used for copying seal strings into the verifier.
+4. Automatic encoding compares plaintext with zlib-compressed UTF-8 text, choosing fewer QR codes and then fewer payload bytes. Short text stays uncompressed when that is smaller. Zlib saves 12 wrapper bytes per compressed page compared with gzip. Gzip remains readable and is used as a fallback if zlib compression is unavailable. Compressed bytes are stored directly in the ordinary QR byte segment; Base64URL is only used for copying seal strings into the verifier.
 5. The chosen payload format is divided into one or more QR code seals.
 6. A bootstrap QR code containing a URL to a verifier web application is added to the document.
 7. The QR seals are printed alongside the document.
@@ -413,7 +413,7 @@ A typical QRed document contains:
 
 The bootstrap QR launches the verifier web application.
 
-The payload QR codes visibly scan as the bootstrap URL in ordinary camera apps. The signed document data required to reconstruct and validate the certified contents is hidden in QR codewords and is available only to a QRed-aware scanner that reads the QR image itself.
+A standard QR decoder can recover the binary seal message. QRed interprets that message to reconstruct and verify the document; generic camera apps may not display binary data usefully. Use the separate navigation code or printed qred.org address to open the verifier.
 
 # Security Model
 

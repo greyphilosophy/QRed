@@ -6,7 +6,7 @@ export const DEFAULT_BOOTSTRAP_URL = "https://qred.org/";
 export const MAX_SEAL_TEXT_BYTES = 8 * 1024 * 1024;
 export const MAX_COMPRESSED_BYTES = MAX_SEAL_TEXT_BYTES + 65536;
 export const MAX_ENVELOPE_BYTES = MAX_COMPRESSED_BYTES + 1024;
-export const MAX_QR_PAYLOAD_BYTES = 2945;
+export const MAX_QR_PAYLOAD_BYTES = 2953;
 export const CHUNK_HEADER_BYTES = 40;
 export const ATTESTED_CHUNK_HEADER_BYTES = 24;
 export const chunkHeaderBytes = version => version === "4" ? ATTESTED_CHUNK_HEADER_BYTES : CHUNK_HEADER_BYTES;

@@ -1,8 +1,9 @@
+import { extractQrBytePayload } from "./qr/qrPayload.js";
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "node:zlib";
 import { afterEach, expect, it, vi } from "vitest";
 import { createQRedSeals } from "./qredSealer.js";
 import { createQRedQrData } from "./qredQr.js";
-import { decodeSeal, extractHiddenQRedPayload, verifyQRedSeals } from "./qredVerifier.js";
+import { decodeSeal, verifyQRedSeals } from "./qredVerifier.js";
 import { compressText, decompressChunks, MAX_SEAL_TEXT_BYTES } from "./sealCompression.js";
 import { concatenate, decodeEnvelope, encodeBase64Url, encodeEnvelope, qrPayloadBytes, qrPayloadText, sealString } from "./sealFormat.js";
 
@@ -22,7 +23,7 @@ it("replaces a second QR with zlib and stores raw compact bytes", async () => {
   expect(bytes.length).toBeLessThan(sealed.seals[0].length);
   expect(sealed.compression_savings_pct).toBe(Math.round(100 * (1 - bytes.length / sealed.uncompressed_payload_bytes)));
   const qr = createQRedQrData(sealed.seals[0]);
-  const recovered = extractHiddenQRedPayload(qr.bytes, qr.version);
+  const recovered = extractQrBytePayload(qr.bytes, qr.version);
   expect(recovered).toBe(sealed.seals[0]);
   expect(await verifyQRedSeals([recovered], keys.publicKey)).toMatchObject({ status: "VALID", content });
 });
@@ -59,7 +60,7 @@ it.each(["zlib", "gzip"].flatMap(encoding => [[500, 2, encoding], [700, 3, encod
   expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThanOrEqual(1);
   const record = decodeEnvelope(concatenate(seals.map(seal => decodeSeal(seal).data)));
   expect((encoding === "zlib" ? inflateSync : gunzipSync)(record.data).toString()).toBe(content);
-  const scanned = qrs.map(qr => extractHiddenQRedPayload(qr.bytes, qr.version));
+  const scanned = qrs.map(qr => extractQrBytePayload(qr.bytes, qr.version));
   expect(await verifyQRedSeals(scanned.toReversed(), keys.publicKey)).toMatchObject({ status: "VALID", content });
   expect(await verifyQRedSeals(scanned.slice(1), keys.publicKey)).toMatchObject({ status: "INCOMPLETE" });
   expect(await verifyQRedSeals([...scanned, scanned[0]], keys.publicKey)).toMatchObject({ status: "VALID" });

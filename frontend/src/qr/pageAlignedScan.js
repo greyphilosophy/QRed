@@ -2,7 +2,7 @@
 // No PDF layout, private key, source content or off-device service is used.
 // The legacy finder-based QR decoder remains an independent fallback.
 import jsQR from "jsqr";
-import { hiddenPayloadFromScanResult } from "./hiddenPayload.js";
+import { bytePayloadFromCodewords, qredPayloadFromScanResult } from "./qrPayload.js";
 import { isChromaticForeground } from "./watermarkFilter.js";
 import { readErasedQrMatrix } from "./qrErasureRecovery.js";
 import { recoverRefinedQrRegion } from "./pageAlignedRecovery.js";
@@ -509,19 +509,19 @@ function decodeRegion(image, mapping, region, versions, budget) {
     const raster = rasterForDecoder({ bits, size });
     const ordinary = jsQR(raster.data, raster.width, raster.width, { inversionAttempts: "dontInvert" });
     if (ordinary?.version === version) {
-      const seal = hiddenPayloadFromScanResult(ordinary);
+      const seal = qredPayloadFromScanResult(ordinary);
       if (seal) return { seal, code: { ...ordinary,
         location: scannedGeometry(mapping, region, size), pageAligned: true } };
     }
-    // Only the exact same QR parity blocks and corrected hidden payload can
+    // Only the exact same QR parity blocks and corrected byte payload can
     // pass this recovery. Erasures come from photographed opaque foreground,
     // never from a saved PDF's text, layout or claimed content.
     if (!unknown.some(Boolean)) continue;
     const recovered = readErasedQrMatrix(bits, unknown, version, confidence);
     if (!recovered) continue;
-    const code = { data: "QRED.ORG", version, correctedData: recovered.correctedData,
+    const code = { data: "", version, binaryData: bytePayloadFromCodewords(recovered.dataCodewords, version),
       location: scannedGeometry(mapping, region, size), pageAligned: true, erasureAware: true };
-    const seal = hiddenPayloadFromScanResult(code);
+    const seal = qredPayloadFromScanResult(code);
     if (seal) return { seal, code };
   }
   return null;

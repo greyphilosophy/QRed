@@ -12,12 +12,12 @@ function decodeDataUrl(dataUrl) {
 }
 
 describe("QRed end-to-end scanning", () => {
-  it("round-trips the current hidden-payload QR format", async () => {
+  it("round-trips the ordinary byte-mode QR messages", async () => {
     const image = decodeDataUrl(await qredQrPngDataUrl("IMG"));
     const code = jsQR(image.data, image.width, image.height, { inversionAttempts: "attemptBoth" });
 
-    expect(code, "new hidden-payload QR should decode").toBeTruthy();
-    expect(code.data).toBe("QRED.ORG");
+    expect(code, "byte-mode QR should decode").toBeTruthy();
+    expect(code.data).toBe("IMG");
     expect(qredTextFromPhotoScanResult(image.data, image.width, image.height, code)).toBe("IMG");
   });
 });

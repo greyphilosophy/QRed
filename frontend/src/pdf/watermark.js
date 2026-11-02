@@ -3,7 +3,7 @@ import QRCode from "qrcode";
 import { createQRedQrSymbol } from "../qredQr.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
 import { DEFAULT_WATERMARK_MARGIN_POINTS, pageWatermarkRegions, scanPageAlignedImage } from "../qr/pageAlignedScan.js";
-import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
+import { qredPayloadFromScanResult } from "../qr/qrPayload.js";
 import { renderPdfPage, withPdfDocument } from "./readPdfText.js";
 import { planWatermarks, watermarkMarginForPage } from "./watermarkPlacement.js";
 import { scanAllSealsFromPage, scanFramedSealFromPage, simulatePrintPhoto } from "./watermarkPreflight.js";
@@ -290,14 +290,14 @@ export async function checkWatermarks(bytes, layouts, pageSealResults, { onFailu
         const code = scanQrImage(qr.data, qr.width, qr.height,
           { tryRescaling: false, maxAttempts: 3 });
         const expected = pageSealResults[index].seals[part];
-        if (hiddenPayloadFromScanResult(code) !== expected) {
+        if (qredPayloadFromScanResult(code) !== expected) {
           fail(index, "The seal could not be read in the clean PDF.");
           break;
         }
         // A clean PDF render is too forgiving. Check a softened, slightly
         // shaded print-like image and require the complete signed payload.
         const photo = simulatePrintPhoto(qr);
-        if (hiddenPayloadFromScanResult(scanQrImage(photo.data, photo.width, photo.height,
+        if (qredPayloadFromScanResult(scanQrImage(photo.data, photo.width, photo.height,
           { tryRescaling: false, maxAttempts: 3 })) !== expected) {
           fail(index, "The seal did not survive the simulated print test.");
           break;
@@ -310,7 +310,7 @@ export async function checkWatermarks(bytes, layouts, pageSealResults, { onFailu
         // Full-page discovery is useful, but not mandatory: a person can
         // frame the pale watermark more closely with a phone camera.
         // A 40%-wider field of view still requires independent QR location,
-        // and every code must yield its *exact* signed hidden payload.
+        // and every code must yield its *exact* signed byte payload.
         const framedReadable = layouts[index].boxes.every((box, part) =>
           scanFramedSealFromPage(image, box, pageSealResults[index].seals[part],
             { entry: layouts[index].entry }));

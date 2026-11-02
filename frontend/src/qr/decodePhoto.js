@@ -1,11 +1,11 @@
 import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
-import { isQRedEntryLink } from "./hiddenPayload.js";
-import { decodeSeal, VISIBLE_QR_TEXT, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult,
+import { isQRedEntryLink } from "./qrPayload.js";
+import { decodeSeal, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult,
   qredTextFromScanResult } from "../qredVerifier.js";
 
 export function qrScanAction(data, width, height, code, { returnPayload = false } = {}) {
-  if (!code?.data) return { status: "continue" };
+  if (!code) return { status: "continue" };
   const text = returnPayload
     ? qredPayloadFromPhotoScanResult(data, width, height, code)
     : qredTextFromPhotoScanResult(data, width, height, code);
@@ -43,18 +43,10 @@ export function decodePhoto(image, { returnPayload = false } = {}) {
   }
   const code = scanQrImage(data, width, height);
   if (code?.codes) return qrFrameAction(image, code, { returnPayload });
-  if (!code?.data) return { status: "feedback", message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For older seals, try framing the individual QR instead." };
-  if (code.data === VISIBLE_QR_TEXT || /QRED[34]:/.test(code.data)
-    || isQRedEntryLink(code.data) || code.data.includes("qred.org")) {
-    const text = returnPayload
-      ? qredPayloadFromPhotoScanResult(data, width, height, code)
-      : qredTextFromPhotoScanResult(data, width, height, code);
-    if (text && !isQRedEntryLink(text)) return { status: "found", text };
-    if (isQRedEntryLink(text) && code.data !== VISIBLE_QR_TEXT) {
-      return { status: "feedback", message: "That code opens qred.org. Include the full printed page against a contrasting background to recover its pale watermark." };
-    }
-    if (code.data === VISIBLE_QR_TEXT) return { status: "feedback", message: "QR code found, but no hidden QRed payload was detected. Move closer, improve lighting, and try again." };
-    return { status: "found", text: qredTextFromScanResult(code) };
+  if (!code) return { status: "feedback", message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For footer seals, try framing the individual QR instead." };
+  const text = qredTextFromScanResult(code);
+  if (isQRedEntryLink(text)) {
+    return { status: "feedback", message: "That code opens qred.org. Include the full printed page against a contrasting background to recover its pale watermark." };
   }
   return qrScanAction(data, width, height, code, { returnPayload });
 }

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PDFDocument, rgb } from "pdf-lib";
 import { extractPdfText, sealPdfInBrowser } from "../pdfClientSeal.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
-import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
+import { qredPayloadFromScanResult } from "../qr/qrPayload.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { renderPdfPage, withPdfDocument } from "./readPdfText.js";
 import { ENTRY_URL, findEntryForWatermark, findEntryPlacement } from "./watermark.js";
@@ -112,7 +112,7 @@ it("restores a decodable navigation QR after recovering a readable signed waterm
     expect(scanQrImage(entry.data, entry.width, entry.height, { tryWatermark: false })?.data)
       .toBe(ENTRY_URL);
     const qr = crop(image, layout.boxes[0]);
-    expect(hiddenPayloadFromScanResult(scanQrImage(qr.data, qr.width, qr.height,
+    expect(qredPayloadFromScanResult(scanQrImage(qr.data, qr.width, qr.height,
       { tryRescaling: false, maxAttempts: 3 }))).toBe(result.pageSealStrings[0][0]);
   });
   await expect(verifyQRedSeals(result.pageSealStrings[0], publicKey))

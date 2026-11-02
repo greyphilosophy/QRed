@@ -5,7 +5,7 @@ import jpeg from "jpeg-js";
 import jsQR from "jsqr";
 import { describe, expect, it } from "vitest";
 import { createQRedSeals } from "./qredSealer.js";
-import { compareDocumentText, compareWordSequences, decodeSeal, extractHiddenQRedPayload, extractHiddenQRedPayloadFromImage, qredTextFromPhotoScanResult, qredTextFromScanResult, verifyQRedSeals } from "./qredVerifier.js";
+import { compareDocumentText, compareWordSequences, decodeSeal, qredTextFromPhotoScanResult, qredTextFromScanResult, verifyQRedSeals } from "./qredVerifier.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
@@ -17,76 +17,6 @@ function decodeJpegFixture(path) {
   const bytes = readFileSync(path);
   const decoded = jpeg.decode(bytes, { useTArray: true });
   return { data: new Uint8ClampedArray(decoded.data), width: decoded.width, height: decoded.height };
-}
-
-function backendFramedPayloadBytes(payload) {
-  const payloadBytes = new TextEncoder().encode(payload);
-  return new Uint8Array([
-    (payloadBytes.length >> 8) & 0xff,
-    payloadBytes.length & 0xff,
-    ...payloadBytes,
-  ]);
-}
-
-function versionOneDataOffset() {
-  return 8;
-}
-
-const formatBits = 0x77c4;
-const formatBitPositions = [
-  [8, 0], [8, 1], [8, 2], [8, 3], [8, 4], [8, 5], [8, 7], [8, 8], [7, 8], [5, 8], [4, 8], [3, 8], [2, 8], [1, 8], [0, 8],
-  [20, 8], [19, 8], [18, 8], [17, 8], [16, 8], [15, 8], [14, 8], [8, 13], [8, 14], [8, 15], [8, 16], [8, 17], [8, 18], [8, 19], [8, 20],
-];
-
-function qrMaskBit(mask, row, col) {
-  return mask === 0 ? (row + col) % 2 === 0 : false;
-}
-
-function isVersionOneFunctionModule(row, col) {
-  return (row < 9 && col < 9) || (row < 9 && col >= 13) || (row >= 13 && col < 9) || row === 6 || col === 6;
-}
-
-function matrixFromCodewords(codewords) {
-  const size = 21;
-  const matrix = Array.from({ length: size }, () => Array(size).fill(false));
-  const bits = Array.from(codewords, (byte) => Array.from({ length: 8 }, (_, bit) => (byte >> (7 - bit)) & 1)).flat();
-  let bitIndex = 0;
-  let upward = true;
-  for (let right = size - 1; right > 0; right -= 2) {
-    if (right === 6) right -= 1;
-    for (let vertical = 0; vertical < size; vertical += 1) {
-      const row = upward ? size - 1 - vertical : vertical;
-      for (const col of [right, right - 1]) {
-        if (isVersionOneFunctionModule(row, col)) continue;
-        const bit = bits[bitIndex] || 0;
-        matrix[row][col] = Boolean(bit ^ (qrMaskBit(0, row, col) ? 1 : 0));
-        bitIndex += 1;
-      }
-    }
-    upward = !upward;
-  }
-  for (const [index, [row, col]] of formatBitPositions.entries()) {
-    matrix[row][col] = Boolean((formatBits >> (14 - (index % 15))) & 1);
-  }
-  return matrix;
-}
-
-function imageDataFromMatrix(matrix, modulePixels = 2, darkValue = 0, lightValue = 255) {
-  const size = matrix.length;
-  const width = size * modulePixels;
-  const imageData = new Uint8ClampedArray(width * width * 4);
-  for (let row = 0; row < width; row += 1) {
-    for (let col = 0; col < width; col += 1) {
-      const dark = matrix[Math.floor(row / modulePixels)][Math.floor(col / modulePixels)];
-      const value = dark ? darkValue : lightValue;
-      const index = ((row * width) + col) * 4;
-      imageData[index] = value;
-      imageData[index + 1] = value;
-      imageData[index + 2] = value;
-      imageData[index + 3] = 255;
-    }
-  }
-  return { imageData, width, height: width };
 }
 
 async function createTestSeals() {
@@ -101,152 +31,17 @@ async function createTestSeals() {
 }
 
 describe("qredVerifier", () => {
-  it("extracts length-framed scanner-safe QRed data from the post-terminator byte offset", () => {
-    const payload = "https://qred.org/#QRED1?doc=DOC&i=0&n=1&rc=gzip&txt=HELLO";
-    const binaryData = new Uint8Array([
-      0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
-      ...backendFramedPayloadBytes(payload),
-      0xec, 0x11,
-    ]);
-
-    expect(extractHiddenQRedPayload(binaryData, 1)).toBe(payload);
-    expect(qredTextFromScanResult({ data: "QRED.ORG", binaryData, version: 1 })).toBe(payload);
-    expect(qredTextFromScanResult({ data: "https://qred.org/#QRED1?sig?garbled", binaryData, version: 1 })).toBe(payload);
-  });
-
-  it("extracts compressed and encoded QRed chunk text from compact backend framing", () => {
-    const payload = "rc=gzip&txt=H4sI-gzip_payload";
-    const binaryData = new Uint8Array([
-      0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
-      ...backendFramedPayloadBytes(payload),
-      0xec, 0x11,
-    ]);
-
-    expect(extractHiddenQRedPayload(binaryData, 1)).toBe(payload);
-  });
-
-  it("does not extract unframed legacy printable bytes", () => {
-    const binaryData = new Uint8Array([
-      0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
-      ...new TextEncoder().encode("legacy printable payload"),
-      0xec, 0x11,
-    ]);
-
-    expect(extractHiddenQRedPayload(binaryData, 1)).toBeNull();
-    expect(qredTextFromScanResult({ data: "QRED.ORG", binaryData, version: 1 })).toBe("QRED.ORG");
-  });
-
-  it("extracts length-framed hidden payloads from deinterleaved QR image codewords", () => {
-    const payload = "IMG";
-    const dataCodewords = new Uint8Array(19);
-    dataCodewords.set([0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40], 0);
-    dataCodewords.set(backendFramedPayloadBytes(payload), versionOneDataOffset());
-    const allCodewords = new Uint8Array(26);
-    allCodewords.set(dataCodewords);
-    const { imageData, width, height } = imageDataFromMatrix(matrixFromCodewords(allCodewords));
-
-    expect(extractHiddenQRedPayloadFromImage(imageData, width, height, {
-      data: "QRED.ORG",
-      version: 1,
-      location: {
-        topLeftCorner: { x: 0, y: 0 },
-        topRightCorner: { x: width, y: 0 },
-        bottomLeftCorner: { x: 0, y: height },
-        bottomRightCorner: { x: width, y: height },
-      },
-    })).toBe(payload);
-  });
-
-  it("recovers hidden payloads from low-contrast photographed modules with adaptive thresholding", () => {
-    const payload = "LOW";
-    const dataCodewords = new Uint8Array(19);
-    dataCodewords.set([0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40], 0);
-    dataCodewords.set(backendFramedPayloadBytes(payload), versionOneDataOffset());
-    const allCodewords = new Uint8Array(26);
-    allCodewords.set(dataCodewords);
-    const { imageData, width, height } = imageDataFromMatrix(matrixFromCodewords(allCodewords), 2, 140, 180);
-
-    expect(extractHiddenQRedPayloadFromImage(imageData, width, height, {
-      data: "QRED.ORG",
-      version: 1,
-      location: {
-        topLeftCorner: { x: 0, y: 0 },
-        topRightCorner: { x: width, y: 0 },
-        bottomLeftCorner: { x: 0, y: height },
-        bottomRightCorner: { x: width, y: height },
-      },
-    })).toBe(payload);
-  });
-
-  it("recovers hidden payloads from the committed blurred JPEG that still decodes the visible QR", () => {
-    const payload = "IMG";
+  it("does not recover retired padding payloads from a committed blurred JPEG", () => {
     const image = decodeJpegFixture(noisyFixturePath);
     const code = jsQR(image.data, image.width, image.height, { inversionAttempts: "attemptBoth" });
-
-    expect(code, `jsQR did not detect a QR code in ${noisyFixturePath}`).toBeTruthy();
-    expect(extractHiddenQRedPayloadFromImage(image.data, image.width, image.height, code)).toBe(payload);
-    expect(qredTextFromPhotoScanResult(image.data, image.width, image.height, code)).toBe(payload);
+    expect(code?.data).toBe("QRED.ORG");
+    expect(qredTextFromPhotoScanResult(image.data, image.width, image.height, code)).toBe("QRED.ORG");
   });
 
-  it("does not treat retired seal content as a current-format record", () => {
-    const payload = "https://qred.org/#QRED1?v=1&alg=Ed25519&doc=DOC-PLAINTEXT&i=0&n=1&iss=QRed+QA&kid=deadbeef&ts=2026-07-05T00%3A00%3A00.000Z&txt=PDF+file%3A+letter.pdf%0ASize%3A+965+bytes";
-    const payloadBytes = new TextEncoder().encode(payload);
-    const binaryData = new Uint8Array([
-      0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
-      (payloadBytes.length >> 8) & 0xff,
-      payloadBytes.length & 0xff,
-      ...payloadBytes,
-      0xec, 0x11,
-    ]);
-
-    expect(qredTextFromPhotoScanResult(null, 0, 0, { data: "QRED.ORG", binaryData, version: 1 })).toBe(payload);
-  });
-
-  it("returns no hidden image payload when scan geometry is unavailable", () => {
-    expect(extractHiddenQRedPayloadFromImage(new Uint8ClampedArray(), 0, 0, { data: "QRED.ORG" })).toBeNull();
-  });
-
-  it("recovers a hidden payload from the QR image even when jsQR only exposes visible text bytes", () => {
-    const payload = "IMG-ONLY";
-    const dataCodewords = new Uint8Array(19);
-    dataCodewords.set([0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40], 0);
-    dataCodewords.set(backendFramedPayloadBytes(payload), versionOneDataOffset());
-    const allCodewords = new Uint8Array(26);
-    allCodewords.set(dataCodewords);
-    const { imageData, width, height } = imageDataFromMatrix(matrixFromCodewords(allCodewords));
-
-    expect(qredTextFromPhotoScanResult(imageData, width, height, {
-      data: "QRED.ORG",
-      binaryData: new Uint8Array([0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40]),
-      version: 1,
-      location: {
-        topLeftCorner: { x: 0, y: 0 },
-        topRightCorner: { x: width, y: 0 },
-        bottomLeftCorner: { x: 0, y: height },
-        bottomRightCorner: { x: width, y: height },
-      },
-    })).toBe(payload);
-  });
-
-  it("falls back to the visible scan text when photo geometry is unavailable", () => {
-    expect(qredTextFromPhotoScanResult(null, 0, 0, { data: "https://example.test/plain" }))
+  it("preserves ordinary QR text", () => {
+    expect(qredTextFromScanResult({ data: "https://example.test/plain", binaryData: [1, 2, 3] }))
       .toBe("https://example.test/plain");
-    expect(qredTextFromPhotoScanResult(undefined, undefined, undefined, { data: "QRED.ORG" }))
-      .toBe("QRED.ORG");
-  });
-
-  it("ignores standard QR padding bytes when no hidden carrier payload is present", () => {
-    const binaryData = new Uint8Array([
-      0x20, 0x3d, 0x44, 0x44, 0xad, 0x4f, 0x50, 0x40,
-      0xec, 0x11, 0xec, 0x11,
-    ]);
-
-    expect(qredTextFromScanResult({ data: "QRED.ORG", binaryData, version: 1 })).toBe("QRED.ORG");
-  });
-
-  it("falls back to normal QR text when no scanner-safe hidden payload is present", () => {
-    expect(qredTextFromScanResult({ data: "https://example.test/plain", binaryData: new Uint8Array([1, 2, 3]) }))
-      .toBe("https://example.test/plain");
+    expect(qredTextFromPhotoScanResult(null, 0, 0, { data: "QRED.ORG" })).toBe("QRED.ORG");
   });
 
   it("decodes QRed seal metadata", async () => {

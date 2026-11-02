@@ -179,25 +179,25 @@
   .badge-warning { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
   .badge-info { background: rgba(59, 130, 246, 0.15); color: var(--primary); }
   .badge-error { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
-  .hidden-payload-section {
+  .seal-payload-section {
     background: #0f172a;
     border: 1px solid #334155;
     border-radius: 8px;
     padding: 1rem;
     margin-top: 1rem;
   }
-  .hidden-payload-section h4 {
+  .seal-payload-section h4 {
     font-size: 0.9rem;
     color: var(--primary);
     margin-bottom: 0.5rem;
   }
-  .hidden-payload-section .payload-text {
+  .seal-payload-section .payload-text {
     font-family: "SF Mono", "Fira Code", monospace;
     font-size: 0.85rem;
     word-break: break-all;
     color: var(--text);
   }
-  .hidden-payload-section .payload-text.empty {
+  .seal-payload-section .payload-text.empty {
     color: var(--text-dim);
     font-style: italic;
   }
@@ -213,7 +213,7 @@
 <body>
 <header>
   <h1>QRed — QR Photo Analyzer</h1>
-  <p>Choose a photo containing a QR code to inspect all data including hidden payloads</p>
+  <p>Choose a photo containing a QR code to inspect decoded QR messages and QRed document seals</p>
   <p>Photos are processed in this browser and are not sent to a server.</p>
   <details>
     <summary>Optional: use airplane mode</summary>

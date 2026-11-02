@@ -3,7 +3,7 @@ import { PDFDocument, rgb } from "pdf-lib";
 import { createQRedSeals } from "../qredSealer.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
-import { hiddenPayloadFromScanResult } from "../qr/hiddenPayload.js";
+import { qredPayloadFromScanResult } from "../qr/qrPayload.js";
 import { scanPdfPage } from "../verifier/scanPdf.js";
 import { renderSealedPdf } from "./renderSealedPdf.js";
 import { extractPdfText } from "../pdfClientSeal.js";
@@ -130,7 +130,7 @@ it("reserves readable instruction text above a full-width three-code footer", as
     const recovered = signed.seals.map((_seal, index) => {
       const qr = crop(image, { x: layout.qrOffsetX + index * (layout.qrSize + layout.gap),
         y: layout.qrOffsetY, width: layout.qrSize, height: layout.qrSize });
-      return hiddenPayloadFromScanResult(scanQrImage(qr.data, qr.width, qr.height));
+      return qredPayloadFromScanResult(scanQrImage(qr.data, qr.width, qr.height));
     });
     expect(recovered).toEqual(signed.seals);
     await expect(verifyQRedSeals(recovered, publicKey)).resolves.toMatchObject({ status: "VALID", content });

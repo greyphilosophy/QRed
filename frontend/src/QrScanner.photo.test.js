@@ -4,7 +4,7 @@ import { PNG } from "pngjs";
 import { describe, expect, it } from "vitest";
 import { qrScanAction } from "./QrScanner.jsx";
 import { scanQrImage } from "./qr/scanQrImage.js";
-import { verifyQRedSeals, VISIBLE_QR_TEXT } from "./qredVerifier.js";
+import { verifyQRedSeals } from "./qredVerifier.js";
 
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 const wrongPublicKey = "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=";
@@ -13,18 +13,19 @@ function scanJpeg(bytes) {
   const image = jpeg.decode(bytes, { useTArray: true });
   const pixels = new Uint8ClampedArray(image.data);
   const code = scanQrImage(pixels, image.width, image.height);
-  expect(code?.data).toBe(VISIBLE_QR_TEXT);
+  expect(code?.binaryData?.length).toBeGreaterThan(0);
   const action = qrScanAction(pixels, image.width, image.height, code, { returnPayload: true });
   expect(action.status).toBe("found");
   return action.text;
 }
 
 describe("QrScanner JPEG regressions", () => {
-  it("recovers the known payload from the committed blurred JPEG", () => {
-    // The historical fixture contains only IMG. Its physical-camera provenance
-    // is undocumented; this checks its pixels without claiming field coverage.
-    const bytes = readFileSync(new URL("../../tests/qred_hidden_payload_photo.jpg", import.meta.url));
-    expect(scanJpeg(bytes)).toBe("IMG");
+  it("ignores padding payloads in the retired blurred JPEG", () => {
+    const image = jpeg.decode(readFileSync(new URL("../../tests/qred_hidden_payload_photo.jpg", import.meta.url)), { useTArray: true });
+    const pixels = new Uint8ClampedArray(image.data);
+    const code = scanQrImage(pixels, image.width, image.height);
+    expect(code?.data).toBe("QRED.ORG");
+    expect(qrScanAction(pixels, image.width, image.height, code, { returnPayload: true })).toEqual({ status: "continue" });
   });
 
   it.each([85, 50])("verifies a signed PDF seal after JPEG compression at quality %i", async quality => {

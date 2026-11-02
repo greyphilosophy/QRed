@@ -1,5 +1,5 @@
 import jsQR from "jsqr";
-import { hiddenPayloadFromScanResult, isQRedEntryLink } from "./hiddenPayload.js";
+import { qredPayloadFromScanResult, isQRedEntryLink } from "./qrPayload.js";
 import { filterWatermark, normalizeWatermarkLuminance } from "./watermarkFilter.js";
 import { scanModuleAwareQr } from "./moduleAwareScan.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
@@ -92,7 +92,7 @@ function scanAttempts(width, height, tryRescaling = true, tryWatermark = true, i
 }
 
 function usableResult(code) {
-  return Boolean(code?.data) && (!isQRedEntryLink(code.data) || Boolean(hiddenPayloadFromScanResult(code)));
+  return Boolean(qredPayloadFromScanResult(code)) || (Boolean(code?.data) && !isQRedEntryLink(code.data));
 }
 
 // Prepare a resolution only once. The module-aware retry consumes the exact
@@ -134,7 +134,7 @@ export function scanWatermarkPreview(data, width, height) {
 }
 
 /** Return QR geometry in the original image's coordinates, even after a retry.
- * Hidden-payload recovery and camera overlays must use the same coordinate frame.
+ * QR recovery and camera overlays must use the same coordinate frame.
  */
 export function scanQrImage(data, width, height, { tryRescaling = true, tryWatermark = true, maxAttempts = Infinity } = {}) {
   if (!isValidImage(data, width, height)) return null;

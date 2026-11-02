@@ -5,71 +5,19 @@
 
 import jsQR from "jsqr";
 import { scanQrImage } from "./qr/scanQrImage.js";
-import { decodeSeal, verifyQRedSeals, qredDisplayTextFromScannedPayload } from "./qredVerifier.js";
-import { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset, hiddenPayloadFromScanResult } from "./qr/hiddenPayload.js";
-import { codewordsFromMatrix, deinterleaveDataCodewordsWithTables, QR_MODULE_COUNT_BY_VERSION } from "./qr/qrLowLevel.js";
-import { sampleQrMatrix } from "./qr/qrImageRecovery.js";
+import { decodeSeal, verifyQRedSeals, qredDisplayTextFromScannedPayload,
+  qredTextFromScanResult as scannedPayload } from "./qredVerifier.js";
+import { isQRedEntryLink, qredPayloadFromScanResult } from "./qr/qrPayload.js";
+import { QR_MODULE_COUNT_BY_VERSION } from "./qr/qrLowLevel.js";
 
-export { VISIBLE_QR_TEXT, extractHiddenQRedPayload, hiddenPayloadByteOffset, jsQR };
-
-export { qredDisplayTextFromScannedPayload };
+export { jsQR, qredDisplayTextFromScannedPayload };
 
 export function qredTextFromScanResult(scanResult) {
-  if (!scanResult || typeof scanResult === "string") return scanResult || "";
-  const visibleText = scanResult.data || "";
-  const hiddenPayload = hiddenPayloadFromScanResult(scanResult);
-  if (visibleText === VISIBLE_QR_TEXT || /QRED[34]:/.test(visibleText) || visibleText.includes("qred.org")) {
-    return hiddenPayload ? qredDisplayTextFromScannedPayload(hiddenPayload) : qredDisplayTextFromScannedPayload(visibleText);
-  }
-  return visibleText;
+  return qredDisplayTextFromScannedPayload(scannedPayload(scanResult));
 }
 
-
-export function extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) {
-  if (scanResult?.correctedData !== undefined) return hiddenPayloadFromScanResult(scanResult);
-  if (!scanResult?.location || !scanResult.version) return null;
-
-  // Fast path — centered adaptive sample first (>90% clean photos)
-  {
-    const matrix = sampleQrMatrix(imageData, width, height, scanResult.location, scanResult.version, { rowOffset: 0.5, colOffset: 0.5 });
-    const { codewords, ecLevelBits } = codewordsFromMatrix(matrix, scanResult.version);
-    const payload = extractHiddenQRedPayload(deinterleaveDataCodewordsWithTables(codewords, scanResult.version, ecLevelBits), scanResult.version);
-    if (payload) return payload;
-  }
-
-  const thresholds = [undefined, 128, 96, 112, 144, 160];
-  const offsets = [0.5, 0.45, 0.55, 0.4, 0.6, 0.35, 0.65];
-  const counts = new Map();
-  for (const threshold of thresholds) {
-    for (const rowOffset of offsets) {
-      for (const colOffset of offsets) {
-        if (threshold === undefined && rowOffset === 0.5 && colOffset === 0.5) continue;
-        const matrix = sampleQrMatrix(imageData, width, height, scanResult.location, scanResult.version, { rowOffset, colOffset, threshold });
-        const { codewords, ecLevelBits } = codewordsFromMatrix(matrix, scanResult.version);
-        const payload = extractHiddenQRedPayload(deinterleaveDataCodewordsWithTables(codewords, scanResult.version, ecLevelBits), scanResult.version);
-        if (!payload) continue;
-        const nextCount = (counts.get(payload) || 0) + 1;
-        counts.set(payload, nextCount);
-        if (nextCount >= 2) return payload;
-      }
-    }
-  }
-  let bestPayload = null;
-  let bestCount = 0;
-  for (const [payload, count] of counts) {
-    if (count > bestCount) {
-      bestCount = count;
-      bestPayload = payload;
-    }
-  }
-  return bestPayload;
-}
-
-export function qredTextFromPhotoScanResult(imageData, width, height, scanResult) {
-  const visibleText = qredTextFromScanResult(scanResult);
-  if (!imageData || !width || !height) return qredDisplayTextFromScannedPayload(visibleText);
-  const recoveredPayload = extractHiddenQRedPayloadFromImage(imageData, width, height, scanResult) || visibleText;
-  return qredDisplayTextFromScannedPayload(recoveredPayload);
+export function qredTextFromPhotoScanResult(_imageData, _width, _height, scanResult) {
+  return qredTextFromScanResult(scanResult);
 }
 
 // — QR detection (jsQR only — BarcodeDetector path removed for simplicity; jsQR is already bundled)
@@ -121,40 +69,28 @@ export function createTestAnalyzerController({ uploadZone, fileInput: _fileInput
     uploadZone.classList.toggle("scanning", tone === "loading");
   }
 
-  async function updateHiddenPayloadSection(card, code, imgElement, version, payloadOffset) {
-    const section = card.querySelector("[data-hidden-payload-state]");
+  async function updateSealPayloadSection(card, code) {
+    const section = card.querySelector("[data-seal-payload-state]");
     if (!section) return;
-
-    const qrCanvas = document.createElement("canvas");
-    qrCanvas.width = imgElement?.naturalWidth || imgElement?.width || 0;
-    qrCanvas.height = imgElement?.naturalHeight || imgElement?.height || 0;
-    const qrCtx = qrCanvas.getContext("2d");
-    if (!imgElement || !qrCtx || qrCanvas.width === 0 || qrCanvas.height === 0) {
-      section.innerHTML = `\n      <h4>🔍 QRed QR detected — checking for hidden payload...</h4>\n      <p style="margin-bottom: 0.5rem;"><span class="badge badge-warning">Hidden payload: NOT FOUND</span></p>\n      <p style="font-size: 0.85rem; color: var(--text-dim);">This QR code has the QRed visible text but no hidden payload was detected in the expected offset.</p>\n    `;
+    const payload = qredPayloadFromScanResult(code);
+    if (!payload) {
+      section.dataset.sealPayloadState = "navigation";
+      section.innerHTML = `<h4>QRed navigation code</h4><p>This code opens qred.org. Scan the page watermark to recover its document seal.</p>`;
       return;
     }
-
-    qrCtx.drawImage(imgElement, 0, 0);
-    const qrImageData = qrCtx.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
-    let recoveredText = qredTextFromPhotoScanResult(qrImageData.data, qrImageData.width, qrImageData.height, code);
-    const payload = extractHiddenQRedPayloadFromImage(qrImageData.data, qrImageData.width, qrImageData.height, code) || code.data;
     const decoded = decodeSeal(payload);
-    if (decoded) {
-      const result = await verifyQRedSeals([payload], "");
-      recoveredText = result.content
-        ? `Recovered text (signature not verified):\n${result.content}`
-        : result.evidence
-          ? `Recovered ${result.evidence.blank ? "blank-page marker" : "visual page reference"} (signature not verified). Open the verifier to authenticate and compare this page.`
+    const result = await verifyQRedSeals([payload], "");
+    const recoveredText = result.content
+      ? `Recovered text (signature not verified):\n${result.content}`
+      : result.evidence
+        ? `Recovered ${result.evidence.blank ? "blank-page marker" : "visual page reference"} (signature not verified). Open the verifier to authenticate and compare this page.`
         : result.status === "INCOMPLETE"
           ? `Seal ${decoded.chunk_number + 1} of ${decoded.total_chunks}. Collect all seals in the verifier to restore the text.`
           : `Cannot restore seal text: ${result.error_message}`;
-    }
-    if (recoveredText !== code.data) {
-      section.innerHTML = `\n      <h4>🔍 Hidden QRed Payload Found</h4>\n      <p style="margin-bottom: 0.5rem;"><span class="badge badge-success">Hidden payload: YES</span></p>\n      <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.5rem;">Payload byte offset: ${payloadOffset} | Displayed text: ${recoveredText.length} characters</p>\n      <div class="payload-text">${escapeHtml(recoveredText)}</div>\n    `;
-      return;
-    }
-
-    section.innerHTML = `\n    <h4>🔍 QRed QR detected — checking for hidden payload...</h4>\n    <p style="margin-bottom: 0.5rem;"><span class="badge badge-warning">Hidden payload: NOT FOUND</span></p>\n    <p style="font-size: 0.85rem; color: var(--text-dim);">This QR code has the QRed visible text but no hidden payload was detected in the expected offset.</p>\n  `;
+    section.dataset.sealPayloadState = "found";
+    section.innerHTML = `<h4>QRed seal found</h4>
+      <p style="margin-bottom: 0.5rem;"><span class="badge badge-success">Seal decoded</span></p>
+      <div class="payload-text">${escapeHtml(recoveredText)}</div>`;
   }
 
   function renderResultCard(file, code, imgElement) {
@@ -172,13 +108,10 @@ export function createTestAnalyzerController({ uploadZone, fileInput: _fileInput
     card.classList.add("success");
     const version = code.version || "—";
     const moduleCount = version !== "—" ? QR_MODULE_COUNT_BY_VERSION[version] : "—";
-    const looksLikeQRed = code.data === VISIBLE_QR_TEXT || /QRED[34]:/.test(code.data) || code.data.includes("qred.org");
-    const payloadOffset = looksLikeQRed ? hiddenPayloadByteOffset(version) : "—";
-
-    let hiddenSection = "";
-    if (looksLikeQRed) {
-      hiddenSection = `\n      <div class="hidden-payload-section" data-hidden-payload-state="pending">\n        <h4>🔍 QRed QR detected — checking for hidden payload...</h4>\n        <p style="margin-bottom: 0.5rem;"><span class="badge badge-info">Hidden payload: LOADING</span></p>\n        <p style="font-size: 0.85rem; color: var(--text-dim);">Recovering the hidden photo payload…</p>\n      </div>\n    `;
-    }
+    const looksLikeQRed = Boolean(qredPayloadFromScanResult(code)) || isQRedEntryLink(code.data);
+    const sealSection = looksLikeQRed
+      ? `<div class="seal-payload-section" data-seal-payload-state="pending"><h4>Reading QRed seal…</h4></div>`
+      : "";
 
     let hexDumpSection = "";
     if (code.binaryData && code.binaryData.length > 0) {
@@ -194,10 +127,10 @@ export function createTestAnalyzerController({ uploadZone, fileInput: _fileInput
     }
 
     const previewUrl = URL.createObjectURL(file);
-    card.innerHTML = `\n    <h3>✅ QR Code Decoded</h3>\n    <img class="preview-img" src="${previewUrl}" alt="Photo preview">\n    <div class="detail-grid">\n      <span class="label">File</span><span class="value">${escapeHtml(file.name)}</span>\n      <span class="label">Visible text</span><span class="value" style="color: var(--primary);">${escapeHtml(code.data)}</span>\n      <span class="label">QR Version</span><span class="value">${version}</span>\n      <span class="label">Module count</span><span class="value">${moduleCount} × ${moduleCount}</span>\n      <span class="label">Raw binary bytes</span><span class="value">${code.binaryData ? code.binaryData.length : 0}</span>\n      ${locationSection}\n      <span class="label">QRed indicator</span><span class="value">${looksLikeQRed ? '<span class="badge badge-success">Yes</span>' : '<span class="badge badge-info">No</span>'}</span>\n    </div>\n    ${hiddenSection}\n    ${hexDumpSection}\n  `;
+    card.innerHTML = `\n    <h3>✅ QR Code Decoded</h3>\n    <img class="preview-img" src="${previewUrl}" alt="Photo preview">\n    <div class="detail-grid">\n      <span class="label">File</span><span class="value">${escapeHtml(file.name)}</span>\n      <span class="label">Decoded text</span><span class="value" style="color: var(--primary);">${escapeHtml(code.data || "Binary QR message")}</span>\n      <span class="label">QR Version</span><span class="value">${version}</span>\n      <span class="label">Module count</span><span class="value">${moduleCount} × ${moduleCount}</span>\n      <span class="label">Raw binary bytes</span><span class="value">${code.binaryData ? code.binaryData.length : 0}</span>\n      ${locationSection}\n      <span class="label">QRed indicator</span><span class="value">${looksLikeQRed ? '<span class="badge badge-success">Yes</span>' : '<span class="badge badge-info">No</span>'}</span>\n    </div>\n    ${sealSection}\n    ${hexDumpSection}\n  `;
 
     if (looksLikeQRed) {
-      setTimeout(() => updateHiddenPayloadSection(card, code, imgElement, version, payloadOffset), 0);
+      setTimeout(() => updateSealPayloadSection(card, code), 0);
     }
 
     return card;
@@ -278,7 +211,6 @@ export function createTestAnalyzerController({ uploadZone, fileInput: _fileInput
     qredDisplayTextFromScannedPayload,
     qredTextFromPhotoScanResult,
     qredTextFromScanResult,
-    extractHiddenQRedPayload,
     handleSelectedFiles,
     processFiles,
     // internals exposed so legacy guard tests can still assert presence

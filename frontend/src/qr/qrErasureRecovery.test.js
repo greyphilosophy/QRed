@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import QRCode from "qrcode";
 import { createQRedQrSymbol, createQRedQrData } from "../qredQr.js";
 import { encodeChunk, sealString } from "../sealFormat.js";
-import { hiddenPayloadFromScanResult } from "./hiddenPayload.js";
+import { bytePayloadFromCodewords, qredPayloadFromScanResult } from "./qrPayload.js";
 import { readErasedQrMatrix, recoverBitErasedDataCodewords, recoverErasedDataCodewords } from "./qrErasureRecovery.js";
 import { codewordsFromMatrix, EC_BLOCKS_BY_LEVEL } from "./qrLowLevel.js";
 
@@ -10,7 +10,7 @@ function fixture() {
   const payload = new Uint8Array(720);
   for (let i = 0; i < payload.length; i++) payload[i] = (i * 17 + (i >>> 2) * 37) & 255;
   // Use a correctly framed QRC3 transport chunk. Arbitrary bytes are not
-  // a QRed seal and must be rejected by hidden-payload recovery.
+  // a QRed seal and must be rejected by seal recovery.
   const seal = sealString(encodeChunk(new Uint8Array(32).fill(23), 0, 4, payload));
   const symbol = createQRedQrSymbol(seal, { errorCorrectionLevel: "L" });
   const size = symbol.modules.size;
@@ -23,13 +23,13 @@ function fixture() {
 
 function recoveredSeal(qr, bits, unknown) {
   const result = readErasedQrMatrix(bits, unknown, qr.symbol.version);
-  return hiddenPayloadFromScanResult(result && {
-    data: "QRED.ORG", correctedData: result.correctedData, version: qr.symbol.version,
+  return qredPayloadFromScanResult(result && {
+    data: "", binaryData: bytePayloadFromCodewords(result.dataCodewords, qr.symbol.version), version: qr.symbol.version,
   });
 }
 
 describe("QR Reed-Solomon erasure-aware recovery", () => {
-  it("reads the original complete hidden payload without changing its signed wire format", () => {
+  it("reads the original complete byte payload without changing its signed wire format", () => {
     const qr = fixture();
     const data = createQRedQrData(qr.seal, { errorCorrectionLevel: "L" });
     const matrix = Array.from({ length: qr.size }, (_, row) =>

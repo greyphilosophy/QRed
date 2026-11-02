@@ -5,27 +5,15 @@ import ECLevel from "qrcode/lib/core/error-correction-level";
 import BitBuffer from "qrcode/lib/core/bit-buffer";
 import ReedSolomonEncoder from "qrcode/lib/core/reed-solomon-encoder";
 import Mode from "qrcode/lib/core/mode";
-import AlphanumericData from "qrcode/lib/core/alphanumeric-data";
-import MaskPattern from "qrcode/lib/core/mask-pattern";
-import FormatInfo from "qrcode/lib/core/format-info";
-import { VISIBLE_QR_TEXT } from "./qr/hiddenPayload.js";
+import ByteData from "qrcode/lib/core/byte-data";
 import { qrPayloadBytes } from "./sealFormat.js";
 
-const HIDDEN_PAYLOAD_LENGTH_BYTES = 2;
 const MIN_MODULE_PIXELS = 4;
 const DEFAULT_QR_OPTIONS = { errorCorrectionLevel: "auto", margin: 4, width: 360 };
 const ERROR_CORRECTION_LEVELS_DESC = ["H", "Q", "M", "L"];
 
-function characterCountBitLength(version) {
-  return Mode.getCharCountIndicator(Mode.ALPHANUMERIC, version);
-}
-
-export function qredVisibleBitsLength(version) {
-  return 4 + characterCountBitLength(version) + AlphanumericData.getBitsLength(VISIBLE_QR_TEXT.length);
-}
-
-export function qredHiddenPayloadByteOffset(version) {
-  return Math.ceil((qredVisibleBitsLength(version) + 4) / 8);
+export function qredByteHeaderBits(version) {
+  return 4 + Mode.getCharCountIndicator(Mode.BYTE, version);
 }
 
 function dataCapacityBytes(version, errorCorrectionLevel) {
@@ -33,8 +21,7 @@ function dataCapacityBytes(version, errorCorrectionLevel) {
 }
 
 export function qredPayloadCapacity(version = 40, errorCorrectionLevel = ECLevel.L) {
-  return dataCapacityBytes(version, errorCorrectionLevel)
-    - qredHiddenPayloadByteOffset(version) - HIDDEN_PAYLOAD_LENGTH_BYTES;
+  return Math.floor((dataCapacityBytes(version, errorCorrectionLevel) * 8 - qredByteHeaderBits(version)) / 8);
 }
 
 function resolveErrorCorrectionLevel(value) {
@@ -98,82 +85,26 @@ export function createCodewords(bitBuffer, version, errorCorrectionLevel) {
   return data;
 }
 
-function setupData(matrix, data) {
-  const size = matrix.size;
-  let inc = -1;
-  let row = size - 1;
-  let bitIndex = 7;
-  let byteIndex = 0;
-  for (let col = size - 1; col > 0; col -= 2) {
-    if (col === 6) col -= 1;
-    while (true) {
-      for (let c = 0; c < 2; c += 1) {
-        if (!matrix.isReserved(row, col - c)) {
-          const dark = byteIndex < data.length && (((data[byteIndex] >>> bitIndex) & 1) === 1);
-          matrix.set(row, col - c, dark);
-          bitIndex -= 1;
-          if (bitIndex === -1) {
-            byteIndex += 1;
-            bitIndex = 7;
-          }
-        }
-      }
-      row += inc;
-      if (row < 0 || size <= row) {
-        row -= inc;
-        inc = -inc;
-        break;
-      }
-    }
-  }
-}
-
 export function createQRedQrData(value, options = DEFAULT_QR_OPTIONS) {
   const payloadBytes = qrPayloadBytes(value);
-  if (payloadBytes.length > 0xffff) throw new Error("QRed payload is too large to frame");
   const { version, errorCorrectionLevel } = chooseQrShape(payloadBytes, options.errorCorrectionLevel);
   const buffer = new BitBuffer();
-  const visible = new AlphanumericData(VISIBLE_QR_TEXT);
-  buffer.put(visible.mode.bit, 4);
-  buffer.put(visible.getLength(), characterCountBitLength(version));
-  visible.write(buffer);
-  buffer.put(0, 4);
-  while (buffer.getLengthInBits() % 8 !== 0) buffer.putBit(0);
-  buffer.put(payloadBytes.length >>> 8, 8);
-  buffer.put(payloadBytes.length & 0xff, 8);
-  for (const byte of payloadBytes) buffer.put(byte, 8);
+  const segment = new ByteData(payloadBytes);
+  buffer.put(segment.mode.bit, 4);
+  buffer.put(segment.getLength(), Mode.getCharCountIndicator(Mode.BYTE, version));
+  segment.write(buffer);
   const capacityBits = dataCapacityBytes(version, errorCorrectionLevel) * 8;
+  buffer.put(0, Math.min(4, capacityBits - buffer.getLengthInBits()));
+  while (buffer.getLengthInBits() % 8 !== 0) buffer.putBit(0);
   for (let i = 0; buffer.getLengthInBits() < capacityBits; i += 1) buffer.put(i % 2 ? 0x11 : 0xec, 8);
 
-  return { version, errorCorrectionLevel, bytes: new Uint8Array(buffer.buffer), codewords: createCodewords(buffer, version, errorCorrectionLevel) };
-}
-
-function setupFormatInfo(matrix, level, mask) {
-  const bits = FormatInfo.getEncodedBits(level, mask);
-  for (let index = 0; index < 15; index += 1) {
-    const dark = Boolean((bits >>> index) & 1);
-    const row = index < 6 ? index : index < 8 ? index + 1 : matrix.size - 15 + index;
-    const column = index < 8 ? matrix.size - index - 1 : index === 8 ? 7 : 14 - index;
-    matrix.set(row, 8, dark, true);
-    matrix.set(8, column, dark, true);
-  }
-  matrix.set(matrix.size - 8, 8, true, true);
+  return { version, errorCorrectionLevel, payloadBytes, bytes: new Uint8Array(buffer.buffer), codewords: createCodewords(buffer, version, errorCorrectionLevel) };
 }
 
 export function createQRedQrSymbol(value, options = DEFAULT_QR_OPTIONS) {
-  const { version, errorCorrectionLevel, codewords } = createQRedQrData(value, options);
-  const visible = new AlphanumericData(VISIBLE_QR_TEXT);
-  const qr = QRCode.create(VISIBLE_QR_TEXT, { errorCorrectionLevel, version });
-  MaskPattern.applyMask(qr.maskPattern, qr.modules);
-  setupData(qr.modules, codewords);
-  // The library originally chose a mask for the visible marker and standard
-  // padding. Score the actual hidden bytes and their parity to avoid patterns
-  // that become difficult to locate after printing or resampling.
-  qr.maskPattern = MaskPattern.getBestMask(qr.modules, mask => setupFormatInfo(qr.modules, errorCorrectionLevel, mask));
-  MaskPattern.applyMask(qr.maskPattern, qr.modules);
-  setupFormatInfo(qr.modules, errorCorrectionLevel, qr.maskPattern);
-  qr.segments = [visible];
-  return qr;
+  const payloadBytes = qrPayloadBytes(value);
+  const { version, errorCorrectionLevel } = chooseQrShape(payloadBytes, options.errorCorrectionLevel);
+  return QRCode.create([{ data: payloadBytes, mode: "byte" }], { version, errorCorrectionLevel });
 }
 
 export function qredRasterPlan(moduleCount, options = DEFAULT_QR_OPTIONS) {

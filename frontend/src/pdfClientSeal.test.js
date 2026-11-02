@@ -1,3 +1,5 @@
+import { extractQrBytePayload, qredPayloadFromScanResult } from "./qr/qrPayload.js";
+import { qrPayloadBytes } from "./sealFormat.js";
 import { Buffer } from "node:buffer";
 import { execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync } from "node:fs";
@@ -10,8 +12,8 @@ import { describe, expect, it } from "vitest";
 import { extractPdfText, LEGAL_FOOTER_HEIGHT, planQrStampLayout, planQrStampLayoutForFooterBand, qrPngBytes, sealPdfInBrowser } from "./pdfClientSeal.js";
 import { qrScanAction } from "./QrScanner.jsx";
 import { scanQrImage } from "./qr/scanQrImage.js";
-import { createQRedQrData, qredQrPngDataUrl, qredRasterPlan, qredVisibleBitsLength } from "./qredQr.js";
-import { extractHiddenQRedPayload, qredPayloadFromPhotoScanResult, verifyQRedSeals, VISIBLE_QR_TEXT } from "./qredVerifier.js";
+import { createQRedQrData, qredQrPngDataUrl, qredRasterPlan, qredByteHeaderBits } from "./qredQr.js";
+import { qredPayloadFromPhotoScanResult, verifyQRedSeals } from "./qredVerifier.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
@@ -100,7 +102,7 @@ describe("browser PDF sealing", () => {
     PNG.bitblt(page, png, 0, page.height - footerHeight, page.width, footerHeight, 0, 0);
     const pixels = new Uint8ClampedArray(png.data);
     const qr = jsQR(pixels, png.width, png.height);
-    expect(qr?.data).toBe(VISIBLE_QR_TEXT);
+    expect(qredPayloadFromScanResult(qr)).toMatch(/#QRED3:/);
     const payload = qredPayloadFromPhotoScanResult(pixels, png.width, png.height, qr);
     const result = await verifyQRedSeals([payload], publicKey);
     expect(result).toMatchObject({ status: "VALID", metadata_authenticated: true });
@@ -222,7 +224,7 @@ describe("browser PDF sealing", () => {
     PNG.bitblt(stamped, footer, 0, original.height, stamped.width, 900, 0, 0);
     const pixels = new Uint8ClampedArray(footer.data);
     const code = scanQrImage(pixels, footer.width, footer.height);
-    expect(code?.data).toBe(VISIBLE_QR_TEXT);
+    expect(qredPayloadFromScanResult(code)).toMatch(/#QRED3:/);
     expect(code.version).toBe(createQRedQrData(stampedQrValues[0]).version);
     expect(code.version).toBeLessThan(createQRedQrData(stampedQrValues[0], { errorCorrectionLevel: "H" }).version);
     // Measure the saved PDF's QR footprint, including its four-module quiet
@@ -274,7 +276,7 @@ describe("browser PDF sealing", () => {
       PNG.bitblt(printed, png, Math.round((18 + index * 208) * 200 / 72), 2200, 550, 550, 0, 0);
       const pixels = new Uint8ClampedArray(png.data);
       const code = scanQrImage(pixels, png.width, png.height);
-      expect(code?.data).toBe(VISIBLE_QR_TEXT);
+      expect(qredPayloadFromScanResult(code)).toMatch(/#QRED3:/);
       expect(code.version).toBeLessThan(40);
       const modules = 17 + 4 * code.version;
       const { topLeftCorner, topRightCorner } = code.location;
@@ -359,7 +361,7 @@ describe("browser PDF sealing", () => {
     expect(printedLayout.qrSize / 72).toBeGreaterThanOrEqual(177 / 72);
 
     const scannedQrValue = scanQrPng(await qrPngBytes(stampedQrValues[0]));
-    expect(scannedQrValue).toMatchObject({ data: VISIBLE_QR_TEXT });
+    expect(qredPayloadFromScanResult(scannedQrValue)).toBe(stampedQrValues[0]);
   });
 
   it("shows plaintext document text when a PDF is sealed with the plaintext recipe", async () => {
@@ -383,15 +385,15 @@ describe("browser PDF sealing", () => {
     const autoData = createQRedQrData("small payload");
     const pinnedData = createQRedQrData("small payload", { errorCorrectionLevel: "H" });
 
-    expect(autoData.version).toBe(2);
-    expect(autoData.errorCorrectionLevel.bit).toBe(0); // M fits in version 2.
-    expect(pinnedData.version).toBe(3);
+    expect(autoData.version).toBe(1);
+    expect(autoData.errorCorrectionLevel.bit).toBe(0); // M fits in version 1.
+    expect(pinnedData.version).toBe(2);
     expect(pinnedData.errorCorrectionLevel.bit).toBe(2); // Explicit H is honored.
-    expect(extractHiddenQRedPayload(autoData.bytes, autoData.version)).toBe("small payload");
-    expect(extractHiddenQRedPayload(pinnedData.bytes, pinnedData.version)).toBe("small payload");
+    expect(extractQrBytePayload(autoData.bytes, autoData.version)).toBe("small payload");
+    expect(extractQrBytePayload(pinnedData.bytes, pinnedData.version)).toBe("small payload");
   });
 
-  it("generates spec-compatible QRED.ORG alphanumeric QR codes with hidden payload padding that scanners can read", async () => {
+  it("generates ordinary QR byte messages containing the entire signed seal", async () => {
     const file = await makeLetterPdfFile();
     const { stampedQrValues } = await sealPdfInBrowser({
       file,
@@ -400,13 +402,13 @@ describe("browser PDF sealing", () => {
     });
 
     const scanResult = scanQrPng(await qrPngBytes(stampedQrValues[0]));
-    expect(scanResult).toMatchObject({ data: VISIBLE_QR_TEXT });
+    expect(scanResult.binaryData).toEqual(Array.from(qrPayloadBytes(stampedQrValues[0])));
     const qrData = createQRedQrData(stampedQrValues[0]);
-    const visibleBits = qredVisibleBitsLength(qrData.version);
+    const messageBits = qredByteHeaderBits(qrData.version) + qrData.payloadBytes.length * 8;
     expect(scanResult.version).toBe(qrData.version);
-    expect(Array.from({ length: 4 }, (_, index) => bitAt(qrData.bytes, visibleBits + index))).toEqual([0, 0, 0, 0]);
-    expect(extractHiddenQRedPayload(qrData.bytes, qrData.version)).toBe(stampedQrValues[0]);
-    await expect(verifyQRedSeals([extractHiddenQRedPayload(qrData.bytes, qrData.version)], publicKey)).resolves.toMatchObject({
+    expect(Array.from({ length: 4 }, (_, index) => bitAt(qrData.bytes, messageBits + index))).toEqual([0, 0, 0, 0]);
+    expect(extractQrBytePayload(qrData.bytes, qrData.version)).toBe(stampedQrValues[0]);
+    await expect(verifyQRedSeals([extractQrBytePayload(qrData.bytes, qrData.version)], publicKey)).resolves.toMatchObject({
       status: "VALID",
     });
   });

@@ -13,7 +13,7 @@ name is stored in a seal or requested in the stamping form.
 
 ## Single-QR record
 
-The hidden payload is a binary record. Integers are unsigned, big endian.
+The seal payload is a binary record. Integers are unsigned, big endian.
 
 | Field | Bytes | Meaning |
 | --- | ---: | --- |
@@ -64,8 +64,8 @@ The PDF stamper permits at most four QR codes per page. Optional evidence uses
 spare capacity within the count needed for text. The decoder still accepts older
 records with more chunks.
 
-First construct the complete record above. If it exceeds the maximum hidden
-QR payload (2,945 bytes at version 40-L), split that record into raw byte chunks.
+First construct the complete record above. If it exceeds the maximum
+QR byte payload (2,953 bytes at version 40-L), split that record into raw byte chunks.
 Every chunk has this header:
 
 | Field | Bytes | Meaning |
@@ -95,14 +95,23 @@ Keep the minimum QR count. With multiple QRs, balance the record bytes if all
 codes can fit below version 40; otherwise retain the greedy split and its smaller
 last code. Each code chooses its smallest fitting version, then the strongest
 error correction fitting that grid. Printed dimensions remain unchanged.
-The QR mask is selected using the complete hidden data and error-correction
+The QR mask is selected using the complete message data and error-correction
 codewords. Image downscaling uses an antialiasing filter so printed modules do
 not disappear through point sampling.
 
-Ordinary readers still see `QRED.ORG`. Its terminator/alignment and the two-byte
-hidden-payload length use 10–11 data bytes per QR, outside the record/chunk sizes
-above. Ordinary QR error correction, padding, patterns, and quiet zones are
-additional. No URL is embedded in the hidden record.
+Each payload QR uses one ordinary byte segment containing the binary record or
+chunk, without a URL or Base64 expansion. Its header is 12 bits for versions 1–9
+and 20 bits for versions 10–40. A zero terminator, byte alignment and alternating
+`0xEC`/`0x11` padding follow the message as usual. No data is stored after the
+terminator. Maximum message capacity is **2,953 bytes at version 40-L**, eight
+more than the retired padding format. At that version, M/Q/H capacities are
+2,331/1,663/1,273 bytes. Chunk headers count toward those limits.
+
+The verifier reads the decoder's standard `binaryData` message. Erasure recovery
+parses the byte-mode header and declared length from corrected codewords; it
+never searches beyond a terminator. Rectangular page watermarks retain the same
+layout and optical recovery. Navigation is a separate `https://qred.org/` QR
+when it fits, with “Verify at QRED.ORG” text on every sealed page.
 
 Copyable strings use `https://qred.org/#QRED3:<Base64URL-of-binary-payload>`.
 A custom bootstrap URL changes only the copyable link. Image recovery returns
@@ -115,22 +124,24 @@ Canonical text is limited to 8 MiB per page. Compressed input is limited to that
 size plus 64 KiB. Enforce decompression output bounds while streaming, validate
 the zlib Adler-32 or gzip CRC32/length, and reject malformed UTF-8, framing, flags, or indices.
 The largest full record is the compressed limit plus its 121-byte header.
-Automatic encoding compares plaintext and zlib by QR count, then actual hidden
+Automatic encoding compares plaintext and zlib by QR count, then actual binary
 payload bytes; plaintext wins a tie. Zlib adds 6 container bytes once per page,
 12 fewer than gzip's 18 bytes. The native browser compressor chooses the level.
 If zlib compression fails, automatic encoding tries gzip; if neither is available,
 it uses plaintext. Explicit compression requests fail clearly when unavailable.
 Processing remains local and makes no network requests.
 
-For the original text-only gzip sample invoice (before optional evidence), compressed text is 318 bytes, giving a 403-byte hidden
-record (85 + 318). With QRed framing, non-text overhead is 113 bytes: 85 record
-bytes + 18 gzip bytes + 10 QRed framing bytes. It fits QR version 13 at the same
-2.75-inch printed footprint. The prior format used 418 non-text bytes and
-version 18 for this fixture. With the same DEFLATE body, zlib reduces the hidden
-record to 391 bytes and non-text overhead to 101 bytes. A 12-byte saving does not
-necessarily reduce the QR version. Stored gzip image fixtures remain readable.
+For the original text-only invoice example (before optional evidence), gzip
+produced a 403-byte record (85 record-header bytes + 318 compressed bytes).
+Using the same DEFLATE body with zlib reduces the record to 391 bytes. QR headers,
+terminator, padding and error correction are additional. Byte savings need not
+reduce the QR version.
 
-Deploy the stamper and every verifier route together. Current verifiers still
+Deploy the stamper and every verifier route together, and refresh offline copies.
+QR images from the retired post-terminator padding format are intentionally
+unsupported and must be re-sealed. The signed v3/v4 records themselves have not
+changed; existing copyable strings can still be verified or re-encoded in ordinary
+byte-mode QRs. Current verifiers still
 accept gzip/plaintext v3 and v4 records; older verifier builds reject the zlib
 flag and must be refreshed, including saved offline copies. The page-evidence
 flag similarly requires refreshing all verifier routes and offline copies; older

@@ -30,7 +30,7 @@ These scenarios describe the Windows 11 demo flow for QRed using a local FastAPI
 **When** the recipient scans that QR code with a smartphone camera
 **Then** the smartphone opens the visible bootstrap URL `https://qred.org/`
 **And** the verifier page offers a QRed-aware camera scanner, QR image selection, and issuer public-key entry.
-**And** hidden payload bytes are recovered only when the verifier scans the QR image itself, not from the smartphone camera URL handoff.
+**And** the verifier reads the separate seal QR’s ordinary binary message to recover and verify the signed document.
 
 ## Feature: Reconstruct and verify a sealed document
 
