@@ -20,6 +20,29 @@ function readSeal(image) {
 }
 
 describe("scanning rendered production PDF seals", () => {
+  it("reads the next dense signed chunk in one frame after learning a working scale", async () => {
+    const scan = createQrFrameScanner();
+    const seals = [], frames = [];
+    for (const part of [1, 2]) {
+      const image = fixture(`delivery-part-${part}-200dpi`);
+      let seal = null, attempts = 0;
+      while (!seal && attempts < 4) {
+        seal = qredPayloadFromScanResult(scan(image.data, image.width, image.height));
+        attempts++;
+      }
+      expect(seal).toBeTruthy();
+      seals.push(seal);
+      frames.push(attempts);
+    }
+    expect(seals[0]).not.toBe(seals[1]);
+    await expect(verifyQRedSeals(seals, publicKey)).resolves.toMatchObject({
+      status: "VALID", content: expect.stringContaining("Item 45: Received and inspected"),
+    });
+    // Count actual decoder frames, not wall-clock time: this is deterministic
+    // across CI machines and still exercises the real raster and QR decoder.
+    expect(frames).toEqual([2, 1]);
+  });
+
   it("recovers dense v3 grids surrounded by whitespace and verifies their corrected payloads", async () => {
     const seals = [];
     for (const part of [2, 1]) {
