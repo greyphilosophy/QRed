@@ -61,7 +61,7 @@ export function preparePhotoReadingInWorker(image, { signal } = {}) {
 
 // No frame queue: callers keep the submitted canvas unchanged until onResult
 // runs, and check busy before drawing the next camera frame into that canvas.
-export function createLiveScanWorker({ onResult, onError, returnPayload = false, requirePageQuality = false, onQuality }) {
+export function createLiveScanWorker({ onResult, onError, returnPayload = false, requirePageQuality = false, onQuality, onCaptured }) {
   let worker = null, busy = false, stopped = false;
   function reset() {
     if (worker) {
@@ -90,6 +90,13 @@ export function createLiveScanWorker({ onResult, onError, returnPayload = false,
           current.onmessage = ({ data }) => {
             if (worker !== current || stopped || !busy) return;
             if (data.error) { fail(current, new Error(data.error)); return; }
+            if (data.captured) {
+              // This is an intermediate acknowledgement, not a decoder result.
+              // Keep busy true so no newer camera frame can replace the photo.
+              try { if (data.quality) onQuality?.(data.quality); onCaptured?.(); }
+              catch (error) { fail(current, error); }
+              return;
+            }
             busy = false;
             try { if (data.quality) onQuality?.(data.quality); onResult(data.action); }
             catch (error) { fail(current, error); }

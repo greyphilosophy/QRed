@@ -9,6 +9,7 @@ export { QR_CAMERA_CONSTRAINTS, findPreferredMainCamera, getPreferredCameraStrea
 export { qrScanAction } from "./qr/decodePhoto.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
+import { photoProcessingMessage } from "./verifier/photoStatus.js";
 import "./qrScanner.css";
 
 /**
@@ -205,6 +206,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
   useEffect(() => {
     const seen = new Set();
     let captureReported = false;
+    let processingCapture = false;
     const capturedCanvas = canvasRef.current;
     let camera;
     const stopGuide = observePageScanGuide(videoRef.current, guideAreaRef.current, guideRef.current);
@@ -216,8 +218,16 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
         setQuality(quality); stopGuide.update(quality);
         if (!quality.ready && captureReported) { captureReported = false; setFeedback(null); }
       },
-      onResult: action => handleScanActionRef.current(action),
-      onError: error => { camera.stop(); setError(error.message); },
+      onCaptured: () => {
+        processingCapture = true;
+        setFeedback(photoProcessingMessage());
+        onReadingPhoto(true);
+      },
+      onResult: action => {
+        if (processingCapture) { processingCapture = false; onReadingPhoto(false); }
+        handleScanActionRef.current(action);
+      },
+      onError: error => { processingCapture = false; onReadingPhoto(false); camera.stop(); setError(error.message); },
     });
 
     handleScanActionRef.current = (scanAction) => {
@@ -275,7 +285,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       const controller = new AbortController();
       photoScanRef.current = controller;
       onReadingPhoto(true);
-      setFeedback("Reading photo… You can cancel and resume the camera.");
+      setFeedback(photoProcessingMessage());
       scanPhotoInWorker(image, { returnPayload, signal: controller.signal }).then(action => {
         if (photoScanRef.current !== controller) return;
         setFeedback(null);
@@ -289,6 +299,11 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       });
     }
     photoActionRef.current = () => {
+      if (processingCapture) {
+        processingCapture = false; liveScan.reset();
+        onReadingPhoto(false); setFeedback(null); setQuality(null);
+        return;
+      }
       if (!photoScanRef.current) { capturePhoto(); return; }
       const controller = photoScanRef.current;
       photoScanRef.current = null;
@@ -376,7 +391,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       quality && !feedback ? React.createElement("span", null, quality.message) : null,
       feedback ? React.createElement("span", null, feedback) : null,
       !quality && !feedback ? "Keep all four page corners visible. Avoid glare." : null,
-      quality?.state === "hold" ? React.createElement("progress", { className: "capture-readiness", max: 1,
+      quality?.state === "hold" && !feedback ? React.createElement("progress", { className: "capture-readiness", max: 1,
         value: quality.progress, "aria-label": "Steady hold before automatic capture" }) : null) : null,
     React.createElement("button", { className: "ar-close", onClick: onClose }, "Close")
   );

@@ -193,7 +193,13 @@ conditions, not signature verification. Retakes use the same automatic capture
 and manual fallback. Physical phone/print trials are still needed to tune the
 capture thresholds across cameras, lighting, backgrounds, and paper conditions.
 
-The 600 ms hold is only the capture-readiness delay, not total verification time.
+After the 600 ms steady-hold check, **Photo captured — processing…** appears
+before seal decoding. Recovery continues on that same retained frame, so movement
+after the message cannot change the photograph being checked. Capture can still
+be cancelled, and an unreadable seal prompts another attempt. Text recognition
+shows its reported percentage while reading; additional processing remains
+indeterminate until a result is ready. No percentage is advanced by a timer.
+The hold is only the capture-readiness delay, not total verification time.
 Document scanning tries a small watermark preview first, then keeps the larger
 and original-resolution recovery paths for difficult seals. Manual capture also
 tries an ordinary footer code before exhaustive page alignment. Image preparation

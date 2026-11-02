@@ -4,6 +4,7 @@ import { PageEvidenceVerification } from "./PageEvidenceVerification.jsx";
 import { PageCameraCapture } from "./PageCameraCapture.jsx";
 import { createPageTextChecks } from "./pageTextChecks.js";
 import { decodeSeal } from "../qredVerifier.js";
+import { photoProcessingMessage } from "./photoStatus.js";
 import "./photoTextVerification.css";
 
 const EMPTY = [];
@@ -72,7 +73,9 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
       {unscanned && <p className="photo-summary">Other pages have not been checked. You can review the pages captured so far.</p>}
       {page && <section aria-label={`Review ${pageName(page.page)}`}>
         <h3 ref={heading} tabIndex={-1}>{pageName(page.page)} <span className="photo-note">· Seal authenticated</span></h3>
-        <p className={`photo-summary ${page.state}`}>{labels[page.state]}</p>
+        <p className={`photo-summary ${page.state}`} role={page.state === "reading" ? "status" : undefined}>
+          {page.state === "reading" ? photoProcessingMessage(page.progress) : labels[page.state]}</p>
+        {page.state === "reading" && <progress max="1" value={page.progress ?? undefined} aria-label="Printed-text recognition" />}
         {page.error && <p role="alert">{page.error}</p>}
         {comparison && <>
           <div className="photo-differences">

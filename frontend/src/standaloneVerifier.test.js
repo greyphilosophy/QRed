@@ -17,6 +17,7 @@ import { createQRedQrData, createQRedQrSymbol } from "./qredQr.js";
 import { readSigningKeyFile } from "./signingKeys.js";
 import { createVerificationSession } from "./verifier/verificationSession.js";
 import { createScanPhotoCollection } from "./verifier/scanPhotos.js";
+import { photoProcessingMessage } from "./verifier/photoStatus.js";
 import { signAsync } from "@noble/ed25519";
 import { AUTH_PROVIDERS, authProvider } from "./authProviders.js";
 import { attestationMessage, pageCommitment } from "./attestation.js";
@@ -55,7 +56,7 @@ function loadStandalone(overrides = {}) {
   });
   const bindings = {
     getPreferredCameraStream, applyCameraQualityControls, authProvider, startCameraSession, observePageScanGuide, createLiveScanWorker, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
-    preparePhotoScanner: vi.fn(), scanPhotoInWorker,
+    preparePhotoScanner: vi.fn(), scanPhotoInWorker, photoProcessingMessage,
     createScanPhotoCollection: callback => createScanPhotoCollection(callback, async () => new Blob(["frame"], { type: "image/png" })),
     mountPhotoTextVerification: () => ({ update: vi.fn(), prepare: vi.fn().mockResolvedValue(), clear: vi.fn() }),
     mountPdfSealInput: () => ({ update: vi.fn() }),

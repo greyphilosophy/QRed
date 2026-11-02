@@ -364,6 +364,7 @@ describe("QrScanner manual photo capture", () => {
     expect(context.drawImage).toHaveBeenCalledTimes(liveDraws);
     fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
     expect(screen.getByRole("button", { name: "Cancel and resume camera" }).disabled).toBe(false);
+    expect(screen.getByText("Photo captured — processing…")).toBeTruthy();
     expect(createLiveScanWorker.mock.results.at(-1).value.reset).toHaveBeenCalledTimes(1);
     const canvas = document.querySelector("canvas");
     const draws = context.drawImage.mock.calls.length;

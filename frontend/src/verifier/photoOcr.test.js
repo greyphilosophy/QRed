@@ -67,6 +67,27 @@ it("labels the contrast fallback and releases its pixels after recognition", asy
   expect(copy).toEqual({ width: 0, height: 0 });
   reader.dispose();
 });
+
+it("reports first-pass recognition progress without restarting it for a recovery pass", async () => {
+  let logger;
+  const engine = worker(), progress = vi.fn();
+  engine.recognize.mockImplementationOnce(async () => {
+    logger({ status: "recognizing text", progress: .03 });
+    return { data: { blocks: [] } };
+  }).mockImplementationOnce(async () => {
+    logger({ status: "recognizing text", progress: .1 });
+    return { data: { blocks: [] } };
+  });
+  const reader = createPhotoOcrReader((...args) => {
+    logger = args[2].logger;
+    return Promise.resolve(engine);
+  }, () => ({ canvas: {}, codes: [] }));
+  await reader.read({ width: 100, height: 200 }, progress);
+  expect(progress.mock.calls.map(([event]) => event)).toEqual([
+    { status: "recognizing text", progress: .03 }, { status: "processing" }, { status: "processing" },
+  ]);
+  reader.dispose();
+});
 it("preserves readings from the original instead of replacing them with a cleaner-looking copy", async () => {
   const engine = worker(), copy = { width: 100, height: 200 };
   const reader = createPhotoOcrReader(() => Promise.resolve(engine), () => ({ canvas: copy, codes: [] }));

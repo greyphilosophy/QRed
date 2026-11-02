@@ -7,6 +7,7 @@ import { createLiveScanWorker, scanPhotoInWorker } from "../qr/photoScanClient.j
 import { observePageScanGuide } from "../qr/pageScanGuide.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { bytesEqual, qrPayloadBytes } from "../sealFormat.js";
+import { photoProcessingMessage } from "./photoStatus.js";
 
 // Match bytes from the already authenticated collection, not an untrusted page
 // number or chunk identifier supplied by the new photo.
@@ -31,9 +32,14 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
     const stopGuide = observePageScanGuide(video.current, guideArea.current, guide.current);
     live.current = createLiveScanWorker({ returnPayload: true, requirePageQuality: true,
       onQuality: value => { setQuality(value); stopGuide.update(value); },
+      onCaptured: () => { busyRef.current = true; setBusy(true); setError(""); },
       onResult: action => {
         if (action.text || action.texts?.length) acceptFrame(action, canvas, epoch);
-      }, onError: cause => setError(cause.message) });
+        else {
+          busyRef.current = false; setBusy(false);
+          if (action.message) setError(action.message);
+        }
+      }, onError: cause => { busyRef.current = false; setBusy(false); setError(cause.message); } });
     camera.current = startCameraSession({ video: video.current, requestStream: getPreferredCameraStream,
       prepareStream: applyCameraQualityControls,
       onFrame: () => {
@@ -107,7 +113,7 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
       </div></div></div>
     {!busy && quality && <p role="status">{quality.message}</p>}
     {!busy && quality?.state === "hold" && <progress className="capture-readiness" max="1" value={quality.progress} aria-label="Steady hold before automatic capture" />}
-    {busy && <p role="status">Checking the page seal…</p>}
+    {busy && <p role="status">{photoProcessingMessage()}</p>}
     {error && <p role="alert">{error}</p>}
     <div className="photo-actions"><button type="button" disabled={!ready || busy} onClick={capture}>Capture now</button>
       <button type="button" onClick={onClose}>Cancel retake</button></div>

@@ -44,7 +44,7 @@ export function createPageTextChecks({ reader = createPhotoOcrReader(), open = o
     if (!record) return;
     if (!ready) { prepare().catch(() => {}); return; }
     const current = { kind: "read", record };
-    job = current; record.state = "reading"; publish();
+    job = current; record.state = "reading"; record.progress = null; publish();
     const valid = () => job === current && records.get(record.id) === record && !disposed;
     (async () => {
       let canvas;
@@ -52,12 +52,19 @@ export function createPageTextChecks({ reader = createPhotoOcrReader(), open = o
         canvas = await open(record.file);
         if (!valid()) return;
         current.canvas = canvas;
-        const words = await reader.read(canvas, () => {});
+        const words = await reader.read(canvas, event => {
+          if (!valid()) return;
+          const progress = event.status === "recognizing text" && Number.isFinite(event.progress)
+            && event.progress >= 0 && event.progress < 1 ? event.progress : null;
+          if (record.progress === progress) return;
+          record.progress = progress; publish();
+        });
         if (!valid()) return;
         record.comparison = comparePageReading(record.page.content, words, canvas);
         record.width = canvas.width; record.height = canvas.height;
         record.url = createUrl(record.file);
         record.state = record.comparison.status;
+        record.progress = null;
       } catch (cause) {
         if (valid()) { record.state = "error"; record.error = `Could not read this page. ${cause.message}`; }
       } finally {

@@ -93,6 +93,22 @@ it("invalidates a superseded retake even when its previous OCR finishes late", a
   checks.dispose();
 });
 
+it("discards progress from a cancelled reading", async () => {
+  const { checks, reader } = setup(), pending = deferred();
+  reader.read.mockReturnValueOnce(pending.promise);
+  checks.update([page("one", 1)], [photo(1, "one")]);
+  await vi.waitFor(() => expect(reader.read).toHaveBeenCalled());
+  const report = reader.read.mock.calls[0][1];
+  report({ status: "recognizing text", progress: .3 });
+  expect(checks.getSnapshot().pages[0].progress).toBe(.3);
+  checks.clear();
+  report({ status: "recognizing text", progress: .8 });
+  expect(checks.getSnapshot().pages).toEqual([]);
+  pending.resolve([word("Friday")]);
+  await pending.promise;
+  checks.dispose();
+});
+
 it("stops on a failed engine load and retries only when requested", async () => {
   const { checks, reader } = setup();
   reader.prepare.mockRejectedValueOnce(new Error("Offline"));

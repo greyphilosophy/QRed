@@ -32,6 +32,26 @@ it("checks all captured pages without extra clicks and opens page 2's changed wo
   expect(screen.getByRole("region", { name: "Review Page 1 of 2" })).toBeTruthy();
   expect(ocr.read).toHaveBeenCalledTimes(2);
 });
+
+it("shows reported processing progress without claiming completion before the comparison", async () => {
+  let report, finish;
+  ocr.read.mockImplementation((_, onProgress) => {
+    report = onProgress;
+    return new Promise(resolve => { finish = resolve; });
+  });
+  render(<PhotoTextVerification results={[page]} scanPhotos={[capture(1, "first", "Monday")]} />);
+  await waitFor(() => expect(report).toBeTypeOf("function"));
+  expect(screen.getByText("Photo captured — processing…")).toBeTruthy();
+  act(() => report({ status: "recognizing text", progress: .03 }));
+  expect(screen.getByText("Photo captured — processing 3% completed")).toBeTruthy();
+  expect(screen.getByRole("progressbar", { name: "Printed-text recognition" }).value).toBe(.03);
+  act(() => report({ status: "recognizing text", progress: 1 }));
+  expect(screen.getByText("Photo captured — processing…")).toBeTruthy();
+  expect(screen.getByRole("progressbar").hasAttribute("value")).toBe(false);
+  await act(async () => finish([word("Monday")]));
+  expect(screen.queryByRole("progressbar")).toBeNull();
+  expect(screen.getAllByText("Differences found — review the marked text").length).toBeGreaterThan(0);
+});
 it("opens a later difference ahead of an earlier uncertain reading", async () => {
   ocr.read.mockImplementation(async canvas => [{ ...word(canvas.text), confidence: canvas.text === "Friday" ? 70 : 99 }]);
   render(<PhotoTextVerification results={[page, other]} scanPhotos={[capture(1, "first", "Friday"), capture(2, "second", "Monday")]} />);

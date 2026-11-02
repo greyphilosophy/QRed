@@ -43,11 +43,18 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
 
   return {
     prepare,
-    async read(canvas, onProgress) {
-      const current = await prepare(onProgress);
+    async read(canvas, onProgress = () => {}) {
+      let pass = 0;
+      const current = await prepare(event => {
+        // Only the first whole-page reading has a useful percentage. Recovery
+        // and caption passes are additional work, not a restart of page progress.
+        if (pass === 1) onProgress(event);
+      });
       // The signed text is deliberately never supplied to the recognition engine.
       const recognize = async image => {
+        pass++;
         const { data } = await current.recognize(image, {}, { text: true, blocks: true });
+        onProgress({ status: "processing" });
         return (data.blocks || []).flatMap(block => (block.paragraphs || [])
           .flatMap(paragraph => (paragraph.lines || []).flatMap(line => line.words || [])))
           .map(({ text, confidence, bbox }) => ({ text, confidence, bbox }));

@@ -112,6 +112,24 @@ it("requests quality checks on the submitted frame and reports guidance before i
   live.stop();
 });
 
+it("acknowledges capture without releasing the frozen frame, and ignores a cancelled acknowledgement", () => {
+  const onCaptured = vi.fn(), onResult = vi.fn(), onQuality = vi.fn();
+  const live = createLiveScanWorker({ onCaptured, onResult, onQuality, onError: vi.fn(), requirePageQuality: true });
+  live.scan(image());
+  const receive = worker.onmessage, quality = { ready: true, state: "ready" };
+  receive({ data: { captured: true, quality } });
+  expect(onCaptured).toHaveBeenCalledTimes(1);
+  expect(onQuality).toHaveBeenCalledWith(quality);
+  expect(onResult).not.toHaveBeenCalled();
+  expect(live.busy).toBe(true);
+  expect(live.scan(image())).toBe(false);
+  live.reset();
+  receive({ data: { captured: true, quality } });
+  receive({ data: { action: { status: "found", text: "late" } } });
+  expect(onCaptured).toHaveBeenCalledTimes(1);
+  expect(onResult).not.toHaveBeenCalled();
+});
+
 it("stops a live session permanently and ignores its queued result", () => {
   const onResult = vi.fn();
   const live = createLiveScanWorker({ onResult, onError: vi.fn() });
