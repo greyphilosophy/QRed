@@ -15,8 +15,8 @@ def test_mobile_shows_scan_and_stamp_without_scrolling(page, width, height):
     page.set_viewport_size({"width": width, "height": height})
     page.goto(BASE_URL)
 
-    expect(page.get_by_role("heading", name="Scan a QRed seal")).to_be_visible()
-    scan = page.get_by_role("button", name="Start scanning")
+    expect(page.get_by_role("heading", name="Check a printed document")).to_be_visible()
+    scan = page.get_by_role("button", name="Check document")
     stamp = page.get_by_role("button", name="Open PDF stamping tool")
     expect(scan).to_be_visible()
     expect(stamp).to_be_visible()
@@ -42,7 +42,7 @@ def test_mobile_shows_scan_and_stamp_without_scrolling(page, width, height):
 def test_desktop_keeps_scan_and_stamp_side_by_side(page):
     page.set_viewport_size({"width": 1280, "height": 800})
     page.goto(BASE_URL)
-    scan = page.get_by_role("button", name="Start scanning")
+    scan = page.get_by_role("button", name="Check document")
     stamp = page.get_by_role("button", name="Open PDF stamping tool")
     expect(scan).to_be_visible()
     expect(stamp).to_be_visible()

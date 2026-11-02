@@ -1,12 +1,27 @@
 .photo-check { margin: 1.5rem auto; padding: 1.25rem; border: 1px solid #cbd5e1; border-radius: 12px; background: #fff; color: #172033; max-width: 780px; text-align: left; white-space: normal; }
+.page-check-list { display: grid; gap: .65rem; padding: 0; list-style: none; }
+.photo-check .page-check-status { display: grid; gap: .3rem; width: 100%; text-align: left; background: #f1f5f9; color: #172033; border: 2px solid #cbd5e1; margin: 0; }
+.photo-check .page-check-status[aria-pressed=true] { border-color: #2563eb; }
+.page-check-status span { font-size: .9rem; }
+.page-check-status.matches { border-left: 6px solid #15803d; }
+.page-check-status.differences, .page-check-status.uncertain { border-left: 6px solid #b45309; }
+.difference-crop { display: block; width: 100%; max-height: 180px; margin-top: .6rem; background: white; border: 1px solid #cbd5e1; }
+.page-camera-backdrop { position: fixed; inset: 0; background: #0f172ae6; z-index: 100; padding: 1rem; overflow: auto; }
+.page-camera { max-width: 600px; margin: auto; padding: 1rem; background: white; border-radius: 12px; }
+.page-camera video { width: 100%; max-height: 60dvh; background: #0f172a; }
+.verification-actions { display: flex; justify-content: flex-end; }
+.verification-actions button { min-height: 44px; padding: .6rem 1rem; font: inherit; border: 1px solid #94a3b8; border-radius: 8px; background: #f1f5f9; color: #172033; cursor: pointer; }
+.verification-details summary { cursor: pointer; min-height: 44px; padding: .7rem 0; }
+.photo-check button:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
 .photo-check h2 { font-size: 1.25rem; margin: 0 0 .75rem; }
 .photo-check h3 { margin: 1rem 0 .5rem; }
 .photo-check p { line-height: 1.5; margin: .7rem 0; }
 .photo-check label { display: block; margin: .7rem 0 .3rem; font-weight: 600; }
-.photo-check select, .photo-check input[type=file] { box-sizing: border-box; width: 100%; padding: .5rem; border: 1px solid #94a3b8; border-radius: 5px; background: #fff; color: #172033; font: inherit; }
+.photo-check select, .photo-check input[type=file] { box-sizing: border-box; width: 100%; min-height: 44px; padding: .5rem; border: 1px solid #94a3b8; border-radius: 5px; background: #fff; color: #172033; font: inherit; }
 .photo-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; margin: .75rem 0; }
 .photo-check .photo-actions button { margin: 0; font-size: .9rem; }
-.photo-check button { margin: 0; padding: .6rem .8rem; background: #334155; color: #fff; border: 0; border-radius: 6px; font: inherit; cursor: pointer; }
+.photo-check button { margin: 0; min-height: 44px; padding: .6rem .8rem; background: #334155; color: #fff; border: 0; border-radius: 6px; font: inherit; cursor: pointer; }
+.photo-check summary { min-height: 44px; padding: .7rem 0; cursor: pointer; }
 .photo-check button:disabled { opacity: .5; cursor: default; }
 .photo-check .photo-inline { display: inline-flex; align-items: center; gap: .4rem; margin: 0; font-size: .9rem; }
 .photo-check .photo-inline input { width: auto; }

@@ -57,7 +57,7 @@ function loadStandalone(overrides = {}) {
     getPreferredCameraStream, applyCameraQualityControls, authProvider, startCameraSession, observePageScanGuide, createLiveScanWorker, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
     preparePhotoScanner: vi.fn(),
     createScanPhotoCollection: callback => createScanPhotoCollection(callback, async () => new Blob(["frame"], { type: "image/png" })),
-    mountPhotoTextVerification: () => ({ update: vi.fn() }),
+    mountPhotoTextVerification: () => ({ update: vi.fn(), prepare: vi.fn().mockResolvedValue(), clear: vi.fn() }),
     mountPdfSealInput: () => ({ update: vi.fn() }),
     ...overrides,
   };
@@ -86,7 +86,7 @@ it.each(Object.keys(AUTH_PROVIDERS))("shows an authenticated %s identity and ser
   expect(document.getElementById("issuerKeyControls").hidden).toBe(true);
   await window.__qredTestVerify(seals, "");
   expect(document.getElementById("issuerKeyControls").hidden).toBe(true);
-  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
+  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("Seal authenticated"));
   const details = document.getElementById("resultMeta");
   expect(details.textContent).toContain("alice@gmail.com");
   expect(details.textContent).toContain("Account authenticated through " + authProvider(provider).label);
@@ -108,11 +108,11 @@ it("opens a saved issuer key in the standalone verifier and rejects invalid file
   expect(document.getElementById("issuerKeyControls").hidden).toBe(false);
   const picker = document.getElementById("publicKeyFileInput");
   fireEvent.change(picker, { target: { files: [{ name: "qred-ed25519-public-key.txt", size: 45, text: async () => publicKey + "\n" }] } });
-  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
+  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("Seal authenticated"));
   fireEvent.change(picker, { target: { files: [{ name: "key.txt", size: 3, text: async () => "bad" }] } });
   await waitFor(() => expect(document.getElementById("publicKeyFileStatus").textContent).toContain("Key import failed"));
   await window.__qredTestVerify(seals);
-  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
+  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("Seal authenticated"));
   expect(document.getElementById("resultContent").textContent).toBe("Standalone imported key");
   expect(fetch).not.toHaveBeenCalled();
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ clearRect() {} });
@@ -141,7 +141,7 @@ it("the standalone camera recovers standard byte payloads before verifying and r
   fireEvent.click(document.getElementById("btnScan"));
   await waitFor(() => expect(typeof video.onloadedmetadata).toBe("function"));
   video.onloadedmetadata();
-  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
+  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("Seal authenticated"));
   expect(document.getElementById("resultContent").textContent).toBe("Standalone camera document");
   expect(document.getElementById("resultMeta").textContent).toContain(timestamp);
   expect(document.getElementById("resultMeta").querySelector("img")).toBeNull();
@@ -185,7 +185,7 @@ it("the standalone camera yields between retries and ignores a retired padding p
   }
   expect(document.getElementById("resultStatus").textContent).toBe("");
   expect(document.getElementById("resultContent").textContent).not.toContain("QRED1?");
-  expect(document.getElementById("btnScan").textContent).toBe("Stop");
+  expect(document.getElementById("btnScan").textContent).toBe("Review captured pages");
 });
 
 it.each([
@@ -235,7 +235,7 @@ it.each([
     await Promise.resolve();
   }
   expect(document.querySelectorAll(".seal-item")).toHaveLength(2);
-  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
+  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("Seal authenticated"));
   expect(document.getElementById("resultContent").textContent).toBe("A".repeat(3000));
   expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
   expect(stop).toHaveBeenCalledTimes(1);
@@ -270,9 +270,9 @@ it("collects a page-aligned batch from one live camera frame", async () => {
   fireEvent.click(document.getElementById("btnScan"));
   await waitFor(() => expect(typeof video.onloadedmetadata).toBe("function"));
   video.onloadedmetadata();
-  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
+  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("Seal authenticated"));
   expect(document.getElementById("resultContent").textContent).toBe(content);
   expect(document.querySelectorAll(".seal-item")).toHaveLength(4);
-  expect(snapshot).toHaveBeenCalledTimes(4);
+  expect(snapshot).toHaveBeenCalledTimes(1);
   for (const [source] of snapshot.mock.calls) expect(source).toBe(document.getElementById("scanCanvas"));
 });

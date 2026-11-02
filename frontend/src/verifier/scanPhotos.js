@@ -26,7 +26,7 @@ export function snapshotScanPhoto(source) {
   }, "image/png"));
 }
 
-/** Session-only images, associated by seal group/chunk rather than scan order.
+/** Session-only images, associated by signed page rather than scan order.
  * No OCR or trust decision happens here; only verified pages can use an image.
  */
 export function createScanPhotoCollection(onChange, snapshot = snapshotScanPhoto) {
@@ -37,10 +37,10 @@ export function createScanPhotoCollection(onChange, snapshot = snapshotScanPhoto
     async capture(seal, source, { replace = false } = {}) {
       const decoded = decodeSeal(seal);
       if (!decoded || !source?.width || !source?.height) return;
-      const key = `${decoded.document_id}:${decoded.chunk_number}`;
+      const key = decoded.document_id; // One full-page capture per page, including multipart seals.
       if (!replace && (pending.has(key) || photos.some(photo => photo.key === key))) return;
       if (!pending.has(key) && pending.size >= MAX_PENDING_PHOTOS) {
-        notice = "Some scan images could not be kept. You can take or choose a page photo below.";
+        notice = "Some scan images could not be kept. Retake any unchecked page below.";
         publish();
         return;
       }
@@ -62,16 +62,30 @@ export function createScanPhotoCollection(onChange, snapshot = snapshotScanPhoto
         while (photos.length > MAX_SCAN_PHOTOS || bytes > MAX_SCAN_PHOTO_BYTES) {
           bytes -= photos[0].file.size;
           photos = photos.slice(1);
-          notice = "Older scan images were released to save memory. You can take or choose another page photo.";
+          notice = "Older scan images were released to save memory. Retake any unchecked page below.";
         }
         publish();
       } catch {
         if (epoch !== generation || pending.get(key) !== id) return;
-        notice = "A scan image could not be kept. The seal is still collected; take or choose a page photo below.";
+        notice = "A scan image could not be kept. The seal is still collected; retake this page below.";
         publish();
       } finally {
         if (pending.get(key) === id) pending.delete(key);
       }
+    },
+    replacePage(documentId, file) {
+      if (!file?.size || file.size > MAX_SCAN_PHOTO_BYTES) {
+        notice = "This image is too large. Retake the page."; publish(); return;
+      }
+      pending.delete(documentId);
+      photos = photos.filter(photo => photo.documentId !== documentId);
+      photos.push({ id: ++sequence, key: documentId, documentId, chunkNumber: 0, file });
+      let bytes = photos.reduce((sum, photo) => sum + photo.file.size, 0);
+      while (photos.length > MAX_SCAN_PHOTOS || bytes > MAX_SCAN_PHOTO_BYTES) {
+        bytes -= photos[0].file.size; photos = photos.slice(1);
+        notice = "Older scan images were released to save memory. Retake any unchecked page.";
+      }
+      publish();
     },
     clear() {
       generation += 1;

@@ -10,6 +10,11 @@ function App() {
   const stampSection = useRef(null);
   const stampHeading = useRef(null);
   const verification = useSealVerification();
+  useEffect(() => {
+    if (verification.progress?.finished && !verification.scanning) {
+      document.getElementById("document-check")?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    }
+  }, [verification.progress?.finished, verification.scanning]);
 
   function scrollToStampTool() {
     const section = stampSection.current;
@@ -35,12 +40,14 @@ function App() {
       <QrScanner
         key={verification.session}
         returnPayload
+        beforeScan={() => verification.textChecks.prepare()}
+        onScanningChange={verification.setScanning}
         collectSeals
         collectionProgress={verification.progress}
         onSealDetected={verification.addSeal}
         onOpenPdfStampTool={openPdfStampTool}
         pdfStampToolOpen={showPdfStampTool}
-        resultPanel={<div className="ar-result-panel"><h2>QR captured</h2><p>{verification.progress?.message || "See verification results below."}</p></div>}
+        resultPanel={<div className="ar-result-panel"><h2>Pages captured</h2><p>{verification.progress?.message}</p><button onClick={() => document.getElementById("document-check")?.scrollIntoView({ behavior: "smooth" })}>Review page checks</button></div>}
       />
       <SealVerification verification={verification} />
       {showPdfStampTool && (

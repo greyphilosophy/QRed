@@ -16,6 +16,14 @@
 .ar-camera .page-scan-guide-area { inset: 5rem 1.25rem 11rem; }
 .ar-display-scanning .ar-scan-feedback { width: min(86vw, 560px); }
 
+.homepage .ar-display-result { min-height: 0; max-width: 780px; margin: 0 auto; padding: 1rem; display: grid; gap: 1rem; }
+.ar-display-result .ar-result-panel { position: static; transform: none; width: 100%; max-height: none; padding: 1rem; }
+.ar-display-result .ar-controls { position: static; transform: none; width: 100%; border-radius: 20px; }
+.ar-display .ar-button { font: inherit; font-weight: 600; cursor: pointer; }
+.ar-display .ar-button-primary { background: #f8fafc; border: 1px solid #f8fafc; color: #0f172a; }
+.ar-display .ar-button-secondary { color: #f8fafc; border: 1px solid #94a3b8; }
+.ar-result-panel button { min-height: 44px; margin-top: .75rem; padding: .6rem 1rem; font: inherit; border: 1px solid #94a3b8; border-radius: 8px; background: #f8fafc; color: #0f172a; cursor: pointer; }
+
 .ar-close {
   color: white;
   border: 1px solid rgba(255, 255, 255, .3);

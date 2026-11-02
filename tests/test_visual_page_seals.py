@@ -10,7 +10,7 @@ import subprocess
 import pytest
 from PIL import Image, ImageDraw
 from playwright.sync_api import expect
-from browser_helpers import OfflineNetworkGuard, stamp_and_save, wait_for_offline_resources
+from browser_helpers import show_seal_details, show_file_inputs, prepare_text_for_offline, OfflineNetworkGuard, stamp_and_save, wait_for_offline_resources
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
@@ -68,6 +68,7 @@ def test_load_pdf_seals_on_both_verifiers_offline(browser, tmp_path, path):
         seal(page, buffer.getvalue(), stamped)
         expect(page.locator("#stamp-result")).not_to_contain_text("Clear footer added")
         page.goto(base + path, wait_until="networkidle")
+        show_file_inputs(page)
         picker = page.get_by_label("Open PDF to verify", exact=True)
         status = page.locator(".pdf-seal-input [role=status]")
         picker.set_input_files(source)
@@ -80,17 +81,18 @@ def test_load_pdf_seals_on_both_verifiers_offline(browser, tmp_path, path):
         results = page.locator(".verification-card .verification-result" if path == "/" else "#resultContent .verification-result")
         expect(results).to_have_count(2)
         for index in range(2):
-            expect(results.nth(index)).to_contain_text("VALID", timeout=30000)
+            expect(results.nth(index)).to_contain_text("Seal authenticated", timeout=30000)
             expect(results.nth(index)).to_contain_text(f"PDF verification example - page {index + 1} of 2")
         wait_for_offline_resources(page, pdf=True)
-        page.get_by_role("button", name="Clear collected seals" if path == "/" else "New Scan", exact=True).click()
+        page.get_by_role("button", name="Finish & clear", exact=True).click()
         expect(status).to_have_count(0)
+        prepare_text_for_offline(page)
         guard.block()
         picker.set_input_files(stamped)
         expect(status).to_have_text("Found 2 QRed seals across 2 of 2 PDF pages.", timeout=90000)
         expect(results).to_have_count(2)
         for index in range(2):
-            expect(results.nth(index)).to_contain_text("VALID", timeout=30000)
+            expect(results.nth(index)).to_contain_text("Seal authenticated", timeout=30000)
         progress = page.locator(".verification-card .collection-progress" if path == "/" else "#resultMeta .collection-progress")
         expect(progress).to_have_text("All 2 pages collected.")
         guard.assert_quiet()
@@ -140,12 +142,14 @@ def test_text_invoice_with_raster_logos_keeps_watermarks(page, tmp_path, logo_lo
             photo = Image.new("RGB", (image.width + 80, image.height + 80), (55, 55, 55))
             photo.paste(image.convert("RGB"), (40, 40))
         photo.save(printed)
+        show_file_inputs(page)
         page.get_by_label("Choose QR image", exact=True).set_input_files(printed)
         if number == 2:
             page.get_by_label("Open issuer public key file", exact=True).set_input_files({
                 "name": "public-key.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode(),
             })
-            expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=30000)
+            show_seal_details(page)
+            expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_be_visible(timeout=30000)
     expect(page.locator(".verification-card .collection-progress")).to_have_text("All 2 pages collected.", timeout=30000)
     results = page.locator(".verification-card .verification-result")
     expect(results).to_have_count(2)
@@ -177,6 +181,7 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
         # Each sealing run creates a fresh PDF worker. Wait for the real
         # offline cache to contain it; an earlier download alone isn't enough.
         wait_for_offline_resources(page, pdf=True)
+        prepare_text_for_offline(page)
         guard.block()
         again = seal(page, synthetic_page(blank), tmp_path / "offline-sealed.pdf")
         assert again["evidence"] == result["evidence"]
@@ -188,13 +193,16 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
         footer = printed.crop((0, 1584, 1224, 2016))
         footer.save(tmp_path / "seal.png")
         page.goto(base + path, wait_until="networkidle")
+        prepare_text_for_offline(page)
         guard.block()
         if path == "/":
+            show_file_inputs(page)
             page.get_by_label("Choose QR image", exact=True).set_input_files(tmp_path / "seal.png")
             page.get_by_label("Open issuer public key file", exact=True).set_input_files({
                 "name": "public-key.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode(),
             })
-            expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible()
+            show_seal_details(page)
+            expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_be_visible()
         else:
             page.locator("#publicKeyFileInput").set_input_files({
                 "name": "public-key.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode(),
@@ -209,8 +217,8 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
                 navigator.mediaDevices.enumerateDevices = async () => [];
                 window.__syntheticCameraFrame = frame;
             }""", camera_image)
-            page.get_by_role("button", name="Scan QR Code", exact=True).click()
-            expect(page.locator("#resultStatus")).to_have_text("VALID", timeout=30000)
+            page.get_by_role("button", name="Check document", exact=True).click()
+            expect(page.locator("#resultStatus")).to_have_text("Seal authenticated", timeout=30000)
         reference = page.get_by_role("region", name="Signed page reference", exact=True)
         expect(reference).to_be_visible()
         expect(page.get_by_role("button", name="Load text recognition", exact=True)).to_have_count(0)
@@ -221,7 +229,17 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
             expect(thumbnail).to_be_visible()
             values = thumbnail.evaluate("el => Array.from(el.getContext('2d').getImageData(0,0,el.width,el.height).data)")
             assert min(values[::4]) == 0 and max(values[::4]) == 255
-        reference.get_by_label("Choose visual comparison photo", exact=True).set_input_files(tmp_path / "printed.png")
+        full_page = "data:image/png;base64," + base64.b64encode((tmp_path / "printed.png").read_bytes()).decode()
+        page.evaluate("""async url => {
+            const image = new Image(); image.src = url; await image.decode();
+            const frame = document.createElement('canvas'); frame.width = image.width; frame.height = image.height;
+            frame.getContext('2d').drawImage(image, 0, 0);
+            navigator.mediaDevices.getUserMedia = async () => frame.captureStream(15);
+            navigator.mediaDevices.enumerateDevices = async () => [];
+            setInterval(() => frame.getContext('2d').drawImage(image, 0, 0), 100);
+        }""", full_page)
+        reference.get_by_role("button", name="Retake this page for visual review", exact=True).click()
+        page.get_by_role("dialog").get_by_role("button", name="Use this view").click()
         photo = reference.get_by_role("img", name="Page photo beside the signed visual reference")
         # The earlier QR-only scan is 432 px tall; wait for the user's full-page
         # replacement to finish decoding rather than observing the first image.

@@ -16,16 +16,20 @@ import "./qrScanner.css";
  * display its raw contents.
  *
  * Three states:
- * 1. Idle — shows the AR viewport and "Start scanning" button (user-initiated camera access)
+ * 1. Idle — prepares text checking, then opens the camera on user request
  * 2. Scanning — camera feed + worker decoding; collection mode waits for all pages
- * 3. Result — displays the scanned QR text, "New scan" resumes scanning
+ * 3. Result — shows collection progress and can resume scanning
  */
 export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSealDetected, returnPayload = false, resultPanel,
-  collectSeals = false, collectionProgress }) {
+  collectSeals = false, collectionProgress, beforeScan, onScanningChange }) {
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
   const [captureRequest, setCaptureRequest] = useState(0);
   const [readingPhoto, setReadingPhoto] = useState(false);
+  const [preparing, setPreparing] = useState(false), [preparationError, setPreparationError] = useState("");
+  const startGeneration = useRef(0);
+  useEffect(() => () => { startGeneration.current++; }, []);
+  useEffect(() => { onScanningChange?.(mode === "scanning"); }, [mode, onScanningChange]);
   const handleScan = useCallback((text, frame) => {
     onSealDetected?.(text, frame);
     setScannedText(text);
@@ -39,21 +43,36 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
       && collectionProgress.activeSeal === scannedText) setMode("result");
   }, [mode, scannedText, collectionProgress]);
 
-  const scanButtonLabel = mode === "scanning" ? (readingPhoto ? "Cancel and resume camera" : "Capture photo") : mode === "result" ? "Scan again" : "Start scanning";
+  const scanButtonLabel = preparing ? "Preparing check…" : mode === "scanning" ? (readingPhoto ? "Cancel and resume camera" : "Capture page") : mode === "result" ? "Scan more pages" : "Check document";
   const controls = React.createElement("div", { className: "ar-controls" },
     React.createElement("button", {
       className: "ar-button ar-button-primary",
-      onClick: () => {
+      disabled: preparing,
+      onClick: async () => {
         if (mode === "scanning") {
           setCaptureRequest((request) => request + 1);
           return;
+        }
+        const generation = ++startGeneration.current;
+        if (beforeScan) {
+          setPreparing(true); setPreparationError("");
+          try { await beforeScan(); }
+          catch (error) { if (generation === startGeneration.current) { setPreparing(false); setPreparationError(error.message); } return; }
+          if (generation !== startGeneration.current) return;
+          setPreparing(false);
         }
         setScannedText(null);
         setCaptureRequest(0);
         setMode("scanning");
       },
     }, scanButtonLabel),
-    onOpenPdfStampTool ? React.createElement("button", {
+    mode === "scanning" && collectSeals ? React.createElement("button", {
+      className: "ar-button ar-button-secondary", onClick: () => {
+        setMode("result");
+        document.getElementById("document-check")?.scrollIntoView({ behavior: "smooth" });
+      },
+    }, "Review captured pages") : null,
+    onOpenPdfStampTool && mode !== "scanning" ? React.createElement("button", {
       "aria-label": "Open PDF stamping tool",
       "aria-controls": "pdf-stamp-tool",
       "aria-expanded": pdfStampToolOpen,
@@ -97,8 +116,9 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
       ),
       React.createElement("div", { className: "ar-copy" },
         React.createElement("p", { className: "eyebrow" }, "QRed AR verifier"),
-        React.createElement("h1", null, "Scan a QRed seal"),
-        React.createElement("p", null, "Point your camera at a QR seal or pale page watermark. Include the whole page when possible.")
+        React.createElement("h1", null, "Check a printed document"),
+        React.createElement("p", null, "Frame each whole page. QRed checks the seal and helps you find changed text."),
+        preparationError ? React.createElement("p", { role: "alert" }, preparationError + " Try Check document again while connected.") : null
       )
     ),
     controls
@@ -123,7 +143,7 @@ export function manualCapturePendingAction(startedAt, now = performance.now()) {
   if (now - startedAt < MANUAL_CAPTURE_PENDING_TIMEOUT_MS) return null;
   return {
     status: "feedback",
-    message: "The camera is open, but this browser is not delivering photo frames yet. Wait a moment, then try Capture photo again; if this keeps happening, close and reopen the scanner or check camera permissions.",
+    message: "The camera is open, but this browser is not delivering photo frames yet. Wait a moment, then try Capture page again; if this keeps happening, close and reopen the scanner or check camera permissions.",
   };
 }
 
@@ -176,6 +196,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
 
   useEffect(() => {
     const seen = new Set();
+    const capturedCanvas = canvasRef.current;
     let camera;
     const stopGuide = observePageScanGuide(videoRef.current, guideAreaRef.current, guideRef.current);
     preparePhotoScanner();
@@ -301,6 +322,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       onReadingPhoto(false);
       camera.stop();
       liveScan.stop();
+      if (capturedCanvas) capturedCanvas.width = capturedCanvas.height = 0;
       stopGuide();
     };
   }, [onScan, returnPayload, onReadingPhoto]);

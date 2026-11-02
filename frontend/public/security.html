@@ -21,7 +21,7 @@
   <p class="kicker">System design & due diligence</p>
   <h1>Security & Architecture</h1>
   <p class="lead">Data flows, trust boundaries, offline capability, and limitations for organizational security reviews.</p>
-  <p class="meta">Last updated: November 1, 2026</p>
+  <p class="meta">Last updated: November 2, 2026</p>
   
 <div class="note"><p><strong>Architecture overview, not an audit:</strong> this is a logical diagram of the current open-source implementation, not a guarantee about every network packet, a penetration-test report, a security certification, or approval to process CJI.</p></div>
 <section aria-labelledby="s1"><h2 id="s1">1. Logical network and data-flow diagram</h2>
@@ -30,6 +30,7 @@
   <figcaption>High-level logical flows. <a href="/qred-network-data-flow.svg">Open or save the full-size SVG diagram</a> for a security review. The diagram includes optional online traffic; offline verification is possible when needed resources and trust anchors are already present.</figcaption>
 </figure>
 <h3>Trust boundaries</h3>
+<p><strong>Verification capture lifecycle:</strong> whole-page camera frames are used temporarily for seal recovery and text comparison. Retakes replace prior frames. Finish &amp; clear cancels ongoing work, releases image and text references, and stops capture. QRed does not persist document images or recognized/signed text in browser storage, save them to the photo library, or upload them. Public software/OCR assets may be cached. This application-level cleanup cannot promise forensic erasure by the device or browser.</p>
 <p><strong>User-controlled device:</strong> original PDF files, camera photos, extracted text, signing keys, and the sealed output are handled in the browser by the current document workflow. Device security and any downloads or onward sharing are the user's responsibility.</p>
 <p><strong>QRed's Cloudflare deployment:</strong> serves application resources and exposes a small Worker API for public configuration, key information, sign-in, and account-backed attestations. Its authority signing seed is a configured Worker secret and is not returned to browsers.</p>
 <p><strong>External identity providers:</strong> Google, Microsoft, and Amazon handle sign-in under their own systems. These providers do not receive the original document or its page commitments from QRed's sign-in requests.</p>
