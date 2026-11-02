@@ -188,9 +188,15 @@ it("the standalone camera yields between retries and ignores a retired padding p
   expect(document.getElementById("btnScan").textContent).toBe("Stop");
 });
 
-it("keeps one camera session for multipart seals and resolves the default key after reconstruction", async () => {
+it.each([
+  { name: "immediate recovery", timestamp: "2026-11-02T05:54:27.000Z" },
+  { name: "recovery after a missed frame", timestamp: "2026-10-20T17:55:14.123Z" },
+])("keeps one camera session for multipart seals and resolves the default key after reconstruction ($name)", async ({ timestamp }) => {
   vi.stubGlobal("crypto", webcrypto);
-  const sealed = await createQRedSeals({ content: "A".repeat(3000), encodingStrategy: "plaintext", privateKey, publicKey });
+  // Fix the signed bytes: a wall-clock timestamp changes the QR pattern and
+  // can change which rescaled frame decodes successfully after a duplicate.
+  const sealed = await createQRedSeals({ content: "A".repeat(3000), encodingStrategy: "plaintext",
+    timestamp, privateKey, publicKey });
   expect(sealed.seals).toHaveLength(2);
   const frames = sealed.seals.map(seal => raster(createQRedQrSymbol(seal)));
   let frame = frames[1], nextFrame, now = 1000;
@@ -202,7 +208,8 @@ it("keeps one camera session for multipart seals and resolves the default key af
   Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: {
     getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop }] }),
   } });
-  loadStandalone();
+  const scan = vi.fn(createQrFrameScanner());
+  loadStandalone({ createQrFrameScanner: () => scan });
   const video = document.getElementById("cameraVideo");
   Object.defineProperties(video, { videoWidth: { value: frame.width }, videoHeight: { value: frame.height } });
   vi.spyOn(video, "play").mockResolvedValue();
@@ -217,7 +224,17 @@ it("keeps one camera session for multipart seals and resolves the default key af
   expect(document.querySelectorAll(".seal-item")).toHaveLength(1);
   expect(stop).not.toHaveBeenCalled();
   expect(fetch).not.toHaveBeenCalled();
-  frame = frames[0]; now += 125; nextFrame();
+  frame = frames[0];
+  // The real camera continues supplying fresh frames after a miss. Exercise
+  // that bounded fallback instead of stopping the simulated camera after one
+  // attempt and waiting for a result that can no longer arrive.
+  for (let retry = 0; retry < 4 && document.querySelectorAll(".seal-item").length < 2; retry++) {
+    const callsBefore = scan.mock.calls.length;
+    now += 125; nextFrame();
+    expect(scan).toHaveBeenCalledTimes(callsBefore + 1);
+    await Promise.resolve();
+  }
+  expect(document.querySelectorAll(".seal-item")).toHaveLength(2);
   await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("VALID"));
   expect(document.getElementById("resultContent").textContent).toBe("A".repeat(3000));
   expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
