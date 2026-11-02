@@ -470,7 +470,9 @@ describe("decodeCanvasFrame", () => {
     ctx.getImageData.mockReturnValue({ data: new Uint8ClampedArray(320 * 240 * 4).fill(255) });
     expect(decodeCanvasFrame(video, canvas, { scanQrFrame, returnPayload: true }))
       .toEqual({ status: "continue" });
-    expect(scanPageAlignedImage).toHaveBeenCalledTimes(1);
+    // The successful route is retried against the new frame, without carrying
+    // over any of the previous frame's payloads or comparison photo.
+    expect(scanPageAlignedImage).toHaveBeenCalledTimes(2);
     expect(scanPageAlignedImage).toHaveBeenCalledWith(
       expect.objectContaining({ width: 320, height: 240 }), { deep: false });
   });

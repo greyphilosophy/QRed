@@ -10,6 +10,7 @@ import { scanPageAlignedImage } from "./pageAlignedScan.js";
 const MAX_SCAN_PIXELS = 12_000_000;
 const RETRY_SCALES = [0.9, 1.25, 1.5];
 const MAX_WATERMARK_PIXELS = 2_500_000;
+const RECENT_FRAME_PAYLOAD_LIMIT = 32;
 
 function resizeRgba(data, width, height, targetWidth, targetHeight) {
   const pixels = new Uint8ClampedArray(targetWidth * targetHeight * 4);
@@ -192,7 +193,8 @@ export function scanQrImage(data, width, height, { tryRescaling = true, tryWater
   return entryLink;
 }
 
-/** One scan attempt per live frame. A miss advances the scale for the next frame,
+/** One scan attempt per live frame. Prefer the strategy that found a new QRed
+ * payload; misses and repeated payloads advance through the remaining strategies,
  * letting the camera loop yield to rendering and input between retries.
  * A page-aligned attempt returns all codes together in { codes }, so callers
  * can collect them before the originating camera frame is overwritten.
@@ -204,6 +206,30 @@ export function createQrFrameScanner() {
   let sizes;
   let nextSize = 0;
   let entryToSkip = null;
+  const recentPayloads = new Set();
+  function scheduleNext(codes) {
+    const payloads = codes.map(qredPayloadFromScanResult).filter(Boolean);
+    if (payloads.some(payload => !recentPayloads.has(payload))) {
+      // Remember the strategy, never old pixels, geometry or returned codes.
+      // A recognized transport is a hint; the verifier still checks its trust.
+      const [successful] = sizes.splice(nextSize, 1);
+      sizes.unshift(successful);
+      nextSize = 0;
+    } else {
+      // Repeated chunks must not keep other scales or full-page recovery
+      // waiting indefinitely. A miss also resumes the remaining fallbacks.
+      nextSize = (nextSize + 1) % sizes.length;
+    }
+    // Different strategies may repeatedly find different chunks of one page.
+    // Remember a bounded set so those strategies cannot keep promoting each
+    // other and prevent the rest of the page from being recovered.
+    for (const payload of payloads) {
+      recentPayloads.delete(payload);
+      recentPayloads.add(payload);
+      if (recentPayloads.size > RECENT_FRAME_PAYLOAD_LIMIT)
+        recentPayloads.delete(recentPayloads.values().next().value);
+    }
+  }
   return (data, width, height) => {
     if (!isValidImage(data, width, height)) return null;
     if (width !== previousWidth || height !== previousHeight) {
@@ -212,6 +238,7 @@ export function createQrFrameScanner() {
       sizes = [...scanAttempts(width, height, true, true, true), "pageAligned"];
       nextSize = 0;
       entryToSkip = null;
+      recentPayloads.clear();
     }
     if (!sizes.length) return null;
     if (sizes[nextSize] === "pageAligned") {
@@ -219,7 +246,7 @@ export function createQrFrameScanner() {
       // Live scanning should try again with the operator's latest framing.
       const codes = scanPageAlignedImage({ data, width, height }, { deep: false })
         .map(({ code }) => code).filter(usableResult);
-      nextSize = codes.length ? 0 : (nextSize + 1) % sizes.length;
+      scheduleNext(codes);
       return codes.length ? { codes } : null;
     }
     const skippingEntry = entryToSkip;
@@ -230,7 +257,7 @@ export function createQrFrameScanner() {
       // retry. Discard the old position afterward, even if the camera moved.
       entryToSkip = code;
     } else {
-      nextSize = usableResult(code) ? 0 : (nextSize + 1) % sizes.length;
+      scheduleNext([code]);
     }
     return code;
   };
