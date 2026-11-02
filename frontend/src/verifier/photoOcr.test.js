@@ -17,7 +17,7 @@ it("uses only local versioned assets and extracts bounded word data from the rea
   expect(factory).toHaveBeenCalledWith("eng", 1, expect.objectContaining({
     workerPath: "/ocr/v1/worker.min.js", corePath: "/ocr/v1", langPath: "/ocr/v1", cacheMethod: "none",
   }));
-  expect(engine.setParameters).toHaveBeenCalledWith({ tessedit_pageseg_mode: "3", thresholding_method: "2" });
+  expect(engine.setParameters).toHaveBeenCalledWith({ tessedit_pageseg_mode: "3", thresholding_method: "2", thresholding_kfactor: "0.2" });
   expect(engine.recognize).toHaveBeenCalledWith(image, {}, { text: true, blocks: true });
   reader.dispose();
   expect(engine.terminate).toHaveBeenCalledTimes(1);

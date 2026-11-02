@@ -29,7 +29,9 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
         // A pale watermark can dominate a page-wide threshold and turn the
         // background into letters. Local adaptive thresholding reads the
         // original pixels, including faint additions, without a second pass.
-        await next.setParameters({ tessedit_pageseg_mode: "3", thresholding_method: "2" });
+        // A less aggressive factor retains light-gray additions that the
+        // engine's default Sauvola factor can discard beside a watermark.
+        await next.setParameters({ tessedit_pageseg_mode: "3", thresholding_method: "2", thresholding_kfactor: "0.2" });
         return next;
       }).catch(error => {
         if (epoch === generation) { pending = null; worker?.terminate(); worker = null; }

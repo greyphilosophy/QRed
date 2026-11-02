@@ -35,6 +35,14 @@ it("keeps signed wording even when it is inside a likely stamp region", () => {
   expect(result.status).toBe("matches");
   expect(result.markings).toEqual([]);
 });
+it("still reports covered signed text when a copied stamp's glyphs are separated for review", () => {
+  const result = comparePageReading("Invoice Friday", {
+    words: [word("Invoice", 10, 10), word("[=]", 110, 220)], codes: [box],
+  }, dimensions);
+  expect(result.status).toBe("differences");
+  expect(result.differences).toContainEqual(expect.objectContaining({ expected: "Friday", observed: "" }));
+  expect(result.markings[0].observed).toBe("[=]");
+});
 it("shows a possible caption's q/g OCR ambiguity unchanged for manual review", () => {
   const observed = caption.map(w => w.text === "qred.org" ? { ...w, text: "gred.org" } : w);
   const result = comparePageReading("Friday", { words: [...text, ...observed], codes: [box] }, dimensions);
