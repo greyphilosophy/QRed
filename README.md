@@ -133,7 +133,7 @@ what the browser exposes. There is no flashlight control.
 Live scanning uses a background worker with one frame in flight and no queued
 frames. It rotates through bounded attempts and disables lengthy alignment
 refinement so the operator can adjust the camera. Selected images and
-**Capture photo** use a cancellable worker with longer recovery fallbacks.
+**Capture now** use a cancellable worker with longer recovery fallbacks.
 A fast bounded attempt comes first; original-resolution pixels remain available
 for harder pages. **Cancel and resume camera** returns from still-photo recovery
 to the same camera stream. Signature verification still checks the recovered
@@ -171,56 +171,97 @@ Key files contain one raw key as Base64URL or standard Base64, with or without p
 
 The configured/default public key is for verification only. The stamping tool does not preload it because an unrelated private key cannot sign for it. A generated key proves control of that signing key, not an independently verified issuer identity.
 
-## Compare a printed page photo
+## Check a printed document
 
-**Signed page reference** reconstructs the optional grayscale thumbnail from the
-seal, offline, beside a captured or uploaded page photo. **Locate signed text**
-highlights the recorded line location when present. Image-only pages need no OCR
-model download; blank pages display the signed blank-page marker. These views
-support manual comparison, not an automatic image-match verdict. Lossy references
-can miss small changes, colors, digits, handwriting, and face substitutions.
+On the homepage or `verify.htm`, choose **Check document** and allow camera access.
+QRed prepares its local English text reader before opening the camera. Frame each
+whole page upright, in good light, against a contrasting background. QRed detects
+the paper edges and waits for a sharp boundary and a steady hold of at least
+600 ms across several frames before reading its seal. The outline follows the
+detected page; live guidance explains when to move back, move closer, or wait for
+focus. These are capture heuristics, not proof of document completeness or text
+legibility. A sharp photograph of poorly printed, covered, or missing text still
+proceeds to comparison. The same temporary frame is used for seal
+recovery and printed-text comparison; no photograph needs to be saved or selected
+from the phone's gallery. Frames are not stacked, enhanced, or cropped to create
+the retained evidence image. Only one frame is in flight; it stays unchanged
+until its seal result is associated with it.
 
+Use **Capture now** on either verifier if the edges cannot be detected or live
+recovery needs a longer still-image attempt. This overrides the automatic capture
+conditions, not signature verification. Retakes use the same automatic capture
+and manual fallback. Physical phone/print trials are still needed to tune the
+capture thresholds across cameras, lighting, backgrounds, and paper conditions.
 
-After verifying a page's seals, use **Compare a page photo** on the homepage or
-`verify.htm`. A successful seal scan also retains its original image, including
-when reading a pale watermark. Once the seals are verified and collection has
-finished, the selected page's image is compared automatically if text recognition
-is loaded. You can load the reader after scanning too; the image waits in this tab.
-For multi-seal pages, **Captured scan image** lets you choose among the images.
-Pages and images are associated by seal identifiers, even when scanned out of order.
+After the 600 ms steady-hold check, **Photo captured — processing…** appears
+before seal decoding. Recovery continues on that same retained frame, so movement
+after the message cannot change the photograph being checked. Capture can still
+be cancelled, and an unreadable seal prompts another attempt. Text recognition
+shows its reported percentage while reading; additional processing remains
+indeterminate until a result is ready. No percentage is advanced by a timer.
+The hold is only the capture-readiness delay, not total verification time.
+Document scanning tries a small watermark preview first, then keeps the larger
+and original-resolution recovery paths for difficult seals. Manual capture also
+tries an ordinary footer code before exhaustive page alignment. Image preparation
+and recognition run in background workers so the controls remain available.
 
-Include the entire page upright and in good light. Reading a QR does not establish
-that the rest of the page is in focus or even in frame. You can always take or
-choose a clearer page photo. For a multi-page collection, select the signed page
-to review. Existing seals work without adding any payload bytes.
+After collection, every captured page with authenticated signed text is checked
+automatically, one at a time. **Check this page now** stops scanning and checks a
+partial collection without requiring the rest of the document. Other pages remain
+explicitly unchecked. Page buttons retain their individual results, and the first
+reading that needs review opens automatically. A valid seal is labelled **Seal
+authenticated**, separately from the printed-text result.
 
-QRed reads printed English text locally and highlights the same still image:
-green for matching words, red for different/extra readings, amber for uncertain
-readings. Tap a highlight to see what was read; zoom or rotate the photo as needed.
-Missing signed text appears in a separate review list because seals contain no
-word coordinates. Choosing another page, clearing the collection, or invalidating
-the signature discards the previous photo comparison.
+Differences show the signed wording, the independently recognized wording, and a
+magnified photo region where a reliable location is available. Red highlights mark
+different/extra readings; amber marks uncertainty. Matching-word highlights are
+optional. Missing text is listed without inventing a photo location. **Retake this
+page** uses QRed's browser camera. It reads the seal again and only replaces the
+superseded capture and result if its bytes match the authenticated page collection.
+An unreadable seal or another page leaves the previous check intact.
 
-This is an OCR-assisted text comparison, not authentication of every pixel,
+This is OCR-assisted text comparison, not authentication of every pixel,
 handwriting, images, or layout. OCR can miss or misread text, even confidently.
 Check important numbers and unmarked areas. Blur, skew, columns, watermark seals,
-and QRed's added seal captions can produce differences. Case, punctuation,
-numbers, signs, and repeated words are preserved; only whitespace and canonical
-Unicode composition are ignored. The reader never receives the expected text as
-a recognition hint. Its confidence threshold is a review heuristic, not an
-authenticity probability.
+and QRed's added captions can affect recognition. If the original yields no text,
+a contrast-assisted reading can recover dark text over a pale watermark. Such a
+reading always needs visual review: pale writing may also have disappeared from
+that working copy. The original photo remains available. Navigation captions
+beside decoded QRed codes (including a visible q/g OCR ambiguity) and readings inside those codes are shown
+separately as markings to inspect, never silently treated as authenticated text.
+Additional wording and the same caption elsewhere remain part of the comparison.
+Case, punctuation, numbers,
+signs, and repeated words are preserved; only whitespace and canonical Unicode
+composition are ignored. The reader never receives the signed text as a recognition
+hint. Confidence is a review heuristic, not a probability of authenticity.
+The reader uses local adaptive thresholding on the original photo to avoid
+mistaking a pale watermark background for lettering. It still compares faint
+additions and missing text; the authenticated wording is never used to choose a
+recognition result.
 
-The English model, WebAssembly engine, and worker are served by QRed itself and
-cached as versioned assets. **Text recognition ready** means the reader is loaded
-in the current tab and can process photos offline. Photos and recognized text
-are kept only in memory, not uploaded or written to browser storage. Reloading
-or clearing the seal collection releases the captured scan images. Capture is
-deduplicated per seal and bounded to 16 images / 32 MiB of encoded images, with
-at most four encodings in flight. Older images are released with a notice if the
-limit is reached; retained images are capped at six megapixels. Reloading
-or clearing browser caches may require loading resources again. The first release
-is covered by synthetic-image browser tests; physical print/phone-camera accuracy
-still needs testing.
+**Compare the signed visual reference** opens the optional lossy grayscale
+reference and signed line locations for manual inspection. Image-only and blank
+pages do not receive an automatic image-match verdict. Fine details, colors,
+handwriting, and face substitutions may be lost in the reference. Retakes use the
+same temporary browser-camera flow. Existing PDF and image inputs remain available
+as secondary entry points.
+
+**Finish & clear** ends the check, stops the camera and OCR worker, revokes image
+URLs, and releases captured images, recognized words, signed contents, and results.
+Late asynchronous results cannot restore a cleared check. Navigating away also
+ends the check; refreshing does not restore document history. The screen confirms “Check cleared. Camera off.” Start another check
+from the cleared screen. QRed does not upload this data, save it to the photo
+library, or write it to persistent browser storage. This is application-level
+cleanup, not a promise of forensic erasure from the browser or operating system.
+
+Only public application resources and the English OCR model are cached for offline
+use. **Prepare for offline checking** can preload the text reader before entering
+airplane mode or opening an existing file. Keep the tab open. Captures are bounded
+to one image per page, 16 images / 32 MiB total, with four encodings in flight and
+six megapixels per image. Evicted images are explicitly marked as needing a new
+capture. Synthetic tests cover changed words on page 2, retakes, partial collection,
+clear/cancellation races, and network/persistent-storage behavior. Physical phone
+and printer trials remain necessary for optical accuracy and usability.
 
 ## Run tests
 
@@ -249,6 +290,11 @@ requests verify that the guard catches page and service-worker traffic.
 then compares matching, altered, incomplete, and blank synthetic page images on
 both verifier routes with networking blocked or offline. It checks highlighted
 image coordinates and rejects missing model resources with a recoverable error.
+`tests/test_capture_performance.py` measures automatic capture and text comparison
+on a clear 1440×1920 synthetic page after reader preparation. It guards against
+the former long seal-retry sequence and main-thread image-processing stalls on
+both verifier routes. These CI limits are regression checks, not physical-phone
+performance guarantees; model startup and harder pages take additional time.
 This covers the tested workflows after their resources load; first-use assets,
 page reloads, and device-wide traffic are outside that assertion.
 

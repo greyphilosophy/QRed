@@ -233,7 +233,7 @@ function locatePaperAtResolution(image) {
   return quad;
 }
 
-function locatePaper(image) {
+export function locatePaper(image) {
   const { width, height } = image;
   if (image.bounds && Number.isFinite(image.scale)) {
     // PDF renderers already supply a known visible page crop; this is only a

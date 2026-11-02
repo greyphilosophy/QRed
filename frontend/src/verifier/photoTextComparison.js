@@ -51,6 +51,7 @@ export function comparePhotoText(expectedText, words, { width, height } = {}) {
     const indices = [...pending.wordIndices];
     differences.push({
       expected: pending.start === null ? "" : expected.slice(pending.start, pending.end),
+      context: pending.start === null ? "" : expected.slice(Math.max(0, pending.start - 70), Math.min(expected.length, pending.end + 70)),
       observed: indices.map(index => words[index].text).join(" "),
       wordIndices: indices,
     });
@@ -83,7 +84,7 @@ export function comparePhotoText(expectedText, words, { width, height } = {}) {
     const box = validBox(word.bbox, width, height) ? word.bbox : null;
     const uncertain = !Number.isFinite(word.confidence) || word.confidence < OCR_REVIEW_THRESHOLD || !box;
     const agrees = indices.length > 0 && indices.every(tokenIndex => matched.has(tokenIndex));
-    return { text: String(word.text || ""), bbox: box, confidence: word.confidence,
+    return { text: String(word.text || ""), sourceIndex: index, bbox: box, confidence: word.confidence,
       status: uncertain ? "uncertain" : agrees ? "matched" : "different", agrees };
   }).filter(word => word.text.trim());
   const uncertainCount = classified.filter(word => word.status === "uncertain").length;

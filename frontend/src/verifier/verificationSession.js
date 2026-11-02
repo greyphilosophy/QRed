@@ -21,7 +21,7 @@ export function createVerificationSession() {
       const next = [...new Set([...snapshot.seals, ...[seals].flat().filter(seal => decodeSeal(seal))])];
       if (next.length === snapshot.seals.length) return false;
       revision += 1;
-      publish({ seals: next, results: [], busy: false });
+      publish({ seals: next, results: [], busy: true });
       return true;
     },
     async verify(publicKey, verify = verifyQRedSeals) {

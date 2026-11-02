@@ -24,10 +24,10 @@ it("associates original scan images by page and seal, with no duplicate work", a
   await collection.capture(seals[0], frame);
   await collection.capture("https://qred.org/", frame);
   await collection.capture(seals[0], frame);
-  expect(snapshot).toHaveBeenCalledTimes(3);
+  expect(snapshot).toHaveBeenCalledTimes(2);
   expect(snapshot).toHaveBeenCalledWith(frame);
   expect(changed.mock.lastCall[0].photos.map(({ documentId, chunkNumber }) => [documentId, chunkNumber])).toEqual([
-    [decodeSeal(seals[1]).document_id, 1], [decodeSeal(others[0]).document_id, 0], [decodeSeal(seals[0]).document_id, 0],
+    [decodeSeal(seals[1]).document_id, 1], [decodeSeal(others[0]).document_id, 0],
   ]);
 });
 
@@ -66,6 +66,19 @@ it("reports failed image capture without rejecting the seal or preventing retry"
   expect(changed.mock.lastCall[0]).toMatchObject({ photos: [], notice: expect.stringContaining("seal is still collected") });
   await collection.capture(seals[0], frame);
   expect(changed.mock.lastCall[0].photos).toHaveLength(1);
+});
+
+it("a retake releases the old page image and rejects a late scan encoding", async () => {
+  let finish;
+  const changed = vi.fn(), collection = createScanPhotoCollection(changed, () => new Promise(resolve => { finish = resolve; }));
+  const pending = collection.capture(seals[0], frame);
+  const file = new Blob(["retake"], { type: "image/png" });
+  collection.replacePage(decodeSeal(seals[0]).document_id, file);
+  finish(new Blob(["stale"])); await pending;
+  expect(changed.mock.lastCall[0].photos).toHaveLength(1);
+  expect(changed.mock.lastCall[0].photos[0].file).toBe(file);
+  collection.clear();
+  expect(changed.mock.lastCall[0].photos).toEqual([]);
 });
 
 it.each([1, MAX_SCAN_PHOTO_BYTES / 2])("bounds retained image count and bytes (image size %s)", async size => {

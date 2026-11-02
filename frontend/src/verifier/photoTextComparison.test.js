@@ -30,9 +30,9 @@ describe("photo comparison against signed text", () => {
   it("marks insertions on the image and lists deletions without inventing a location", () => {
     const result = comparePhotoText("Invoice approved", words("Invoice 500 approved"), size);
     expect(result.words.map(word => word.status)).toEqual(["matched", "different", "matched"]);
-    expect(result.differences).toEqual([{ expected: "", observed: "500", wordIndices: [1] }]);
+    expect(result.differences).toEqual([{ expected: "", observed: "500", wordIndices: [1], context: "" }]);
     const deleted = comparePhotoText("Invoice not approved", words("Invoice approved"), size);
-    expect(deleted.differences).toEqual([{ expected: "not", observed: "", wordIndices: [] }]);
+    expect(deleted.differences).toEqual([{ expected: "not", observed: "", wordIndices: [], context: "Invoice not approved" }]);
   });
   it("keeps low-confidence matches and mismatches uncertain", () => {
     const result = comparePhotoText("Pay 100", words("Pay 100", 45), size);

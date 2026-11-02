@@ -3,14 +3,10 @@ import React, { useEffect, useId, useRef, useState } from "react";
 import { renderVisualReference } from "../pageEvidence.js";
 import { openPagePhoto, photoPreviewUrl } from "./photoOcr.js";
 
-function EvidencePage({ page, captures }) {
+function EvidencePage({ page, captures, onRetake }) {
   const { evidence } = page;
   const id = useId(), canvas = useRef(null), generation = useRef(0), currentUrl = useRef(null);
-  // A user-selected full-page photo must win over a QR-only scan captured
-  // asynchronously. Scan snapshots can finish well after signature validation.
-  const explicitPhoto = useRef(false);
   const [line, setLine] = useState(-1), [photo, setPhoto] = useState(null), [error, setError] = useState("");
-  const [captureId, setCaptureId] = useState("");
   const firstCapture = captures[0];
   const lines = evidence.text.split("\n").filter(text => text.trim());
   const position = evidence.layout?.lines[line];
@@ -23,39 +19,34 @@ function EvidencePage({ page, captures }) {
     context.putImageData(pixels, 0, 0);
   }, [evidence.visual]);
   useEffect(() => {
-    // The initial QR snapshot is only a starting point for comparison. Never
-    // replace a full-page photo the user intentionally opened, even when a
-    // delayed scanner snapshot arrives or another capture is collected.
-    if (explicitPhoto.current) return;
     if (firstCapture) loadPhoto(firstCapture.file, firstCapture.id);
     else {
       generation.current++;
       if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
       currentUrl.current = null;
-      setPhoto(null); setCaptureId("");
+      setPhoto(null);
     }
   }, [firstCapture?.id]);
-  useEffect(() => () => {
-    generation.current++;
-    if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
-    currentUrl.current = null;
+  useEffect(() => {
+    const reference = canvas.current;
+    return () => {
+      generation.current++;
+      if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
+      currentUrl.current = null;
+      if (reference) reference.width = reference.height = 0;
+    };
   }, []);
-  async function loadPhoto(file, selectedCapture = "") {
+  async function loadPhoto(file) {
     const token = ++generation.current;
-    setError(""); setCaptureId(selectedCapture); setPhoto(null);
+    setError(""); setPhoto(null);
     try {
-      const image = await openPagePhoto(file), url = await photoPreviewUrl(image);
+      const image = await openPagePhoto(file);
+      let url;
+      try { url = await photoPreviewUrl(image); } finally { image.width = image.height = 0; }
       if (token !== generation.current) { URL.revokeObjectURL(url); return; }
       if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
       currentUrl.current = url; setPhoto(url);
     } catch (cause) { if (token === generation.current) setError(cause.message); }
-  }
-  function choose(event) {
-    const file = event.target.files?.[0]; event.target.value = "";
-    if (file) {
-      explicitPhoto.current = true;
-      loadPhoto(file);
-    }
   }
   return <>
     {evidence.blank ? <p className="photo-summary">The signer recorded this page as blank. Check the printed page for added marks.</p> : <p className="photo-note">
@@ -79,7 +70,7 @@ function EvidencePage({ page, captures }) {
       </figure>
       <figure><figcaption>Page photo for comparison</figcaption>
         {photo ? <img className="evidence-photo" src={photo} alt="Page photo beside the signed visual reference" />
-          : <p>Scan images appear here when available. Take or choose a photo of the entire page.</p>}
+          : <p>Scan images appear here when available. Use Retake this page to capture the entire page.</p>}
       </figure>
     </div>
     <p className="photo-note">A successful QR scan may show only part of the page. Use a clear photo of the entire printed page for comparison.</p>
@@ -92,24 +83,13 @@ function EvidencePage({ page, captures }) {
       {line >= 0 && <p className="photo-selected">{lines[line]}</p>}
       <p className="photo-note">{evidence.layout.mode === 1 ? "Locations use a coarse 16 × 16 grid." : evidence.layout.mode === 2 ? "Locations mark approximate line starts." : "Boxes mark the extracted text lines."} Positions refer to the original page, before the seal footer was added.</p>
     </>}
-    {captures.length > 1 && <><label htmlFor={`${id}-capture`}>Visual comparison scan image</label>
-      <select id={`${id}-capture`} value={captureId} onChange={event => {
-        const capture = captures.find(item => String(item.id) === event.target.value);
-        if (capture) {
-          explicitPhoto.current = true;
-          loadPhoto(capture.file, capture.id);
-        }
-      }}><option value="" disabled>Uploaded photo</option>{captures.map(capture => <option key={capture.id} value={capture.id}>Scan of seal {capture.chunkNumber + 1}</option>)}</select></>}
-    <div className="photo-inputs">
-      <div><label htmlFor={`${id}-camera`}>Take visual comparison photo</label><input id={`${id}-camera`} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={choose} /></div>
-      <div><label htmlFor={`${id}-photo`}>Choose visual comparison photo</label><input id={`${id}-photo`} type="file" accept="image/jpeg,image/png,image/webp" onChange={choose} /></div>
-    </div>
+    {onRetake && <button type="button" onClick={() => onRetake(page)}>Retake this page for visual review</button>}
     <p className="photo-note">Compare these views yourself; QRed does not give an automatic image-match verdict. Photos stay on this device. No text-recognition download is needed for this view.</p>
     {error && <p role="alert">{error}</p>}
   </>;
 }
 
-export function PageEvidenceVerification({ results = [], scanPhotos = [], session = 0 }) {
+export function PageEvidenceVerification({ results = [], scanPhotos = [], session = 0, onRetake }) {
   const id = useId(), [selected, setSelected] = useState("");
   const pages = results.filter(result => result.status === "VALID" && result.signature_valid === true && result.evidence)
     .sort((a, b) => (a.page_number || 0) - (b.page_number || 0));
@@ -122,6 +102,6 @@ export function PageEvidenceVerification({ results = [], scanPhotos = [], sessio
     <select id={`${id}-page`} value={page.document_id} onChange={event => setSelected(event.target.value)}>
       {pages.map(result => <option key={result.document_id} value={result.document_id}>Page {result.page_number} of {result.page_count}</option>)}
     </select>
-    <EvidencePage key={`${session}:${page.document_id}:${page.key_id}:${page.page_hash}`} page={page} captures={captures} />
+    <EvidencePage key={`${session}:${page.document_id}:${page.key_id}:${page.page_hash}`} page={page} captures={captures} onRetake={onRetake} />
   </section>;
 }

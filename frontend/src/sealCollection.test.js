@@ -24,6 +24,7 @@ it("collects out-of-order pages and chunks before completing a PDF", async () =>
   const second = await page(2);
   const scans = [first.seals[1], ...second.seals];
   expect(await progress(scans)).toMatchObject({ pagesCollected: 1, pagesTotal: 2, finished: false });
+  expect((await progress(scans)).message).toContain("Page 2 captured. Show page 1.");
   scans.push(first.seals[0]);
   expect(await progress(scans)).toMatchObject({ pagesCollected: 2, pagesTotal: 2, complete: true });
 });

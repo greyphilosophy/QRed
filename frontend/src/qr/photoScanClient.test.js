@@ -1,6 +1,6 @@
 /* @vitest-environment jsdom */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { createLiveScanWorker, scanPhotoInWorker } from "./photoScanClient.js";
+import { createLiveScanWorker, scanPhotoInWorker, preparePhotoReadingInWorker } from "./photoScanClient.js";
 
 let worker;
 beforeEach(() => {
@@ -9,6 +9,17 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 const image = () => ({ data: new Uint8ClampedArray(24), width: 2, height: 3 });
+
+it("cancels background OCR preparation and ignores its late result", async () => {
+  const controller = new AbortController(), pixels = image();
+  const pending = preparePhotoReadingInWorker(pixels, { signal: controller.signal });
+  expect(worker.postMessage).toHaveBeenCalledWith({ image: pixels, prepareReading: true }, [pixels.data.buffer]);
+  const late = worker.onmessage;
+  controller.abort();
+  late({ data: { action: { image: pixels, codes: [] } } });
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  expect(worker.terminate).toHaveBeenCalledTimes(1);
+});
 
 it("transfers the original pixel buffer and terminates after returning all page chunks", async () => {
   const pixels = image();
@@ -85,6 +96,38 @@ it("discards a live result on reset, then starts a fresh worker without reviving
   expect(onResult).toHaveBeenCalledTimes(1);
   expect(onResult).toHaveBeenCalledWith({ status: "continue" });
   live.stop();
+});
+
+it("requests quality checks on the submitted frame and reports guidance before its seal result", () => {
+  const order = [], onQuality = vi.fn(() => order.push("quality")), onResult = vi.fn(() => order.push("seal"));
+  const live = createLiveScanWorker({ onQuality, onResult, onError: vi.fn(), requirePageQuality: true });
+  const frame = image();
+  live.scan(frame);
+  expect(worker.postMessage.mock.calls[0][0]).toMatchObject({ image: frame, requirePageQuality: true, frameTime: expect.any(Number) });
+  const quality = { state: "framing", ready: false, corners: null }, action = { status: "continue" };
+  worker.onmessage({ data: { quality, action } });
+  expect(onQuality).toHaveBeenCalledWith(quality);
+  expect(onResult).toHaveBeenCalledWith(action);
+  expect(order).toEqual(["quality", "seal"]);
+  live.stop();
+});
+
+it("acknowledges capture without releasing the frozen frame, and ignores a cancelled acknowledgement", () => {
+  const onCaptured = vi.fn(), onResult = vi.fn(), onQuality = vi.fn();
+  const live = createLiveScanWorker({ onCaptured, onResult, onQuality, onError: vi.fn(), requirePageQuality: true });
+  live.scan(image());
+  const receive = worker.onmessage, quality = { ready: true, state: "ready" };
+  receive({ data: { captured: true, quality } });
+  expect(onCaptured).toHaveBeenCalledTimes(1);
+  expect(onQuality).toHaveBeenCalledWith(quality);
+  expect(onResult).not.toHaveBeenCalled();
+  expect(live.busy).toBe(true);
+  expect(live.scan(image())).toBe(false);
+  live.reset();
+  receive({ data: { captured: true, quality } });
+  receive({ data: { action: { status: "found", text: "late" } } });
+  expect(onCaptured).toHaveBeenCalledTimes(1);
+  expect(onResult).not.toHaveBeenCalled();
 });
 
 it("stops a live session permanently and ignores its queued result", () => {

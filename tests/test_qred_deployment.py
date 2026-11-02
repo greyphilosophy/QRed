@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, expect
-from browser_helpers import stamp_and_save, BASE_URL
+from browser_helpers import show_seal_details, show_file_inputs, stamp_and_save, BASE_URL
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas as rl_canvas
 from PIL import Image
@@ -223,6 +223,7 @@ def _verify_seal(page: Page, seal_payload: str, expected_document_id: str = "", 
 
     # Step 2: Wait for #resultStatus to appear in the DOM (page.evaluate updates DOM asynchronously)
     try:
+        show_seal_details(page)
         result_status = page.locator('#resultStatus').first
         expect_playwright(result_status).to_be_visible(timeout=15_000)
         dom_status = result_status.inner_text().strip()
@@ -366,8 +367,10 @@ class TestPdfTextSealing:
                         "-x", "0", "-y", "2200", "-W", "1700", "-H", "600",
                         "-png", stamped, str(footer)], check=True, capture_output=True)
         page.get_by_role("button", name="Use public key to verify", exact=True).click()
+        show_file_inputs(page)
         page.get_by_label("Choose QR image", exact=True).set_input_files(footer.with_suffix(".png"))
-        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
+        show_seal_details(page)
+        expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("Item 45: Received and inspected")
 
         # The photo analyzer must show restored text, not a Base64 dump.
@@ -393,8 +396,10 @@ class TestPdfTextSealing:
                             "-x", str(round((18 + index * 208) * 200 / 72)), "-y", "2200",
                             "-W", "550", "-H", "550", "-png", stamped, str(crop)],
                            check=True, capture_output=True)
+            show_file_inputs(page)
             page.get_by_label("Choose QR image", exact=True).set_input_files(crop.with_suffix(".png"))
-            status = "INCOMPLETE" if index == 1 else "VALID"
+            status = "INCOMPLETE" if index == 1 else "Seal authenticated"
+            show_seal_details(page)
             expect(page.get_by_role("heading", name=status, exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("Record 45:")
 
@@ -552,9 +557,11 @@ class TestKeyGenerationImportAndSignatureVerification:
         subprocess.run(["pdftoppm", "-f", "1", "-singlefile", "-r", "200",
                         "-x", "0", "-y", "2200", "-W", "1700", "-H", "600",
                         "-png", str(sealed_path), str(footer)], check=True, capture_output=True)
+        show_file_inputs(page)
         page.get_by_label("Choose QR image", exact=True).set_input_files(footer.with_suffix(".png"))
         page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
-        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
+        show_seal_details(page)
+        expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("Testing client-side sealing")
         for request in requests:
             assert generated_private not in request.url
@@ -567,7 +574,7 @@ class TestKeyGenerationImportAndSignatureVerification:
         page.evaluate("seals => window.__qredTestVerify(seals)", seal_result["seal_strings"])
         expect(page.locator("#resultStatus")).to_have_text("UNVERIFIED")
         page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
-        expect(page.locator("#resultStatus")).to_have_text("VALID")
+        expect(page.locator("#resultStatus")).to_have_text("Seal authenticated")
         expect(page.locator("#resultContent")).to_contain_text("Testing client-side sealing")
 
     def test_seal_with_custom_private_key(self, page: Page, simple_pdf_path: str):
@@ -645,35 +652,45 @@ class TestRenderedQrImageUploads:
     def test_verifies_previously_unreadable_rendered_image(self, page: Page, image_name):
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
         expect(page.get_by_label("Open issuer public key file", exact=True)).to_have_count(0)
+        show_file_inputs(page)
         page.get_by_label("Choose QR image", exact=True).set_input_files(str(self.FIXTURES / image_name))
         _open_verification_key(page, self.PUBLIC_KEY)
-        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
+        show_seal_details(page)
+        expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45" if "invoice" in image_name else "Inventory dispatch QA-1042")
         _open_verification_key(page, "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=")
+        show_seal_details(page)
         expect(page.get_by_role("heading", name="INVALID", exact=True)).to_be_visible()
 
     def test_mobile_image_upload_waits_for_both_distinct_seals(self, page: Page):
         page.set_viewport_size({"width": 390, "height": 844})
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
+        show_file_inputs(page)
         upload = page.get_by_label("Choose QR image", exact=True)
         upload.set_input_files(str(self.FIXTURES / "manifest-seal-1-300dpi.png"))
+        show_seal_details(page)
         expect(page.get_by_role("heading", name="INCOMPLETE", exact=True)).to_be_visible(timeout=20000)
         _open_verification_key(page, self.PUBLIC_KEY)
         upload.set_input_files(str(self.FIXTURES / "manifest-seal-1-300dpi.png"))
+        show_seal_details(page)
         expect(page.get_by_role("heading", name="INCOMPLETE", exact=True)).to_be_visible()
         upload.set_input_files(str(self.FIXTURES / "manifest-seal-2-300dpi.png"))
-        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
+        show_seal_details(page)
+        expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("END OF MANIFEST - 56 synthetic line items.")
 
     def test_verifies_image_with_damaged_byte_header(self, page: Page):
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
+        show_file_inputs(page)
         page.get_by_label("Choose QR image", exact=True).set_input_files({
             "name": "damaged-invoice.png", "mimeType": "image/png", "buffer": _invoice_camera_pixels(damaged=True),
         })
         _open_verification_key(page, self.PUBLIC_KEY)
-        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
+        show_seal_details(page)
+        expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45")
         _open_verification_key(page, "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=")
+        show_seal_details(page)
         expect(page.get_by_role("heading", name="INVALID", exact=True)).to_be_visible()
 
 
@@ -699,7 +716,7 @@ class TestCameraFrameScanning:
         (() => {
             const camera = CAMERA_FIXTURE;
             // Freeze the scanner's cooldown clock for the button case, so
-            // only Capture photo can produce the result after the blank frame.
+            // only Capture now can produce the result after the blank frame.
             if (camera.manual) performance.now = () => 1000;
             Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: {
                 enumerateDevices: async () => [],
@@ -715,6 +732,10 @@ class TestCameraFrameScanning:
                     context.fillRect(0, 0, canvas.width, canvas.height);
                     const stream = canvas.captureStream(10);
                     window.showCameraSeal = () => {
+                        context.fillStyle = '#373737';
+                        context.fillRect(0, 0, canvas.width, canvas.height);
+                        context.fillStyle = 'white';
+                        context.fillRect(canvas.width * .04, canvas.height * .04, canvas.width * .92, canvas.height * .92);
                         // Crop the existing PDF fixture with its quiet zone,
                         // then put its corners beyond the old center 50% ROI.
                         context.drawImage(image, 75, 0, 825, 825, camera.left, camera.top, camera.size, camera.size);
@@ -726,7 +747,7 @@ class TestCameraFrameScanning:
         })();
         """.replace("CAMERA_FIXTURE", json.dumps(camera)))
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
-        page.get_by_role("button", name="Start scanning", exact=True).click()
+        page.get_by_role("button", name="Check document", exact=True).click()
         page.wait_for_function("""() => {
             const video = document.querySelector('.ar-camera video');
             return video?.readyState >= 2 && video.videoWidth > 0;
@@ -734,19 +755,25 @@ class TestCameraFrameScanning:
         page.locator(".ar-camera video").scroll_into_view_if_needed()
         page.evaluate("window.showCameraSeal()")
         if manual:
-            page.wait_for_function("""() => {
+            page.wait_for_function("""({ left, top, size }) => {
                 const video = document.querySelector('.ar-camera video');
                 const canvas = document.createElement('canvas');
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
                 const context = canvas.getContext('2d');
                 context.drawImage(video, 0, 0);
-                return context.getImageData(0, 0, canvas.width, canvas.height).data.some((value, i) => i % 4 !== 3 && value < 128);
-            }""", timeout=5000)
-            page.get_by_role("button", name="Capture photo", exact=True).click()
-        expect(page.get_by_role("heading", name="QR captured", exact=True)).to_be_visible(timeout=10000)
+                // Wait for ink inside the QR region, not the newly added dark
+                // desk: a streamed canvas can display that background first.
+                return context.getImageData(left, top, size, size).data.some((value, i) => i % 4 !== 3 && value < 128);
+            }""", arg={"left": left, "top": top, "size": size}, timeout=5000)
+            page.get_by_role("button", name="Capture now", exact=True).click()
+        show_seal_details(page)
+        # Manual capture runs the more thorough photo decoder. This checks
+        # recovery, not decoding speed on the host running the browser.
+        expect(page.get_by_role("heading", name="Pages captured", exact=True)).to_be_visible(timeout=30000 if manual else 10000)
         _open_verification_key(page, TestRenderedQrImageUploads.PUBLIC_KEY)
-        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible()
+        show_seal_details(page)
+        expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_be_visible()
         expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45")
 
 
@@ -792,7 +819,9 @@ class TestContinuousSealScanning:
                         context.fillRect(0, 0, 550, 550);
                         // Preserve the saved-PDF pixels and their quiet zone.
                         context.drawImage(image, 0, 0);
+                        const displayed = new Promise(resolve => document.querySelector('video').requestVideoFrameCallback(resolve));
                         stream.getVideoTracks()[0].requestFrame();
+                        await displayed;
                     };
                     return stream;
                 },
@@ -801,11 +830,14 @@ class TestContinuousSealScanning:
         """.replace("FRAMES", json.dumps(frames)))
         base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
         page.goto(base_url + route, wait_until="networkidle")
-        page.get_by_role("button", name="Start scanning" if route == "/" else "Scan QR Code", exact=True).click()
+        page.get_by_role("button", name="Check document", exact=True).click()
         page.wait_for_function("document.querySelector('video')?.readyState >= 2")
         page.locator("video").first.scroll_into_view_if_needed()
         progress = page.locator(".ar-collection-progress" if route == "/" else "#statusText")
         page.evaluate("window.showSealFrame(0)")
+        # These are intentional footer close-ups, not whole-page photographs.
+        # The manual override keeps multipart seal collection available.
+        page.get_by_role("button", name="Capture now", exact=True).click()
         _open_verification_key(page, DEMO_PUBLIC_KEY)
         expect(progress).to_contain_text("1 of 2 pages collected", timeout=20000)
         # Repeated camera frames must not add duplicate pieces or stop the stream.
@@ -813,9 +845,11 @@ class TestContinuousSealScanning:
         expect(progress).to_contain_text("1 of 2 pages collected")
         assert page.evaluate("window.cameraStream.getTracks().every(track => track.readyState === 'live')")
         page.evaluate("window.showSealFrame(1)")
+        page.get_by_role("button", name="Capture now", exact=True).click()
         expect(progress).to_contain_text("1 of 2 QR seals", timeout=20000)
         assert page.evaluate("window.cameraOpenCount") == 1
         page.evaluate("window.showSealFrame(2)")
+        page.get_by_role("button", name="Capture now", exact=True).click()
         summary = page.locator(".verification-card .collection-progress" if route == "/" else "#resultMeta .collection-progress")
         expect(summary).to_have_text("All 2 pages collected.", timeout=20000)
         page.wait_for_function("window.cameraStream.getTracks().every(track => track.readyState === 'ended')")
@@ -825,16 +859,18 @@ class TestContinuousSealScanning:
         expect(results.nth(0)).to_contain_text("Record 45:")
         expect(results.nth(1)).to_contain_text("Final delivery page.")
         if route == "/":
-            expect(page.get_by_role("heading", name="VALID", exact=True)).to_have_count(2)
+            show_seal_details(page)
+            expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_have_count(2)
             # Clearing resets duplicate suppression as well as collected results.
-            page.get_by_role("button", name="Clear collected seals", exact=True).click()
-            page.get_by_role("button", name="Start scanning", exact=True).click()
+            page.get_by_role("button", name="Finish & clear", exact=True).click()
+            page.get_by_role("button", name="Check document", exact=True).click()
             page.wait_for_function("window.cameraOpenCount === 2 && document.querySelector('video')?.readyState >= 2")
             page.locator("video").first.scroll_into_view_if_needed()
             page.evaluate("window.showSealFrame(0)")
+            page.get_by_role("button", name="Capture now", exact=True).click()
             expect(progress).to_contain_text("1 of 2 pages collected", timeout=20000)
         else:
-            expect(page.locator("#resultStatus")).to_have_text("VALID")
+            expect(page.locator("#resultStatus")).to_have_text("Seal authenticated")
 
 
 class TestExistingSealCompatibility:

@@ -98,3 +98,25 @@ def stamp_and_save(page, source, destination=None):
     assert path.read_bytes().startswith(b"%PDF-"), "The saved seal is not a PDF"
     expect(page.locator("#stamp-result")).to_contain_text("in this browser.")
     return path, page.evaluate("window.__lastSealResult")
+
+
+def show_seal_details(page):
+    details = page.locator("details").filter(has=page.get_by_text("Seal details and recovered text", exact=True))
+    if details.get_attribute("open") is None:
+        details.locator("summary").first.click()
+
+
+def show_file_inputs(page):
+    summary = page.get_by_text("Open an existing PDF or image", exact=True)
+    if summary.count() and summary.locator("..").get_attribute("open") is None:
+        summary.click()
+
+
+def prepare_text_for_offline(page):
+    if not page.get_by_role("button", name="Offline text checking ready", include_hidden=True).count():
+        summary = page.get_by_text("Prepare for offline checking", exact=True)
+        if summary.locator("..").get_attribute("open") is None:
+            summary.click()
+        page.get_by_role("button", name="Prepare offline checking", exact=True).click()
+        expect(page.get_by_role("button", name="Offline text checking ready", include_hidden=True)).to_have_count(1, timeout=60000)
+    page.wait_for_load_state("networkidle")

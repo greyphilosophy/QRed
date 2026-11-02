@@ -1,11 +1,13 @@
 import { createWorker } from "tesseract.js";
+import { captionLineCandidates, isPrintedCaption, preparePhotoReading } from "./photoReading.js";
 
 // These versioned resources are copied from locked dependencies at build time.
 // Never use Tesseract's default CDN paths: all resources belong to this origin.
 export const OCR_ASSET_PATH = "/ocr/v1";
 
-export function createPhotoOcrReader(workerFactory = createWorker) {
+export function createPhotoOcrReader(workerFactory = createWorker, prepareImage = preparePhotoReading) {
   let worker = null, pending = null, generation = 0;
+  let preprocessing = null;
   let progress = () => {};
 
   async function prepare(onProgress = () => {}) {
@@ -24,7 +26,12 @@ export function createPhotoOcrReader(workerFactory = createWorker) {
       }).then(async next => {
         if (epoch !== generation) { await next.terminate(); throw new Error("Reading cancelled."); }
         worker = next;
-        await next.setParameters({ tessedit_pageseg_mode: "3" });
+        // A pale watermark can dominate a page-wide threshold and turn the
+        // background into letters. Local adaptive thresholding reads the
+        // original pixels, including faint additions, without a second pass.
+        // A less aggressive factor retains light-gray additions that the
+        // engine's default Sauvola factor can discard beside a watermark.
+        await next.setParameters({ tessedit_pageseg_mode: "3", thresholding_method: "2", thresholding_kfactor: "0.2" });
         return next;
       }).catch(error => {
         if (epoch === generation) { pending = null; worker?.terminate(); worker = null; }
@@ -36,17 +43,88 @@ export function createPhotoOcrReader(workerFactory = createWorker) {
 
   return {
     prepare,
-    async read(canvas, onProgress) {
-      const current = await prepare(onProgress);
+    async read(canvas, onProgress = () => {}) {
+      let pass = 0;
+      const current = await prepare(event => {
+        // Only the first whole-page reading has a useful percentage. Recovery
+        // and caption passes are additional work, not a restart of page progress.
+        if (pass === 1) onProgress(event);
+      });
       // The signed text is deliberately never supplied to the recognition engine.
-      const { data } = await current.recognize(canvas, {}, { text: true, blocks: true });
-      return (data.blocks || []).flatMap(block => (block.paragraphs || [])
-        .flatMap(paragraph => (paragraph.lines || []).flatMap(line => line.words || [])))
-        .map(({ text, confidence, bbox }) => ({ text, confidence, bbox }));
+      const recognize = async image => {
+        pass++;
+        const { data } = await current.recognize(image, {}, { text: true, blocks: true });
+        onProgress({ status: "processing" });
+        return (data.blocks || []).flatMap(block => (block.paragraphs || [])
+          .flatMap(paragraph => (paragraph.lines || []).flatMap(line => line.words || [])))
+          .map(({ text, confidence, bbox }) => ({ text, confidence, bbox }));
+      };
+      const controller = new AbortController();
+      preprocessing = controller;
+      let prepared;
+      try {
+        // OCR and bounded image preparation use separate workers. Neither QR
+        // searching nor contrast processing may block input and cancellation.
+        const preparation = Promise.resolve().then(() => prepareImage(canvas, { signal: controller.signal })).then(result => {
+          if (controller.signal.aborted) {
+            if (result.canvas) result.canvas.width = result.canvas.height = 0;
+            throw new DOMException("Reading cancelled", "AbortError");
+          }
+          prepared = result;
+        });
+        let [words] = await Promise.all([recognize(canvas), preparation]);
+        if (controller.signal.aborted) throw new DOMException("Reading cancelled", "AbortError");
+        // Preserve every reading from the original. Only use the contrast copy
+        // when segmentation found no text at all, and label its limitations.
+        const contrastAssisted = words.length === 0;
+        if (contrastAssisted) words = await recognize(prepared.canvas);
+        const candidates = captionLineCandidates(words, prepared.codes);
+        if (candidates.length) {
+          const removed = new Set(), replacements = new Map();
+          await current.setParameters({ tessedit_pageseg_mode: "7" });
+          try {
+            for (const line of candidates) {
+              const left = Math.max(0, Math.floor(line.x0) - 8), top = Math.max(0, Math.floor(line.y0) - 8);
+              const width = Math.min(canvas.width - left, Math.ceil(line.x1) - left + 8);
+              const height = Math.min(canvas.height - top, Math.ceil(line.y1) - top + 8);
+              if (width * height > 250000) continue;
+              const detail = document.createElement("canvas");
+              detail.width = width * 2; detail.height = height * 2;
+              try {
+                detail.getContext("2d").drawImage(canvas, left, top, width, height, 0, 0, detail.width, detail.height);
+                const caption = await recognize(detail);
+                if (!isPrintedCaption(caption)) continue;
+                const mapped = caption.map(word => ({ ...word, bbox: {
+                  x0: left + word.bbox.x0 / 2, x1: left + word.bbox.x1 / 2,
+                  y0: top + word.bbox.y0 / 2, y1: top + word.bbox.y1 / 2,
+                } }));
+                const x0 = Math.min(...mapped.map(w => w.bbox.x0)), x1 = Math.max(...mapped.map(w => w.bbox.x1));
+                // Preserve every original word outside the newly read caption.
+                // In particular, never drop a nearby addition the crop missed.
+                const replaced = line.indices.filter(i => {
+                  const center = (words[i].bbox.x0 + words[i].bbox.x1) / 2;
+                  return center >= x0 && center <= x1;
+                });
+                if (replaced.length) {
+                  replaced.forEach(i => removed.add(i));
+                  replacements.set(Math.min(...replaced), mapped);
+                }
+              } finally { detail.width = detail.height = 0; }
+            }
+          } finally { if (worker === current) await current.setParameters({ tessedit_pageseg_mode: "3" }); }
+          words = words.flatMap((word, index) => replacements.get(index) || (removed.has(index) ? [] : [word]));
+        }
+        return { words, codes: prepared.codes, contrastAssisted };
+      } finally {
+        controller.abort();
+        if (preprocessing === controller) preprocessing = null;
+        if (prepared?.canvas) prepared.canvas.width = prepared.canvas.height = 0;
+      }
     },
     dispose() {
       generation += 1;
       progress = () => {};
+      preprocessing?.abort(); preprocessing = null;
       worker?.terminate();
       worker = null;
       pending = null;
@@ -70,7 +148,7 @@ export async function openPagePhoto(file) {
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-    const context = canvas.getContext("2d");
+    const context = canvas.getContext("2d", { willReadFrequently: true });
     if (!context) throw new Error("This browser cannot open the page photo.");
     context.fillStyle = "white";
     context.fillRect(0, 0, canvas.width, canvas.height);

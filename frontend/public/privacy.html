@@ -21,7 +21,7 @@
   <p class="kicker">Privacy & data handling</p>
   <h1>Privacy Policy</h1>
   <p class="lead">How QRed handles document contents, account identity, and temporary technical data.</p>
-  <p class="meta">Last updated: November 1, 2026</p>
+  <p class="meta">Last updated: November 2, 2026</p>
   
 <section aria-labelledby="p1"><h2 id="p1">1. What QRed does</h2>
 <p>QRed helps people seal documents with QR codes and cryptographic signatures, and check those seals later. QRed is designed to process original PDF files, page images, extracted text, and locally held signing keys <strong>on the user's device</strong>. Normal browser sealing and verification workflows do not send original document files to QRed's server.</p>
@@ -29,6 +29,8 @@
 <section aria-labelledby="p2"><h2 id="p2">2. Information involved in QRed</h2>
 <h3>Documents and local key material</h3>
 <p>The browser opens and processes files that you select. QRed's current implementation does not operate a user-document storage service, and it does not send your local private signing key to the QRed Worker. You decide where to save, print, and share the finished document.</p>
+<h3>Temporary verification captures</h3>
+<p>The document checker captures and retakes pages inside the browser. QRed does not save those captures to your photo library, send them to a server, or persist images, recognized text, or recovered signed contents in browser storage. They remain available only for the active check. <strong>Finish &amp; clear</strong> releases the session data and stops its camera and text reader; leaving the page also ends the check. Only public application resources and language data are cached for offline use. Browser or operating-system copies are outside QRed's control; this is not a guarantee of forensic erasure.</p>
 <h3>Account-backed attestations</h3>
 <p>When you select an available account provider (Google, Microsoft, or Amazon), QRed uses that provider to authenticate the account. Depending on provider and account, QRed receives a provider account identifier, profile name, and email address, as well as limited authentication metadata.</p>
 <p>For the document attestation, the browser creates <strong>SHA-256 page commitments</strong> and sends these derived values to the QRed Worker for signing. The Worker does not receive PDF bytes, filenames, extracted document text, or raw document roots through this workflow. Page commitments are not salted: QRed's server or anyone with access to its request data could recognize identical page commitments or test guesses about simple, known documents. These derived values are document-related metadata, not anonymized data.</p>

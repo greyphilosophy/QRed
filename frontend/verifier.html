@@ -307,7 +307,7 @@
 <body>
   <header>
     <h1>QRed Verifier</h1>
-    <p>Scan QR seals to verify a document. Include the whole page when possible; the scan image is kept for page comparison.</p>
+    <p>Frame each whole page and hold steady. QRed captures automatically, then checks the seal and printed text.</p>
     <p>PDFs, camera frames, and seal text are processed in this browser and are not sent to a server.</p>
     <details>
       <summary>Optional: use airplane mode</summary>
@@ -317,6 +317,7 @@
   </header>
 
   <main>
+    <div class="controls"><button class="btn btn-secondary" id="btnNewScan">Finish &amp; clear</button></div>
     <div id="scanMode">
       <div class="viewfinder" id="viewfinder">
         <video id="cameraVideo" playsinline autoplay></video>
@@ -326,14 +327,18 @@
         </div>
         <div class="placeholder" id="placeholder">
           <div class="icon">&#9679;</div>
-          <div>Tap <strong>Scan QR Code</strong> to open camera</div>
+          <div>Tap <strong>Check document</strong> to open camera</div>
         </div>
       </div>
-      <p class="page-scan-hint" id="pageGuideHint" hidden>Keep all four page corners visible. Avoid glare.</p>
+      <p class="page-scan-hint" id="pageGuideHint" role="status" hidden>Show all four page corners and hold steady for automatic capture.</p>
+      <progress class="capture-readiness" id="captureReadiness" max="1" value="0" aria-label="Steady hold before automatic capture" hidden></progress>
 
       <div class="controls">
-        <button class="btn btn-primary" id="btnScan">Scan QR Code</button>
+        <button class="btn btn-primary" id="btnScan">Check document</button>
+        <button class="btn btn-primary" id="btnCapture" hidden>Capture now</button>
       </div>
+      <p class="page-scan-hint">Camera images stay in this session. QRed does not save them to your photo library or upload them.</p>
+      <p id="clearNotice" role="status"></p>
 
       <div class="status-bar" id="statusBar">
         <div class="status-dot active" id="statusDot"></div>
@@ -357,18 +362,18 @@
       <p id="publicKeyFileStatus" role="status"></p>
     </section>
 
+    <div id="photoTextComparison"></div>
+    <details><summary>Seal details and recovered text</summary>
     <div class="result-view" id="resultView">
       <div class="result-card">
         <div class="result-status" id="resultStatus"></div>
         <div class="result-meta" id="resultMeta"></div>
         <div class="result-content" id="resultContent"></div>
       </div>
-      <div class="controls">
-        <button class="btn btn-secondary" id="btnNewScan">New Scan</button>
-      </div>
+
     </div>
 
-    <div id="photoTextComparison"></div>
+    </details>
 
     <div id="errorMsg" style="color: var(--error); font-size: 0.85rem; padding: 0.5rem; display: none;"></div>
   </main>
@@ -387,10 +392,11 @@
     import { startCameraSession } from "./src/qr/cameraSession.js";
     import { observePageScanGuide } from "./src/qr/pageScanGuide.js";
     import { getPreferredCameraStream, applyCameraQualityControls } from "./src/qr/cameraControls.js";
-    import { createLiveScanWorker, preparePhotoScanner } from "./src/qr/photoScanClient.js";
+    import { createLiveScanWorker, preparePhotoScanner, scanPhotoInWorker } from "./src/qr/photoScanClient.js";
     import { decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
     import { mountPhotoTextVerification } from "./src/verifier/mountPhotoTextVerification.jsx";
     import { createScanPhotoCollection } from "./src/verifier/scanPhotos.js";
+    import { photoProcessingMessage } from "./src/verifier/photoStatus.js";
     import { mountPdfSealInput } from "./src/verifier/mountPdfSealInput.jsx";
     import { readSigningKeyFile } from "./src/signingKeys.js";
     import { authProvider } from "./src/authProviders.js";
@@ -420,6 +426,7 @@
       camera: null,
       defaultKeysPromise: null,
       publicKey: "",
+      startGeneration: 0,
     };
 
     var collection = createVerificationSession();
@@ -430,7 +437,13 @@
     });
     function updatePhotoComparison(results) {
       var snapshot = collection.getSnapshot();
-      photoComparison.update(results || snapshot.results, snapshot.session, state.scanImages, Boolean(snapshot.progress && !snapshot.progress.finished));
+      photoComparison.update(results || snapshot.results, snapshot.session, state.scanImages, state.isScanning, {
+        verifying: snapshot.busy,
+        seals: snapshot.seals,
+        onReplacePhoto: function(id, file) {
+          if (collection.getSnapshot().session === snapshot.session) scanPhotos.replacePage(id, file);
+        }
+      });
     }
     updatePhotoComparison([]);
     var pdfInput = mountPdfSealInput(document.getElementById("pdfSealInput"), processScannedSeal);
@@ -439,6 +452,7 @@
 
     // Camera handling
     var btnScan = document.getElementById("btnScan");
+    var btnCapture = document.getElementById("btnCapture");
     var btnNewScan = document.getElementById("btnNewScan");
     var statusBar = document.getElementById("statusBar");
     var statusText = document.getElementById("statusText");
@@ -449,18 +463,37 @@
     var publicKeyFileInput = document.getElementById("publicKeyFileInput");
     var publicKeyFileStatus = document.getElementById("publicKeyFileStatus");
 
-    btnScan.onclick = function() {
+    btnScan.onclick = async function() {
+      document.getElementById("clearNotice").textContent = "";
       if (state.isScanning) {
         stopScanning();
-        btnScan.textContent = "Scan QR Code";
+        btnScan.textContent = "Check document";
+        document.getElementById("photoTextComparison").scrollIntoView({ behavior: "smooth" });
       } else {
+        var generation = ++state.startGeneration;
+        btnScan.disabled = true; btnScan.textContent = "Preparing check…";
+        try { await photoComparison.prepare(); }
+        catch (error) {
+          if (generation === state.startGeneration) {
+            btnScan.disabled = false; btnScan.textContent = "Check document";
+          }
+          return;
+        }
+        if (generation !== state.startGeneration) return;
+        btnScan.disabled = false;
         startScanning();
-        btnScan.textContent = "Stop";
+        btnScan.textContent = "Stop camera";
       }
     };
 
     btnNewScan.onclick = function() {
+      state.startGeneration++;
+      photoComparison.clear();
       stopScanning();
+      btnScan.disabled = false;
+      ["resultStatus", "resultMeta", "resultContent", "errorMsg"].forEach(function(id) {
+        document.getElementById(id).textContent = "";
+      });
       collection.clear();
       pdfInput.update(collection.getSnapshot().session);
       issuerKeyControls.hidden = true;
@@ -471,12 +504,16 @@
       progressContainer.style.display = "none";
       document.getElementById("resultView").classList.remove("visible");
       document.getElementById("scanMode").style.display = "block";
-      btnScan.textContent = "Scan QR Code";
+      btnScan.textContent = "Check document";
       document.getElementById("placeholder").style.display = "flex";
       document.getElementById("cameraVideo").style.display = "none";
       document.getElementById("scanCanvas").style.display = "none";
       statusBar.classList.remove("visible");
+      document.getElementById("clearNotice").textContent = "Check cleared. Camera off.";
+      btnScan.focus();
     };
+
+    window.addEventListener("pagehide", function() { btnNewScan.onclick(); });
 
     publicKeyFileInput.onchange = async function(event) {
       var file = event.target.files && event.target.files[0];
@@ -542,6 +579,11 @@
       var canvas = document.getElementById("scanCanvas");
       var placeholder = document.getElementById("placeholder");
       var guideArea = document.getElementById("pageGuideArea");
+      var hint = document.getElementById("pageGuideHint");
+      var readiness = document.getElementById("captureReadiness");
+      var seen = new Set();
+      var processingCapture = false;
+      btnCapture.hidden = false; btnCapture.textContent = "Capture now";
 
       placeholder.style.display = "none";
       video.style.display = "block";
@@ -549,27 +591,79 @@
       document.getElementById("pageGuideHint").hidden = false;
       state.stopPageGuide = observePageScanGuide(video, guideArea, document.getElementById("pageGuide"));
 
+      function collectFrame(action) {
+        var added = false;
+        (action.texts || [action.text]).filter(Boolean).forEach(function(text) {
+          if (seen.has(text)) return;
+          seen.add(text); added = true;
+          processScannedSeal(text, canvas);
+        });
+        if (added) {
+          hint.textContent = "Page captured. Show the next page.";
+          if (typeof navigator.vibrate === "function") navigator.vibrate(80);
+        } else if (action.text || action.texts?.length) hint.textContent = "This page is already captured. Show the next page.";
+        else if (action.message) hint.textContent = action.message;
+      }
+
       function cameraError(err) {
         stopScanning();
-        btnScan.textContent = "Scan QR Code";
+        btnScan.textContent = "Check document";
         statusText.textContent = "Camera error: " + err.message;
         placeholder.style.display = "flex";
         placeholder.innerHTML = "<div class='icon'>&#128247;</div><div>" + escapeHtml(err.message) + "</div>";
       }
       var liveScan = createLiveScanWorker({
         returnPayload: true,
+        requirePageQuality: true,
+        onQuality: function(quality) {
+          hint.textContent = quality.message;
+          readiness.hidden = quality.state !== "hold"; readiness.value = quality.progress;
+          state.stopPageGuide?.update(quality);
+        },
+        onCaptured: function() {
+          processingCapture = true;
+          hint.textContent = photoProcessingMessage();
+          readiness.hidden = true;
+          btnCapture.textContent = "Cancel and resume camera";
+        },
         onResult: function(action) {
-          if (action.status === "found-multiple") {
-            // Collect every piece against this frame before the canvas is reused.
-            action.texts.forEach(function(text) { processScannedSeal(text, canvas); });
-          } else if (action.status === "found") {
-            processScannedSeal(action.text, canvas);
-          }
+          if (processingCapture) { processingCapture = false; btnCapture.textContent = "Capture now"; }
+          collectFrame(action);
         },
         onError: cameraError,
       });
       state.liveScan = liveScan;
       state.isScanning = true;
+      updatePhotoComparison();
+      btnCapture.onclick = async function() {
+        if (processingCapture) {
+          processingCapture = false; liveScan.reset();
+          btnCapture.textContent = "Capture now";
+          hint.textContent = "Show all four page corners and hold steady for automatic capture.";
+          return;
+        }
+        if (state.photoScan) {
+          state.photoScan.abort(); state.photoScan = null;
+          btnCapture.textContent = "Capture now"; return;
+        }
+        if (!video.videoWidth || !video.videoHeight) { hint.textContent = "Camera is preparing. Try Capture now in a moment."; return; }
+        liveScan.reset();
+        var controller = new AbortController(); state.photoScan = controller;
+        btnCapture.textContent = "Cancel and resume camera";
+        hint.textContent = photoProcessingMessage();
+        readiness.hidden = true;
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        try {
+          var ctx = canvas.getContext("2d", { willReadFrequently: true }); ctx.drawImage(video, 0, 0);
+          var action = await scanPhotoInWorker(ctx.getImageData(0, 0, canvas.width, canvas.height),
+            { returnPayload: true, signal: controller.signal });
+          if (state.photoScan === controller && state.isScanning) collectFrame(action);
+        } catch (error) {
+          if (state.photoScan === controller && error.name !== "AbortError") hint.textContent = error.message;
+        } finally {
+          if (state.photoScan === controller) { state.photoScan = null; btnCapture.textContent = "Capture now"; }
+        }
+      };
       state.camera = startCameraSession({
         video: video,
         waitForMetadata: true,
@@ -578,10 +672,10 @@
         onFrame: function() {
           if (!video.videoWidth || !video.videoHeight) return;
           statusBar.classList.add("visible");
-          if (liveScan.busy) return;
+          if (liveScan.busy || state.photoScan) return;
           if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
           if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
-          var ctx = canvas.getContext("2d");
+          var ctx = canvas.getContext("2d", { willReadFrequently: true });
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           liveScan.scan(imageData);
@@ -596,17 +690,24 @@
       state.camera = null;
       state.liveScan?.stop();
       state.liveScan = null;
+      state.photoScan?.abort(); state.photoScan = null;
+      btnCapture.hidden = true; btnCapture.onclick = null;
+      document.getElementById("captureReadiness").hidden = true;
       state.stopPageGuide?.();
       state.stopPageGuide = null;
       document.getElementById("pageGuideArea").hidden = true;
       document.getElementById("pageGuideHint").hidden = true;
       statusBar.classList.remove("visible");
+      var canvas = document.getElementById("scanCanvas");
+      canvas.width = canvas.height = 0;
+      updatePhotoComparison();
     }
 
     function processScannedSeal(sealStr, frame, options = {}) {
+      if (options.session !== undefined && options.session !== collection.getSnapshot().session) return;
       if (!decodeSeal(sealStr)) {
         stopScanning();
-        btnScan.textContent = "Scan QR Code";
+        btnScan.textContent = "Check document";
         showResult("QR_CONTENT", { content: sealStr });
         return;
       }
@@ -620,6 +721,7 @@
       var progress = snapshot.progress;
       if (!progress) return;
       statusText.textContent = progress.message;
+      if (state.isScanning) btnScan.textContent = progress.pagesCollected > 1 ? "Check captured pages now" : "Check this page now";
       var collected = progress.pagesCollected || progress.collected;
       var total = progress.pagesTotal || progress.total;
       progressFill.style.width = Math.min(100, collected / total * 100) + "%";
@@ -628,7 +730,7 @@
       var result = snapshot.results.find(function(result) { return result.document_id === active.documentId; });
       if (progress.finished) {
         stopScanning();
-        btnScan.textContent = "Scan QR Code";
+        btnScan.textContent = "Check document";
       }
       if (result && result.status !== "INCOMPLETE") {
         showResult(result.status, result, { keepScanView: !progress.finished, progress: progress, results: snapshot.results });
@@ -664,7 +766,7 @@
       var summaryStatus = ["ERROR", "INVALID", "INCOMPLETE", "UNVERIFIED"].find(function(value) {
         return results.some(function(result) { return result.status === value; });
       }) || status;
-      rs.textContent = summaryStatus;
+      rs.textContent = summaryStatus === "VALID" ? "Seal authenticated" : summaryStatus;
       rs.className = "result-status " + summaryStatus.toLowerCase();
 
       var rm = document.getElementById("resultMeta");
@@ -688,7 +790,7 @@
         var article = document.createElement("article");
         article.className = "verification-result";
         var heading = document.createElement("h3");
-        heading.textContent = (result.pdf ? "Page " + result.page_number + " of " + result.page_count + " · " : "") + result.status;
+        heading.textContent = (result.pdf ? "Page " + result.page_number + " of " + result.page_count + " · " : "") + (result.status === "VALID" ? "Seal authenticated" : result.status);
         article.appendChild(heading);
         var metadata = document.createElement("div");
         metadata.className = "result-meta";

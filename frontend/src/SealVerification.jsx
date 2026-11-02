@@ -4,6 +4,7 @@ import { decodeSeal } from "./qredVerifier.js";
 import { isQRedEntryLink } from "./qr/qrPayload.js";
 import { readSigningKeyFile } from "./signingKeys.js";
 import { createVerificationSession } from "./verifier/verificationSession.js";
+import { createPageTextChecks } from "./verifier/pageTextChecks.js";
 import { PhotoTextVerification } from "./verifier/PhotoTextVerification.jsx";
 import { createScanPhotoCollection } from "./verifier/scanPhotos.js";
 import { PdfSealInput } from "./verifier/PdfSealInput.jsx";
@@ -11,13 +12,24 @@ import { authProvider } from "./authProviders.js";
 
 export function useSealVerification() {
   const [collection] = useState(createVerificationSession);
+  const [textChecks] = useState(createPageTextChecks);
+  const [scanning, setScanning] = useState(false);
   const snapshot = useSyncExternalStore(collection.subscribe, collection.getSnapshot);
   const { seals } = snapshot;
   const [publicKey, setPublicKey] = useState("");
   const [notice, setNotice] = useState("");
   const [scanImages, setScanImages] = useState({ photos: [], notice: "" });
   const [photoCollection] = useState(() => createScanPhotoCollection(setScanImages));
-  useEffect(() => () => photoCollection.clear(), [photoCollection]);
+  useEffect(() => () => { photoCollection.clear(); textChecks.dispose(); }, [photoCollection, textChecks]);
+  const clear = useCallback(() => {
+    textChecks.clear(); photoCollection.clear(); collection.clear();
+    setNotice("Check cleared. Camera off."); setScanning(false);
+  }, [textChecks, photoCollection, collection]);
+  useEffect(() => {
+    // Also clear a page restored from the back/forward cache.
+    window.addEventListener("pagehide", clear);
+    return () => window.removeEventListener("pagehide", clear);
+  }, [clear]);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,6 +47,7 @@ export function useSealVerification() {
   }, []);
 
   const addSeal = useCallback((text, frame, { replaceImage = false } = {}) => {
+    if (collection.getSnapshot().session !== snapshot.session) return;
     if (isQRedEntryLink(text)) {
       setNotice("That code opens qred.org. Scan the pale watermark to read the document seal.");
       return;
@@ -47,7 +60,7 @@ export function useSealVerification() {
     const captured = photoCollection.capture(text, frame, { replace: replaceImage });
     collection.add(text);
     return captured;
-  }, [photoCollection, collection]);
+  }, [photoCollection, collection, snapshot.session]);
 
   useEffect(() => {
     collection.verify(publicKey);
@@ -55,7 +68,10 @@ export function useSealVerification() {
   }, [collection, seals, publicKey]);
 
   return { ...snapshot, publicKey, setPublicKey, notice, setNotice, addSeal, scanImages,
-    clear: () => { photoCollection.clear(); collection.clear(); setNotice(""); } };
+    scanning, setScanning, textChecks, clear,
+    replacePhoto: (id, file) => {
+      if (collection.getSnapshot().session === snapshot.session) photoCollection.replacePage(id, file);
+    } };
 }
 
 export function SealVerification({ verification }) {
@@ -67,7 +83,7 @@ export function SealVerification({ verification }) {
   useEffect(() => { preparePhotoScanner(); }, []);
   useEffect(() => {
     imageRead.current += 1;
-    setReadingImage(false);
+    setReadingImage(false); setKeyFileStatus("");
     return () => { imageRead.current += 1; imageScan.current?.abort(); };
   }, [verification.session]);
   const { seals, setPublicKey, results, notice, setNotice, busy, addSeal } = verification;
@@ -143,15 +159,12 @@ export function SealVerification({ verification }) {
     setNotice("Photo scan cancelled.");
   }
 
-  return <section className="verification-card" aria-label="Seal verification">
-    <h2>Verify collected seals</h2>
-    <p>Include the whole printed page to recover one or four pale watermark codes at once. You can also scan older individual QR seals. Keep the page photo for comparison with its signed contents.</p>
-    <p className="verification-note">PDFs, QR images, and camera frames are processed in this browser and are not sent to a server.</p>
-    <details>
-      <summary>Optional: use airplane mode</summary>
-      <p>Load QRed, then enable airplane mode and turn Wi-Fi and Bluetooth off in your device settings to limit network access while you work. Keep this tab open.</p>
-      <p>Try your workflow with a non-sensitive file before opening sensitive documents. Some PDF fonts and text-recognition resources may still need an internet connection.</p>
-    </details>
+  return <section className="verification-card" aria-label="Seal verification" id="document-check">
+    <div className="verification-actions"><button type="button" onClick={verification.clear}>Finish &amp; clear</button></div>
+    {notice && notice !== "Check cleared. Camera off." && <p role="status">{notice}</p>}
+    <PhotoTextVerification results={results} seals={seals} session={verification.session} checks={verification.textChecks}
+      scanPhotos={verification.scanImages?.photos} captureNotice={verification.scanImages?.notice}
+      scanning={verification.scanning} verifying={busy} onReplacePhoto={verification.replacePhoto} />
     {hasLocalSeals && <div>
       <p>This collection includes a seal made with a private key file. Use the issuer’s public key file to verify it.</p>
       <label htmlFor="issuer-public-key-file">Open issuer public key file</label>
@@ -159,6 +172,13 @@ export function SealVerification({ verification }) {
       <p role="status">{keyFileStatus}</p>
       <p className="verification-note">Obtain the key from the issuer through a trusted channel. The default demo key is public test data and proves no issuer identity.</p>
     </div>}
+    <details className="verification-details"><summary>Open an existing PDF or image</summary>
+    <p className="verification-note">PDFs, QR images, and camera frames are processed in this browser and are not sent to a server.</p>
+    <details>
+      <summary>Optional: use airplane mode</summary>
+      <p>Load QRed, then enable airplane mode and turn Wi-Fi and Bluetooth off in your device settings to limit network access while you work. Keep this tab open.</p>
+      <p>Try your workflow with a non-sensitive file before opening sensitive documents. Some PDF fonts and text-recognition resources may still need an internet connection.</p>
+    </details>
     <label htmlFor="qr-image">Choose QR image</label>
     <input id="qr-image" type="file" accept="image/*" onChange={readImage} />
     {readingImage && <div>
@@ -166,13 +186,13 @@ export function SealVerification({ verification }) {
       <button type="button" onClick={cancelImageScan}>Cancel photo scan</button>
     </div>}
     <PdfSealInput onSeal={addSeal} session={verification.session} />
-    <button type="button" onClick={verification.clear}>Clear collected seals</button>
+    </details>
+    <details className="verification-details"><summary>Seal details and recovered text</summary>
     <div aria-live="polite">
       {verification.progress && <p className="collection-progress">{verification.progress.message}</p>}
-      {notice && <p role="status">{notice}</p>}
       {busy && <p role="status">Verifying…</p>}
       {results.map((result, index) => <article key={result.document_id || index} className="verification-result">
-        <h3>{result.status}</h3>
+        <h3>{result.status === "VALID" ? "Seal authenticated" : result.status}</h3>
         <p>Document: {result.document_id}</p>
         {result.identity && <>
           <p>{result.identity_authenticated ? "Account authenticated through " + authProvider(result.identity.provider)?.label : "Unverified identity claim"}: {result.identity.email}. Name: {result.identity.name} ({result.identity.name_source === result.identity.provider ? authProvider(result.identity.provider)?.label + " profile" : "self-declared"}).</p>
@@ -187,8 +207,6 @@ export function SealVerification({ verification }) {
         {result.content && <pre>{result.content}</pre>}
       </article>)}
     </div>
-    <PhotoTextVerification results={results} session={verification.session}
-      scanPhotos={verification.scanImages?.photos} captureNotice={verification.scanImages?.notice}
-      collecting={Boolean(verification.progress && !verification.progress.finished)} />
+    </details>
   </section>;
 }

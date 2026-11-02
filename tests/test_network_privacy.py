@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 from playwright.sync_api import expect
-from browser_helpers import OfflineNetworkGuard, stamp_and_save, wait_for_offline_resources
+from browser_helpers import show_seal_details, show_file_inputs, prepare_text_for_offline, OfflineNetworkGuard, stamp_and_save, wait_for_offline_resources
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
@@ -57,6 +57,7 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, la
         page.get_by_role("button", name="Close", exact=True).click()
         page.wait_for_load_state("networkidle")
         wait_for_offline_resources(page, pdf=True)
+        prepare_text_for_offline(page)
         guard.check_instrumentation(page)
         guard.block(offline=offline)
         assert page.evaluate("navigator.onLine") is (not offline)
@@ -104,23 +105,28 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, la
                 photo = Image.new("RGB", (image.width + 80, image.height + 80), (55, 55, 55))
                 photo.paste(image.convert("RGB"), (40, 40))
             photo.save(footer.with_suffix(".png"))
+        show_file_inputs(page)
         page.get_by_label("Choose QR image", exact=True).set_input_files(footer.with_suffix(".png"))
         page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
-        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
+        show_seal_details(page)
+        expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text(text)
 
         # Also exercise file reading, image decoding and byte-payload
         # recovery from real stamped-PDF pixels while networking is blocked.
-        page.get_by_role("button", name="Clear collected seals", exact=True).click()
+        page.get_by_role("button", name="Finish & clear", exact=True).click()
         fixture_key = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="
         fixture = Path(__file__).parent / "fixtures" / "compact-qr" / "invoice-footer-300dpi.png"
+        show_file_inputs(page)
         page.get_by_label("Choose QR image", exact=True).set_input_files(fixture)
         page.get_by_label("Open issuer public key file", exact=True).set_input_files({
             "name": "fixture-public-key.txt", "mimeType": "text/plain", "buffer": fixture_key.encode(),
         })
-        expect(page.get_by_role("heading", name="VALID", exact=True)).to_be_visible(timeout=20000)
+        show_seal_details(page)
+        expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_be_visible(timeout=20000)
         expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45")
         page.get_by_label("Open issuer public key file", exact=True).set_input_files(tmp_path / "qred-ed25519-public-key.txt")
+        show_seal_details(page)
         expect(page.get_by_role("heading", name="INVALID", exact=True)).to_be_visible()
 
         # Flush pending request callbacks, including background SW fetches.

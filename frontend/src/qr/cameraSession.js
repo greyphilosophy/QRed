@@ -11,6 +11,7 @@ export function startCameraSession({ video, requestStream, prepareStream, onStre
   function stop() {
     if (stopped) return;
     stopped = true;
+    globalThis.removeEventListener?.("pagehide", stop);
     if (animation !== null) cancelAnimationFrame(animation);
     if (video.onloadedmetadata === startFrames) video.onloadedmetadata = null;
     if (stream) {
@@ -20,6 +21,7 @@ export function startCameraSession({ video, requestStream, prepareStream, onStre
       onStream?.(null);
     }
   }
+  globalThis.addEventListener?.("pagehide", stop);
 
   function fail(error, stage) {
     if (stopped) return;

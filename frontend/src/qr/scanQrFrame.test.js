@@ -22,6 +22,40 @@ function chunk(index = 0) {
   return { data: "", binaryData: Array.from(bytes) };
 }
 
+it("starts whole-page scanning with the watermark preview and still learns a footer strategy", () => {
+  const watermark = createQrFrameScanner({ preferWatermark: true });
+  jsQR.mockReturnValueOnce(chunk());
+  expect(frame(watermark)).toMatchObject({ watermark: true });
+  expect(jsQR).toHaveBeenCalledTimes(1);
+  const footer = createQrFrameScanner({ preferWatermark: true });
+  jsQR.mockReturnValueOnce(null).mockReturnValueOnce(chunk()).mockReturnValueOnce(chunk(1));
+  expect(frame(footer)).toBeNull();
+  expect(frame(footer).watermark).toBeUndefined();
+  expect(frame(footer).watermark).toBeUndefined();
+  expect(jsQR).toHaveBeenCalledTimes(4);
+});
+
+it("keeps page-aligned and module-aware fallbacks reachable after watermark-first misses", () => {
+  const scan = createQrFrameScanner({ preferWatermark: true });
+  for (let i = 0; i < 10; i++) frame(scan);
+  expect(scanPageAlignedImage).toHaveBeenCalledTimes(1);
+  expect(jsQR.mock.calls.some(([, , , options]) => options.moduleSampler)).toBe(true);
+});
+
+it("tries a small document preview before its full watermark fallback, returning original coordinates", () => {
+  const width = 1440, height = 1920, original = new Uint8ClampedArray(width * height * 4).fill(255);
+  const scan = createQrFrameScanner({ preferWatermark: true });
+  expect(scan(original, width, height)).toBeNull();
+  expect(jsQR.mock.calls[0][1] * jsQR.mock.calls[0][2]).toBeLessThanOrEqual(1_000_000);
+  const code = { ...chunk(), location: { topLeftCorner: { x: 20, y: 30 } } };
+  jsQR.mockReturnValueOnce(code);
+  const found = scan(original, width, height), [, w, h] = jsQR.mock.lastCall;
+  expect(w * h).toBeGreaterThan(1_000_000);
+  expect(w * h).toBeLessThanOrEqual(2_500_000);
+  expect(found.location.topLeftCorner).toEqual({ x: 20.5 * width / w - .5, y: 30.5 * height / h - .5 });
+  expect(original[0]).toBe(255);
+});
+
 it("limits a live frame to one decode and spreads retries across subsequent frames", () => {
   const scan = createQrFrameScanner();
   const pixels = new Uint8ClampedArray(200 * 200 * 4).fill(255);

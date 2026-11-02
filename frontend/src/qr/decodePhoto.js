@@ -38,6 +38,12 @@ export function decodePhoto(image, { returnPayload = false } = {}) {
     // not stop recovery of a four-code page. Trust is checked by the normal
     // verification session after either decoding path returns its payload.
     if (decodeSeal(payload)?.total_chunks === 1) return { status: "found", text: payload };
+    // An ordinary footer code should not pay for exhaustive page alignment.
+    // Allow one original-scale attempt plus a masked navigation-code retry.
+    const ordinary = scanQrImage(data, width, height,
+      { tryRescaling: false, tryWatermark: false, maxAttempts: 2 });
+    const ordinaryPayload = ordinary && qredPayloadFromPhotoScanResult(data, width, height, ordinary);
+    if (decodeSeal(ordinaryPayload)?.total_chunks === 1) return { status: "found", text: ordinaryPayload };
     const aligned = scanPageAlignedImage(image, { deep: true });
     if (aligned.length) return { status: "found-multiple", texts: aligned.map(result => result.seal) };
   }

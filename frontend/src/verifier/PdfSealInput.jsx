@@ -36,7 +36,7 @@ export function PdfSealInput({ onSeal, session = 0 }) {
           canvas.width = image.width; canvas.height = image.height;
           try {
             canvas.getContext("2d").putImageData(new ImageData(image.data, image.width, image.height), 0, 0);
-            await onSeal(seal, canvas, { replaceImage: true });
+            await onSeal(seal, canvas, { replaceImage: true, session });
           } finally { canvas.width = canvas.height = 0; }
         },
       });

@@ -22,7 +22,7 @@ export function preparePhotoScanner() {
   })().catch(() => { preparation = undefined; });
 }
 
-export function scanPhotoInWorker(image, { signal, returnPayload = false } = {}) {
+function runPhotoWorker(image, { signal, ...request }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(new DOMException("Scan cancelled", "AbortError")); return; }
     const worker = new Worker(workerUrl, { type: "module" });
@@ -45,15 +45,23 @@ export function scanPhotoInWorker(image, { signal, returnPayload = false } = {})
     worker.onmessageerror = () => finish(new Error("The photo scan result could not be read. Try again."));
     try {
       // Transfer ownership instead of cloning a 12–48 MP pixel buffer.
-      worker.postMessage({ image: { data: image.data, width: image.width, height: image.height }, returnPayload },
+      worker.postMessage({ image: { data: image.data, width: image.width, height: image.height }, ...request },
         [image.data.buffer]);
     } catch (error) { finish(error); }
   });
 }
 
+export function scanPhotoInWorker(image, { signal, returnPayload = false } = {}) {
+  return runPhotoWorker(image, { signal, returnPayload });
+}
+
+export function preparePhotoReadingInWorker(image, { signal } = {}) {
+  return runPhotoWorker(image, { signal, prepareReading: true });
+}
+
 // No frame queue: callers keep the submitted canvas unchanged until onResult
 // runs, and check busy before drawing the next camera frame into that canvas.
-export function createLiveScanWorker({ onResult, onError, returnPayload = false }) {
+export function createLiveScanWorker({ onResult, onError, returnPayload = false, requirePageQuality = false, onQuality, onCaptured }) {
   let worker = null, busy = false, stopped = false;
   function reset() {
     if (worker) {
@@ -82,8 +90,15 @@ export function createLiveScanWorker({ onResult, onError, returnPayload = false 
           current.onmessage = ({ data }) => {
             if (worker !== current || stopped || !busy) return;
             if (data.error) { fail(current, new Error(data.error)); return; }
+            if (data.captured) {
+              // This is an intermediate acknowledgement, not a decoder result.
+              // Keep busy true so no newer camera frame can replace the photo.
+              try { if (data.quality) onQuality?.(data.quality); onCaptured?.(); }
+              catch (error) { fail(current, error); }
+              return;
+            }
             busy = false;
-            try { onResult(data.action); }
+            try { if (data.quality) onQuality?.(data.quality); onResult(data.action); }
             catch (error) { fail(current, error); }
           };
           current.onerror = event => {
@@ -93,7 +108,8 @@ export function createLiveScanWorker({ onResult, onError, returnPayload = false 
           current.onmessageerror = () => fail(current, new Error("The live scan result could not be read."));
         }
         busy = true;
-        worker.postMessage({ image: { data: image.data, width: image.width, height: image.height }, returnPayload, live: true },
+        const qualityOptions = requirePageQuality ? { requirePageQuality, frameTime: performance.now() } : {};
+        worker.postMessage({ image: { data: image.data, width: image.width, height: image.height }, returnPayload, live: true, ...qualityOptions },
           [image.data.buffer]);
         return true;
       } catch (error) {
