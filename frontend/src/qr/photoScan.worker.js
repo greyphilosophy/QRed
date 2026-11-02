@@ -1,14 +1,21 @@
 import { decodePhoto, qrFrameAction } from "./decodePhoto.js";
 import { createQrFrameScanner } from "./scanQrImage.js";
 import { createPageCaptureGate } from "./pageCaptureQuality.js";
+import { preparePhotoReadingPixels } from "../verifier/photoReadingPixels.js";
 
 // A camera session keeps its retry position, but submits only one fresh frame
 // at a time. Live requests never enter the exhaustive still-photo decoder.
-const scanQrFrame = createQrFrameScanner();
+let scanQrFrame;
 const captureGate = createPageCaptureGate();
 let readingSince = null;
-self.onmessage = ({ data: { image, returnPayload, live = false, requirePageQuality = false, frameTime } }) => {
+self.onmessage = ({ data: { image, returnPayload, live = false, requirePageQuality = false, frameTime, prepareReading = false } }) => {
   try {
+    if (prepareReading) {
+      const action = preparePhotoReadingPixels(image);
+      self.postMessage({ action }, [action.image.data.buffer]);
+      return;
+    }
+    scanQrFrame ??= createQrFrameScanner({ preferWatermark: requirePageQuality });
     const quality = requirePageQuality ? captureGate.update(image, frameTime) : null;
     const action = quality && !quality.ready ? { status: "continue" } : live
       ? qrFrameAction(image, scanQrFrame(image.data, image.width, image.height), { returnPayload })

@@ -637,7 +637,7 @@
         readiness.hidden = true;
         canvas.width = video.videoWidth; canvas.height = video.videoHeight;
         try {
-          var ctx = canvas.getContext("2d"); ctx.drawImage(video, 0, 0);
+          var ctx = canvas.getContext("2d", { willReadFrequently: true }); ctx.drawImage(video, 0, 0);
           var action = await scanPhotoInWorker(ctx.getImageData(0, 0, canvas.width, canvas.height),
             { returnPayload: true, signal: controller.signal });
           if (state.photoScan === controller && state.isScanning) collectFrame(action);
@@ -658,7 +658,7 @@
           if (liveScan.busy || state.photoScan) return;
           if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
           if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
-          var ctx = canvas.getContext("2d");
+          var ctx = canvas.getContext("2d", { willReadFrequently: true });
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           liveScan.scan(imageData);

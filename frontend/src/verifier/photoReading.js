@@ -1,43 +1,23 @@
-import { scanQrImage } from "../qr/scanQrImage.js";
-import { maskQrCode } from "../qr/maskQrCode.js";
-import { isQRedEntryLink, qredPayloadFromScanResult } from "../qr/qrPayload.js";
-import { decodeSeal } from "../qredVerifier.js";
+import { preparePhotoReadingInWorker } from "../qr/photoScanClient.js";
 import { comparePhotoText } from "./photoTextComparison.js";
 
 // This is a second reading, never a replacement for the displayed original.
 // Removing a pale watermark can also remove pale writing: a result using this
 // copy must always require visual review, even when its dark text agrees.
-export function preparePhotoReading(source) {
+export async function preparePhotoReading(source, { signal } = {}) {
+  signal?.throwIfAborted();
+  const pixels = source.getContext("2d").getImageData(0, 0, source.width, source.height);
+  const { image, codes } = await preparePhotoReadingInWorker(pixels, { signal });
   const canvas = document.createElement("canvas");
-  canvas.width = source.width; canvas.height = source.height;
-  const context = canvas.getContext("2d");
-  context.drawImage(source, 0, 0);
-  const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-  for (let i = 0; i < pixels.data.length; i += 4) {
-    if (Math.min(pixels.data[i], pixels.data[i + 1], pixels.data[i + 2]) > 150) {
-      pixels.data[i] = pixels.data[i + 1] = pixels.data[i + 2] = 255;
-    }
-  }
-  context.putImageData(pixels, 0, 0);
-  const codes = [];
+  canvas.width = image.width; canvas.height = image.height;
   try {
-    for (let count = 0; count < 8; count++) {
-      const code = scanQrImage(pixels.data, pixels.width, pixels.height,
-        { tryWatermark: false, maxAttempts: 5 });
-      if (!code) break;
-      const text = qredPayloadFromScanResult(code) || code.data;
-      const points = ["topLeftCorner", "topRightCorner", "bottomLeftCorner", "bottomRightCorner"].map(key => code.location[key]);
-      const box = { x0: Math.min(...points.map(p => p.x)), y0: Math.min(...points.map(p => p.y)),
-        x1: Math.max(...points.map(p => p.x)), y1: Math.max(...points.map(p => p.y)) };
-      if ((isQRedEntryLink(text) || decodeSeal(text)) &&
-          (box.x1 - box.x0) * (box.y1 - box.y0) < source.width * source.height * .2) codes.push(box);
-      if (!maskQrCode(pixels.data, pixels.width, pixels.height, code)) break;
-    }
+    if (signal?.aborted) throw new DOMException("Reading cancelled", "AbortError");
+    canvas.getContext("2d", { willReadFrequently: true }).putImageData(new ImageData(image.data, image.width, image.height), 0, 0);
     return { canvas, codes };
   } catch (error) {
     canvas.width = canvas.height = 0;
     throw error;
-  } finally { pixels.data.fill(0); }
+  } finally { image.data.fill(0); }
 }
 
 // Only identify the caption beside a decoded QRed code. Allow the observed q/g

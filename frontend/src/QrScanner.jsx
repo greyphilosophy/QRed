@@ -156,7 +156,7 @@ export function manualCapturePendingAction(startedAt, now = performance.now()) {
 
 export function captureCameraFrame(video, canvas) {
   if (!isCameraFrameReady(video, canvas)) return null;
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return null;
   const width = video.videoWidth, height = video.videoHeight;
   if (canvas.width !== width) canvas.width = width;

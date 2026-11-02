@@ -1,6 +1,6 @@
 /* @vitest-environment jsdom */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { createLiveScanWorker, scanPhotoInWorker } from "./photoScanClient.js";
+import { createLiveScanWorker, scanPhotoInWorker, preparePhotoReadingInWorker } from "./photoScanClient.js";
 
 let worker;
 beforeEach(() => {
@@ -9,6 +9,17 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 const image = () => ({ data: new Uint8ClampedArray(24), width: 2, height: 3 });
+
+it("cancels background OCR preparation and ignores its late result", async () => {
+  const controller = new AbortController(), pixels = image();
+  const pending = preparePhotoReadingInWorker(pixels, { signal: controller.signal });
+  expect(worker.postMessage).toHaveBeenCalledWith({ image: pixels, prepareReading: true }, [pixels.data.buffer]);
+  const late = worker.onmessage;
+  controller.abort();
+  late({ data: { action: { image: pixels, codes: [] } } });
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  expect(worker.terminate).toHaveBeenCalledTimes(1);
+});
 
 it("transfers the original pixel buffer and terminates after returning all page chunks", async () => {
   const pixels = image();

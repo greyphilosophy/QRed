@@ -17,6 +17,7 @@ it("uses only local versioned assets and extracts bounded word data from the rea
   expect(factory).toHaveBeenCalledWith("eng", 1, expect.objectContaining({
     workerPath: "/ocr/v1/worker.min.js", corePath: "/ocr/v1", langPath: "/ocr/v1", cacheMethod: "none",
   }));
+  expect(engine.setParameters).toHaveBeenCalledWith({ tessedit_pageseg_mode: "3", thresholding_method: "2" });
   expect(engine.recognize).toHaveBeenCalledWith(image, {}, { text: true, blocks: true });
   reader.dispose();
   expect(engine.terminate).toHaveBeenCalledTimes(1);
@@ -29,6 +30,22 @@ it("terminates a worker which finishes loading after cancellation", async () => 
   resolve(engine);
   await expect(loading).rejects.toThrow(/cancelled/);
   expect(engine.terminate).toHaveBeenCalledTimes(1);
+});
+
+it("aborts concurrent preparation and releases a copy delivered after the reader is disposed", async () => {
+  let finishPreparation, signal;
+  const engine = worker(), copy = { width: 100, height: 200 };
+  const reader = createPhotoOcrReader(() => Promise.resolve(engine), (_, options) => {
+    signal = options.signal;
+    return new Promise(resolve => { finishPreparation = resolve; });
+  });
+  const read = reader.read({ width: 100, height: 200 });
+  await vi.waitFor(() => expect(finishPreparation).toBeTypeOf("function"));
+  reader.dispose();
+  expect(signal.aborted).toBe(true);
+  finishPreparation({ canvas: copy, codes: [] });
+  await expect(read).rejects.toMatchObject({ name: "AbortError" });
+  expect(copy).toEqual({ width: 0, height: 0 });
 });
 it("retries initialization after a failed load", async () => {
   const factory = vi.fn().mockRejectedValueOnce(new Error("Missing language")).mockResolvedValue(worker());

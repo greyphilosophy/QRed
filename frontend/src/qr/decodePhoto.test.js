@@ -54,8 +54,25 @@ it("collects all four chunks even when the preview has already read one", () => 
 });
 
 it("keeps original-resolution alignment and legacy recovery after a preview miss", () => {
-  scanQrImage.mockReturnValue(code(single));
+  scanQrImage.mockReturnValueOnce(null).mockReturnValue(code(single));
   expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found", text: single });
   expect(scanPageAlignedImage.mock.calls[0][0]).toBe(image);
   expect(scanQrImage).toHaveBeenCalledWith(image.data, image.width, image.height);
+});
+
+it("recovers a complete ordinary footer seal before exhaustive alignment", async () => {
+  scanQrImage.mockReturnValue(code(single));
+  const action = decodePhoto(image, { returnPayload: true });
+  expect(action).toEqual({ status: "found", text: single });
+  expect(scanPageAlignedImage).not.toHaveBeenCalled();
+  expect(scanQrImage).toHaveBeenCalledTimes(1);
+  expect(scanQrImage).toHaveBeenCalledWith(image.data, image.width, image.height,
+    { tryRescaling: false, tryWatermark: false, maxAttempts: 2 });
+  expect((await verifyQRedSeals([action.text], publicKey)).status).toBe("VALID");
+});
+
+it("does not let a single footer chunk skip collection of the remaining chunks", () => {
+  scanQrImage.mockReturnValue(code(multiple[0]));
+  scanPageAlignedImage.mockReturnValue(multiple.map(seal => ({ seal })));
+  expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found-multiple", texts: multiple });
 });

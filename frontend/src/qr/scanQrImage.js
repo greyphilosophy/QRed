@@ -35,7 +35,10 @@ function resizeRgba(data, width, height, targetWidth, targetHeight) {
     for (let x = 0; x < targetWidth; x += 1) {
       const target = (y * targetWidth + x) * 4;
       let red = 0, green = 0, blue = 0, alpha = 0;
-      for (const [sy, wy] of ySamples[y]) for (const [sx, wx] of xSamples[x]) {
+      // Indexed access avoids allocating iterators for every output pixel.
+      // Keep the same sample order and arithmetic as the original filter.
+      for (let yi = 0; yi < ySamples[y].length; yi++) for (let xi = 0; xi < xSamples[x].length; xi++) {
+        const sy = ySamples[y][yi][0], wy = ySamples[y][yi][1], sx = xSamples[x][xi][0], wx = xSamples[x][xi][1];
         const source = (sy * width + sx) * 4, weight = wx * wy;
         red += data[source] * weight; green += data[source + 1] * weight;
         blue += data[source + 2] * weight; alpha += data[source + 3] * weight;
@@ -69,8 +72,8 @@ function isValidImage(data, width, height) {
     && data?.length === width * height * 4;
 }
 
-function watermarkScanSize(width, height) {
-  const scale = Math.min(1, Math.sqrt(MAX_WATERMARK_PIXELS / (width * height)));
+function watermarkScanSize(width, height, maxPixels = MAX_WATERMARK_PIXELS) {
+  const scale = Math.min(1, Math.sqrt(maxPixels / (width * height)));
   const w = Math.max(1, Math.floor(width * scale)), h = Math.max(1, Math.floor(height * scale));
   return [w, h, Math.max(1, Math.min(4, Math.round(Math.max(w, h) / 550)))];
 }
@@ -200,7 +203,7 @@ export function scanQrImage(data, width, height, { tryRescaling = true, tryWater
  * can collect them before the originating camera frame is overwritten.
  * Give each camera session its own scanner; still images use scanQrImage.
  */
-export function createQrFrameScanner() {
+export function createQrFrameScanner({ preferWatermark = false } = {}) {
   let previousWidth;
   let previousHeight;
   let sizes;
@@ -236,6 +239,17 @@ export function createQrFrameScanner() {
       previousWidth = width;
       previousHeight = height;
       sizes = [...scanAttempts(width, height, true, true, true), "pageAligned"];
+      // Whole-page verification normally sees a pale watermark. Try its one
+      // bounded preview before expensive ordinary-code rescaling; keep every
+      // fallback, and let a successful footer strategy become preferred too.
+      if (preferWatermark) {
+        sizes.unshift(...sizes.splice(sizes.findIndex(size => size[2]), 1));
+        const preview = watermarkScanSize(width, height, 1_000_000);
+        // Most clearly framed pages have ample module detail at this scale.
+        // Dense or awkwardly sampled seals retain the established 2.5 MP pass
+        // immediately afterward, and all original-resolution fallbacks.
+        if (preview[0] !== sizes[0][0] || preview[1] !== sizes[0][1]) sizes.unshift(preview);
+      }
       nextSize = 0;
       entryToSkip = null;
       recentPayloads.clear();

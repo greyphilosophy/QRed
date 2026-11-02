@@ -41,8 +41,9 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
         if (!source?.videoWidth) return;
         setReady(true);
         if (busyRef.current || live.current.busy) return;
-        canvas.width = source.videoWidth; canvas.height = source.videoHeight;
-        const context = canvas.getContext("2d");
+        if (canvas.width !== source.videoWidth) canvas.width = source.videoWidth;
+        if (canvas.height !== source.videoHeight) canvas.height = source.videoHeight;
+        const context = canvas.getContext("2d", { willReadFrequently: true });
         context.drawImage(source, 0, 0);
         live.current.scan(context.getImageData(0, 0, canvas.width, canvas.height));
       },
@@ -77,7 +78,7 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
     const canvas = document.createElement("canvas");
     canvas.width = source.videoWidth; canvas.height = source.videoHeight;
     try {
-      const context = canvas.getContext("2d");
+      const context = canvas.getContext("2d", { willReadFrequently: true });
       context.drawImage(source, 0, 0);
       const action = await scanPhotoInWorker(context.getImageData(0, 0, canvas.width, canvas.height),
         { returnPayload: true, signal: scan.current.signal });

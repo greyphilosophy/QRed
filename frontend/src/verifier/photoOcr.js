@@ -7,6 +7,7 @@ export const OCR_ASSET_PATH = "/ocr/v1";
 
 export function createPhotoOcrReader(workerFactory = createWorker, prepareImage = preparePhotoReading) {
   let worker = null, pending = null, generation = 0;
+  let preprocessing = null;
   let progress = () => {};
 
   async function prepare(onProgress = () => {}) {
@@ -25,7 +26,10 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
       }).then(async next => {
         if (epoch !== generation) { await next.terminate(); throw new Error("Reading cancelled."); }
         worker = next;
-        await next.setParameters({ tessedit_pageseg_mode: "3" });
+        // A pale watermark can dominate a page-wide threshold and turn the
+        // background into letters. Local adaptive thresholding reads the
+        // original pixels, including faint additions, without a second pass.
+        await next.setParameters({ tessedit_pageseg_mode: "3", thresholding_method: "2" });
         return next;
       }).catch(error => {
         if (epoch === generation) { pending = null; worker?.terminate(); worker = null; }
@@ -46,9 +50,21 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
           .flatMap(paragraph => (paragraph.lines || []).flatMap(line => line.words || [])))
           .map(({ text, confidence, bbox }) => ({ text, confidence, bbox }));
       };
-      let words = await recognize(canvas);
-      const prepared = prepareImage(canvas);
+      const controller = new AbortController();
+      preprocessing = controller;
+      let prepared;
       try {
+        // OCR and bounded image preparation use separate workers. Neither QR
+        // searching nor contrast processing may block input and cancellation.
+        const preparation = Promise.resolve().then(() => prepareImage(canvas, { signal: controller.signal })).then(result => {
+          if (controller.signal.aborted) {
+            if (result.canvas) result.canvas.width = result.canvas.height = 0;
+            throw new DOMException("Reading cancelled", "AbortError");
+          }
+          prepared = result;
+        });
+        let [words] = await Promise.all([recognize(canvas), preparation]);
+        if (controller.signal.aborted) throw new DOMException("Reading cancelled", "AbortError");
         // Preserve every reading from the original. Only use the contrast copy
         // when segmentation found no text at all, and label its limitations.
         const contrastAssisted = words.length === 0;
@@ -90,11 +106,16 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
           words = words.flatMap((word, index) => replacements.get(index) || (removed.has(index) ? [] : [word]));
         }
         return { words, codes: prepared.codes, contrastAssisted };
-      } finally { if (prepared.canvas) prepared.canvas.width = prepared.canvas.height = 0; }
+      } finally {
+        controller.abort();
+        if (preprocessing === controller) preprocessing = null;
+        if (prepared?.canvas) prepared.canvas.width = prepared.canvas.height = 0;
+      }
     },
     dispose() {
       generation += 1;
       progress = () => {};
+      preprocessing?.abort(); preprocessing = null;
       worker?.terminate();
       worker = null;
       pending = null;
@@ -118,7 +139,7 @@ export async function openPagePhoto(file) {
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-    const context = canvas.getContext("2d");
+    const context = canvas.getContext("2d", { willReadFrequently: true });
     if (!context) throw new Error("This browser cannot open the page photo.");
     context.fillStyle = "white";
     context.fillRect(0, 0, canvas.width, canvas.height);

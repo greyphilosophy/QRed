@@ -234,6 +234,10 @@ def test_real_stamped_pages_separate_markings_and_detect_edits(browser, tmp_path
         context.route("**/api/keys/default", lambda route: route.fulfill(json={"public_key": PUBLIC_KEY}))
         base = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
         page.goto(base, wait_until="networkidle")
+        # This exact watermark pattern previously made global-threshold OCR
+        # report background glyphs instead of the four unchanged text lines.
+        # Fix Date only; camera, decoding and recognition timers still run.
+        page.clock.set_fixed_time("2026-11-02T22:28:38.060Z")
         page.get_by_role("button", name="Open PDF stamping tool").click()
         page.get_by_role("button", name="Private key (offline)", exact=True).click()
         page.get_by_label("Private Key", exact=True).fill("txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=")

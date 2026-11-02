@@ -193,6 +193,12 @@ conditions, not signature verification. Retakes use the same automatic capture
 and manual fallback. Physical phone/print trials are still needed to tune the
 capture thresholds across cameras, lighting, backgrounds, and paper conditions.
 
+The 600 ms hold is only the capture-readiness delay, not total verification time.
+Document scanning tries a small watermark preview first, then keeps the larger
+and original-resolution recovery paths for difficult seals. Manual capture also
+tries an ordinary footer code before exhaustive page alignment. Image preparation
+and recognition run in background workers so the controls remain available.
+
 After collection, every captured page with authenticated signed text is checked
 automatically, one at a time. **Check this page now** stops scanning and checks a
 partial collection without requiring the rest of the document. Other pages remain
@@ -222,6 +228,10 @@ Case, punctuation, numbers,
 signs, and repeated words are preserved; only whitespace and canonical Unicode
 composition are ignored. The reader never receives the signed text as a recognition
 hint. Confidence is a review heuristic, not a probability of authenticity.
+The reader uses local adaptive thresholding on the original photo to avoid
+mistaking a pale watermark background for lettering. It still compares faint
+additions and missing text; the authenticated wording is never used to choose a
+recognition result.
 
 **Compare the signed visual reference** opens the optional lossy grayscale
 reference and signed line locations for manual inspection. Image-only and blank
@@ -274,6 +284,11 @@ requests verify that the guard catches page and service-worker traffic.
 then compares matching, altered, incomplete, and blank synthetic page images on
 both verifier routes with networking blocked or offline. It checks highlighted
 image coordinates and rejects missing model resources with a recoverable error.
+`tests/test_capture_performance.py` measures automatic capture and text comparison
+on a clear 1440×1920 synthetic page after reader preparation. It guards against
+the former long seal-retry sequence and main-thread image-processing stalls on
+both verifier routes. These CI limits are regression checks, not physical-phone
+performance guarantees; model startup and harder pages take additional time.
 This covers the tested workflows after their resources load; first-use assets,
 page reloads, and device-wide traffic are outside that assertion.
 

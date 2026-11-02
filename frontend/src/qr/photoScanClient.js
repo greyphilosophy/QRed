@@ -22,7 +22,7 @@ export function preparePhotoScanner() {
   })().catch(() => { preparation = undefined; });
 }
 
-export function scanPhotoInWorker(image, { signal, returnPayload = false } = {}) {
+function runPhotoWorker(image, { signal, ...request }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(new DOMException("Scan cancelled", "AbortError")); return; }
     const worker = new Worker(workerUrl, { type: "module" });
@@ -45,10 +45,18 @@ export function scanPhotoInWorker(image, { signal, returnPayload = false } = {})
     worker.onmessageerror = () => finish(new Error("The photo scan result could not be read. Try again."));
     try {
       // Transfer ownership instead of cloning a 12–48 MP pixel buffer.
-      worker.postMessage({ image: { data: image.data, width: image.width, height: image.height }, returnPayload },
+      worker.postMessage({ image: { data: image.data, width: image.width, height: image.height }, ...request },
         [image.data.buffer]);
     } catch (error) { finish(error); }
   });
+}
+
+export function scanPhotoInWorker(image, { signal, returnPayload = false } = {}) {
+  return runPhotoWorker(image, { signal, returnPayload });
+}
+
+export function preparePhotoReadingInWorker(image, { signal } = {}) {
+  return runPhotoWorker(image, { signal, prepareReading: true });
 }
 
 // No frame queue: callers keep the submitted canvas unchanged until onResult
