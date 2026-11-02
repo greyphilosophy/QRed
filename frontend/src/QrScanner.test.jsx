@@ -451,7 +451,7 @@ describe("decodeCanvasFrame", () => {
     expect(decodeCanvasFrame(video, canvas, { manual: true, returnPayload: true }))
       .toEqual({ status: "found-multiple", texts });
     expect(scanPageAlignedImage).toHaveBeenCalledTimes(1);
-    expect(jsQR).toHaveBeenCalledTimes(1); // One bounded preview before page recovery.
+    expect(jsQR).toHaveBeenCalledTimes(2); // Bounded watermark and ordinary previews before page recovery.
   });
 
   it("delivers every live-page chunk before a different camera frame replaces its photo", async () => {
