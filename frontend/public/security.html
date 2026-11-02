@@ -21,7 +21,7 @@
   <p class="kicker">System design & due diligence</p>
   <h1>Security & Architecture</h1>
   <p class="lead">Data flows, trust boundaries, offline capability, and limitations for organizational security reviews.</p>
-  <p class="meta">Last updated: October 26, 2026</p>
+  <p class="meta">Last updated: November 1, 2026</p>
   
 <div class="note"><p><strong>Architecture overview, not an audit:</strong> this is a logical diagram of the current open-source implementation, not a guarantee about every network packet, a penetration-test report, a security certification, or approval to process CJI.</p></div>
 <section aria-labelledby="s1"><h2 id="s1">1. Logical network and data-flow diagram</h2>
@@ -47,7 +47,7 @@
 </tbody></table></div>
 <p>QRed's current implementation does not maintain a database of user accounts or uploaded documents. Account authentication uses secure encrypted, document-bound cookies that expire after five minutes. Network/hosting telemetry and identity-provider records can exist separately.</p></section>
 <section aria-labelledby="s3"><h2 id="s3">3. Provider-specific authentication</h2>
-<p>All four providers are optional and independently configured. Their availability can change by deployment; an unconfigured provider should not be described as enabled.</p>
+<p>All three providers are optional and independently configured. Their availability can change by deployment; an unconfigured provider should not be described as enabled.</p>
 <ul>
 <li><strong>Google:</strong> server-side OAuth code exchange; verified Gmail or eligible Workspace identity.</li>
 <li><strong>Microsoft:</strong> single-page application authorization code with PKCE, redeemed in the browser; QRed Worker validates the signed ID token. No Microsoft client secret.</li>
@@ -57,7 +57,11 @@
 <section aria-labelledby="s4"><h2 id="s4">4. Limits of authentication and document evidence</h2>
 <p>Signatures authenticate the bytes actually covered by their signed QRed payload, not necessarily every aspect of the visible printed or scanned document. QR recovery, OCR, image quantization, camera quality, layout changes, and later physical alterations can affect detection. Original pages may include graphics, form marks, or fine details that lossy visual evidence does not fully preserve.</p>
 <p>Recipients should compare recovered signed text and visual evidence with the document and verify the trustworthiness of the relevant public key. Public account trust anchors are bundled with the application; an offline copy cannot learn that a trust anchor was revoked until updated. A local public key received from an untrusted party is not proof of issuer identity.</p>
-<p><strong>Confidentiality warning:</strong> QRed QR payloads can reveal document text and attested profile details to compatible readers. A cryptographic seal does not encrypt a document or prevent distribution.</p></section>
+<p><strong>Confidentiality warning:</strong> QRed QR payloads can reveal document text and attested profile details to compatible readers. A cryptographic seal does not encrypt a document or prevent distribution.</p>
+<h3>QR transport and migration</h3>
+<p>Payload seals now carry their complete binary record in an ordinary QR byte segment, with normal terminator and padding. The verifier reads message bytes and does not recover application data after the terminator. The separate navigation QR opens qred.org without document data; generic camera apps may not display a binary seal usefully.</p>
+<p>QR images using the retired padding format must be re-sealed. Current v3/v4 copyable seal strings retain their format. Update both verifier routes and saved offline copies together with the stamper; loading an older cached app can leave it incompatible with newly printed seals.</p>
+<p>Full-page watermarks still use experimental rectangular modules and reconstructed quiet zones. Standard message encoding does not establish JIS/ISO conformance of that printed geometry, generic-reader compatibility, or patent clearance. See <a href="https://github.com/greyphilosophy/QRed/blob/main/docs/LICENSING_AND_COMPATIBILITY.md">licensing and QR compatibility</a>.</p></section>
 <section aria-labelledby="s5"><h2 id="s5">5. Security evidence and organization reviews</h2>
 <p>Implementation and automated tests are available in <a href="https://github.com/greyphilosophy/QRed">QRed's repository</a>; <a href="https://github.com/greyphilosophy/QRed/actions">CI runs</a> provide repeatable evidence for tested functionality. Tests do not replace independent penetration testing, operational monitoring, organization-specific risk assessment, incident-response plans, or compliance authorization.</p>
 <p>For an organization handling criminal justice information, QRed does not claim CJIS compliance or authorization. An organization's responsible officials should review endpoint security, hosting and subcontractor obligations, network egress, identity assurance, key management, auditability, retention, accessibility, and printed/sealed-document disclosure risk. An offline-capable browser application is not automatically suitable for processing CJI.</p>

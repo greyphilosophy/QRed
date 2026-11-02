@@ -21,13 +21,13 @@
   <p class="kicker">Account & data controls</p>
   <h1>User Data Deletion</h1>
   <p class="lead">How to request deletion, disconnect an identity provider, and understand what QRed can and cannot remove.</p>
-  <p class="meta">Last updated: October 26, 2026</p>
+  <p class="meta">Last updated: November 1, 2026</p>
   
 <section aria-labelledby="d1"><h2 id="d1">1. Request deletion or ask what QRed holds</h2>
 <p>Email <a class="contact" href="mailto:greyphilosophy@gmail.com">greyphilosophy@gmail.com</a> with the subject <strong>QRed data deletion request</strong>. Tell us the identity provider you used (if any), the account email, and approximately when you signed in. We may need to confirm that the request relates to your account before disclosing or changing account-related information.</p>
 <p><strong>Do not send PDFs, document contents, passwords, access tokens, or signing keys.</strong> We will review the request and explain what data, if any, is under QRed's control and what may be retained by hosting or identity providers. We cannot promise to erase material we do not possess or control.</p></section>
 <section aria-labelledby="d2"><h2 id="d2">2. What QRed stores</h2>
-<p>The current QRed app has no server database of uploaded user documents or registered user accounts. Browser-based sealing and verification process selected PDFs and images locally. Account-backed sealing creates an encrypted, <strong>approximately ten-minute</strong> browser-cookie session. QRed's Worker does not maintain a permanent sign-in record for that session.</p>
+<p>The current QRed app has no server database of uploaded user documents or registered user accounts. Browser-based sealing and verification process selected PDFs and images locally. Account-backed sealing creates an encrypted browser-cookie session with a <strong>five-minute expiry fixed when the session starts</strong>; polling and retries do not extend it. QRed's Worker does not maintain a permanent sign-in record for that session.</p>
 <p>Cloudflare or identity providers may process and retain separate security and operational logs. Their deletion procedures and retention limits are not the same as QRed's temporary application cookies.</p></section>
 <section aria-labelledby="d3"><h2 id="d3">3. Actions you can take now</h2>
 <ol>

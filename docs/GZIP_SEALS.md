@@ -34,6 +34,9 @@ sealing, scanning, and verification are local and make no network requests.
 plaintext candidate, including all record and chunk headers. It is not a
 percentage reduction in QR count and can be negative when compression is forced.
 
-Current verifiers continue to read existing gzip and plaintext v3/v4 seals.
+Current verifiers continue to read gzip and plaintext v3/v4 records in ordinary
+QR byte segments or copyable seal strings. This does not preserve compatibility
+with retired QR images that stored those records after the terminator; re-seal
+those documents with the current stamper.
 Older verifier builds reject the new zlib flag; deploy all verifier routes with
 the stamper and refresh saved offline copies before using new zlib seals.
