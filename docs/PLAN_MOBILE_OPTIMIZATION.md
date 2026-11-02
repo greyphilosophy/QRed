@@ -1,6 +1,10 @@
 # QRed Mobile Optimization Plan
 
 ## Current State
+Current payload recovery reads ordinary QR byte segments. Retired hidden-padding
+images require re-sealing; references to hidden recovery in the historical audit
+below do not describe supported transport.
+
 As of November 2026, both scanner pages prefer the rear main camera at 1× with a 1920×1080 ideal frame. Unknown camera labels retain the browser's environment-camera choice. The flashlight control has been removed. Full-page watermarks need the entire frame; the older center-crop and lower-resolution proposals below should not be applied to manual page captures.
 
 Both live camera views decode in a background worker with one frame in flight and no queued frames. The submitted canvas stays unchanged until every recovered seal has been collected with its original photo. Closing the scanner terminates the worker; capturing a still photo first discards any pending live result. The public worker code is prepared for offline use through the existing service worker; photographs stay on the device. Physical lens selection still needs testing on supported phones because camera labels and controls vary by browser.
@@ -11,7 +15,8 @@ Photo recovery now tries the existing watermark filter once at a maximum of 2.5 
 
 Both live camera views show a steady, page-shaped guide with corner and glare advice. The guide fits inside the visible camera image, adapts to phone rotation, and does not crop the scanned frame or saved photo. Live attempts explicitly disable exhaustive alignment refinement; selected images and an explicit Capture photo action retain that longer, cancellable recovery path.
 
-The audit and phases below record the earlier optimization plan, not a current inventory of missing features.
+The audit and phases below are historical, not a current feature inventory or
+implementation checklist. Do not restore retired hidden-padding recovery.
 
 ## Findings from Codebase Audit
 

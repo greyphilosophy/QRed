@@ -1,108 +1,65 @@
 # QRed Business Rules
 
-This document summarizes the current business rules for QRed as implemented and specified in this repository. It is intended as a product-facing companion to the formal requirements and technical specification.
+Current behavior after [PR #163](https://github.com/greyphilosophy/QRed/pull/163),
+merged November 1, 2026 (Pacific time). See [Compact seals v3](COMPACT_SEALS_V3.md),
+[account attestations](ACCOUNT_ATTESTATION.md), and [watermark recovery](WATERMARK_DECODING.md)
+for protocol details.
 
-## Scope and Intent
+## Scope and processing
 
-1. QRed exists to make printed documents tamper-evident by embedding a signed representation of certified document contents into QR-code seals printed with the document.
-2. A recipient must be able to verify certified contents with commonly available smartphone hardware and a modern mobile browser, with the verifier interpreting ordinary binary QR messages as signed document seals.
-3. QRed verification must not require recipients to install a dedicated mobile application.
-4. The sealed document should carry the information needed to validate its certified contents after the payload seals have been acquired.
-5. QRed is an open, publicly documented, interoperable format so independent implementations can generate and validate compatible documents.
+1. QRed embeds signed document evidence in printed QR seals so recipients can recover it and compare it with a document.
+2. PDF preparation, text extraction, QR generation, scanning and verification happen in the browser. No document-processing backend or app installation is required.
+3. Local-key sealing works offline after required resources load. Optional account sealing requires an online provider and QRed Worker attestation for each document.
+4. Account sealing sends deterministic, unsalted SHA-256 page commitments and account metadata to the Worker, not PDF bytes, filenames, extracted text or the raw document root. A party with access to requests could correlate commitments or test guesses about known contents.
+5. Google, Microsoft and Amazon are independently configured. Document-bound sign-in sessions expire five minutes after creation; polling and retries do not extend that deadline.
 
-## Document Sealing Rules
+## Evidence and signatures
 
-1. The system accepts one or more source documents for sealing.
-2. Before signing, document content is converted into a deterministic canonical text representation.
-3. Canonicalization preserves certified text content while excluding non-essential formatting.
-4. The reference canonicalization process:
-   - splits text on line endings,
-   - strips trailing whitespace from each line,
-   - collapses consecutive blank lines to a single blank line, and
-   - strips leading and trailing empty lines.
-5. The canonical text is signed by the issuing authority using Ed25519.
-6. The signed payload is encoded into one or more machine-readable payload seals.
-7. Automatic mode evaluates plaintext and zlib candidates carried as ordinary QR byte segments, using gzip as a fallback when zlib is unavailable.
-8. Only reversible candidates are selectable.
-9. Automatic mode chooses the candidate that requires the fewest QR codes.
-10. QR-count ties prefer fewer encoded payload bytes, then plaintext.
-11. Explicit strategies may request plaintext, zlib, or gzip.
-12. Payloads that exceed a single seal's capacity are divided into numbered chunks.
-13. Printed payload QR codes contain the binary seal record without a URL. A separate navigation code opens `https://qred.org/` from the first page. It is required in first-page footer layouts and optional on watermarks; every page retains the printed “Verify at QRED.ORG” instruction.
-14. Payload QR codes use standard byte-mode messages with ordinary terminators and padding. The scanner reads decoded message bytes and does not recover data from padding. Retired padding-format images require re-sealing.
-15. The `/verify.htm` route may remain available as a human-facing verifier page, but newly generated QR payloads must not add `/verify.htm` unless a future compatibility requirement explicitly requires it.
+1. The UI prepares one selected PDF at a time. Supported form fields are flattened before extraction; unsupported forms, inconsistent appearances and missing required fonts stop sealing.
+2. Text canonicalization removes trailing whitespace, collapses repeated blank lines and removes leading/trailing blank lines. It does not preserve every visual feature of the source PDF.
+3. Text pages contain canonical text and may use spare capacity for signed line positions and a lossy grayscale reference. Image-only pages use a visual reference; blank pages use an explicit marker. Optional evidence must not add QR codes beyond the count needed for text.
+4. Local seals use Ed25519 and compact v3 records. Account-backed v4 seals bind a page commitment to provider identity, authority key ID and server time. Their signature is checked with a bundled trusted authority key.
+5. Multipage seals include signed page position/count and a shared document root. These support grouping and detection of mixed documents; they do not prove every printed page is present until collection is complete.
+6. A key ID is eight SHA-256 digest bytes, displayed as 16 lowercase hexadecimal characters. Private keys are never included in seals.
+7. Local seals omit a freeform issuer name. Account seals include provider, profile name, email, provider-scoped account identifier and attestation time. Anyone with a copy can recover this evidence; compression and signing do not encrypt it.
 
-## Payload and Metadata Rules
+## QR transport and compatibility
 
-1. Compact v3 records contain the format/version, signed timestamp, binary key ID, canonical text, and full signature. Multipage PDFs add signed page position/count and a document root. Issuer names are omitted; page hashes and standalone IDs are derived.
-2. Payloads include a `key_id` derived from the issuer public key.
-3. The reference key ID is the first 16 lowercase hexadecimal characters of the SHA-256 digest of the Ed25519 public key bytes.
-4. The issuer private key must never be embedded in generated seals.
-5. Unsupported major format versions are rejected.
-6. Implementations do not need to preserve backward compatibility until a compatibility requirement exists.
+1. Each payload QR contains one ordinary byte segment with a binary record or chunk. It contains no navigation URL, and no application data follows the QR terminator.
+2. Version 40-L holds at most 2,953 message bytes, including any QRed chunk header. Chunk indices and a record digest support reconstruction; duplicate identical scans are harmless, but conflicting chunks are rejected.
+3. Automatic encoding compares plaintext and zlib by QR count, then payload bytes, preferring plaintext on a tie. It tries gzip if zlib compression is unavailable. Explicit compression remains an API option; the UI uses automatic selection.
+4. Copyable v3/v4 seal strings remain supported. QR images using the retired post-terminator padding layout are not supported and must be re-sealed. Deploy the stamper and both verifier routes together and refresh offline copies.
+5. A separate navigation QR opens qred.org from the first page. It is required in first-page footer layouts and optional over a watermark. Every sealed page retains the printed verification instruction.
+6. Rectangular watermark cells and reconstructed quiet zones are experimental geometry for QRed's scanner. Standard message encoding is not a claim of full JIS/ISO symbol conformance or generic-camera readability. See [licensing and compatibility](LICENSING_AND_COMPATIBILITY.md).
 
-## Issuer and Key Trust Rules
+## PDF layout
 
-1. Verification uses public-key cryptography; issuer private keys are only used for signing.
-2. Verification must not require access to issuer private keys.
-3. Recipients must be able to determine whether a document was issued by a trusted authority.
-4. Verification requires a trusted public key source, either an explicitly supplied trusted public key or an issuer registry lookup.
-5. A future trusted key directory may map key IDs to public keys and authority names. That directory is not yet implemented; current verification uses a supplied trusted key.
-6. The issuer registry validates registrations by recomputing the key ID from the public key.
-7. Registry registration is rejected when the submitted key ID does not match the submitted public key.
-8. Missing registry keys are treated as lookup failures, not successful verification.
+1. The stamper permits at most four payload QR codes per page. A watermark uses one full-page symbol or exactly four balanced pieces. Explicit footer layouts may use one through four codes.
+2. Automatic mode first tries rectangular watermarks on text pages, then verified square fallbacks and a footer when needed. Image-only and blank pages use footers.
+3. Full-page watermarks share one physical margin across the document: 54 points by default, reduced to 36 points when any original rendered page has at least four square points of visible ink within half an inch of an edge. Navigation panels and square fallbacks retain 54-point clearance.
+4. A navigation overlay must avoid original page marks and keep its own quiet zone. Both the navigation code and all signed chunks must pass clean and softened/shaded recovery checks. If it fails, try the text-only instruction before a footer.
+5. Watermarks preserve original page dimensions. Footer fallback extends Letter to Legal or shrinks other page contents to reserve space; the UI reports affected pages.
+6. Never omit a chunk or silently create overflow pages. Reject pages exceeding the four-code limit or layouts whose modules are too small. Preflight demonstrates recovery under tested conditions, not guaranteed printer/camera reliability.
 
-## Verification Rules
+## Verification and trust
 
-1. The verification workflow loads the verifier from the short `https://qred.org/` origin when needed, then uses a QRed-aware scanner to read one or more payload QR images, recover signed message bytes, reconstruct the payload, validate payload completeness, verify the signature, display certified contents, and report a result.
-2. Payload reconstruction requires all chunks for the same document or grouping namespace.
-3. Missing chunks produce an `INCOMPLETE` result.
-4. Malformed, unsupported, or unreadable seal data produces an `ERROR` result when it cannot be reconstructed.
-5. Mixed document IDs or incompatible chunk groups are invalid and must not be accepted as a valid reconstructed document.
-6. A successfully reconstructed payload whose signature verifies is `VALID`.
-7. A successfully reconstructed payload whose signature does not verify is `INVALID`.
-8. Any modification to certified contents invalidates verification.
-9. Verification displays the certified contents contained in the seals.
-10. The scanner interface displays arbitrary QR payload contents, not only QRed seals.
-11. Verification should be capable of operating without transmitting document contents to a third party.
-12. The mobile verifier verifies locally after payload acquisition.
+1. Both verifier routes read camera frames, selected photos and PDFs locally. Reconstructed evidence still needs signature verification.
+2. **INCOMPLETE** means chunks are missing; **ERROR** means malformed/unsupported data or a decoding failure; **UNVERIFIED** means no trusted key is available. Invalid signatures or conflicting seal sets cannot produce **VALID**.
+3. **VALID** means the reconstructed signed evidence verifies with the selected trusted key. It does not automatically authenticate every visible mark, prove legal identity or establish organizational signing authority.
+4. Recipients obtain local issuer public keys independently through a trusted channel. Account seals select a bundled authority key by ID. An unknown authority remains unverified; a key embedded by an untrusted sender would not establish trust.
+5. There is no public issuer-registration service or live revocation service. Offline copies cannot learn about changed trust keys until updated.
+6. Recipients compare signed text and visual references with the document. OCR and lossy images can miss changes; altering paper while leaving its QR intact does not itself invalidate the QR signature.
+7. Live scanning prefers the main rear camera at 1×, uses a page guide and bounded worker attempts, and leaves lengthy refinement to selected images or explicit photo capture. Photo recovery is cancellable. Hardware support varies by browser.
 
-## PDF Sealing Rules
+## Security and disclosure boundaries
 
-1. Backend PDF sealing applies QRed seals to each source PDF page so each page can be independently verified.
-2. PDF sealing rejects non-PDF uploads.
-3. PDF sealing rejects PDFs with no pages.
-4. PDF seal layout must fit at least one QRed payload QR code; otherwise sealing is rejected.
-5. PDF stamping must not drop payload seals; overflow pages are appended when the source pages cannot hold all required seals.
-6. For page-level PDF sealing, signed page content includes a page content SHA-256 digest and a document Merkle root.
-7. Page seals from the same sealed PDF share a document Merkle root so swapped-in pages from another PDF expose a different root.
-8. Duplicate or repeated page content must still receive non-colliding QR grouping namespaces.
+QRed does not provide confidentiality, legal identity proofing, authorization,
+protection against copying, or protection after signing-key compromise. It is
+not represented as CJIS-approved or generally suitable for regulated records.
+Public code and tests support evaluation; they are not security certification,
+patent clearance or proof of physical print reliability.
 
-## Deployment and Operations Rules
-
-1. Deploy the byte-mode stamper and all verifier routes together, and refresh offline copies. Navigation links use `https://qred.org/`; the binary seal contains no URL.
-2. Production should use Cloudflare Pages for the frontend verifier deployment.
-3. GoDaddy forwarding must not be used as the primary production mechanism for `qred.org` verification traffic.
-4. If API-backed production features are enabled, the frontend Worker must be configured with the backend API origin or the browser build must be configured with the backend API base URL.
-5. If no backend origin is configured, the static Worker may serve demo issuer keys but must return a clear `503` for unsupported backend API routes.
-
-## Security Boundary and Non-Goals
-
-1. QRed provides integrity verification, issuer authentication, tamper detection, and key ID validation.
-2. QRed does not provide confidentiality; sealed contents may be visible to authorized viewers and QR scanners.
-3. QRed does not provide identity proofing.
-4. QRed does not provide authorization decisions.
-5. QRed does not provide revocation services in the current scope.
-6. QRed does not prevent unauthorized copying, physical theft, photocopying, or reprinting of documents.
-7. QRed does not protect documents if an issuer private key is compromised.
-8. QRed is not a replacement for PKI infrastructure.
-
-## Success Rules
-
-QRed is successful when a recipient can:
-
-1. scan a document using a smartphone,
-2. reconstruct the certified contents,
-3. verify the issuer signature,
-4. detect unauthorized modifications, and
-5. complete verification without installing a dedicated application.
+The [privacy](../frontend/public/privacy.html), [data deletion](../frontend/public/data-deletion.html),
+[terms](../frontend/public/terms.html), and [security](../frontend/public/security.html)
+pages describe the public service boundaries. Keep them aligned with changes
+to data handling, identity, transport and compatibility.

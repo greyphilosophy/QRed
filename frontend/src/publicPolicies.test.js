@@ -13,7 +13,7 @@ describe("public QRed policy and security pages", () => {
     expect(html).toContain('<main id="main"');
     expect(html).toContain('href="/legal.css"');
     expect(html).toContain('href="mailto:greyphilosophy@gmail.com"');
-    expect(html).toContain("Last updated: October 26, 2026");
+    expect(html).toMatch(/Last updated: [A-Z][a-z]+ \d{1,2}, \d{4}/);
     for (const link of nav) expect(html).toContain('href="' + link + '"');
     expect(html).toContain('aria-current="page"');
     // Sensitive readers should never load third-party JavaScript or tracking

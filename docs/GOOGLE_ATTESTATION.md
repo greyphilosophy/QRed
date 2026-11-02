@@ -86,7 +86,7 @@ Request bodies are limited to 16 KiB, each document to 100 pages, and each signi
 
 ## Compact v4 format
 
-Local signatures keep the existing v3 format. Google attestations use `QRS4`, multipart `QRC4`, and copyable `QRED4:` strings. Ordinary camera apps still see `QRED.ORG`. QR balancing, automatic zlib/plaintext selection (with gzip fallback), and fixed print dimensions use the same rules as local seals.
+Local signatures keep the existing v3 format. Google attestations use `QRS4`, multipart `QRC4`, and copyable `QRED4:` strings. Printed payload QR codes carry ordinary binary messages without a URL or data hidden in padding. A separate first-page navigation QR opens qred.org; it is required in footer layouts and optional on watermarks. Retired padding-format images require re-sealing, although current copyable strings retain their format. QR balancing, automatic zlib/plaintext selection (with gzip fallback), and fixed print dimensions use the same rules as local seals.
 
 The v4 record contains a compact 48-bit millisecond timestamp, eight-byte key ID, and (for multipage PDFs) four bytes of page position/count and a 16-byte truncated SHA-256 document root, followed by:
 

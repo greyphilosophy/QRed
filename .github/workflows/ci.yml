@@ -33,8 +33,8 @@ jobs:
         working-directory: frontend
         run: npm run build:pages
 
-  # Deliberately red until actual page-corner/rectangular watermark recovery
-  # satisfies docs/WATERMARK_READABILITY_REQUIREMENTS.md.
+  # Synthetic page-corner/rectangular recovery gate. Physical print acceptance
+  # remains separate in docs/WATERMARK_READABILITY_REQUIREMENTS.md.
   # Keep this as a separate hard gate; do not skip or use expected-failure tests.
   watermark-readability-acceptance:
     name: Watermark readability acceptance

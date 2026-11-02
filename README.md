@@ -1,6 +1,6 @@
 # QRed
 
-QRed is an open standard and reference implementation for tamper-evident document sealing and verification.
+QRed is a publicly documented experimental format and reference implementation for tamper-evident document sealing and verification. It is not a standards-body certification.
 
 QRed encodes the signed contents of a document into one or more QR code seals printed alongside the document. Seal QR codes carry the signed binary record in an ordinary QR byte segment. A separate navigation QR opens qred.org from the first page: it is required in footer layouts and included on watermark pages when it fits; the printed “Verify at QRED.ORG” instruction remains available on every sealed page.
 
@@ -12,8 +12,10 @@ Image-only pages carry a signed grayscale visual reference; blank pages carry an
 explicit signed blank-page marker. Text pages use spare capacity for line positions
 and an approximate visual reference, without adding QR codes. Experimental
 watermark mode uses one page-filling QR or splits overflow into four balanced
-quadrant QRs, with **at least 0.75 inch of watermark clearance at every paper
-edge**. This may rule out four dense v40 symbols on US Letter. The original
+quadrant QRs. Full-page watermarks share one document-wide margin: **0.75 inch
+by default, or 0.5 inch when any original page has sufficient visible ink
+within half an inch of an edge**. Square fallbacks retain 0.75-inch clearance.
+The minimum module-size check may rule out four dense v40 symbols on US Letter. The original
 PDF content itself remains unchanged and may still reach closer to an edge;
 for best results print at 100% / Actual size. Explicit footer mode retains ordinary QR counts up to four. See [page references](docs/PAGE_REFERENCES.md) and
 [Compact seals v3](docs/COMPACT_SEALS_V3.md) for scope, compatibility, and tests.
@@ -35,7 +37,7 @@ cd frontend
 npm ci && npm start
 ```
 
-The demo app runs at `http://localhost:3000`. Local private-key sealing and QR processing run in the browser without a backend. Optional account sealing uses a Cloudflare Worker to attest randomized document fingerprints; PDFs and document text stay on the device. See [account sign-in setup](docs/ACCOUNT_ATTESTATION.md).
+The demo app runs at `http://localhost:3000`. Local private-key sealing and QR processing run in the browser without a backend. Optional account sealing uses a Cloudflare Worker to attest deterministic, unsalted SHA-256 page commitments; PDFs and document text stay on the device. A party with access to Worker request data could correlate repeated commitments or test guesses about known contents. See [account sign-in setup](docs/ACCOUNT_ATTESTATION.md).
 
 Use Node 24. For PDF raster regression tests, install `poppler-utils`
 (`pdftoppm`).
@@ -74,7 +76,7 @@ text page and falls back to a clear footer only on pages where they cannot be
 placed or recovered. The explicit **Pale watermark (experimental)** option uses
 the same behavior; footer layouts can also be selected directly.
 Watermarks preserve the original paper
-dimensions, text size, rotation, and crop on pages where watermarks are readable. A half-inch conventional QR opens
+dimensions, text size, rotation, and crop on pages where watermarks are readable. An optional half-inch conventional QR opens
 `https://qred.org/` from a clear area on the first page; pale QR watermarks carry
 each page's signed data. The watermark uses 15% black with multiply blending to
 keep the pattern pale and document text intact. Use QRed's camera or image picker
@@ -83,16 +85,16 @@ The navigation code contains no document data and is ignored during verification
 Placement checks rendered pixels, including graphics, before using a blank area.
 Text pages with embedded logos or pictures are eligible for watermarks; the
 rendered recovery check determines whether the seal remains readable.
-Before drawing, QRed analyzes the original page for broad dark areas and gray
-graphics that could interfere with scanning. It selects a position and size
-from that obstruction map, giving extra weight to the QR's finder patterns,
-timing strips, lower-right alignment pattern, and quiet zone while favoring
-larger printed modules. Thin black text is treated as easier to recover around.
-This is a bounded geometric optimization, not a sequence of trial stamps or
-decodes. It predicts readability; it does not guarantee the best possible
-placement. The selected watermark must still pass the rendered recovery check.
+QRed first tries the full-page rectangular layout when its modules meet the
+minimum printed size. It checks exact payload recovery from a clean render and
+a softened/shaded simulation. If that fails, a rendered obstruction map helps
+select a smaller square fallback, which must also pass recovery checks.
+The navigation panel may cover watermark modules, but must avoid original page
+marks and preserve its own quiet zone. Both the link and every signed chunk
+must remain readable. If the link cannot fit, QRed tries a text-only
+**Verify at qred.org** instruction before falling back to a footer.
 Image-only and blank pages automatically use a clear footer. A page also falls back
-to a footer if there is no clear entry-code space, its watermark is too dense, or
+to a footer if neither navigation nor its text instruction can fit safely, its watermark is too dense, or
 QRed cannot recover it from the rendered output. Other pages retain their watermark
 layout. Footer fallback expands letter pages to legal size and shrinks other page
 contents to make room; the completion message lists the affected pages.
@@ -103,7 +105,8 @@ the decision. The page can carry up to four conventional QR symbols, in a
 2×2 watermark layout where space permits. See [watermark decoding](docs/WATERMARK_DECODING.md).
 In experimental watermark mode, QRed uses page-filling rectangular QR
 modules, page-corner perspective correction, and virtual quiet zones. Ordinary
-QR decoding remains a fallback for old seals and close-up photographs.
+QR decoding remains a fallback for square layouts and close-up photographs.
+This preserves optical layout support, not support for retired padding-format payloads.
 [Readability requirements and acceptance tests](docs/WATERMARK_READABILITY_REQUIREMENTS.md)
 remain the release gate, and **physical 150/300/600-DPI print/phone verification
 is not yet established**. Recovered data still requires the same
@@ -124,11 +127,17 @@ the complete payloads, including the first code's signature, to reduce the
 largest grid. If balancing cannot reduce it, the original split is retained
 so a smaller final code does not grow unnecessarily. Printed sizes stay the same.
 
-The image and camera scanners retry failed detections at a few nearby image
-scales to handle dense QR codes whose edges fall between pixels. Live camera
-scanning tries one scale per frame, with time for input and rendering between
-attempts. Chosen images and manual photo captures try all scales immediately.
-Signature verification still uses the recovered signed payload and the issuer's key.
+Both camera views prefer the rear main camera at 1× and show a page-shaped guide;
+keep all four page corners visible and avoid glare. Lens selection depends on
+what the browser exposes. There is no flashlight control.
+Live scanning uses a background worker with one frame in flight and no queued
+frames. It rotates through bounded attempts and disables lengthy alignment
+refinement so the operator can adjust the camera. Selected images and
+**Capture photo** use a cancellable worker with longer recovery fallbacks.
+A fast bounded attempt comes first; original-resolution pixels remain available
+for harder pages. **Cancel and resume camera** returns from still-photo recovery
+to the same camera stream. Signature verification still checks the recovered
+signed payload and trusted key.
 
 Start the camera once, then move between seals. It stays open while QR pieces or
 PDF pages are missing, ignores repeated scans, and stops when the expected pages
@@ -150,7 +159,11 @@ contents, not every visible mark on the loaded PDF; compare the page below.
 
 Choose **Private key file (offline)** to reuse a local signing identity. Open its `.txt` file or paste the private key; QRed derives the public key automatically. There is no separate public-key entry or derive button in the sealing form. You can still save the public key or select **Use public key to verify** on the same device. After scanning a locally signed seal, the verifier offers **Open issuer public key file** and rechecks collected seals when a key is imported. Obtain this file from the issuer through a trusted channel. Invalid files leave existing keys intact, and replacing a private key asks for confirmation.
 
-The **Stamp PDF** button in the QR scanner opens the PDF stamping section, scrolls to it and moves focus to the heading. In the stamping tool, choose **Private key (offline)** or one of the three individual **Authenticate with Google/Microsoft/Amazon login** buttons (not a dropdown). The selected method is highlighted, and methods confirmed unavailable are disabled. Selecting an account method and a PDF automatically prepares the PDF locally; choosing a method alone does not authenticate or upload anything.\n\nQRed automatically prepares the PDF in the original browser tab. Once the document-specific short-lived account session is ready, the provider sign-in button appears. This avoids a blank `about:blank` popup while the original browser tab processes the PDF. Google and Microsoft use a native `<a target="_blank" rel="noopener noreferrer">` link to their verified sign-in URLs. Amazon first tries direct `window.open(finalUrl)` on the same user tap, then synchronously clears the new tab's `opener` before external content can load. If the browser blocks it, Amazon falls back to the native link. No provider pre-opens a blank popup while QRed prepares the PDF or uses delayed navigation. On phones, return to the original QRed tab after authenticating to finish the PDF; keep that tab open and do not navigate away. The prepared session expires after five minutes, and cancellation attempts to clear the encrypted session cookies. After the provider opens, **Check sign-in status** on the original tab can verify a pending, failed, or completed Worker session if the browser silently closed the provider tab. A successful Google or Amazon callback attempts to close its sign-in tab without requiring a window opener. If the browser blocks closure, use the callback's close button or switch back to the original QRed tab; never reload the original page. A failed sign-in callback stays visible with a sanitized reason. If the callback shows success but the original tab stays pending, the PDF is **not yet sealed**, and browser cookie isolation or another session handoff problem needs investigation. The PDF and its page salts never leave the device.\n\nWhen configured, **Google**, **Microsoft**, and **Amazon** sign-in let QRed attest the prepared document, provider account, profile name/email, and server time. Google retains its Gmail/Workspace eligibility rule. For the other providers, verifiers identify the email as provider-reported, not independently verified mailbox control. Each method uses encrypted, short-lived browser cookies without a database. Each document requires a connection to obtain its attestation; scanning works offline with the trusted authority keys built into the verifier. Providers are enabled independently: Microsoft uses a public SPA client ID with browser PKCE (no expiring client secret), while Google and Amazon require server-side secrets. [Setup, protocol and privacy details](docs/ACCOUNT_ATTESTATION.md).
+The **Stamp PDF** button in the QR scanner opens the PDF stamping section, scrolls to it and moves focus to the heading. In the stamping tool, choose **Private key (offline)** or one of the three individual **Authenticate with Google/Microsoft/Amazon login** buttons (not a dropdown). The selected method is highlighted, and methods confirmed unavailable are disabled. Selecting an account method and a PDF automatically prepares the PDF locally; choosing a method alone does not authenticate or upload anything.
+
+QRed automatically prepares the PDF in the original browser tab. Once the document-specific short-lived account session is ready, the provider sign-in button appears. This avoids a blank `about:blank` popup while the original browser tab processes the PDF. Google and Microsoft use a native `<a target="_blank" rel="noopener noreferrer">` link to their verified sign-in URLs. Amazon first tries direct `window.open(finalUrl)` on the same user tap, then synchronously clears the new tab's `opener` before external content can load. If the browser blocks it, Amazon falls back to the native link. No provider pre-opens a blank popup while QRed prepares the PDF or uses delayed navigation. On phones, return to the original QRed tab after authenticating to finish the PDF; keep that tab open and do not navigate away. The prepared session expires after five minutes, and cancellation attempts to clear the encrypted session cookies. After the provider opens, **Check sign-in status** on the original tab can verify a pending, failed, or completed Worker session if the browser silently closed the provider tab. A successful Google or Amazon callback attempts to close its sign-in tab without requiring a window opener. If the browser blocks closure, use the callback's close button or switch back to the original QRed tab; never reload the original page. A failed sign-in callback stays visible with a sanitized reason. If the callback shows success but the original tab stays pending, the PDF is **not yet sealed**, and browser cookie isolation or another session handoff problem needs investigation. The PDF stays on the device; only unsalted page commitments are sent to the Worker.
+
+When configured, **Google**, **Microsoft**, and **Amazon** sign-in let QRed attest the prepared document, provider account, profile name/email, and server time. Google retains its Gmail/Workspace eligibility rule. For the other providers, verifiers identify the email as provider-reported, not independently verified mailbox control. Each method uses encrypted, short-lived browser cookies without a database. Each document requires a connection to obtain its attestation; scanning works offline with the trusted authority keys built into the verifier. Providers are enabled independently: Microsoft uses a public SPA client ID with browser PKCE (no expiring client secret), while Google and Amazon require server-side secrets. [Setup, protocol and privacy details](docs/ACCOUNT_ATTESTATION.md).
 
 There is no public-key text field in the verifier. Account seals select a bundled trusted authority key automatically using the key ID in the QR payload, so their verification needs no key-file import. An unknown authority remains unverified; a key supplied by the QR itself would not establish trust.
 
@@ -249,7 +262,7 @@ separately.
 ## Shared workflow modules
 
 - `sealFormat.js` defines binary envelope sizes; `sealBudget.js` owns QR capacity
-  and the two-code PDF limit. Evidence planning and final sealing use the same
+  and the four-code PDF limit. Evidence planning and final sealing use the same
   compression selection in `sealCompression.js`.
 - `pdfClientSeal.js` prepares and signs page evidence. `pdf/renderSealedPdf.js`
   places completed seals and checks watermark recovery, retrying with footers
@@ -358,24 +371,21 @@ Many documents are distributed in printed form and may be photocopied, scanned, 
 
 QRed bridges the gap between physical and digital documents by embedding a signed representation of the document directly on the page.
 
-This allows recipients to verify:
-
-- The document was issued by the certifying authority.
-- The certified contents have not been altered.
-- The displayed contents match the original signed document.
+Recipients can check the signature on the embedded evidence using a trusted
+key, then compare that evidence with the visible document. A valid signature
+alone does not establish that the paper matches the evidence or that the signer
+has legal identity or organizational authority.
 
 # How It Works
 
-1. A document is converted into a canonical text representation.
-3. The canonical text is digitally signed by the issuing authority.
-4. Automatic encoding compares plaintext with zlib-compressed UTF-8 text, choosing fewer QR codes and then fewer payload bytes. Short text stays uncompressed when that is smaller. Zlib saves 12 wrapper bytes per compressed page compared with gzip. Gzip remains readable and is used as a fallback if zlib compression is unavailable. Compressed bytes are stored directly in the ordinary QR byte segment; Base64URL is only used for copying seal strings into the verifier.
-5. The chosen payload format is divided into one or more QR code seals.
-6. A bootstrap QR code containing a URL to a verifier web application is added to the document.
-7. The QR seals are printed alongside the document.
-8. A recipient scans the bootstrap QR code.
-9. The verifier web application scans the remaining QR seals.
-10. The verifier joins the chunks, decompresses zlib/gzip when selected, and verifies the signature against the exact restored text and signed metadata.
-11. The certified contents are displayed to the user.
+1. The browser extracts canonical text and optional page evidence, or creates a visual/blank-page reference when no text is available.
+2. A local Ed25519 key signs the evidence and metadata, or an online account attestation binds a page commitment to provider identity and server time.
+3. Automatic encoding compares plaintext with zlib, choosing fewer QR codes and then fewer payload bytes; gzip is a fallback. Compression is reversible, not encryption.
+4. The binary record is placed in ordinary QR byte segments, split into numbered chunks when needed. Printed seals contain no document URL or hidden padding data.
+5. A separate first-page navigation QR is required in footer layouts and optional on watermarks. Every page retains the printed verifier address.
+6. The recipient opens qred.org and reads the seals with its camera, photo or PDF scanner.
+7. The verifier reconstructs the record, decompresses it when needed and checks the signature against a trusted key.
+8. The recipient compares recovered signed text and visual evidence with the document. OCR assists this comparison but does not authenticate every visible detail.
 
 # Design Goals
 
@@ -386,7 +396,7 @@ This allows recipients to verify:
 - Resistant to casual document tampering.
 - Supports multi-page and high-content documents.
 - Binds sealed PDF pages with signed page positions and a shared document Merkle root so swapped-in pages can be detected.
-- Suitable for government, legal, educational, and business records.
+- Support evaluation for records workflows without claiming regulatory approval or suitability for a particular organization.
 
 # Non-Goals
 
@@ -395,9 +405,11 @@ QRed is not intended to:
 - Replace PKI infrastructure.
 - Guarantee document authenticity without a trusted issuer.
 - Prevent unauthorized copying of documents.
-- Protect confidential information from authorized viewers.
+- Encrypt embedded contents or prevent anyone with a copy from decoding them.
 
 # Example Use Cases
+
+These are possible evaluation scenarios, not endorsements for regulated use:
 
 - Criminal history reports
 - Background check summaries
@@ -412,11 +424,11 @@ QRed is not intended to:
 
 A typical QRed document contains:
 
-- One bootstrap QR code
+- A separate navigation QR on the first page where supported, plus a printed verifier address
 - One or more payload QR codes
 - A digitally signed document payload
 
-The bootstrap QR launches the verifier web application.
+The navigation QR launches the verifier web application and contains no document data.
 
 A standard QR decoder can recover the binary seal message. QRed interprets that message to reconstruct and verify the document; generic camera apps may not display binary data usefully. Use the separate navigation code or printed qred.org address to open the verifier.
 
@@ -429,11 +441,13 @@ Each issuing authority maintains a signing key pair:
 - Private key: used to sign document payloads. Must be generated and stored securely by the issuer — never uploaded to any server.
 - Public key: used by the verifier to validate signatures. This is the only key that may be served from the server (e.g., via `/api/keys/default`).
 
-**User private keys and document contents stay on the device.** Local signing and verification work offline after resources are loaded. Optional account sealing sends randomized page commitments and account details to QRed. The server holds its own authority signing key as a secret and never sends it to clients. Its public trust anchors are bundled in the verifier; unknown account-attestation authorities remain unverified. See [the attestation privacy and trust model](docs/ACCOUNT_ATTESTATION.md).
+**User private keys and original document contents stay on the device.** Local signing and verification work offline after resources are loaded. Optional account sealing sends deterministic, unsalted page commitments and account details to QRed; these commitments are document-related metadata, not anonymized data. The server holds its own authority signing key as a secret and never sends it to clients. Its public trust anchors are bundled in the verifier; unknown account-attestation authorities remain unverified. See [the attestation privacy and trust model](docs/ACCOUNT_ATTESTATION.md).
 
-The default demo keypair is provided solely for testing. In production, issuers should generate their own keypair and supply the private key directly in the browser.
+Public demo keys in test fixtures prove no issuer identity. The stamping tool does
+not preload a demo private key. Generate or import your own key, or choose a
+configured account provider.
 
-Changing signed text or v2 identity metadata invalidates the signature. A
+Changing signed content or authenticated v3/v4 metadata invalidates the signature. A
 recipient must also compare that recovered text with the visible document;
 changing the paper while leaving its QR unchanged does not alter the QR's
 signature. Optional visual references and line coordinates are authenticated as
@@ -448,4 +462,13 @@ The format, payload structure, chunking rules, compression algorithms, and verif
 
 # License
 
-This project is released under the Apache License 2.0.
+This project's source code is released under [Apache License 2.0](LICENSE).
+Dependencies retain their own licenses. The contributor patent grant is limited
+to covered claims those contributors can license; it is not blanket permission
+from unrelated patent holders.
+
+Ordinary QR byte encoding does not make the experimental rectangular watermark
+geometry JIS/ISO conformant. QRed does not claim patent clearance or separate
+DENSO permission for those variations. See [licensing and QR compatibility](docs/LICENSING_AND_COMPATIBILITY.md),
+the [Privacy Policy](https://qred.org/privacy.html), [Terms](https://qred.org/terms.html),
+and [Security & architecture](https://qred.org/security.html).

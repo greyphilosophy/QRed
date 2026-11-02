@@ -3,7 +3,9 @@
 The implementation introduced in PR #157 supports a **single page-filling
 rectangular QR** or **four balanced QR chunks arranged 2×2**, with no
 internal physical quiet zones. Explicit footer mode and legacy square
-watermarks remain compatible. See [quantitative acceptance requirements](WATERMARK_READABILITY_REQUIREMENTS.md).
+watermark layouts remain supported with current byte-mode messages. This does
+not restore retired padding-format payload support. See
+[quantitative acceptance requirements](WATERMARK_READABILITY_REQUIREMENTS.md).
 Synthetic tests do not establish printer or phone reliability; broader
 physical acceptance remains tracked in the requirements above.
 

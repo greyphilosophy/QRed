@@ -1,5 +1,9 @@
 # QRed Plaintext-First Implementation Plan
 
+> Historical plan, superseded by [Compact seals v3](../COMPACT_SEALS_V3.md).
+> Current seals use ordinary binary QR byte segments. Hidden-padding recovery
+> and the old backend workflow below are retired, not implementation guidance.
+
 > **For Hermes:** Use `subagent-driven-development` to implement this plan task-by-task.
 
 **Goal:** Make plaintext the default QRed format, keep the scanner universal, and reserve hidden-payload formats/compact formats for cases where plaintext is too large or multipart.

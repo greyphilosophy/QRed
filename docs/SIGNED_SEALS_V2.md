@@ -1,9 +1,12 @@
 # Signed seals v2 (historical)
 
-This describes a retired format. Current seals and verification use
-[Compact seals v3](COMPACT_SEALS_V3.md); old seals must be re-sealed.
+This entire document records a retired implementation, including its UI,
+compatibility rules and tests. It is not current operating guidance. Current
+local seals use [Compact seals v3](COMPACT_SEALS_V3.md), and account seals use
+[v4 attestations](ACCOUNT_ATTESTATION.md). Current QR transport uses ordinary
+byte segments; old v1/v2 records and padding-format QR images must be re-sealed.
 
-New seals keep the existing `QRED1?` carrier and hidden QR framing, but set
+At the time, new seals kept the existing `QRED1?` carrier and hidden QR framing, but set
 `v=2`. Deploy the updated stamper and both verifier routes together. Old
 verifiers do not understand the new signature message.
 

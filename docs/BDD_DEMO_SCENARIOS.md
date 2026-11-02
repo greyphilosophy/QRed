@@ -1,56 +1,74 @@
-# QRed Demo BDD Scenarios
+# QRed browser demo scenarios
 
-These scenarios describe the Windows 11 demo flow for QRed using a local FastAPI backend and the browser UI opened from `frontend/index.html`.
+These describe the current Vite/Cloudflare browser application. The retired
+Python/FastAPI document backend is not part of this workflow. See
+[Quick start](QUICK_START.md) for setup and test commands.
 
-## Feature: Launch the local demo application
+## Prepare and seal a document locally
 
-### Scenario: Open the browser application
-**Given** the QRed backend is running locally
-**And** the frontend has been started with Vite
-**When** the demonstrator opens `index.html` in a browser
-**Then** the page shows controls for uploading a PDF, generating text seals, and verifying seals.
+**Given** QRed's required resources are available in the browser and the user
+has generated or opened a private signing key,
+**when** they select a PDF and choose **Stamp and save PDF**,
+**then** the browser signs each page's evidence and saves a sealed PDF without
+sending the original document or key to a server.
 
-## Feature: Seal an uploaded PDF
+**And** Automatic layout tries a recoverable watermark before a footer, reports
+footer fallback, and rejects unreadable or over-capacity output instead of
+dropping seals or adding overflow pages.
 
-### Scenario: Stamp every PDF page with QRed seals
-**Given** the demonstrator has selected a PDF file
-**And** an issuer name, Ed25519 private key, and Ed25519 public key are available
-**When** the demonstrator clicks **Upload PDF and Stamp QR Seals**
-**Then** the backend extracts canonical text from each PDF page
-**And** computes page SHA-256 hashes and a shared document Merkle root
-**And** signs each page's integrity-wrapped canonical text
-**And** chunks each signed page payload into one or more QRed payload seals
-**And** stamps each PDF page with its page-specific payload QR codes when space allows
-**And** returns a sealed PDF download.
+## Optionally attest an account
 
-## Feature: Smartphone bootstrap verification
+**Given** Google, Microsoft or Amazon is configured and the user selects it,
+**when** the PDF is prepared and sign-in completes within five minutes,
+**then** the Worker binds provider identity and server time to the prepared page
+commitments, and the original browser tab completes the PDF locally.
 
-### Scenario: Launch verifier from a stamped document
-**Given** a sealed PDF page includes a bootstrap QR code
-**When** the recipient scans that QR code with a smartphone camera
-**Then** the smartphone opens the visible bootstrap URL `https://qred.org/`
-**And** the verifier page offers a QRed-aware camera scanner, QR image selection, and issuer public-key entry.
-**And** the verifier reads the separate seal QR’s ordinary binary message to recover and verify the signed document.
+**And** only derived page commitments and account/session data cross that API
+boundary; commitments are unsalted and can permit correlation or content guesses.
 
-## Feature: Reconstruct and verify a sealed document
+## Open the verifier from paper
 
-### Scenario: Verify QRed payload seals
-**Given** the verifier has collected all payload QR seal strings for one document
-**And** the issuer public key is available from a trusted registry or demo input
-**When** the recipient clicks **Verify Document**
-**And** the verifier reconstructs the chosen signed payload format
-**And** submits the collected payload seals and issuer public key to the verification API
-**And** verifies the Ed25519 signature over the original canonical document text
-**And** displays the verification status, original document text, document ID, timestamp, and signature issuer.
+**Given** the first page has a separate navigation QR,
+**when** a normal camera app reads it,
+**then** it opens qred.org without carrying document data in the URL.
 
-### Scenario: Detect missing payload seals
-**Given** the verifier has collected only some payload QR seal strings for a document
-**When** the recipient attempts verification
-**Then** the result is `INCOMPLETE`
-**And** the verifier reports which chunk numbers are missing.
+**If** a watermark cannot accommodate the navigation QR,
+**then** the printed **Verify at qred.org** instruction still provides the address.
+First-page footer layouts always include the navigation QR.
 
-### Scenario: Detect tampered signed content
-**Given** a signed QRed payload seal has been altered
-**When** the recipient attempts verification with the issuer public key
-**Then** the result is not `VALID`
-**And** the verifier does not present the altered document as authentic.
+## Recover and verify evidence
+
+**Given** the recipient reads all parts of a page through the camera, photo picker
+or PDF reader,
+**when** ordinary QR byte messages are reconstructed,
+**then** QRed verifies them locally using a trusted local issuer key or a bundled
+account authority key and displays the signed evidence.
+
+**And** a generic decoder may recover binary bytes without displaying them
+usefully. The separate navigation QR is not a document seal.
+
+## Handle missing, untrusted or altered data
+
+**Given** some chunks are missing, **then** the page remains incomplete.
+**Given** no trusted key is available, **then** it remains unverified.
+**Given** a signed record or its authenticated metadata has been altered,
+**then** it cannot receive a valid signature result.
+
+**Given** the paper has changed but its QR is intact,
+**then** the signature can still verify; the recipient must compare the recovered
+text and visual evidence with the page. OCR assistance is not a pixel-level guarantee.
+
+## Keep scanning responsive
+
+**Given** live scanning is active, **then** QRed prefers the rear main camera at
+1×, shows a full-page guide and runs bounded background attempts.
+**When** the user chooses **Capture photo** or opens an image,
+**then** longer recovery is available with cancellation; live frames do not queue
+behind that work. **Cancel and resume camera** returns to live scanning.
+
+## Handle retired QR images
+
+**Given** a QR stores its seal after the terminator in padding,
+**when** the current verifier reads it,
+**then** those bytes are not recovered as a seal. Re-seal the source document
+with the current stamper and update saved offline verifier copies.

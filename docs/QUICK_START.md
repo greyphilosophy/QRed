@@ -1,7 +1,8 @@
 # QRed development quick start
 
-QRed seals PDFs and verifies their contents in the browser. Google account
-attestations use the Cloudflare Worker in `frontend/worker/`. The private-key
+QRed seals PDFs and verifies their contents in the browser. Optional Google,
+Microsoft and Amazon account attestations use the Cloudflare Worker in
+`frontend/worker/`. The private-key
 workflow can run from the static frontend alone.
 
 ## Run the frontend
@@ -18,6 +19,11 @@ Open the Vite URL, choose **Stamp PDF**, generate or open a signing key, and
 choose a PDF. **Stamp and save PDF** downloads the sealed document. Both the
 homepage and `/verify.htm` can read seals from PDFs, QR images, or the camera.
 Private-key seals need the issuer's public key file to verify the signature.
+
+Payload QRs contain ordinary binary messages; the separate navigation QR opens
+qred.org. Re-seal documents made with the retired padding carrier and refresh
+offline verifier copies. See [licensing and QR compatibility](LICENSING_AND_COMPATIBILITY.md)
+for the distinction between standard message encoding and experimental watermark geometry.
 
 ## Run tests
 
@@ -62,7 +68,7 @@ They share download, cache-readiness, and network-observation helpers in
 | `frontend/src/sealCompression.js` | Shared compression selection |
 | `frontend/src/verifier/verificationSession.js` | Collected seals, verification lifetime, and progress |
 | `frontend/src/qr/cameraSession.js` | Camera stream and decode-loop lifetime |
-| `frontend/worker/` | Stateless Google identity attestations |
+| `frontend/worker/` | Stateless Google, Microsoft and Amazon account attestations |
 | `tests/` | Production browser regression tests |
 
 See the [README](../README.md) for the seal format, privacy model, and Cloudflare
