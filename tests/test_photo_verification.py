@@ -263,10 +263,10 @@ def test_real_stamped_pages_separate_markings_and_detect_edits(browser, tmp_path
             review = page.get_by_role("region", name="Review Page 2 of 2", exact=True)
             if variant == "unchanged":
                 expect(review.locator(".photo-summary")).not_to_contain_text("No text")
-                expect(review.locator(".photo-differences")).to_be_empty()
+                assert review.locator(".photo-differences").inner_text() == ""
                 page.locator(".page-check-list button").nth(0).click()
                 first = page.get_by_role("region", name="Review Page 1 of 2", exact=True)
-                expect(first.locator(".photo-differences")).to_be_empty()
+                assert first.locator(".photo-differences").inner_text() == ""
                 # OCR may skip the small caption altogether. The user-facing
                 # requirement is no false document difference, whether stamp
                 # readings need separate review or no stamp text was returned.
