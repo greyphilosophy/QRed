@@ -1,13 +1,16 @@
-import { beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createQRedSeals } from "../qredSealer.js";
 import { createQRedQrData } from "../qredQr.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { decodePhoto } from "./decodePhoto.js";
 import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
+import { scanRectifiedSeal } from "./rectifiedSealScan.js";
 
 vi.mock("./scanQrImage.js", () => ({ scanQrImage: vi.fn(), scanWatermarkPreview: vi.fn() }));
 vi.mock("./pageAlignedScan.js", () => ({ scanPageAlignedImage: vi.fn() }));
+vi.mock("./rectifiedSealScan.js", () => ({ scanRectifiedSeal: vi.fn() }));
+afterEach(() => vi.restoreAllMocks());
 
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
 const image = { width: 320, height: 240, data: new Uint8ClampedArray(320 * 240 * 4) };
@@ -27,6 +30,7 @@ beforeAll(async () => {
 beforeEach(() => {
   scanWatermarkPreview.mockReset().mockReturnValue(null);
   scanPageAlignedImage.mockReset().mockReturnValue([]);
+  scanRectifiedSeal.mockReset().mockReturnValue(null);
   scanQrImage.mockReset().mockReturnValue(null);
 });
 
@@ -44,7 +48,7 @@ it.each(["HTTPS://QRED.ORG", "https://example.test"])("continues watermark recov
   scanWatermarkPreview.mockReturnValue({ data });
   scanPageAlignedImage.mockReturnValue([{ seal: single }]);
   expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found-multiple", texts: [single] });
-  expect(scanPageAlignedImage).toHaveBeenCalledWith(image, { deep: true });
+  expect(scanPageAlignedImage).toHaveBeenCalledWith(image, { deep: true, shouldContinue: expect.any(Function) });
 });
 
 it("collects all four chunks even when the preview has already read one", () => {
@@ -57,7 +61,8 @@ it("keeps original-resolution alignment and legacy recovery after a preview miss
   scanQrImage.mockReturnValueOnce(null).mockReturnValue(code(single));
   expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found", text: single });
   expect(scanPageAlignedImage.mock.calls[0][0]).toBe(image);
-  expect(scanQrImage).toHaveBeenCalledWith(image.data, image.width, image.height);
+  expect(scanQrImage).toHaveBeenCalledWith(image.data, image.width, image.height,
+    { shouldContinue: expect.any(Function) });
 });
 
 it("recovers a complete ordinary footer seal before exhaustive alignment", async () => {
@@ -67,7 +72,7 @@ it("recovers a complete ordinary footer seal before exhaustive alignment", async
   expect(scanPageAlignedImage).not.toHaveBeenCalled();
   expect(scanQrImage).toHaveBeenCalledTimes(1);
   expect(scanQrImage).toHaveBeenCalledWith(image.data, image.width, image.height,
-    { tryRescaling: false, tryWatermark: false, maxAttempts: 2 });
+    { tryRescaling: false, tryWatermark: false, maxAttempts: 2, shouldContinue: expect.any(Function) });
   expect((await verifyQRedSeals([action.text], publicKey)).status).toBe("VALID");
 });
 
@@ -75,4 +80,26 @@ it("does not let a single footer chunk skip collection of the remaining chunks",
   scanQrImage.mockReturnValue(code(multiple[0]));
   scanPageAlignedImage.mockReturnValue(multiple.map(seal => ({ seal })));
   expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found-multiple", texts: multiple });
+});
+
+it("uses measured QR corners before the full-resolution and layout retries", async () => {
+  scanRectifiedSeal.mockReturnValue({ seal: single });
+  const action = decodePhoto(image, { returnPayload: true });
+  expect(action).toEqual({ status: "found", text: single });
+  expect(scanQrImage).not.toHaveBeenCalled();
+  expect(scanPageAlignedImage).not.toHaveBeenCalled();
+  expect((await verifyQRedSeals([action.text], publicKey)).status).toBe("VALID");
+});
+
+it("stops recovery at the shared deadline and retains any decoded chunk", () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  scanWatermarkPreview.mockImplementation(() => { now = 8001; return code(multiple[1]); });
+  expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found-multiple", texts: [multiple[1]] });
+  expect(scanRectifiedSeal).not.toHaveBeenCalled();
+  expect(scanQrImage).not.toHaveBeenCalled();
+  expect(scanPageAlignedImage).not.toHaveBeenCalled();
+  now = 0;
+  scanWatermarkPreview.mockImplementation(() => { now = 8001; return null; });
+  expect(decodePhoto(image, { returnPayload: true })).toMatchObject({ status: "feedback" });
 });

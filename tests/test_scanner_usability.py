@@ -81,9 +81,24 @@ def test_main_camera_at_one_times_zoom_without_flashlight(browser, path):
             }""")
             assert geometry["insideImage"], (width, height, geometry)
             assert geometry["overlappingControls"] == [], (width, height, geometry)
-            assert geometry["ratio"] == pytest.approx(4 / 3 if width > height else 3 / 4, abs=0.01)
+            assert geometry["ratio"] == pytest.approx(8.5 / 11, abs=0.01)
             assert geometry["animation"] == "none"
             assert geometry["pointerEvents"] == "none"
+            expect(page.locator(".page-detected-outline")).to_have_count(0)
+            # Capture advice can wrap or change height while detection updates.
+            # This must not shift the manually aligned paper corners.
+            stationary = page.evaluate("""async () => {
+                const guide = document.querySelector('.page-scan-guide');
+                const feedback = document.querySelector('.ar-scan-feedback, #pageGuideHint');
+                const bounds = () => JSON.stringify(guide.getBoundingClientRect().toJSON());
+                const before = bounds(), previous = feedback.style.minHeight;
+                feedback.style.minHeight = '140px';
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                const unchanged = bounds() === before;
+                feedback.style.minHeight = previous;
+                return unchanged;
+            }""")
+            assert stationary
         expect(page.get_by_text("Show all four page corners. Try a contrasting background, or use Capture now.", exact=True)).to_be_visible()
         page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
         expect(page.locator(".page-scan-guide")).not_to_be_visible()

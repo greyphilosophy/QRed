@@ -157,7 +157,8 @@ export function scanWatermarkPreview(data, width, height) {
 /** Return QR geometry in the original image's coordinates, even after a retry.
  * QR recovery and camera overlays must use the same coordinate frame.
  */
-export function scanQrImage(data, width, height, { tryRescaling = true, tryWatermark = true, maxAttempts = Infinity } = {}) {
+export function scanQrImage(data, width, height, { tryRescaling = true, tryWatermark = true,
+  maxAttempts = Infinity, shouldContinue = () => true } = {}) {
   if (!isValidImage(data, width, height)) return null;
   let entryLink = null;
   let entryToSkip = null;
@@ -170,7 +171,7 @@ export function scanQrImage(data, width, height, { tryRescaling = true, tryWater
   const sizes = scanAttempts(width, height, tryRescaling, tryWatermark);
   for (let index = 0; index < sizes.length; index++) {
     const size = sizes[index];
-    if (attempts >= regularBudget) break;
+    if (attempts >= regularBudget || !shouldContinue()) break;
     const prepared = prepareAtSize(data, width, height, size, entryToSkip);
     if (prepared.radius && !preparedWatermark) preparedWatermark = prepared;
     const code = decodePrepared(prepared, width, height);
@@ -188,7 +189,7 @@ export function scanQrImage(data, width, height, { tryRescaling = true, tryWater
   }
   // Count the fallback against the same budget as ordinary scan attempts.
   // Preflight callers can reserve one attempt by setting maxAttempts = 3.
-  if (preparedWatermark && attempts < maxAttempts) {
+  if (preparedWatermark && attempts < maxAttempts && shouldContinue()) {
     const code = decodePrepared(preparedWatermark, width, height, true);
     if (usableResult(code)) return code;
     if (code?.data) entryLink ??= code;

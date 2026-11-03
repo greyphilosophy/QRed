@@ -147,9 +147,15 @@ function locatePaperAtResolution(image) {
   // glyphs obscure the interior. Do not invent an edge when no distinguishable
   // border exists; old finder-based scanning remains the fallback.
   const cornerOffsets = [[0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1]];
-  const deskRgb = [0, 1, 2].map(channel =>
-    cornerOffsets.reduce((sum, [x, y]) => sum + channelAt((y * width + x) * 4, channel), 0) / 4);
-  const deskChroma = Math.max(...deskRgb) - Math.min(...deskRgb);
+  // A patterned table can have two almost-black corners. Averaging their
+  // colours with the bright pattern hides its chroma and mistakes that
+  // pattern for paper. Require chromatic evidence from two corners instead.
+  const cornerChroma = cornerOffsets.map(([x, y]) => {
+    const offset = (y * width + x) * 4;
+    const rgb = [0, 1, 2].map(channel => channelAt(offset, channel));
+    return Math.max(...rgb) - Math.min(...rgb);
+  }).sort((a, b) => a - b);
+  const deskChroma = cornerChroma[2];
   const paperChroma = [];
   for (const v of [0.3, 0.4, 0.5, 0.6, 0.7]) {
     for (const u of [0.3, 0.4, 0.5, 0.6, 0.7]) {
@@ -169,14 +175,13 @@ function locatePaperAtResolution(image) {
   const threshold = Math.abs(contrast) >= 45
     ? (paper + bg) / 2
     : bg + (forward ? 1 : -1) * Math.max(2.5, 0.23 * Math.abs(contrast));
-  const chromaLimit = Math.max(7, Math.min(12, deskChroma * 0.45));
   const bright = (x, y) => {
     const value = at(x, y);
     if (useChroma) {
       const start = (y * width + x) * 4;
       const r = channelAt(start, 0), g = channelAt(start, 1), b = channelAt(start, 2);
       return value > Math.max(45, bg * 0.42) &&
-        Math.max(r, g, b) - Math.min(r, g, b) < chromaLimit;
+        Math.max(r, g, b) - Math.min(r, g, b) < Math.max(7, value * 0.12);
     }
     return forward ? value >= threshold : value <= threshold;
   };
@@ -503,7 +508,7 @@ function scannedGeometry(mapping, region, size) {
 
 function decodeRegion(image, mapping, region, versions, budget) {
   for (const { version } of versions) {
-    if (budget.remaining <= 0) break;
+    if (budget.remaining <= 0 || !budget.shouldContinue()) break;
     budget.remaining--;
     const { bits, size, unknown, confidence } = sampledMatrix(image, mapping, region, version);
     const raster = rasterForDecoder({ bits, size });
@@ -543,7 +548,7 @@ function refinementScore(versions) {
   return versions.find(item => item.version >= 7)?.score ?? 0;
 }
 
-export function refineSingles(image, singles) {
+export function refineSingles(image, singles, shouldContinue = () => true) {
   let budget = 16;
   // Nearby orientation/format scores are not reliable enough to let one
   // hypothesis spend every retry on neighboring versions. Give the four
@@ -559,7 +564,7 @@ export function refineSingles(image, singles) {
       // when the local alignment search needs the full-size starting grid.
       // Both guesses consume the existing page-wide single-code budget.
       for (const candidate of mapping === fullMapping ? [mapping] : [mapping, fullMapping]) {
-        if (budget-- <= 0) break;
+        if (budget-- <= 0 || !shouldContinue()) return [];
         const recovered = recoverRefinedQrRegion(image, candidate, region, version);
         if (recovered) return [recovered];
       }
@@ -569,7 +574,7 @@ export function refineSingles(image, singles) {
   return [];
 }
 
-function refineQuadrants(image, quadrants, bestCodes) {
+function refineQuadrants(image, quadrants, bestCodes, shouldContinue) {
   let budget = 36;
   let best = bestCodes;
   for (const { mapping, regions, versions, codes } of quadrants) {
@@ -580,7 +585,7 @@ function refineQuadrants(image, quadrants, bestCodes) {
     for (const index of order) {
       const candidates = refinementVersions(versions[index], seededVersion, true);
       for (const version of candidates.slice(0, seededVersion ? 9 : 15)) {
-        if (budget-- <= 0) break;
+        if (budget-- <= 0 || !shouldContinue()) return found.length > best.length ? found : best;
         const recovered = recoverRefinedQrRegion(image, mapping, regions[index], version);
         if (!recovered) continue;
         seededVersion = version;
@@ -595,7 +600,7 @@ function refineQuadrants(image, quadrants, bestCodes) {
   return best;
 }
 
-function refinePage(image, singles, quadrants, bestCodes) {
+function refinePage(image, singles, quadrants, bestCodes, shouldContinue) {
   // Each layout's budget is shared by ALL orientations, formats and scales.
   // A four-quadrant miss can never consume the single-code allowance.
   singles.sort((a, b) => refinementScore(b.versions) - refinementScore(a.versions));
@@ -603,18 +608,19 @@ function refinePage(image, singles, quadrants, bestCodes) {
   const singleFirst = !bestCodes.length &&
     refinementScore(singles[0]?.versions ?? []) > (quadrants[0]?.score ?? 0);
   if (singleFirst) {
-    const recovered = refineSingles(image, singles);
+    const recovered = refineSingles(image, singles, shouldContinue);
     if (recovered.length) return recovered;
   }
-  const recovered = refineQuadrants(image, quadrants, bestCodes);
-  return recovered.length || singleFirst ? recovered : refineSingles(image, singles);
+  const recovered = refineQuadrants(image, quadrants, bestCodes, shouldContinue);
+  return recovered.length || singleFirst ? recovered : refineSingles(image, singles, shouldContinue);
 }
 
 /** Synchronous photograph-only watermark recovery. The page and QR grids are
  * established from visible paper edges, not from metadata or a signing layout.
  * "pageAligned: false" is handled by callers as the legacy fallback path.
  */
-export function scanPageAlignedImage(image, { deep = false } = {}) {
+export function scanPageAlignedImage(image, { deep = false, shouldContinue = () => true } = {}) {
+  if (!shouldContinue()) return [];
   if (!image || !Number.isInteger(image.width) || !Number.isInteger(image.height) ||
       image.width < 160 || image.height < 160 ||
       image.width * image.height > MAX_PHOTO_PIXELS ||
@@ -654,6 +660,7 @@ export function scanPageAlignedImage(image, { deep = false } = {}) {
         (u, v) => mapping(0.5 + (u - 0.5) * scale, 0.5 + (v - 0.5) * scale);
       const sampledImage = { ...image, paperAt: paperBrightnessMap(image, candidateMapping) };
       for (const profile of profiles) {
+        if (!shouldContinue()) return [];
         const singleRegion = pageWatermarkRegions(1, profile.size, profile)[0];
         const singleVersions = chooseVersions(sampledImage, candidateMapping, singleRegion);
         const regions = pageWatermarkRegions(4, profile.size, profile);
@@ -670,10 +677,11 @@ export function scanPageAlignedImage(image, { deep = false } = {}) {
   // one page-wide limit so adding orientations cannot quadruple decode work.
   hypotheses.sort((a, b) => Math.max(b.singleVersions[0]?.score ?? 0, b.score) -
     Math.max(a.singleVersions[0]?.score ?? 0, a.score));
-  const budget = { remaining: 64 }, singles = [], quadrants = [];
+  const budget = { remaining: 64, shouldContinue }, singles = [], quadrants = [];
   let bestCodes = [];
   for (const { image: sampledImage, mapping, fullMapping, profile, singleRegion, singleVersions,
     regions, versions, score } of hypotheses) {
+    if (!shouldContinue()) return bestCodes;
     const single = decodeRegion(sampledImage, mapping, singleRegion, singleVersions, budget);
     if (single) return [single];
     const codes = [];
@@ -688,5 +696,5 @@ export function scanPageAlignedImage(image, { deep = false } = {}) {
       quadrants.push({ mapping, regions, versions, codes, score });
     }
   }
-  return deep && !image.bounds ? refinePage(image, singles, quadrants, bestCodes) : bestCodes;
+  return deep && !image.bounds ? refinePage(image, singles, quadrants, bestCodes, shouldContinue) : bestCodes;
 }

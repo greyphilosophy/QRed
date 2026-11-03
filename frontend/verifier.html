@@ -618,7 +618,6 @@
         onQuality: function(quality) {
           hint.textContent = quality.message;
           readiness.hidden = quality.state !== "hold"; readiness.value = quality.progress;
-          state.stopPageGuide?.update(quality);
         },
         onCaptured: function() {
           processingCapture = true;

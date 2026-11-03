@@ -1,8 +1,10 @@
 export const QR_CAMERA_CONSTRAINTS = {
   video: {
     facingMode: { ideal: "environment" },
-    width: { ideal: 1920 },
-    height: { ideal: 1080 },
+    // Dense full-page seals need more detail than a 1080p preview. These are
+    // preferences, so cameras with lower limits can still open normally.
+    width: { ideal: 3840 },
+    height: { ideal: 2880 },
   },
 };
 

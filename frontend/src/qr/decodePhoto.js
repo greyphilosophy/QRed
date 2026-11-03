@@ -1,5 +1,6 @@
 import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
+import { scanRectifiedSeal } from "./rectifiedSealScan.js";
 import { isQRedEntryLink } from "./qrPayload.js";
 import { decodeSeal, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult,
   qredTextFromScanResult } from "../qredVerifier.js";
@@ -24,12 +25,17 @@ export function qrFrameAction(image, code, options = {}) {
 
 // The same decoder serves a chosen photo and a manually captured camera frame.
 // Browser callers run this synchronous work in photoScan.worker.js.
-export function decodePhoto(image, { returnPayload = false } = {}) {
+export function decodePhoto(image, { returnPayload = false, maxDurationMs = 8000 } = {}) {
   const { data, width, height } = image;
   if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0
     || width * height > 80_000_000 || data?.length !== width * height * 4) {
     throw new Error("This photo cannot be scanned at its current size. Choose a smaller photo.");
   }
+  // Cooperatively stop between bounded attempts. A miss must return retake
+  // guidance instead of spending a minute exhausting layout guesses.
+  const deadline = performance.now() + maxDurationMs;
+  const shouldContinue = () => performance.now() < deadline;
+  const partials = new Set();
   if (returnPayload) {
     const preview = scanWatermarkPreview(data, width, height);
     const payload = preview && qredPayloadFromPhotoScanResult(data, width, height, preview);
@@ -38,16 +44,22 @@ export function decodePhoto(image, { returnPayload = false } = {}) {
     // not stop recovery of a four-code page. Trust is checked by the normal
     // verification session after either decoding path returns its payload.
     if (decodeSeal(payload)?.total_chunks === 1) return { status: "found", text: payload };
+    if (decodeSeal(payload)) partials.add(payload);
+    const rectified = shouldContinue() ? scanRectifiedSeal(image, { shouldContinue }) : null;
+    if (decodeSeal(rectified?.seal)?.total_chunks === 1) return { status: "found", text: rectified.seal };
+    if (decodeSeal(rectified?.seal)) partials.add(rectified.seal);
     // An ordinary footer code should not pay for exhaustive page alignment.
     // Allow one original-scale attempt plus a masked navigation-code retry.
-    const ordinary = scanQrImage(data, width, height,
-      { tryRescaling: false, tryWatermark: false, maxAttempts: 2 });
+    const ordinary = shouldContinue() ? scanQrImage(data, width, height,
+      { tryRescaling: false, tryWatermark: false, maxAttempts: 2, shouldContinue }) : null;
     const ordinaryPayload = ordinary && qredPayloadFromPhotoScanResult(data, width, height, ordinary);
     if (decodeSeal(ordinaryPayload)?.total_chunks === 1) return { status: "found", text: ordinaryPayload };
-    const aligned = scanPageAlignedImage(image, { deep: true });
-    if (aligned.length) return { status: "found-multiple", texts: aligned.map(result => result.seal) };
+    if (decodeSeal(ordinaryPayload)) partials.add(ordinaryPayload);
+    const aligned = shouldContinue() ? scanPageAlignedImage(image, { deep: true, shouldContinue }) : [];
+    const texts = [...new Set([...aligned.map(result => result.seal), ...partials])];
+    if (texts.length) return { status: "found-multiple", texts };
   }
-  const code = scanQrImage(data, width, height);
+  const code = shouldContinue() ? scanQrImage(data, width, height, { shouldContinue }) : null;
   if (code?.codes) return qrFrameAction(image, code, { returnPayload });
   if (!code) return { status: "feedback", message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For footer seals, try framing the individual QR instead." };
   const text = qredTextFromScanResult(code);

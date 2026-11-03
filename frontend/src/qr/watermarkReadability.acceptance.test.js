@@ -3,6 +3,7 @@
 // cryptographic verification. They are deliberately red until page-coordinate
 // geometry and rectangular watermark recovery are actually implemented.
 import { PDFDocument } from "pdf-lib";
+import { Buffer } from "node:buffer";
 import { describe, expect, it } from "vitest";
 import { createQRedSeals } from "../qredSealer.js";
 import { createQRedQrSymbol } from "../qredQr.js";
@@ -12,6 +13,7 @@ import { stampWatermarks } from "../pdf/watermark.js";
 import { renderPdfPage, withPdfDocument } from "../pdf/readPdfText.js";
 import { scanPdfPage } from "../verifier/scanPdf.js";
 import { decodePhoto } from "./decodePhoto.js";
+import { scanRectifiedSeal } from "./rectifiedSealScan.js";
 import { DEFAULT_WATERMARK_MARGIN_POINTS, pageWatermarkRegions, scanPageAlignedImage } from "./pageAlignedScan.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
@@ -195,6 +197,22 @@ function sampleAtPagePoint(image, x, y) {
 }
 
 describe("watermark readability acceptance contract (requirements WM-01..08)", () => {
+  it("recovers a dense rectangular seal from its own corners through shadow and black text", async () => {
+    const content = "Independent corner recovery, local paper brightness, and untouched photo evidence. ".repeat(20).trimEnd();
+    const { seals } = await signed(content);
+    expect(seals).toHaveLength(1);
+    const photo = printAndPhotograph(seals, {
+      width: 1200, height: 1600, ink: [25, 25, 25], finderBlocked: false,
+      patternedBackdrop: true, shadowed: true, printerWarp: 0.025,
+    });
+    const original = photo.data.slice();
+    const recovered = scanRectifiedSeal(photo);
+    expect(recovered?.seal).toBe(seals[0]);
+    await expect(verifyQRedSeals([recovered.seal], publicKey)).resolves.toMatchObject({ status: "VALID", content });
+    expect(Buffer.compare(Buffer.from(photo.data), Buffer.from(original))).toBe(0);
+    expect(scanRectifiedSeal(photo, { shouldContinue: () => false })).toBeNull();
+  }, 20000);
+
   it("[WM-02] enlarges a single QR over >=80% of usable letter-paper area, with rectangular cells", () => {
     const [box] = planWatermarks(blankPage(), [{ modules: { size: 177 } }]);
     const usableWidth = pageSize.width - margin * 2;

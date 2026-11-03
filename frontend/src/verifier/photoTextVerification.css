@@ -8,7 +8,7 @@
 .difference-crop { display: block; width: 100%; max-height: 180px; margin-top: .6rem; background: white; border: 1px solid #cbd5e1; }
 .page-camera-backdrop { position: fixed; inset: 0; background: #0f172ae6; z-index: 100; padding: 1rem; overflow: auto; }
 .page-camera { max-width: 600px; margin: auto; padding: 1rem; background: white; border-radius: 12px; }
-.page-camera video { width: 100%; max-height: 60dvh; background: #0f172a; }
+.page-camera video { width: 100%; max-height: 60dvh; object-fit: contain; background: #0f172a; }
 .verification-actions { display: flex; justify-content: flex-end; }
 .verification-actions button { min-height: 44px; padding: .6rem 1rem; font: inherit; border: 1px solid #94a3b8; border-radius: 8px; background: #f1f5f9; color: #172033; cursor: pointer; }
 .verification-details summary { cursor: pointer; min-height: 44px; padding: .7rem 0; }

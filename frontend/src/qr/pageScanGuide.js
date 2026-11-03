@@ -1,49 +1,25 @@
 import "./pageScanGuide.css";
 
-// An aiming guide until paper edges are found, then the measured outline.
+// Fixed US Letter corners for manual alignment. Detection must never move them.
 // Decoding and retained photographs always use the entire original frame.
 // Keep the guide inside the actual object-fit: contain image, not its letterbox.
 export function observePageScanGuide(video, area, guide) {
-  let quality = null, observedFeedback = null;
-  const outline = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  const polygon = document.createElementNS(outline.namespaceURI, "polygon");
-  outline.classList.add("page-detected-outline");
-  outline.setAttribute("aria-hidden", "true");
-  outline.append(polygon); area.append(outline);
   function update() {
     const view = video.getBoundingClientRect(), available = area.getBoundingClientRect();
-    const feedback = area.closest(".ar-camera")?.querySelector(".ar-scan-feedback");
-    if (feedback !== observedFeedback) {
-      if (observedFeedback) observer?.unobserve(observedFeedback);
-      if (feedback) observer?.observe(feedback);
-      observedFeedback = feedback;
-    }
     if (!video.videoWidth || !video.videoHeight || !view.width || !view.height) {
       guide.hidden = true;
-      outline.style.display = "none";
       return;
     }
     const scale = Math.min(view.width / video.videoWidth, view.height / video.videoHeight);
     const imageWidth = video.videoWidth * scale, imageHeight = video.videoHeight * scale;
     const imageLeft = view.left + (view.width - imageWidth) / 2;
     const imageTop = view.top + (view.height - imageHeight) / 2;
-    outline.style.display = quality?.corners ? "block" : "none";
-    if (quality?.corners) {
-      outline.setAttribute("viewBox", `0 0 ${available.width} ${available.height}`);
-      polygon.setAttribute("points", quality.corners.map(p =>
-        `${imageLeft - available.left + p.x * imageWidth},${imageTop - available.top + p.y * imageHeight}`).join(" "));
-      outline.dataset.state = quality.state;
-      guide.hidden = true;
-      return;
-    }
     // Leave some visible background around the paper for edge detection.
     const margin = Math.min(imageWidth, imageHeight) * 0.04;
     const left = Math.max(available.left, imageLeft + margin), top = Math.max(available.top, imageTop + margin);
     const right = Math.min(available.right, imageLeft + imageWidth - margin);
-    const feedbackTop = feedback?.getBoundingClientRect().top;
-    const bottom = Math.min(available.bottom, imageTop + imageHeight - margin,
-      feedbackTop > view.top ? feedbackTop - 12 : Infinity);
-    const ratio = window.innerWidth > window.innerHeight ? 4 / 3 : 3 / 4;
+    const bottom = Math.min(available.bottom, imageTop + imageHeight - margin);
+    const ratio = 8.5 / 11;
     const width = Math.max(0, Math.min(right - left, (bottom - top) * ratio));
     const height = width / ratio;
     guide.hidden = !width || !height;
@@ -65,8 +41,6 @@ export function observePageScanGuide(video, area, guide) {
     video.removeEventListener("loadedmetadata", update);
     video.removeEventListener("resize", update);
     window.removeEventListener("resize", update);
-    outline.remove();
   };
-  stop.update = next => { quality = next; update(); };
   return stop;
 }

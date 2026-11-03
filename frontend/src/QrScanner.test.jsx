@@ -31,8 +31,8 @@ describe("QrScanner camera controls", () => {
     expect(QR_CAMERA_CONSTRAINTS).toEqual({
       video: {
         facingMode: { ideal: "environment" },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
+        width: { ideal: 3840 },
+        height: { ideal: 2880 },
       },
     });
   });
