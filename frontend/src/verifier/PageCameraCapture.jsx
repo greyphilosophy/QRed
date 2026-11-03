@@ -34,13 +34,14 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
     const stopGuide = observePageScanGuide(video.current, guideArea.current, guide.current);
     live.current = createLiveScanWorker({ returnPayload: true, requirePageQuality: true,
       onQuality: setQuality,
-      onCaptured: () => {
-        if (canCaptureCameraPhoto(video.current)) { capture(); return; }
+      onCaptured: ({ captureOnly } = {}) => {
+        if (captureOnly) { capture({ preserveGate: true }); return; }
         busyRef.current = true; setBusy(true); setError("");
       },
       onResult: action => {
         if (action.text || action.texts?.length) acceptFrame(action, canvas, epoch);
         else {
+          if (action.status === "feedback") live.current.reset();
           busyRef.current = false; setBusy(false);
           if (action.message) setError(action.message);
         }
@@ -56,7 +57,7 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
         if (canvas.height !== source.videoHeight) canvas.height = source.videoHeight;
         const context = canvas.getContext("2d", { willReadFrequently: true });
         context.drawImage(source, 0, 0);
-        live.current.scan(context.getImageData(0, 0, canvas.width, canvas.height));
+        live.current.scan(context.getImageData(0, 0, canvas.width, canvas.height), { captureOnly: canCaptureCameraPhoto(source) });
       },
       onError: cause => setError(`Camera could not open. ${cause.message}`) });
     return () => {
@@ -77,14 +78,16 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
       camera.current.stop(); live.current.stop();
       onCapture(file); onClose();
       if (typeof navigator.vibrate === "function") navigator.vibrate(80);
-    } catch (cause) { if (epoch === generation.current) setError(cause.message); }
+    } catch (cause) {
+      if (epoch === generation.current) { live.current.reset(); setError(cause.message); }
+    }
     finally { if (epoch === generation.current) { busyRef.current = false; setBusy(false); } }
   }
-  async function capture() {
+  async function capture({ preserveGate = false } = {}) {
     const epoch = generation.current, source = video.current;
     if (!source?.videoWidth || busyRef.current) return;
     busyRef.current = true; setBusy(true); setError("");
-    live.current.reset();
+    if (!preserveGate) live.current.reset();
     scan.current = new AbortController();
     const controller = scan.current;
     const canvas = document.createElement("canvas");

@@ -225,8 +225,8 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
         setQuality(quality);
         if (!quality.ready && captureReported) { captureReported = false; setFeedback(null); }
       },
-      onCaptured: () => {
-        if (canCaptureCameraPhoto(videoRef.current)) { capturePhoto(); return; }
+      onCaptured: ({ captureOnly } = {}) => {
+        if (captureOnly) { capturePhoto(true); return; }
         processingCapture = true;
         setFeedback(photoProcessingMessage());
         onReadingPhoto(true);
@@ -278,10 +278,10 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       return false;
     };
 
-    function capturePhoto() {
+    function capturePhoto(preserveGate = false) {
       if (photoScanRef.current) return;
       // A queued live result must never be attached to the new still photo.
-      liveScan.reset();
+      if (!preserveGate) liveScan.reset();
       const image = captureCameraFrame(videoRef.current, canvasRef.current);
       if (!image) {
         handleScanActionRef.current({ status: "pending", message: "Camera is preparing the photo. Hold steady…" });
@@ -344,7 +344,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       if (timeout) { handleScanActionRef.current(timeout); return; }
       if (!frameReady || liveScan.busy) return;
       const image = captureCameraFrame(video, canvas);
-      if (image) liveScan.scan(image);
+      if (image) liveScan.scan(image, { captureOnly: canCaptureCameraPhoto(video) });
     }
 
     camera = startCameraSession({

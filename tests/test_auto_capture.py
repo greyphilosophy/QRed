@@ -44,6 +44,11 @@ def test_native_still_capture_keeps_more_detail_and_acknowledges_only_after_capt
         page.evaluate("finishStillCapture()")
         expect(page.locator(".page-check-list button")).to_have_count(1, timeout=15000)
         assert page.evaluate("stillRequests[0]") == {"fillLightMode": "off", "imageWidth": 1440, "imageHeight": 1920}
+        expect(page.get_by_text("Move the page to capture again, or use Capture now.", exact=True)).to_be_visible(timeout=5000)
+        # A still photo can take longer than the gate's normal frame-gap limit.
+        # The stationary page must not start another exposure after that delay.
+        page.wait_for_timeout(2000)
+        assert page.evaluate("stillRequests.length") == 1
         page.get_by_role("button", name="Check this page now", exact=True).click()
         review = page.get_by_role("region", name="Review Page 2 of 2", exact=True)
         expect(review.locator(".photo-differences")).to_contain_text("Monday", timeout=30000)

@@ -621,8 +621,8 @@
           hint.textContent = quality.message;
           readiness.hidden = quality.state !== "hold"; readiness.value = quality.progress;
         },
-        onCaptured: function() {
-          if (canCaptureCameraPhoto(video)) { btnCapture.onclick(); return; }
+        onCaptured: function({ captureOnly } = {}) {
+          if (captureOnly) { btnCapture.onclick({ preserveGate: true }); return; }
           processingCapture = true;
           hint.textContent = photoProcessingMessage();
           readiness.hidden = true;
@@ -637,7 +637,7 @@
       state.liveScan = liveScan;
       state.isScanning = true;
       updatePhotoComparison();
-      btnCapture.onclick = async function() {
+      btnCapture.onclick = async function({ preserveGate = false } = {}) {
         if (processingCapture) {
           processingCapture = false; liveScan.reset();
           btnCapture.textContent = "Capture now";
@@ -649,7 +649,7 @@
           btnCapture.textContent = "Capture now"; return;
         }
         if (!video.videoWidth || !video.videoHeight) { hint.textContent = "Camera is preparing. Try Capture now in a moment."; return; }
-        liveScan.reset();
+        if (!preserveGate) liveScan.reset();
         var controller = new AbortController(); state.photoScan = controller;
         btnCapture.textContent = "Cancel and resume camera";
         hint.textContent = photoProcessingMessage();
@@ -686,7 +686,7 @@
           var ctx = canvas.getContext("2d", { willReadFrequently: true });
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          liveScan.scan(imageData);
+          liveScan.scan(imageData, { captureOnly: canCaptureCameraPhoto(video) });
         },
         onError: cameraError,
       });

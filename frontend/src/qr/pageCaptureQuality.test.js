@@ -24,6 +24,15 @@ describe("automatic whole-page capture", () => {
     expect(gate.update(image, 400).ready).toBe(false);
     expect(gate.update(image, STEADY_CAPTURE_MS)).toMatchObject({ state: "ready", ready: true, progress: 1 });
   });
+  it("captures a stationary page once, including after processing, and rearms after movement", () => {
+    const gate = createPageCaptureGate(), image = paper();
+    for (const time of [0, 200, 400]) gate.update(image, time);
+    expect(gate.update(image, 600).ready).toBe(true);
+    for (const time of [800, 2400, 10000]) expect(gate.update(image, time)).toMatchObject({ state: "captured", ready: false });
+    const next = paper({ x: 120 });
+    for (const time of [10200, 10400, 10600]) expect(gate.update(next, time).ready).toBe(false);
+    expect(gate.update(next, 10800).ready).toBe(true);
+  });
   it.each([{ x: 0 }, { y: 0 }, { width: 800 }, { desk: 245 }])("does not invent a whole-page capture for %j", options => {
     expect(inspectPageFrame(paper(options)).state).toBe("framing");
   });

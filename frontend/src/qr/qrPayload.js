@@ -29,6 +29,21 @@ export function extractQrBytePayload(data, version) {
   try { return qrPayloadText(bytes); } catch { return null; }
 }
 
+function validateScannedPayload(bytes) {
+  const record = decodeTransport(bytes);
+  if (record.multipart) return;
+  const data = record.data;
+  // Reject impossible compressed headers before a sampled recovery can stop
+  // the search on a damaged candidate. RFC 1950/1952 framing only: full native
+  // decompression, checksums and signature verification still run afterwards.
+  if (record.encoding === "zlib" && (data.length < 6 || (data[0] & 15) !== 8
+    || (data[0] >>> 4) > 7 || (data[0] * 256 + data[1]) % 31 !== 0 || (data[1] & 32))) {
+    throw new Error("Invalid zlib header");
+  }
+  if (record.encoding === "gzip" && (data.length < 18 || data[0] !== 31 || data[1] !== 139
+    || data[2] !== 8 || (data[3] & 224))) throw new Error("Invalid gzip header");
+}
+
 // binaryData is the decoder's ordinary message, already error-corrected and
 // excluding the terminator and padding. Binary signatures need not be UTF-8.
 export function qredPayloadFromScanResult(result) {
@@ -36,14 +51,14 @@ export function qredPayloadFromScanResult(result) {
   if (result.binaryData?.length) {
     try {
       const bytes = Uint8Array.from(result.binaryData);
-      decodeTransport(bytes);
+      validateScannedPayload(bytes);
       return qrPayloadText(bytes);
     } catch { /* A navigation code or ordinary QR message is not a seal. */ }
   }
   // A seal URL encoded as an ordinary QR message is also safe to accept.
   if (typeof result.data !== "string" || !/^(?:[^#]*#)?QRED[34]:/.test(result.data)) return null;
   try {
-    decodeTransport(qrPayloadBytes(result.data));
+    validateScannedPayload(qrPayloadBytes(result.data));
     return result.data;
   } catch { return null; }
 }

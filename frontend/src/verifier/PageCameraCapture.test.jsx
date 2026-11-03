@@ -8,9 +8,12 @@ import { qrPayloadBytes, sealString } from "../sealFormat.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { PageCameraCapture, confirmsPageSeal } from "./PageCameraCapture.jsx";
 
-const camera = vi.hoisted(() => ({ stop: vi.fn(), options: null, snapshot: vi.fn(), scan: vi.fn() }));
+const camera = vi.hoisted(() => ({ stop: vi.fn(), options: null, snapshot: vi.fn(), scan: vi.fn(), reset: vi.fn(), liveOptions: null }));
 vi.mock("../qr/cameraSession.js", () => ({ startCameraSession: options => { camera.options = options; return { stop: camera.stop }; } }));
-vi.mock("../qr/photoScanClient.js", () => ({ scanPhotoInWorker: camera.scan, createLiveScanWorker: () => ({ busy: false, scan: vi.fn(), reset: vi.fn(), stop: vi.fn() }) }));
+vi.mock("../qr/photoScanClient.js", () => ({ scanPhotoInWorker: camera.scan, createLiveScanWorker: options => {
+  camera.liveOptions = options;
+  return { busy: false, scan: vi.fn(), reset: camera.reset, stop: vi.fn() };
+} }));
 vi.mock("./scanPhotos.js", () => ({ snapshotScanPhoto: camera.snapshot }));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); });
 const signed = await createQRedSeals({ content: "Friday", privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=",
@@ -19,6 +22,15 @@ function ready() {
   Object.defineProperties(camera.options.video, { videoWidth: { value: 800 }, videoHeight: { value: 1000 } });
   act(() => camera.options.onFrame());
 }
+it("keeps the hold interval between preview frames and rearms after a rejected page", async () => {
+  render(<PageCameraCapture pageLabel="Page 2" seals={signed.seals} onCapture={vi.fn()} onClose={vi.fn()} />);
+  act(() => camera.liveOptions.onResult({ status: "continue" }));
+  expect(camera.reset).not.toHaveBeenCalled();
+  await act(async () => camera.liveOptions.onResult({ status: "found", text: "wrong page" }));
+  expect(camera.reset).toHaveBeenCalledTimes(1);
+  expect(camera.snapshot).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert").textContent).toContain("does not match Page 2");
+});
 it("captures through the browser stream and releases the canvas and camera without saving a file", async () => {
   const file = new Blob(["temporary pixels"], { type: "image/png" }), capture = vi.fn(), close = vi.fn();
   camera.snapshot.mockResolvedValue(file);

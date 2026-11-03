@@ -7,7 +7,7 @@ import { preparePhotoReadingPixels } from "../verifier/photoReadingPixels.js";
 // finish all recovery on that photo; ordinary live scanning stays bounded.
 let scanQrFrame;
 const captureGate = createPageCaptureGate();
-self.onmessage = ({ data: { image, returnPayload, live = false, requirePageQuality = false, frameTime, prepareReading = false } }) => {
+self.onmessage = ({ data: { image, returnPayload, live = false, requirePageQuality = false, captureOnly = false, frameTime, prepareReading = false } }) => {
   try {
     if (prepareReading) {
       const action = preparePhotoReadingPixels(image);
@@ -16,6 +16,12 @@ self.onmessage = ({ data: { image, returnPayload, live = false, requirePageQuali
     }
     scanQrFrame ??= createQrFrameScanner({ preferWatermark: requirePageQuality });
     const quality = requirePageQuality ? captureGate.update(image, frameTime) : null;
+    // Hand capture to the camera without decoding its lower-detail preview.
+    // Keep this worker's gate so unchanged paper cannot trigger another shot.
+    if (quality?.ready && captureOnly) {
+      self.postMessage({ captured: true, captureOnly: true, quality });
+      return;
+    }
     // The submitted frame is already frozen in the worker and the caller's
     // canvas. Acknowledge it before decoding so moving the phone cannot spoil it.
     if (quality?.ready) self.postMessage({ captured: true, quality });

@@ -3,7 +3,8 @@ import ECLevel from "qrcode/lib/core/error-correction-level.js";
 import Utils from "qrcode/lib/core/utils.js";
 import ECCode from "qrcode/lib/core/error-correction-code.js";
 import { createQRedQrData, qredPayloadCapacity } from "../qredQr.js";
-import { encodeChunk, qrPayloadBytes, sealString } from "../sealFormat.js";
+import { decodeTransport, encodeChunk, qrPayloadBytes, sealString } from "../sealFormat.js";
+import { createQRedSeals } from "../qredSealer.js";
 import { bytePayloadFromCodewords, extractQrBytePayload, qredPayloadFromScanResult } from "./qrPayload.js";
 
 describe("standard QR byte payloads", () => {
@@ -16,6 +17,23 @@ describe("standard QR byte payloads", () => {
     expect(qredPayloadFromScanResult({ data: seal })).toBe(seal);
     expect(qredPayloadFromScanResult({ data: "QRED.ORG" })).toBeNull();
     expect(qredPayloadFromScanResult({ data: "QRED4:invalid" })).toBeNull();
+  });
+
+  it.each(["zlib", "gzip"])("keeps searching after an impossible %s header in a recovered candidate", async encodingStrategy => {
+    const { seals } = await createQRedSeals({
+      content: "Synthetic compressed photo regression. ".repeat(8), encodingStrategy,
+      privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q",
+      timestamp: "2026-11-03T00:00:00Z",
+    });
+    const bytes = qrPayloadBytes(seals[0]), parsed = decodeTransport(bytes);
+    expect(parsed.multipart).toBeFalsy();
+    expect(qredPayloadFromScanResult({ binaryData: bytes })).toBe(seals[0]);
+    const bodyOffset = bytes.length - parsed.data.length;
+    for (const [position, value] of encodingStrategy === "zlib" ? [[0, 0], [1, bytes[bodyOffset + 1] ^ 1]] : [[0, 0], [2, 7], [3, 224]]) {
+      const corrupt = bytes.slice(); corrupt[bodyOffset + position] = value;
+      expect(qredPayloadFromScanResult({ binaryData: corrupt })).toBeNull();
+      expect(qredPayloadFromScanResult({ data: sealString(corrupt) })).toBeNull();
+    }
   });
 
   it("reads only the declared message and ignores bytes beyond its terminator", () => {
