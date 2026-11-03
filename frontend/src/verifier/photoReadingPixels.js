@@ -2,11 +2,15 @@ import { scanQrImage } from "../qr/scanQrImage.js";
 import { maskQrCode } from "../qr/maskQrCode.js";
 import { isQRedEntryLink, qredPayloadFromScanResult } from "../qr/qrPayload.js";
 import { decodeSeal } from "../qredVerifier.js";
+import { locatePaper } from "../qr/pageAlignedScan.js";
 
 // Runs in the photo worker on a transferred working copy, never the retained
 // photograph. The contrast copy can lose pale writing; its reading is always
 // qualified, and recognition of the original is preserved separately.
 export function preparePhotoReadingPixels({ data, width, height }) {
+  // Measure geometry before the contrast copy removes pale ink and colour.
+  // This is a bounded edge search, not another seal-recovery attempt.
+  const corners = locatePaper({ data, width, height });
   for (let i = 0; i < data.length; i += 4) {
     if (Math.min(data[i], data[i + 1], data[i + 2]) > 150)
       data[i] = data[i + 1] = data[i + 2] = 255;
@@ -32,6 +36,6 @@ export function preparePhotoReadingPixels({ data, width, height }) {
       if (search === data) search = new Uint8ClampedArray(data);
       if (!maskQrCode(search, width, height, code)) break;
     }
-    return { image: { data, width, height }, codes };
+    return { image: { data, width, height }, codes, corners };
   } finally { if (search !== data) search.fill(0); }
 }

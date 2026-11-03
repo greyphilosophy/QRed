@@ -19,7 +19,7 @@ it("automatically checks all pages in order and keeps page 2's changed word", as
   checks.update([page("one", 1), page("two", 2)], [photo(2, "two", "Monday"), photo(1, "one")]);
   await vi.waitFor(() => expect(checks.getSnapshot().pages.map(p => p.state)).toEqual(["matches", "differences"]));
   expect(reader.prepare).toHaveBeenCalledTimes(1);
-  expect(reader.read.mock.calls.every(call => call.length === 2)).toBe(true);
+  expect(reader.read.mock.calls[1][2]).toEqual({ text: "Friday", evidence: undefined, file: { text: "Monday" } });
   expect(checks.getSnapshot().pages[1].comparison.differences[0]).toMatchObject({ expected: "Friday", observed: "Monday" });
   expect((await open.mock.results[0].value).width).toBe(0);
   checks.dispose();

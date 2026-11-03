@@ -1,7 +1,7 @@
 // Compare independently recognized text with authenticated text. Whitespace and
 // canonical Unicode composition are the only ignored differences. In particular,
 // never case-fold, strip punctuation, or substitute lookalike letters/digits.
-// Common typography substitutions remain visible review items, never matches.
+// Typography and split/joined words remain visible review items, never matches.
 const MAX_TEXT_LENGTH = 60000;
 const MAX_TOKENS = 4000;
 const MAX_ALIGNMENT_CELLS = 4_000_000;
@@ -27,7 +27,7 @@ function validBox(box, width, height) {
     && box.x1 <= width && box.y1 <= height;
 }
 
-export function comparePhotoText(expectedText, words, { width, height } = {}) {
+export function boundedPhotoTokens(expectedText, words) {
   if (typeof expectedText !== "string" || !Array.isArray(words)) throw new Error("No text available for comparison.");
   if (expectedText.length > MAX_TEXT_LENGTH || words.length > MAX_TOKENS
       || words.reduce((sum, word) => sum + String(word.text || "").length, 0) > MAX_TEXT_LENGTH) {
@@ -36,14 +36,20 @@ export function comparePhotoText(expectedText, words, { width, height } = {}) {
   const expected = expectedText.normalize("NFC");
   const reference = tokenize(expected);
   const observed = words.flatMap((word, wordIndex) => tokenize(String(word.text || "")).map(token => ({ ...token, wordIndex })));
-  const referenceKeys = reference.map(token => typographyKey(token.value));
-  const observedKeys = observed.map(token => typographyKey(token.value));
   if (!reference.length) throw new Error("The seal contains no text to compare.");
   const columns = observed.length + 1;
   if (reference.length > MAX_TOKENS || observed.length > MAX_TOKENS
       || (reference.length + 1) * columns > MAX_ALIGNMENT_CELLS) {
     throw new Error("This page has too much text for photo comparison. Compare its recovered text manually.");
   }
+  return { expected, reference, observed };
+}
+
+export function comparePhotoText(expectedText, words, { width, height } = {}) {
+  const { expected, reference, observed } = boundedPhotoTokens(expectedText, words);
+  const referenceKeys = reference.map(token => typographyKey(token.value));
+  const observedKeys = observed.map(token => typographyKey(token.value));
+  const columns = observed.length + 1;
 
   // Bounded sequence alignment: repeated words must occur the right number of
   // times and in the right reading order. A word-set comparison would miss edits.
@@ -65,13 +71,19 @@ export function comparePhotoText(expectedText, words, { width, height } = {}) {
     const signed = pending.start === null ? "" : expected.slice(pending.start, pending.end);
     const readTokens = pending.tokenIndices.map(index => observed[index].value).join(" ");
     const typography = signed.length > 0 && readTokens.length > 0 && typographyKey(signed) === typographyKey(readTokens);
-    if (typography) pending.tokenIndices.forEach(index => typographyTokens.add(index));
+    // Do not edit characters or discard punctuation. Even an exact character
+    // sequence with different word boundaries still needs a person's review
+    // ("now here" and "nowhere" need not mean the same thing).
+    const spacing = !typography && signed.length > 0 && readTokens.length > 0
+      && signed.replace(/\s/gu, "") === readTokens.replace(/\s/gu, "");
+    if (typography || spacing) pending.tokenIndices.forEach(index => typographyTokens.add(index));
     differences.push({
       expected: signed,
       context: pending.start === null ? "" : expected.slice(Math.max(0, pending.start - 70), Math.min(expected.length, pending.end + 70)),
       observed: typography ? readTokens : indices.map(index => words[index].text).join(" "),
       wordIndices: indices,
       ...(typography ? { typography: true } : {}),
+      ...(spacing ? { spacing: true } : {}),
     });
     pending = null;
   };
@@ -120,7 +132,7 @@ export function comparePhotoText(expectedText, words, { width, height } = {}) {
     matchedCount: classified.filter(word => word.status === "matched").length,
     differentCount: classified.filter(word => word.status === "different").length,
     uncertainCount,
-    status: !observed.length ? "unreadable" : differences.some(difference => !difference.typography)
+    status: !observed.length ? "unreadable" : differences.some(difference => !difference.typography && !difference.spacing)
       ? "differences" : uncertainCount ? "uncertain" : "matches",
   };
 }

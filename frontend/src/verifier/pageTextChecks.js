@@ -58,9 +58,9 @@ export function createPageTextChecks({ reader = createPhotoOcrReader(), open = o
             && event.progress >= 0 && event.progress < 1 ? event.progress : null;
           if (record.progress === progress) return;
           record.progress = progress; publish();
-        });
+        }, { text: record.page.content, evidence: record.page.evidence, file: record.file });
         if (!valid()) return;
-        record.comparison = comparePageReading(record.page.content, words, canvas);
+        record.comparison = comparePageReading(record.page.content, words, canvas, record.page.evidence);
         record.width = canvas.width; record.height = canvas.height;
         record.url = createUrl(record.file);
         record.state = record.comparison.status;

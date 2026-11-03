@@ -19,6 +19,17 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it("separates word spacing and conflicting rereads without hiding substantive differences", async () => {
+  const signed = { ...page, content: "Account 123456 Pay 100" };
+  ocr.read.mockResolvedValue({ words: [word("Account123456"), word("Pay"), word("900")],
+    retryReviews: [{ original: "900", observed: "100", boxes: [{x0:10,y0:10,x1:90,y1:30}] }] });
+  const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
+  await screen.findByText("Word spacing to review (1)");
+  expect(view.container.querySelector(".photo-spacing").open).toBe(false);
+  expect(await screen.findByText("Reread text to review (1)")).toBeTruthy();
+  expect(view.container.querySelector(".photo-differences > ol").textContent).toContain("900");
+});
+
 it("groups typography readings quietly while keeping a changed number prominent", async () => {
   const signed = { ...page, content: "‘Pay’ 100" };
   ocr.read.mockResolvedValue([word("'Pay'"), { ...word("900"), bbox: { x0: 100, y0: 10, x1: 150, y1: 30 } }]);

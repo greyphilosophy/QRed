@@ -36,7 +36,7 @@ def sealed_text():
     source = """
       import { createServer } from 'vite';
       import { PNG } from 'pngjs';
-      const server = await createServer({ server: { middlewareMode: true } });
+      const server = await createServer({ logLevel: 'error', server: { middlewareMode: true } });
       const { createQRedSeals } = await server.ssrLoadModule('/src/qredSealer.js');
       const { createQRedQrSymbol } = await server.ssrLoadModule('/src/qredQr.js');
       let input = ''; for await (const chunk of process.stdin) input += chunk;
@@ -69,6 +69,90 @@ def prepare_reader(page):
     page.get_by_text("Prepare for offline checking", exact=True).click()
     page.get_by_role("button", name="Prepare offline checking", exact=True).click()
     expect(page.get_by_role("button", name="Offline text checking ready", exact=True)).to_be_visible(timeout=60000)
+
+
+def test_scaled_table_recovers_numeric_columns_and_keeps_swapped_amounts_visible(browser):
+    """Real OCR of a print-scaled table, with authenticated line locations."""
+    draw = """async ({swapped = false, qr = null}) => {
+      const canvas = document.createElement('canvas'); canvas.width = 1400; canvas.height = 1800;
+      const ctx = canvas.getContext('2d'); ctx.fillStyle = '#333'; ctx.fillRect(0,0,1400,1800);
+      ctx.fillStyle = 'white'; ctx.fillRect(100,100,1200,1600);
+      const content = [], boxes = [];
+      function line(parts, y, printed = parts) {
+        ctx.font = '32px Arial'; ctx.fillStyle = 'black';
+        const xs = parts.length === 1 ? [100] : [100,600,900];
+        const right = xs.at(-1) + ctx.measureText(parts.at(-1)).width;
+        boxes.push({x:xs[0]/1200,y:(y-30)/1600,width:(right-xs[0])/1200,height:40/1600});
+        content.push(parts.join(' '));
+        ctx.save(); ctx.translate(136,140); ctx.scale(.94,.94);
+        printed.forEach((part,i) => ctx.fillText(part,xs[i],y)); ctx.restore();
+      }
+      line(['Invoice account reference'],130);
+      const names = ['Room','Breakfast','Dinner','Parking','Tax','Service','Credit','Balance'];
+      names.forEach((name,row) => {
+        const parts = [name,(100+row*11)+'.50','0.00'];
+        line(parts,250+row*85,swapped && row < 2 ? [name,(row === 0 ? '111' : '100')+'.50','0.00'] : parts);
+      });
+      line(['Payment due Friday'],1100); line(['Document reference confirmed'],1450);
+      if (qr) {
+        const image = new Image(); image.src = 'data:image/png;base64,' + qr; await image.decode();
+        ctx.save(); ctx.translate(136,140); ctx.scale(.94,.94);
+        ctx.imageSmoothingEnabled = false; ctx.drawImage(image,750,1000,400,400); ctx.restore();
+      }
+      return {evidence:{text:content.join('\\n'),width:1200,height:1600,layout:{mode:3,lines:boxes}},
+        png:canvas.toDataURL('image/png').split(',')[1]};
+    }"""
+    context = browser.new_context(service_workers="allow", viewport={"width": 430, "height": 932})
+    try:
+        context.route("**/api/keys/default", lambda route: route.fulfill(json={"public_key": PUBLIC_KEY}))
+        page = context.new_page()
+        base = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
+        page.goto(base, wait_until="networkidle")
+        evidence = page.evaluate(draw, {})["evidence"]
+        source = """
+          import { createServer } from 'vite'; import { PNG } from 'pngjs';
+          const server = await createServer({logLevel:'error',server:{middlewareMode:true}});
+          const {encodePageEvidence} = await server.ssrLoadModule('/src/pageEvidence.js');
+          const {createQRedSeals} = await server.ssrLoadModule('/src/qredSealer.js');
+          const {createQRedQrSymbol} = await server.ssrLoadModule('/src/qredQr.js');
+          let input = ''; for await (const chunk of process.stdin) input += chunk;
+          const evidence = JSON.parse(input);
+          const sealed = await createQRedSeals({content:evidence.text,pageEvidence:encodePageEvidence(evidence),
+            timestamp:'2026-11-02T12:00:00Z',pageContext:{pageNumber:1,pageCount:1,documentRoot:'cd'.repeat(32)},
+            privateKey:'txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=',
+            publicKey:'eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q='});
+          if (sealed.seals.length !== 1) throw new Error('Test table should fit in one seal');
+          const {modules} = createQRedQrSymbol(sealed.seals[0]), size = (modules.size + 8) * 4;
+          const image = new PNG({width:size,height:size}); image.data.fill(255);
+          for (let y=0; y<size; y++) for (let x=0; x<size; x++) {
+            const r=Math.floor(y/4)-4,c=Math.floor(x/4)-4;
+            if(r>=0 && c>=0 && r<modules.size && c<modules.size && modules.get(r,c)) {
+              const i=(y*size+x)*4; image.data[i]=image.data[i+1]=image.data[i+2]=0;
+            }
+          }
+          console.log(PNG.sync.write(image).toString('base64')); await server.close();
+        """
+        qr = subprocess.run(["node", "--input-type=module", "-e", source], input=json.dumps(evidence),
+                            cwd=ROOT / "frontend", text=True, capture_output=True, check=True).stdout.strip()
+        for swapped in [False, True]:
+            page.goto(base, wait_until="networkidle")
+            photo = page.evaluate(draw, {"swapped": swapped, "qr": qr})
+            page.get_by_text("Open an existing PDF or image", exact=True).click()
+            page.locator("#qr-image").set_input_files({"name": "table.png", "mimeType": "image/png",
+                                                       "buffer": base64.b64decode(photo["png"])})
+            review = page.get_by_role("region", name="Review Page 1 of 1", exact=True)
+            expect(review).to_be_visible(timeout=30000)
+            expect(page.locator(".page-check-status.queued, .page-check-status.reading")).to_have_count(0, timeout=60000)
+            if swapped:
+                expect(review.locator(".photo-differences")).to_contain_text("100.50")
+                expect(review.locator(".photo-differences")).to_contain_text("111.50")
+                expect(review.locator(".photo-summary")).to_contain_text("Differences found")
+            else:
+                assert review.locator(".photo-differences").inner_text() == ""
+                expect(review.locator(".photo-summary")).to_have_text(
+                    re.compile("Recognized text matches the signed text|Some readings need review"))
+    finally:
+        context.close()
 
 
 def camera_paper(page, text, qr_bytes, *, border=True, blur=0):

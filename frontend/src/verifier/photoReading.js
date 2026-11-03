@@ -1,5 +1,5 @@
 import { preparePhotoReadingInWorker } from "../qr/photoScanClient.js";
-import { comparePhotoText } from "./photoTextComparison.js";
+import { compareLocatedPhotoText, signedPhotoLines } from "./photoTextLayout.js";
 
 // This is a second reading, never a replacement for the displayed original.
 // Removing a pale watermark can also remove pale writing: a result using this
@@ -7,13 +7,13 @@ import { comparePhotoText } from "./photoTextComparison.js";
 export async function preparePhotoReading(source, { signal } = {}) {
   signal?.throwIfAborted();
   const pixels = source.getContext("2d").getImageData(0, 0, source.width, source.height);
-  const { image, codes } = await preparePhotoReadingInWorker(pixels, { signal });
+  const { image, codes, corners } = await preparePhotoReadingInWorker(pixels, { signal });
   const canvas = document.createElement("canvas");
   canvas.width = image.width; canvas.height = image.height;
   try {
     if (signal?.aborted) throw new DOMException("Reading cancelled", "AbortError");
     canvas.getContext("2d", { willReadFrequently: true }).putImageData(new ImageData(image.data, image.width, image.height), 0, 0);
-    return { canvas, codes };
+    return { canvas, codes, corners };
   } catch (error) {
     canvas.width = canvas.height = 0;
     throw error;
@@ -79,15 +79,24 @@ export function possiblePrintedMarkings(words, codes) {
   return groups;
 }
 
-export function comparePageReading(expected, reading, dimensions) {
-  const { words, codes = [], contrastAssisted = false } = Array.isArray(reading) ? { words: reading } : reading;
-  let comparison = comparePhotoText(expected, words, dimensions);
+export function comparePageReading(expected, reading, dimensions, evidence) {
+  const { words, codes = [], contrastAssisted = false, corners, retryReviews = [] } = Array.isArray(reading) ? { words: reading } : reading;
+  const lines = signedPhotoLines(expected, evidence, corners, dimensions, words);
+  const compare = input => compareLocatedPhotoText(expected, input, dimensions, lines);
+  let comparison = compare(words);
   const groups = possiblePrintedMarkings(words, codes).filter(indices => indices.every(index =>
     comparison.words.find(word => word.sourceIndex === index)?.agrees === false));
   const excluded = new Set(groups.flat());
-  if (excluded.size) comparison = comparePhotoText(expected, words.filter((_, index) => !excluded.has(index)), dimensions);
+  if (excluded.size) {
+    const indices = words.flatMap((_, index) => excluded.has(index) ? [] : [index]);
+    comparison = compare(indices.map(index => words[index]));
+    comparison.words = comparison.words.map(word => ({ ...word, sourceIndex: indices[word.sourceIndex] }));
+    comparison.differences = comparison.differences.map(difference => ({ ...difference,
+      wordIndices: difference.wordIndices.map(index => indices[index]),
+    }));
+  }
   const markings = groups.map(indices => ({ observed: indices.map(index => words[index].text).join(" "),
     boxes: indices.map(index => words[index].bbox) }));
-  if (comparison.status === "matches" && (contrastAssisted || markings.length)) comparison.status = "uncertain";
-  return { ...comparison, contrastAssisted, markings };
+  if (comparison.status === "matches" && (contrastAssisted || markings.length || retryReviews.length)) comparison.status = "uncertain";
+  return { ...comparison, contrastAssisted, markings, retryReviews };
 }

@@ -55,8 +55,9 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
   }, [page?.id, pages]);
   useEffect(() => { setSelectedWord(null); setZoom(1); }, [page?.id, page?.captureId]);
   const comparison = page?.comparison;
-  const contentDifferences = comparison?.differences.filter(difference => !difference.typography) || [];
+  const contentDifferences = comparison?.differences.filter(difference => !difference.typography && !difference.spacing) || [];
   const typographyDifferences = comparison?.differences.filter(difference => difference.typography) || [];
+  const spacingDifferences = comparison?.differences.filter(difference => difference.spacing) || [];
   const difficultReading = comparison?.words.length >= 5 && comparison.uncertainCount > comparison.words.length * 0.3;
   const validPages = results.filter(result => result.status === "VALID" && result.signature_valid === true);
   const unscanned = validPages.reduce((max, result) => Math.max(max, result.page_count || 0), 0) > validPages.length;
@@ -92,6 +93,15 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
                 {difference.context && <p className="photo-note">Signed wording nearby: {difference.context}</p>}
               </li>)}</ol>
               <p className="photo-note">Confirm the photo reading against the paper. A recognition error can also cause a difference.</p></>}
+            {spacingDifferences.length > 0 && <details className="photo-typography photo-spacing">
+              <summary>Word spacing to review ({spacingDifferences.length})</summary>
+              <p className="photo-note">The characters agree, but words were split or joined. Check the spacing on the paper.</p>
+              <ol>{spacingDifferences.map((difference, index) => <li key={index}>
+                <div><strong>Signed text:</strong> {difference.expected}</div>
+                <div><strong>Photo reading:</strong> {difference.observed}</div>
+                <DifferenceCrop page={page} difference={difference} />
+              </li>)}</ol>
+            </details>}
             {typographyDifferences.length > 0 && <details className="photo-typography">
               <summary>Typography to review ({typographyDifferences.length})</summary>
               <p className="photo-note">Quotes, dashes, or joined letters were read differently. Check the highlighted photo to confirm the printed characters.</p>
@@ -103,6 +113,15 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
               </li>)}</ol>
             </details>}
           </div>
+          {comparison.retryReviews?.length > 0 && <details className="photo-typography photo-retries">
+            <summary>Reread text to review ({comparison.retryReviews.length})</summary>
+            <p className="photo-note">A closer reading disagreed with the first. Check these regions on the paper.</p>
+            <ol>{comparison.retryReviews.map((reading, index) => <li key={index}>
+              <div><strong>First reading:</strong> {reading.original}</div>
+              <div><strong>Closer reading:</strong> {reading.observed}</div>
+              <DifferenceCrop page={page} difference={{ ...reading, spacing: true }} />
+            </li>)}</ol>
+          </details>}
           {comparison.contrastAssisted && <p className="photo-note reading-caution">A contrast-assisted reading was needed. Inspect pale text and marks in the original photo; this reading can miss them.</p>}
           {comparison.markings?.length > 0 && <div className="photo-markings"><h3>QRed markings to inspect</h3>
             <p className="photo-note">These readings sit beside a QRed code. Check them on the paper; they are not authenticated document text.</p>
@@ -174,6 +193,6 @@ function DifferenceCrop({ page, difference }) {
   const height = Math.min(page.height - top, Math.max(...boxes.map(box => box.y1)) - top + 24);
   return <svg className="difference-crop" viewBox={`${left} ${top} ${width} ${height}`} role="img" aria-label="Magnified photo difference">
     <image href={page.url} width={page.width} height={page.height} />
-    {boxes.map((box, index) => <rect key={index} x={box.x0} y={box.y0} width={box.x1 - box.x0} height={box.y1 - box.y0} className={`photo-word ${difference.typography ? "uncertain" : "different"}`} />)}
+    {boxes.map((box, index) => <rect key={index} x={box.x0} y={box.y0} width={box.x1 - box.x0} height={box.y1 - box.y0} className={`photo-word ${difference.typography || difference.spacing ? "uncertain" : "different"}`} />)}
   </svg>;
 }
