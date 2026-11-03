@@ -197,8 +197,8 @@ Photo decoding shares an eight-second retry budget, checked between bounded
 attempts; a device can take longer to finish its current attempt. Unreadable
 photos return retake guidance instead of exhausting every layout guess.
 
-Use **Capture now** on either verifier if the edges cannot be detected or live
-recovery needs a longer still-image attempt. This overrides the automatic capture
+Use **Capture now** on either verifier if the edges cannot be detected or
+automatic capture will not settle. This overrides the automatic capture
 conditions, not signature verification. Retakes use the same automatic capture
 and manual fallback. Physical phone/print trials are still needed to tune the
 capture thresholds across cameras, lighting, backgrounds, and paper conditions.

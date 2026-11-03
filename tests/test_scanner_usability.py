@@ -51,6 +51,7 @@ def test_main_camera_at_one_times_zoom_without_flashlight(browser, path):
         assert state["stopped"] == ["tele"]
         expect(page.get_by_role("button", name="Flashlight", exact=False)).to_have_count(0)
         assert page.locator("video").evaluate("video => getComputedStyle(video).objectFit") == "contain"
+        expect(page.locator(".ar-scan-feedback, #pageGuideHint").first).to_be_visible()
         # The same camera stays open while the phone rotates or its viewport
         # changes. The guide must fit the real image, not the black letterbox,
         # and must leave the advice and camera controls usable.
