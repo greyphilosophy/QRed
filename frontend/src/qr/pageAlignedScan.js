@@ -156,6 +156,14 @@ function locatePaperAtResolution(image) {
     return Math.max(...rgb) - Math.min(...rgb);
   }).sort((a, b) => a - b);
   const deskChroma = cornerChroma[2];
+  const cornerSaturation = cornerOffsets.map(([x, y]) => {
+    const offset = (y * width + x) * 4;
+    const rgb = [0, 1, 2].map(channel => channelAt(offset, channel));
+    return (Math.max(...rgb) - Math.min(...rgb)) / Math.max(1, at(x, y));
+  }).sort((a, b) => a - b);
+  // Keep a pale blue desk distinct from white paper, while allowing a mild
+  // cast along paper edges against a deeply coloured patterned background.
+  const chromaRatio = Math.min(0.12, cornerSaturation[2] * 0.45);
   const paperChroma = [];
   for (const v of [0.3, 0.4, 0.5, 0.6, 0.7]) {
     for (const u of [0.3, 0.4, 0.5, 0.6, 0.7]) {
@@ -181,7 +189,7 @@ function locatePaperAtResolution(image) {
       const start = (y * width + x) * 4;
       const r = channelAt(start, 0), g = channelAt(start, 1), b = channelAt(start, 2);
       return value > Math.max(45, bg * 0.42) &&
-        Math.max(r, g, b) - Math.min(r, g, b) < Math.max(7, value * 0.12);
+        Math.max(r, g, b) - Math.min(r, g, b) < Math.max(7, value * chromaRatio);
     }
     return forward ? value >= threshold : value <= threshold;
   };
