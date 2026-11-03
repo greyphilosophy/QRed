@@ -13,7 +13,9 @@
   pointer-events: none;
 }
 
-.ar-camera .page-scan-guide-area { inset: 5rem 1.25rem 11rem; }
+/* Reserve fixed space for wrapped advice; its changing height must never
+   reposition the manually aligned corners. */
+.ar-camera .page-scan-guide-area { inset: 5rem 1.25rem 14rem; }
 .ar-display-scanning .ar-scan-feedback { width: min(86vw, 560px); }
 
 .homepage .ar-display-result { min-height: 0; max-width: 780px; margin: 0 auto; padding: 1rem; display: grid; gap: 1rem; }
@@ -34,12 +36,6 @@
 
 @media (max-width: 640px) {
   .ar-display-scanning { min-height: calc(100dvh - 1rem); }
-  .ar-camera .page-scan-guide-area { bottom: 14rem; }
-}
-
-@media (max-width: 360px) {
-  /* Reserve fixed space for wrapped advice; its changing height must never
-     reposition the manually aligned corners. */
   .ar-camera .page-scan-guide-area { bottom: 17rem; }
 }
 
