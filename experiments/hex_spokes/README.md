@@ -3,7 +3,9 @@
 This is an **experimental carrier and reader**, stacked on the print/camera
 simulator in PR #169. It does not change the production renderer, browser
 scanner, simulator, error correction, authentication, or acceptance thresholds.
-See [RESULTS.md](RESULTS.md) for the measured outcome and limitations.
+See [RESULTS.md](RESULTS.md) for the original measured outcome and limitations.
+The later [PR 171 OCR comparison](OCR_PR171.md) reruns identical images with the
+new OCR reference/retry interface; it does not change the optical pass counts.
 
 ## Encoding
 
