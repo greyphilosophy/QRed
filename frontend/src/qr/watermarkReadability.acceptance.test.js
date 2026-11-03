@@ -197,7 +197,7 @@ function sampleAtPagePoint(image, x, y) {
 }
 
 describe("watermark readability acceptance contract (requirements WM-01..08)", () => {
-  it("recovers a dense rectangular seal from its own corners through shadow and black text", async () => {
+  it.each([12, 39])("recovers a dense rectangular seal through shadow and black text with radius %i", async searchRadius => {
     const content = "Independent corner recovery, local paper brightness, and untouched photo evidence. ".repeat(20).trimEnd();
     const { seals } = await signed(content);
     expect(seals).toHaveLength(1);
@@ -206,7 +206,7 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
       patternedBackdrop: true, shadowed: true, printerWarp: 0.025,
     });
     const original = photo.data.slice();
-    const recovered = scanRectifiedSeal(photo);
+    const recovered = scanRectifiedSeal(photo, { searchRadius });
     expect(recovered?.seal).toBe(seals[0]);
     await expect(verifyQRedSeals([recovered.seal], publicKey)).resolves.toMatchObject({ status: "VALID", content });
     expect(Buffer.compare(Buffer.from(photo.data), Buffer.from(original))).toBe(0);

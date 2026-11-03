@@ -34,12 +34,14 @@ beforeEach(() => {
   scanQrImage.mockReset().mockReturnValue(null);
 });
 
-it("returns a complete preview seal without alignment and still requires signature verification", async () => {
+it("returns a complete preview seal after a quick page miss and still requires signature verification", async () => {
   scanWatermarkPreview.mockReturnValue(code(single));
   const action = decodePhoto(image, { returnPayload: true });
   expect(action).toEqual({ status: "found", text: single });
   expect(scanPageAlignedImage).not.toHaveBeenCalled();
   expect(scanQrImage).not.toHaveBeenCalled();
+  expect(scanRectifiedSeal).toHaveBeenCalledTimes(1);
+  expect(scanRectifiedSeal.mock.invocationCallOrder[0]).toBeLessThan(scanWatermarkPreview.mock.invocationCallOrder[0]);
   expect((await verifyQRedSeals([action.text], publicKey)).status).toBe("VALID");
   expect((await verifyQRedSeals([action.text], "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI")).status).toBe("INVALID");
 });
@@ -87,19 +89,60 @@ it("uses measured QR corners before the full-resolution and layout retries", asy
   const action = decodePhoto(image, { returnPayload: true });
   expect(action).toEqual({ status: "found", text: single });
   expect(scanQrImage).not.toHaveBeenCalled();
+  expect(scanWatermarkPreview).not.toHaveBeenCalled();
+  expect(scanPageAlignedImage).not.toHaveBeenCalled();
+  expect(scanRectifiedSeal).toHaveBeenCalledWith(image, {
+    searchRadius: 12, shouldContinue: expect.any(Function),
+  });
+  expect((await verifyQRedSeals([action.text], publicKey)).status).toBe("VALID");
+  expect((await verifyQRedSeals([action.text], "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI")).status).toBe("INVALID");
+});
+
+it("reserves time for a footer seal after the local alignment deadline", () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  scanRectifiedSeal.mockImplementation((_image, { shouldContinue }) => {
+    expect(shouldContinue()).toBe(true);
+    now = 4001;
+    expect(shouldContinue()).toBe(false);
+    return null;
+  });
+  scanQrImage.mockReturnValue(code(single));
+  expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found", text: single });
+  expect(scanRectifiedSeal).toHaveBeenCalledTimes(1);
+  expect(scanWatermarkPreview).toHaveBeenCalledTimes(1);
+});
+
+it("keeps the wider alignment search after quick, preview and footer misses", async () => {
+  scanRectifiedSeal.mockReturnValueOnce(null).mockReturnValueOnce({ seal: single });
+  const action = decodePhoto(image, { returnPayload: true });
+  expect(action).toEqual({ status: "found", text: single });
+  expect(scanRectifiedSeal).toHaveBeenCalledTimes(2);
+  expect(scanRectifiedSeal).toHaveBeenLastCalledWith(image, { shouldContinue: expect.any(Function) });
+  expect(scanQrImage.mock.invocationCallOrder[0]).toBeLessThan(scanRectifiedSeal.mock.invocationCallOrder[1]);
   expect(scanPageAlignedImage).not.toHaveBeenCalled();
   expect((await verifyQRedSeals([action.text], publicKey)).status).toBe("VALID");
 });
 
-it("stops recovery at the shared deadline and retains any decoded chunk", () => {
+it.each(["local", "preview", "wide"])("stops at the shared deadline and retains a chunk from %s", stage => {
   let now = 0;
   vi.spyOn(performance, "now").mockImplementation(() => now);
-  scanWatermarkPreview.mockImplementation(() => { now = 8001; return code(multiple[1]); });
+  const expired = value => { now = 8001; return value; };
+  if (stage === "local") scanRectifiedSeal.mockImplementation(() => expired({ seal: multiple[1] }));
+  if (stage === "preview") scanWatermarkPreview.mockImplementation(() => expired(code(multiple[1])));
+  if (stage === "wide") scanRectifiedSeal.mockReturnValueOnce(null)
+    .mockImplementationOnce(() => expired({ seal: multiple[1] }));
   expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found-multiple", texts: [multiple[1]] });
-  expect(scanRectifiedSeal).not.toHaveBeenCalled();
-  expect(scanQrImage).not.toHaveBeenCalled();
+  expect(scanRectifiedSeal).toHaveBeenCalledTimes(stage === "wide" ? 2 : 1);
+  expect(scanQrImage).toHaveBeenCalledTimes(stage === "wide" ? 1 : 0);
   expect(scanPageAlignedImage).not.toHaveBeenCalled();
-  now = 0;
-  scanWatermarkPreview.mockImplementation(() => { now = 8001; return null; });
+});
+
+it("returns retake guidance when the deadline expires without a payload", () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  scanRectifiedSeal.mockImplementation(() => { now = 8001; return null; });
   expect(decodePhoto(image, { returnPayload: true })).toMatchObject({ status: "feedback" });
+  expect(scanWatermarkPreview).not.toHaveBeenCalled();
+  expect(scanQrImage).not.toHaveBeenCalled();
 });

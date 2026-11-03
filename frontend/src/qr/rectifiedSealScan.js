@@ -6,9 +6,9 @@ import { normalizeWatermarkLuminance } from "./watermarkFilter.js";
 import { encodedVersion } from "./qrLowLevel.js";
 import { refineQrModuleGrid } from "./qrAlignmentRefinement.js";
 import { recoverSampledQrMatrix } from "./pageAlignedRecovery.js";
+import { collectModuleSamples, classifyModuleSamples } from "./rectifiedModuleSamples.js";
 
 const SIDE = 900, BORDER = 0.04, INTERIOR = 1 - 2 * BORDER;
-const OFFSETS = [-0.3, -0.15, 0, 0.15, 0.3];
 const finderDark = (row, col) => row === 0 || col === 0 || row === 6 || col === 6 ||
   (row >= 2 && row <= 4 && col >= 2 && col <= 4);
 
@@ -105,31 +105,9 @@ function measuredThreshold(gray, corners) {
   return Math.round((median(dark) + median(light)) / 2);
 }
 
-// Vote only exposed pixels, with a locally measured paper white. Averaging
-// dark text into the threshold can erase pale QR ink in neighboring modules.
-// Mark covered/ambiguous modules as erasures; parity must resolve them.
-function sampleModules(gray, moduleMap, version, threshold, foreground) {
-  const size = 17 + 4 * version, bits = new Uint8Array(size * size);
-  const unknown = new Uint8Array(bits.length), confidence = new Uint8Array(bits.length);
-  for (let row = 0; row < size; row++) for (let col = 0; col < size; col++) {
-    let dark = 0, light = 0, missing = 0;
-    for (const dy of OFFSETS) for (const dx of OFFSETS) {
-      const p = moduleMap(col + 0.5 + dx, row + 0.5 + dy);
-      const x = Math.round(p.x), y = Math.round(p.y);
-      const value = x < 0 || y < 0 || x >= SIDE || y >= SIDE ? 0 : gray[y * SIDE + x];
-      if (value < foreground) missing++;
-      else if (value < threshold) dark++;
-      else light++;
-    }
-    const index = row * size + col, margin = Math.abs(dark - light);
-    bits[index] = Number(dark > light);
-    unknown[index] = Number(missing > 0 || margin < 5);
-    confidence[index] = missing + Math.max(0, 5 - margin);
-  }
-  return { bits, unknown, confidence, size };
-}
-
-export function scanRectifiedSeal(image, { shouldContinue = () => true } = {}) {
+export function scanRectifiedSeal(image, {
+  shouldContinue = () => true, searchRadius = 39,
+} = {}) {
   if (image.width < 160 || image.height < 160 || !shouldContinue()) return null;
   image = { data: image.data, width: image.width, height: image.height,
     paperColor: estimatePaperColor(image) };
@@ -149,18 +127,19 @@ export function scanRectifiedSeal(image, { shouldContinue = () => true } = {}) {
       y: tl.y + (u * size - 3.5) * (tr.y - tl.y) / (size - 7) + (v * size - 3.5) * (bl.y - tl.y) / (size - 7),
     });
     const thresholds = [...new Set([230, measuredThreshold(gray, corners)])];
-    for (const foregroundRobust of [false, true]) {
+    for (const foregroundRobust of [true, false]) {
       if (!shouldContinue()) break;
       const grid = refineQrModuleGrid(working, gridMap, { x: 0, y: 0, width: 1, height: 1 },
-        version, { foregroundRobust });
+        version, { foregroundRobust, searchRadius, shouldContinue });
       if (!grid || grid.quality < 0.66) continue;
+      const observations = collectModuleSamples(gray, SIDE, SIDE, grid.moduleMap, version);
       const photoMap = (col, row) => {
         const p = grid.moduleMap(col, row);
         return working.toPhoto(p.x, p.y);
       };
       for (const threshold of thresholds) for (const foreground of [160, 180]) {
         if (!shouldContinue()) return null;
-        const sampled = sampleModules(gray, grid.moduleMap, version, threshold, foreground);
+        const sampled = classifyModuleSamples(observations, threshold, foreground);
         const recovered = recoverSampledQrMatrix(sampled, photoMap, version,
           { allowSingleBitError: true, allowRankedErasures: false });
         if (recovered) return recovered;

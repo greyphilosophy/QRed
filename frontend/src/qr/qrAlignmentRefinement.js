@@ -56,7 +56,7 @@ function matchScore(image, cx, cy, ux, uy, vx, vy, foregroundRobust) {
     ? (cross - sumP * sum / n) / Math.sqrt(variance * patternVariance) : 0;
 }
 
-function locateAlignment(image, expected, ux, uy, vx, vy, foregroundRobust) {
+function locateAlignment(image, expected, ux, uy, vx, vy, foregroundRobust, searchRadius) {
   let best = { score: -1, x: expected.x, y: expected.y };
   const tryShift = (dx, dy, scale) => {
     const score = matchScore(image, expected.x + dx, expected.y + dy,
@@ -67,8 +67,8 @@ function locateAlignment(image, expected, ux, uy, vx, vy, foregroundRobust) {
       best = { score, x: expected.x + dx, y: expected.y + dy, scale };
   };
   for (const scale of [0.97, 1, 1.03])
-    for (let dy = -39; dy <= 39; dy += 3)
-      for (let dx = -39; dx <= 39; dx += 3) tryShift(dx, dy, scale);
+    for (let dy = -searchRadius; dy <= searchRadius; dy += 3)
+      for (let dx = -searchRadius; dx <= searchRadius; dx += 3) tryShift(dx, dy, scale);
   const dx = best.x - expected.x, dy = best.y - expected.y;
   for (let y = dy - 3; y <= dy + 3; y++)
     for (let x = dx - 3; x <= dx + 3; x++) tryShift(x, y, best.scale || 1);
@@ -126,7 +126,9 @@ function bracket(centers, value, extrapolate) {
 // A QR v27 has 22 independent 5x5 alignment patterns. Match them locally,
 // fit a robust affine grid, then interpolate small residual distortions
 // throughout each QR independently. All observations come from the photo.
-export function refineQrModuleGrid(image, pageMapping, region, version, { foregroundRobust = false } = {}) {
+export function refineQrModuleGrid(image, pageMapping, region, version, {
+  foregroundRobust = false, searchRadius = 39, shouldContinue = () => true,
+} = {}) {
   const centers = alignmentCenters(version);
   if (centers.length < 3) return null;
   const size = 17 + 4 * version, points = [];
@@ -140,6 +142,7 @@ export function refineQrModuleGrid(image, pageMapping, region, version, { foregr
     Math.hypot(down.x - middle.x, down.y - middle.y))) : 7;
   for (let ri = 0; ri < centers.length; ri++)
     for (let ci = 0; ci < centers.length; ci++) {
+      if (!shouldContinue()) return null;
       const row = centers[ri], col = centers[ci];
       if ((ri === 0 && ci === 0) || (ri === 0 && ci === centers.length - 1) ||
           (ri === centers.length - 1 && ci === 0)) continue;
@@ -147,7 +150,7 @@ export function refineQrModuleGrid(image, pageMapping, region, version, { foregr
       const expected = map(cc, rr);
       const right = map(cc + 1, rr), down = map(cc, rr + 1);
       const found = locateAlignment(image, expected, right.x - expected.x,
-        right.y - expected.y, down.x - expected.x, down.y - expected.y, foregroundRobust);
+        right.y - expected.y, down.x - expected.x, down.y - expected.y, foregroundRobust, searchRadius);
       if (found.score >= 0.60) points.push({
         col: cc, row: rr, x: found.x, y: found.y, score: found.score, ri, ci,
       });

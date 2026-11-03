@@ -33,11 +33,19 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = 8000
   }
   // Cooperatively stop between bounded attempts. A miss must return retake
   // guidance instead of spending a minute exhausting layout guesses.
-  const deadline = performance.now() + maxDurationMs;
+  const started = performance.now(), deadline = started + maxDurationMs;
   const shouldContinue = () => performance.now() < deadline;
   const partials = new Set();
   if (returnPayload) {
-    const preview = scanWatermarkPreview(data, width, height);
+    // Try the measured whole-page grid before general-purpose QR location.
+    // Reserve half the cooperative budget for other layouts if this misses.
+    const fastDeadline = started + maxDurationMs / 2;
+    const fast = scanRectifiedSeal(image, {
+      searchRadius: 12, shouldContinue: () => performance.now() < fastDeadline,
+    });
+    if (decodeSeal(fast?.seal)?.total_chunks === 1) return { status: "found", text: fast.seal };
+    if (decodeSeal(fast?.seal)) partials.add(fast.seal);
+    const preview = shouldContinue() ? scanWatermarkPreview(data, width, height) : null;
     const payload = preview && qredPayloadFromPhotoScanResult(data, width, height, preview);
     // A complete single-code seal can skip the expensive alignment search.
     // Navigation/ordinary QRs must not hide a watermark, and one chunk must
@@ -45,9 +53,6 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = 8000
     // verification session after either decoding path returns its payload.
     if (decodeSeal(payload)?.total_chunks === 1) return { status: "found", text: payload };
     if (decodeSeal(payload)) partials.add(payload);
-    const rectified = shouldContinue() ? scanRectifiedSeal(image, { shouldContinue }) : null;
-    if (decodeSeal(rectified?.seal)?.total_chunks === 1) return { status: "found", text: rectified.seal };
-    if (decodeSeal(rectified?.seal)) partials.add(rectified.seal);
     // An ordinary footer code should not pay for exhaustive page alignment.
     // Allow one original-scale attempt plus a masked navigation-code retry.
     const ordinary = shouldContinue() ? scanQrImage(data, width, height,
@@ -55,6 +60,10 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = 8000
     const ordinaryPayload = ordinary && qredPayloadFromPhotoScanResult(data, width, height, ordinary);
     if (decodeSeal(ordinaryPayload)?.total_chunks === 1) return { status: "found", text: ordinaryPayload };
     if (decodeSeal(ordinaryPayload)) partials.add(ordinaryPayload);
+    // Retain the original wider alignment search for larger print distortions.
+    const rectified = shouldContinue() ? scanRectifiedSeal(image, { shouldContinue }) : null;
+    if (decodeSeal(rectified?.seal)?.total_chunks === 1) return { status: "found", text: rectified.seal };
+    if (decodeSeal(rectified?.seal)) partials.add(rectified.seal);
     const aligned = shouldContinue() ? scanPageAlignedImage(image, { deep: true, shouldContinue }) : [];
     const texts = [...new Set([...aligned.map(result => result.seal), ...partials])];
     if (texts.length) return { status: "found-multiple", texts };
