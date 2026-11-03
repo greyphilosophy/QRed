@@ -146,7 +146,7 @@ jobs:
           - shard: deployment-document
             pytest_args: "tests/test_qred_deployment.py::TestPlainTextSealAndVerify tests/test_qred_deployment.py::TestMultiQrDocuments tests/test_qred_deployment.py::TestPdfTextSealing tests/test_qred_deployment.py::TestImageOnlyPdfs tests/test_qred_deployment.py::TestPdfExtractionIntegrity"
           - shard: deployment-scanning-and-new-tests
-            pytest_args: "tests --ignore=tests/test_visual_page_seals.py --ignore=tests/test_account_stateless.py --ignore=tests/test_corrupt_pdf.py --ignore=tests/test_network_privacy.py --ignore=tests/test_photo_verification.py --ignore=tests/test_auto_capture.py --ignore=tests/test_capture_performance.py -k 'not (TestPlainTextSealAndVerify or TestMultiQrDocuments or TestPdfTextSealing or TestImageOnlyPdfs or TestPdfExtractionIntegrity)'"
+            pytest_args: "tests --ignore=tests/test_visual_page_seals.py --ignore=tests/test_account_stateless.py --ignore=tests/test_corrupt_pdf.py --ignore=tests/test_network_privacy.py --ignore=tests/test_photo_verification.py --ignore=tests/test_auto_capture.py --ignore=tests/test_capture_performance.py --ignore=tests/test_print_camera_model.py --ignore=tests/test_print_camera_browser.py -k 'not (TestPlainTextSealAndVerify or TestMultiQrDocuments or TestPdfTextSealing or TestImageOnlyPdfs or TestPdfExtractionIntegrity)'"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -202,3 +202,53 @@ jobs:
         env:
           QRED_BASE_URL: "http://localhost:3000"
         run: pytest -v --tb=short --durations=10 ${{ matrix.pytest_args }}
+
+  print-camera-simulation:
+    name: Printed camera workflow acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Prepare browser, PDF renderer, and production application
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium-headless-shell
+          sudo apt-get update && sudo apt-get install -y poppler-utils
+          cd frontend
+          npm ci
+          npm run build
+      - name: Exercise simulated prints through production verification
+        env:
+          QRED_BASE_URL: http://127.0.0.1:3000
+          # Manual dispatch explores every profile; normal PRs use a fixed set.
+          QRED_SIM_SWEEP: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
+        run: |
+          (cd frontend && node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 3000) &
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:3000 > /dev/null; then break; fi
+            sleep 1
+          done
+          pytest -v --tb=short tests/test_print_camera_model.py tests/test_print_camera_browser.py --junitxml=simulation-results/junit.xml
+      - name: Summarize every success and failure
+        if: always()
+        run: |
+          python tests/report_print_camera.py simulation-results
+          cat simulation-results/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep reproducible synthetic photographs and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qred-print-camera-simulation
+          path: simulation-results/
+          if-no-files-found: error
+          retention-days: 14
