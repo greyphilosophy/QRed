@@ -20,6 +20,7 @@
     "@tesseract.js-data/eng": "1.0.0",
     "jose": "^6.2.13",
     "jsqr": "1.4.0",
+    "pako": "1.0.11",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "6.1.200",
     "qrcode": "^1.5.0",

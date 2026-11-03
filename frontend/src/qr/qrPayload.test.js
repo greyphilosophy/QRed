@@ -19,7 +19,7 @@ describe("standard QR byte payloads", () => {
     expect(qredPayloadFromScanResult({ data: "QRED4:invalid" })).toBeNull();
   });
 
-  it.each(["zlib", "gzip"])("keeps searching after an impossible %s header in a recovered candidate", async encodingStrategy => {
+  it.each(["zlib", "gzip"])("keeps searching after a damaged %s stream in a recovered candidate", async encodingStrategy => {
     const { seals } = await createQRedSeals({
       content: "Synthetic compressed photo regression. ".repeat(8), encodingStrategy,
       privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q",
@@ -31,6 +31,12 @@ describe("standard QR byte payloads", () => {
     const bodyOffset = bytes.length - parsed.data.length;
     for (const [position, value] of encodingStrategy === "zlib" ? [[0, 0], [1, bytes[bodyOffset + 1] ^ 1]] : [[0, 0], [2, 7], [3, 224]]) {
       const corrupt = bytes.slice(); corrupt[bodyOffset + position] = value;
+      expect(qredPayloadFromScanResult({ binaryData: corrupt })).toBeNull();
+      expect(qredPayloadFromScanResult({ data: sealString(corrupt) })).toBeNull();
+    }
+    const bodyDamage = bytes.slice(); bodyDamage[bodyOffset + Math.floor(parsed.data.length / 2)] ^= 128;
+    const checksumDamage = bytes.slice(); checksumDamage[checksumDamage.length - 1] ^= 1;
+    for (const corrupt of [bodyDamage, checksumDamage, bytes.slice(0, -1), Uint8Array.from([...bytes, 0])]) {
       expect(qredPayloadFromScanResult({ binaryData: corrupt })).toBeNull();
       expect(qredPayloadFromScanResult({ data: sealString(corrupt) })).toBeNull();
     }
