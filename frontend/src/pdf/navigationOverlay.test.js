@@ -26,6 +26,9 @@ async function fixture(count, margin) {
     x: 90, y: 690 - index * 14, size: 10,
   }));
   if (margin === 36) {
+    // Establish the narrow ink margin independently of font rasterization.
+    // The label's first small glyph can fall below the minimum ink threshold.
+    page.drawRectangle({ x: 28, y: 160, width: 4, height: 8, color: rgb(0, 0, 0) });
     page.drawText("Narrow source margin", { x: 28, y: 160, size: 8 });
     lines.push("Narrow source margin");
   }
