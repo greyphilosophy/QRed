@@ -211,6 +211,29 @@ describe("QrScanner manual photo capture", () => {
     delete navigator.mediaDevices;
   });
 
+  it("stops and releases the camera when manually loaded pages finish its collection", async () => {
+    const stop = vi.fn(), onScanningChange = vi.fn();
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: {
+      getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop }], getVideoTracks: () => [] }),
+    } });
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    const props = { collectSeals: true, onScanningChange };
+    const view = render(<QrScanner {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Check document" }));
+    await waitFor(() => expect(document.querySelector("video")?.srcObject).toBeTruthy());
+    // Neither loaded page invokes the camera's onScan callback.
+    view.rerender(<QrScanner {...props} collectionProgress={{ activeSeal: "page-one", finished: false, pagesCollected: 1 }} />);
+    expect(stop).not.toHaveBeenCalled();
+    view.rerender(<QrScanner {...props} collectionProgress={{ activeSeal: "page-two", finished: true, pagesCollected: 2 }} />);
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+    expect(onScanningChange).toHaveBeenLastCalledWith(false);
+    expect(document.querySelector("video")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Scan more pages" }));
+    await waitFor(() => expect(document.querySelector("video")?.srcObject).toBeTruthy());
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(onScanningChange).toHaveBeenLastCalledWith(true);
+  });
+
   it("turns the primary scanner button into a photo capture button once the camera starts", async () => {
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,

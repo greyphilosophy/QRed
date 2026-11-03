@@ -19,6 +19,36 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it("groups typography readings quietly while keeping a changed number prominent", async () => {
+  const signed = { ...page, content: "‘Pay’ 100" };
+  ocr.read.mockResolvedValue([word("'Pay'"), { ...word("900"), bbox: { x0: 100, y0: 10, x1: 150, y1: 30 } }]);
+  const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
+  await screen.findByText("Typography to review (2)");
+  const group = view.container.querySelector(".photo-typography");
+  expect(group.open).toBe(false);
+  expect(view.container.querySelectorAll(".photo-differences > ol > li")).toHaveLength(1);
+  expect(view.container.querySelector(".photo-differences > ol").textContent).toContain("900");
+  expect(screen.getByRole("button", { name: "Uncertain reading: 'Pay'" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Different or extra text: 900" })).toBeTruthy();
+});
+
+it("reports that every page is present rather than requesting another page", () => {
+  render(<PhotoTextVerification results={[page, other]} scanning collectionProgress={{
+    complete: true, finished: true, message: "All 2 pages collected.",
+  }} />);
+  expect(screen.getByText("All 2 pages collected.")).toBeTruthy();
+  expect(screen.queryByText("Show the next page, or review the pages captured so far.")).toBeNull();
+});
+
+it("explains an unreliable reading without hiding missing signed wording", async () => {
+  const signed = { ...page, content: "The invoice is not approved for payment" };
+  ocr.read.mockResolvedValue("The invoice is approved for payment".split(" ").map(text => ({ ...word(text), confidence: 40 })));
+  const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
+  await screen.findByText(/Many characters could not be read reliably/);
+  expect(view.container.querySelector(".photo-differences").textContent).toContain("Signed text: not");
+  expect(view.container.querySelector(".photo-summary.differences")).toBeTruthy();
+});
+
 it("checks all captured pages without extra clicks and opens page 2's changed word", async () => {
   render(<PhotoTextVerification results={[page, other]} scanPhotos={[capture(2, "second", "Monday"), capture(1, "first", "Friday")]} />);
   const review = await screen.findByRole("region", { name: "Review Page 2 of 2" });

@@ -26,7 +26,7 @@ export function PhotoTextVerification({ session = 0, ...props }) {
 }
 
 function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captureNotice = "", scanning = false, verifying = false,
-  checks: providedChecks, onReplacePhoto, session }) {
+  checks: providedChecks, onReplacePhoto, collectionProgress, session }) {
   const [checks] = useState(() => providedChecks || createPageTextChecks());
   const snapshot = useSyncExternalStore(checks.subscribe, checks.getSnapshot);
   const [selected, setSelected] = useState(""), [retake, setRetake] = useState(null);
@@ -55,6 +55,9 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
   }, [page?.id, pages]);
   useEffect(() => { setSelectedWord(null); setZoom(1); }, [page?.id, page?.captureId]);
   const comparison = page?.comparison;
+  const contentDifferences = comparison?.differences.filter(difference => !difference.typography) || [];
+  const typographyDifferences = comparison?.differences.filter(difference => difference.typography) || [];
+  const difficultReading = comparison?.words.length >= 5 && comparison.uncertainCount > comparison.words.length * 0.3;
   const validPages = results.filter(result => result.status === "VALID" && result.signature_valid === true);
   const unscanned = validPages.reduce((max, result) => Math.max(max, result.page_count || 0), 0) > validPages.length;
   return <section className="photo-check" aria-label="Document check">
@@ -63,7 +66,8 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
     {snapshot.preparing && <p role="status">Preparing text recognition on this device…</p>}
     {snapshot.error && <div role="alert"><p>{snapshot.error}</p><button onClick={() => checks.prepare().catch(() => {})}>Retry text recognition</button></div>}
     {!pages.length && !validPages.length && <p>Frame each whole page to begin. A seal alone does not check the surrounding printed text.</p>}
-    {scanning && <p role="status">{pages.length
+    {collectionProgress?.complete && !verifying && <p role="status">{collectionProgress.message}</p>}
+    {scanning && !collectionProgress?.finished && <p role="status">{pages.length
       ? "Show the next page, or review the pages captured so far."
       : "Hold steady for automatic capture, or choose Capture now."}</p>}
     {verifying ? <p role="status">Checking seals… Printed-text results are pending.</p> : <>
@@ -78,15 +82,26 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
         {page.state === "reading" && <progress max="1" value={page.progress ?? undefined} aria-label="Printed-text recognition" />}
         {page.error && <p role="alert">{page.error}</p>}
         {comparison && <>
+          {difficultReading && <p className="photo-note reading-caution">Many characters could not be read reliably. Inspect the marked text on the paper; recognition errors can look like changes.</p>}
           <div className="photo-differences">
-            {comparison.differences.length > 0 && <>
-              <ol>{comparison.differences.map((difference, index) => <li key={index}>
+            {contentDifferences.length > 0 && <>
+              <ol>{contentDifferences.map((difference, index) => <li key={index}>
                 <div><strong>Signed text:</strong> {difference.expected || "(no text here)"}</div>
                 <div><strong>Photo reading:</strong> {difference.observed || "(not read — inspect for missing text)"}</div>
                 <DifferenceCrop page={page} difference={difference} />
                 {difference.context && <p className="photo-note">Signed wording nearby: {difference.context}</p>}
               </li>)}</ol>
               <p className="photo-note">Confirm the photo reading against the paper. A recognition error can also cause a difference.</p></>}
+            {typographyDifferences.length > 0 && <details className="photo-typography">
+              <summary>Typography to review ({typographyDifferences.length})</summary>
+              <p className="photo-note">Quotes, dashes, or joined letters were read differently. Check the highlighted photo to confirm the printed characters.</p>
+              <ol>{typographyDifferences.map((difference, index) => <li key={index}>
+                <div><strong>Signed text:</strong> {difference.expected}</div>
+                <div><strong>Photo reading:</strong> {difference.observed}</div>
+                <DifferenceCrop page={page} difference={difference} />
+                {difference.context && <p className="photo-note">Signed wording nearby: {difference.context}</p>}
+              </li>)}</ol>
+            </details>}
           </div>
           {comparison.contrastAssisted && <p className="photo-note reading-caution">A contrast-assisted reading was needed. Inspect pale text and marks in the original photo; this reading can miss them.</p>}
           {comparison.markings?.length > 0 && <div className="photo-markings"><h3>QRed markings to inspect</h3>
@@ -159,6 +174,6 @@ function DifferenceCrop({ page, difference }) {
   const height = Math.min(page.height - top, Math.max(...boxes.map(box => box.y1)) - top + 24);
   return <svg className="difference-crop" viewBox={`${left} ${top} ${width} ${height}`} role="img" aria-label="Magnified photo difference">
     <image href={page.url} width={page.width} height={page.height} />
-    {boxes.map((box, index) => <rect key={index} x={box.x0} y={box.y0} width={box.x1 - box.x0} height={box.y1 - box.y0} className="photo-word different" />)}
+    {boxes.map((box, index) => <rect key={index} x={box.x0} y={box.y0} width={box.x1 - box.x0} height={box.y1 - box.y0} className={`photo-word ${difference.typography ? "uncertain" : "different"}`} />)}
   </svg>;
 }

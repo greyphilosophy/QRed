@@ -392,6 +392,7 @@
     import { startCameraSession } from "./src/qr/cameraSession.js";
     import { observePageScanGuide } from "./src/qr/pageScanGuide.js";
     import { getPreferredCameraStream, applyCameraQualityControls } from "./src/qr/cameraControls.js";
+    import { canCaptureCameraPhoto, captureCameraPhoto } from "./src/qr/cameraPhoto.js";
     import { createLiveScanWorker, preparePhotoScanner, scanPhotoInWorker } from "./src/qr/photoScanClient.js";
     import { decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
     import { mountPhotoTextVerification } from "./src/verifier/mountPhotoTextVerification.jsx";
@@ -439,6 +440,7 @@
       var snapshot = collection.getSnapshot();
       photoComparison.update(results || snapshot.results, snapshot.session, state.scanImages, state.isScanning, {
         verifying: snapshot.busy,
+        collectionProgress: snapshot.progress,
         seals: snapshot.seals,
         onReplacePhoto: function(id, file) {
           if (collection.getSnapshot().session === snapshot.session) scanPhotos.replacePage(id, file);
@@ -620,6 +622,7 @@
           readiness.hidden = quality.state !== "hold"; readiness.value = quality.progress;
         },
         onCaptured: function() {
+          if (canCaptureCameraPhoto(video)) { btnCapture.onclick(); return; }
           processingCapture = true;
           hint.textContent = photoProcessingMessage();
           readiness.hidden = true;
@@ -654,7 +657,13 @@
         canvas.width = video.videoWidth; canvas.height = video.videoHeight;
         try {
           var ctx = canvas.getContext("2d", { willReadFrequently: true }); ctx.drawImage(video, 0, 0);
-          var action = await scanPhotoInWorker(ctx.getImageData(0, 0, canvas.width, canvas.height),
+          var frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          var nativePhoto = canCaptureCameraPhoto(video);
+          if (nativePhoto) hint.textContent = "Hold steady — taking photo…";
+          var still = nativePhoto ? await captureCameraPhoto(video, canvas, { signal: controller.signal }) : null;
+          controller.signal.throwIfAborted();
+          hint.textContent = photoProcessingMessage();
+          var action = await scanPhotoInWorker(still || frame,
             { returnPayload: true, signal: controller.signal });
           if (state.photoScan === controller && state.isScanning) collectFrame(action);
         } catch (error) {

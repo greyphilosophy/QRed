@@ -7,6 +7,39 @@ function words(text, confidence = 97) {
 }
 
 describe("photo comparison against signed text", () => {
+  it.each([
+    ["The ‘office’", "The 'office'"],
+    ["“Approved”", '"Approved"'],
+    ["ofﬁce ﬁle", "office file"],
+    ["non‑binding", "non-binding"],
+    ["Amount −100", "Amount -100"],
+  ])("keeps typography-only readings of %s as review items, not confirmed changes or matches", (signed, read) => {
+    const result = comparePhotoText(signed, words(read), size);
+    expect(result.status).toBe("uncertain");
+    expect(result.differences.length).toBeGreaterThan(0);
+    expect(result.differences.every(difference => difference.typography)).toBe(true);
+    expect(result.uncertainCount).toBeGreaterThan(0);
+    expect(result.differentCount).toBe(0);
+  });
+
+  it.each([
+    ["Pay €100", "Pay $100"], ["Pay 123.45", "Pay 12345"],
+    ["Amount −100", "Amount 100"], ["Dose ½", "Dose 1"],
+    ["Café", "Cafe"], ["Item ①", "Item 1"], ["Area m²", "Area m2"],
+    ["We’re approved", "Were approved"],
+  ])("keeps substantive special-character changes from %s to %s prominent", (signed, read) => {
+    const result = comparePhotoText(signed, words(read), size);
+    expect(result.status).toBe("differences");
+    expect(result.differences.some(difference => !difference.typography)).toBe(true);
+  });
+
+  it("does not hide a changed number beside a typography mismatch", () => {
+    const result = comparePhotoText("‘Pay’ 100", words("'Pay' 900"), size);
+    expect(result.status).toBe("differences");
+    expect(result.differences.filter(difference => !difference.typography)).toEqual([
+      expect.objectContaining({ expected: "100", observed: "900" }),
+    ]);
+  });
   it("aligns words on the photographed image while ignoring only whitespace and canonical Unicode composition", () => {
     const result = comparePhotoText("Café\nInvoice: 123.45", words("Cafe\u0301 Invoice : 123.45"), size);
     expect(result.status).toBe("matches");

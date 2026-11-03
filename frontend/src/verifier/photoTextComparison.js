@@ -1,6 +1,7 @@
 // Compare independently recognized text with authenticated text. Whitespace and
 // canonical Unicode composition are the only ignored differences. In particular,
 // never case-fold, strip punctuation, or substitute lookalike letters/digits.
+// Common typography substitutions remain visible review items, never matches.
 const MAX_TEXT_LENGTH = 60000;
 const MAX_TOKENS = 4000;
 const MAX_ALIGNMENT_CELLS = 4_000_000;
@@ -9,6 +10,15 @@ export const OCR_REVIEW_THRESHOLD = 85; // A review heuristic, NOT a probability
 function tokenize(text) {
   return [...text.normalize("NFC").matchAll(/[\p{L}\p{M}\p{N}]+|[^\s]/gu)]
     .map(match => ({ value: match[0], start: match.index, end: match.index + match[0].length }));
+}
+
+function typographyKey(text) {
+  const ligatures = { "ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st" };
+  // Deliberately narrower than NFKC: currency, fractions, superscripts,
+  // circled digits, accents and alphabet lookalikes keep their distinctions.
+  const normalized = text.replace(/[‘’ʼ]/g, "'").replace(/[“”]/g, '"')
+    .replace(/[‐‑–—−]/g, "-").replace(/[ﬀ-ﬆ]/g, value => ligatures[value]);
+  return tokenize(normalized).map(token => token.value).join("\u0000");
 }
 
 function validBox(box, width, height) {
@@ -26,6 +36,8 @@ export function comparePhotoText(expectedText, words, { width, height } = {}) {
   const expected = expectedText.normalize("NFC");
   const reference = tokenize(expected);
   const observed = words.flatMap((word, wordIndex) => tokenize(String(word.text || "")).map(token => ({ ...token, wordIndex })));
+  const referenceKeys = reference.map(token => typographyKey(token.value));
+  const observedKeys = observed.map(token => typographyKey(token.value));
   if (!reference.length) throw new Error("The seal contains no text to compare.");
   const columns = observed.length + 1;
   if (reference.length > MAX_TOKENS || observed.length > MAX_TOKENS
@@ -38,33 +50,45 @@ export function comparePhotoText(expectedText, words, { width, height } = {}) {
   const table = new Uint16Array((reference.length + 1) * columns);
   for (let i = reference.length - 1; i >= 0; i -= 1) {
     for (let j = observed.length - 1; j >= 0; j -= 1) {
-      table[i * columns + j] = reference[i].value === observed[j].value
+      table[i * columns + j] = referenceKeys[i] === observedKeys[j]
         ? table[(i + 1) * columns + j + 1] + 1
         : Math.max(table[(i + 1) * columns + j], table[i * columns + j + 1]);
     }
   }
   const matched = new Set();
+  const typographyTokens = new Set();
   const differences = [];
   let pending = null;
   const flush = () => {
     if (!pending) return;
     const indices = [...pending.wordIndices];
+    const signed = pending.start === null ? "" : expected.slice(pending.start, pending.end);
+    const readTokens = pending.tokenIndices.map(index => observed[index].value).join(" ");
+    const typography = signed.length > 0 && readTokens.length > 0 && typographyKey(signed) === typographyKey(readTokens);
+    if (typography) pending.tokenIndices.forEach(index => typographyTokens.add(index));
     differences.push({
-      expected: pending.start === null ? "" : expected.slice(pending.start, pending.end),
+      expected: signed,
       context: pending.start === null ? "" : expected.slice(Math.max(0, pending.start - 70), Math.min(expected.length, pending.end + 70)),
-      observed: indices.map(index => words[index].text).join(" "),
+      observed: typography ? readTokens : indices.map(index => words[index].text).join(" "),
       wordIndices: indices,
+      ...(typography ? { typography: true } : {}),
     });
     pending = null;
   };
   let i = 0, j = 0;
   while (i < reference.length || j < observed.length) {
-    if (i < reference.length && j < observed.length && reference[i].value === observed[j].value) {
+    if (i < reference.length && j < observed.length && referenceKeys[i] === observedKeys[j]) {
       flush();
-      matched.add(j);
+      if (reference[i].value === observed[j].value) matched.add(j);
+      else {
+        typographyTokens.add(j);
+        differences.push({ expected: reference[i].value, observed: observed[j].value,
+          wordIndices: [observed[j].wordIndex], typography: true,
+          context: expected.slice(Math.max(0, reference[i].start - 70), Math.min(expected.length, reference[i].end + 70)) });
+      }
       i += 1; j += 1;
     } else {
-      pending ??= { start: null, end: null, wordIndices: new Set() };
+      pending ??= { start: null, end: null, wordIndices: new Set(), tokenIndices: [] };
       if (i < reference.length && (j === observed.length
           || table[(i + 1) * columns + j] >= table[i * columns + j + 1])) {
         pending.start ??= reference[i].start;
@@ -72,6 +96,7 @@ export function comparePhotoText(expectedText, words, { width, height } = {}) {
         i += 1;
       } else {
         pending.wordIndices.add(observed[j].wordIndex);
+        pending.tokenIndices.push(j);
         j += 1;
       }
     }
@@ -84,8 +109,10 @@ export function comparePhotoText(expectedText, words, { width, height } = {}) {
     const box = validBox(word.bbox, width, height) ? word.bbox : null;
     const uncertain = !Number.isFinite(word.confidence) || word.confidence < OCR_REVIEW_THRESHOLD || !box;
     const agrees = indices.length > 0 && indices.every(tokenIndex => matched.has(tokenIndex));
+    const typographyOnly = !agrees && indices.length > 0
+      && indices.every(tokenIndex => matched.has(tokenIndex) || typographyTokens.has(tokenIndex));
     return { text: String(word.text || ""), sourceIndex: index, bbox: box, confidence: word.confidence,
-      status: uncertain ? "uncertain" : agrees ? "matched" : "different", agrees };
+      status: uncertain || typographyOnly ? "uncertain" : agrees ? "matched" : "different", agrees };
   }).filter(word => word.text.trim());
   const uncertainCount = classified.filter(word => word.status === "uncertain").length;
   return {
@@ -93,6 +120,7 @@ export function comparePhotoText(expectedText, words, { width, height } = {}) {
     matchedCount: classified.filter(word => word.status === "matched").length,
     differentCount: classified.filter(word => word.status === "different").length,
     uncertainCount,
-    status: !observed.length ? "unreadable" : differences.length ? "differences" : uncertainCount ? "uncertain" : "matches",
+    status: !observed.length ? "unreadable" : differences.some(difference => !difference.typography)
+      ? "differences" : uncertainCount ? "uncertain" : "matches",
   };
 }

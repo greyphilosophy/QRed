@@ -3,7 +3,7 @@
 import { locatePaper, pageHomography, pageWatermarkRegions } from "./pageAlignedScan.js";
 import { estimatePaperColor } from "./paperColor.js";
 import { normalizeWatermarkLuminance } from "./watermarkFilter.js";
-import { encodedVersion } from "./qrLowLevel.js";
+import { readRectifiedQrVersion } from "./rectifiedQrVersion.js";
 import { refineQrModuleGrid } from "./qrAlignmentRefinement.js";
 import { recoverSampledQrMatrix } from "./pageAlignedRecovery.js";
 import { collectModuleSamples, classifyModuleSamples } from "./rectifiedModuleSamples.js";
@@ -72,28 +72,6 @@ function findCorners(gray) {
   });
 }
 
-function readVersion(gray, corners) {
-  const candidates = [];
-  for (const [index, transpose] of [[1, false], [2, true]]) {
-    const p = corners[index];
-    let word = 0;
-    for (let i = 0; i < 18; i++) {
-      const a = -7 + i % 3, b = Math.floor(i / 3) - 3;
-      const x = Math.round(p.x + (transpose ? b : a) * p.pitch);
-      const y = Math.round(p.y + (transpose ? a : b) * p.pitch);
-      word |= Number(gray[y * SIDE + x] < 235) << i;
-    }
-    for (let version = 7; version <= 40; version++) {
-      const size = 17 + 4 * version, estimated = SIDE * INTERIOR / p.pitch;
-      if (Math.abs(size - estimated) > size * 0.12) continue;
-      let bits = word ^ encodedVersion(version), distance = 0;
-      while (bits) { distance++; bits &= bits - 1; }
-      if (distance <= 3) candidates.push({ version, distance });
-    }
-  }
-  return candidates.sort((a, b) => a.distance - b.distance)[0]?.version;
-}
-
 function measuredThreshold(gray, corners) {
   const dark = [], light = [];
   for (const p of corners) for (let row = 0; row < 7; row++) for (let col = 0; col < 7; col++) {
@@ -119,7 +97,7 @@ export function scanRectifiedSeal(image, {
     const working = rectifiedImage(image, mapping, region);
     const gray = normalizeWatermarkLuminance(working.data, SIDE, SIDE), corners = findCorners(gray);
     if (corners.some(p => p.score < 0.8)) continue;
-    const version = readVersion(gray, corners);
+    const version = readRectifiedQrVersion(gray, SIDE, corners);
     if (!version) continue;
     const size = 17 + 4 * version, [tl, tr, bl] = corners;
     const gridMap = (u, v) => ({
