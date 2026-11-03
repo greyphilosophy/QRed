@@ -98,8 +98,10 @@ export function createPageCaptureGate() {
         anchor = null; startedAt = null; frames = 0; lastAt = now; captured = false;
         return { ...quality, ready: false, progress: 0 };
       }
+      // After a capture, even a pale changed seal can identify the next page
+      // in the same position. Keep the larger tolerance during the steady hold.
       const moved = !anchor || measured.corners.some((p, i) => distance(p, anchor.corners[i]) > .012)
-        || samples.reduce((sum, value, i) => sum + Math.abs(value - anchor.samples[i]), 0) / samples.length > 9;
+        || samples.reduce((sum, value, i) => sum + Math.abs(value - anchor.samples[i]), 0) / samples.length > (captured ? 2 : 9);
       if (captured && !moved) return { ...quality, ready: false, progress: 0, state: "captured",
         message: "Move the page to capture again, or use Capture now." };
       if (moved || lastAt === null || now < lastAt || now - lastAt > 1500) {

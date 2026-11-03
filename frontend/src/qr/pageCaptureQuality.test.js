@@ -33,6 +33,20 @@ describe("automatic whole-page capture", () => {
     for (const time of [10200, 10400, 10600]) expect(gate.update(next, time).ready).toBe(false);
     expect(gate.update(next, 10800).ready).toBe(true);
   });
+  it("recognizes a pale content change on a new page held in exactly the same position", () => {
+    const gate = createPageCaptureGate(), first = paper(), second = paper();
+    for (let y = 300; y < 600; y++) for (let x = 200; x < 600; x++) {
+      const at = (y * second.width + x) * 4;
+      second.data[at] = second.data[at + 1] = second.data[at + 2] = 224;
+    }
+    const a = inspectPageFrame(first), b = inspectPageFrame(second);
+    const difference = a.samples.reduce((sum, value, i) => sum + Math.abs(value - b.samples[i]), 0) / a.samples.length;
+    expect(difference).toBeGreaterThan(2); expect(difference).toBeLessThan(9);
+    for (const time of [0, 200, 400]) gate.update(first, time);
+    expect(gate.update(first, 600).ready).toBe(true);
+    for (const time of [2000, 2200, 2400]) expect(gate.update(second, time).ready).toBe(false);
+    expect(gate.update(second, 2600).ready).toBe(true);
+  });
   it.each([{ x: 0 }, { y: 0 }, { width: 800 }, { desk: 245 }])("does not invent a whole-page capture for %j", options => {
     expect(inspectPageFrame(paper(options)).state).toBe("framing");
   });
