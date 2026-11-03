@@ -20,6 +20,11 @@ it("separates likely QR markings for visible review without declaring a match", 
   expect(result.markings.map(mark => mark.observed)).toEqual(["[=]", "Verify at qred.org"]);
   expect(result.markings[1].boxes).toHaveLength(3);
 });
+it("keeps source indices stable after separating markings so retries target the right words", () => {
+  const result = comparePageReading("Friday", { words: [word("[=]", 110, 220), word("Monday", 10, 10)], codes: [box] }, dimensions);
+  expect(result.words[0]).toMatchObject({ sourceIndex: 1, text: "Monday", status: "different" });
+  expect(result.differences[0].wordIndices).toEqual([1]);
+});
 it("does not globally whitelist a caption, a similar phrase, or additional words", () => {
   expect(possiblePrintedMarkings([...text, ...caption], [])).toEqual([]);
   const elsewhere = caption.map(w => ({ ...w, bbox: { ...w.bbox, y0: 100, y1: 112 } }));

@@ -7,6 +7,15 @@ function words(text, confidence = 97) {
 }
 
 describe("photo comparison against signed text", () => {
+  it.each([["Account 123456", "Account123456"], ["Payment due", "Paym entdue"],
+    ["Customer", "Custom er"], ["now here", "nowhere"], ["1 000", "1000"]])(
+    "keeps word-boundary differences from %s to %s as visible spacing review", (signed, observed) => {
+      const result = comparePhotoText(signed, words(observed), size);
+      expect(result.status).toBe("uncertain");
+      expect(result.differences).toEqual([expect.objectContaining({ spacing: true })]);
+      expect(result.differentCount).toBe(0);
+    });
+
   it.each([
     ["The ‘office’", "The 'office'"],
     ["“Approved”", '"Approved"'],

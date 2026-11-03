@@ -12,7 +12,7 @@ it("uses only local versioned assets and extracts bounded word data from the rea
   const reader = createPhotoOcrReader(factory, () => ({ canvas: {}, codes: [] }));
   await reader.prepare();
   const image = { width: 30, height: 20 };
-  expect((await reader.read(image)).words).toEqual([{ text: "Read", confidence: 96, bbox: { x0: 1, x1: 20, y0: 2, y1: 15 } }]);
+  expect((await reader.read(image)).words).toEqual([{ text: "Read", confidence: 96, bbox: { x0: 1, x1: 20, y0: 2, y1: 15 }, lineId: "1:0:0:0" }]);
   expect(factory).toHaveBeenCalledTimes(1);
   expect(factory).toHaveBeenCalledWith("eng", 1, expect.objectContaining({
     workerPath: "/ocr/v1/worker.min.js", corePath: "/ocr/v1", langPath: "/ocr/v1", cacheMethod: "none",
@@ -119,4 +119,62 @@ it("independently enlarges a misread caption while preserving a nearby added wor
     expect(engine.setParameters).toHaveBeenLastCalledWith({ tessedit_pageseg_mode: "3" });
     expect(copies.every(canvas => canvas.width === 0 && canvas.height === 0)).toBe(true);
   } finally { reader.dispose(); vi.unstubAllGlobals(); }
+});
+
+function retryFixture() {
+  const engine = worker(), copies = [], urls = { createObjectURL: vi.fn(() => "blob:retained-photo"), revokeObjectURL: vi.fn() };
+  const pack = words => ({ data: { blocks: [{ paragraphs: [{ lines: [{ words }] }] }] } });
+  const initial = { text: "TotaI", confidence: 40, bbox: { x0: 100, y0: 200, x1: 200, y1: 230 } };
+  engine.recognize.mockResolvedValueOnce(pack([initial]));
+  let decoded;
+  vi.stubGlobal("URL", urls);
+  vi.stubGlobal("Image", class {
+    naturalWidth = 2000; naturalHeight = 2800;
+    constructor() { decoded = this; }
+    decode() { return Promise.resolve(); }
+  });
+  vi.stubGlobal("document", { createElement: () => {
+    const drawImage = vi.fn(), canvas = { width: 0, height: 0, getContext: () => ({ drawImage }), drawImage };
+    copies.push(canvas); return canvas;
+  } });
+  const prepared = { width: 1000, height: 1400 };
+  const reader = createPhotoOcrReader(() => Promise.resolve(engine), () => ({ canvas: prepared, codes: [] }));
+  return { engine, pack, initial, copies, urls, prepared, reader, decoded: () => decoded,
+    input: { width: 1000, height: 1400 }, reference: { text: "Total", file: { type: "image/png", size: 1000 } } };
+}
+
+it("rereads native-resolution pixels independently, maps the crop back, and releases every temporary image", async () => {
+  const f = retryFixture();
+  f.engine.recognize.mockImplementationOnce(async image => f.pack([{ text: "Total", confidence: 96,
+    bbox: { x0: image.width / 4, y0: image.height / 4, x1: image.width * .75, y1: image.height * .75 } }]));
+  try {
+    const result = await f.reader.read(f.input, () => {}, f.reference);
+    expect(result.words[0]).toMatchObject({ text: "Total", confidence: 96,
+      bbox: { x0: 122.5, y0: 205, x1: 177.5, y1: 225 } });
+    expect(result.retryReviews).toEqual([expect.objectContaining({ original: "TotaI", observed: "Total" })]);
+    expect(f.copies[0].drawImage).toHaveBeenCalledWith(f.decoded(), 190, 390, 220, 80, 0, 0, 220, 80);
+    expect(f.engine.recognize.mock.calls.every(([, options, output]) =>
+      Object.keys(options).length === 0 && output.text === true && output.blocks === true)).toBe(true);
+    expect(f.engine.setParameters).toHaveBeenLastCalledWith({ tessedit_pageseg_mode: "3" });
+    expect(f.urls.revokeObjectURL).toHaveBeenCalledWith("blob:retained-photo");
+    expect(f.decoded().src).toBe("");
+    expect([...f.copies, f.prepared].every(c => c.width === 0 && c.height === 0)).toBe(true);
+  } finally { f.reader.dispose(); vi.unstubAllGlobals(); }
+});
+
+it("cancels an in-flight retry without publishing it or retaining its original-resolution image", async () => {
+  const f = retryFixture();
+  let finish;
+  f.engine.recognize.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  try {
+    const reading = f.reader.read(f.input, () => {}, f.reference);
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    f.reader.dispose();
+    finish(f.pack([{ ...f.initial, text: "Total", confidence: 96 }]));
+    await expect(reading).rejects.toMatchObject({ name: "AbortError" });
+    expect(f.engine.terminate).toHaveBeenCalledTimes(1);
+    expect(f.urls.revokeObjectURL).toHaveBeenCalledWith("blob:retained-photo");
+    expect(f.decoded().src).toBe("");
+    expect([...f.copies, f.prepared].every(c => c.width === 0 && c.height === 0)).toBe(true);
+  } finally { vi.unstubAllGlobals(); }
 });

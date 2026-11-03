@@ -1,5 +1,7 @@
 import { createWorker } from "tesseract.js";
-import { captionLineCandidates, isPrintedCaption, preparePhotoReading } from "./photoReading.js";
+import { captionLineCandidates, comparePageReading, isPrintedCaption, preparePhotoReading } from "./photoReading.js";
+import { signedPhotoLines } from "./photoTextLayout.js";
+import { applyTextRetries, planTextRetries, TEXT_RETRY_MS, TEXT_RETRY_PIXELS } from "./photoOcrRetry.js";
 
 // These versioned resources are copied from locked dependencies at build time.
 // Never use Tesseract's default CDN paths: all resources belong to this origin.
@@ -43,7 +45,7 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
 
   return {
     prepare,
-    async read(canvas, onProgress = () => {}) {
+    async read(canvas, onProgress = () => {}, reference = {}) {
       let pass = 0;
       const current = await prepare(event => {
         // Only the first whole-page reading has a useful percentage. Recovery
@@ -52,12 +54,14 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
       });
       // The signed text is deliberately never supplied to the recognition engine.
       const recognize = async image => {
+        controller.signal.throwIfAborted();
         pass++;
         const { data } = await current.recognize(image, {}, { text: true, blocks: true });
+        controller.signal.throwIfAborted();
         onProgress({ status: "processing" });
-        return (data.blocks || []).flatMap(block => (block.paragraphs || [])
-          .flatMap(paragraph => (paragraph.lines || []).flatMap(line => line.words || [])))
-          .map(({ text, confidence, bbox }) => ({ text, confidence, bbox }));
+        return (data.blocks || []).flatMap((block, b) => (block.paragraphs || [])
+          .flatMap((paragraph, p) => (paragraph.lines || []).flatMap((line, l) => (line.words || [])
+            .map(({ text, confidence, bbox }) => ({ text, confidence, bbox, lineId: `${pass}:${b}:${p}:${l}` })))));
       };
       const controller = new AbortController();
       preprocessing = controller;
@@ -114,7 +118,53 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
           } finally { if (worker === current) await current.setParameters({ tessedit_pageseg_mode: "3" }); }
           words = words.flatMap((word, index) => replacements.get(index) || (removed.has(index) ? [] : [word]));
         }
-        return { words, codes: prepared.codes, contrastAssisted };
+        let retryReviews = [];
+        if (reference.text?.trim() && !contrastAssisted) {
+          const reading = { words, codes: prepared.codes, corners: prepared.corners };
+          const comparison = comparePageReading(reference.text, reading, canvas, reference.evidence);
+          const lines = signedPhotoLines(reference.text, reference.evidence, prepared.corners, canvas, words);
+          const candidates = planTextRetries(words, comparison, lines, canvas);
+          if (candidates.length) {
+            const replacements = [], deadline = performance.now() + TEXT_RETRY_MS;
+            let source = null, pixels = 0;
+            await current.setParameters({ tessedit_pageseg_mode: "7" });
+            try {
+              // Decode the retained file lazily for crops at its original
+              // resolution, independently of the bounded whole-page canvas.
+              if (reference.file) source = await openPhotoSource(reference.file);
+              controller.signal.throwIfAborted();
+              const input = source?.image || canvas;
+              const sx = (source?.width || canvas.width) / canvas.width;
+              const sy = (source?.height || canvas.height) / canvas.height;
+              for (const candidate of candidates) {
+                if (performance.now() >= deadline) break;
+                controller.signal.throwIfAborted();
+                const box = candidate.bbox, width = box.x1 - box.x0, height = box.y1 - box.y0;
+                const scale = Math.min(Math.max(1, sx, 64 / height), 3, Math.sqrt(500000 / (width * height)));
+                const detail = document.createElement("canvas");
+                detail.width = Math.max(1, Math.round(width * scale));
+                detail.height = Math.max(1, Math.round(height * scale));
+                pixels += detail.width * detail.height;
+                if (pixels > TEXT_RETRY_PIXELS) { detail.width = detail.height = 0; break; }
+                try {
+                  detail.getContext("2d").drawImage(input, box.x0 * sx, box.y0 * sy, width * sx, height * sy,
+                    0, 0, detail.width, detail.height);
+                  const read = await recognize(detail);
+                  const mapped = read.filter(word => word.bbox).map(word => ({ ...word, bbox: {
+                    x0: box.x0 + word.bbox.x0 * width / detail.width, x1: box.x0 + word.bbox.x1 * width / detail.width,
+                    y0: box.y0 + word.bbox.y0 * height / detail.height, y1: box.y0 + word.bbox.y1 * height / detail.height,
+                  } }));
+                  replacements.push({ candidate, words: mapped });
+                } finally { detail.width = detail.height = 0; }
+              }
+            } finally {
+              source?.release();
+              if (worker === current) await current.setParameters({ tessedit_pageseg_mode: "3" });
+            }
+            ({ words, retryReviews } = applyTextRetries(words, replacements));
+          }
+        }
+        return { words, codes: prepared.codes, corners: prepared.corners, contrastAssisted, retryReviews };
       } finally {
         controller.abort();
         if (preprocessing === controller) preprocessing = null;
@@ -132,7 +182,7 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
   };
 }
 
-export async function openPagePhoto(file) {
+async function openPhotoSource(file) {
   if (!file || !/^image\/(jpeg|png|webp)$/.test(file.type)) {
     throw new Error("Choose a JPEG, PNG, or WebP page photo.");
   }
@@ -144,17 +194,26 @@ export async function openPagePhoto(file) {
     await image.decode();
     const pixels = image.naturalWidth * image.naturalHeight;
     if (!pixels || pixels > 60_000_000) throw new Error("Choose a photo with at most 60 megapixels.");
-    const scale = Math.min(1, Math.sqrt(6_000_000 / pixels));
+    return { image, width: image.naturalWidth, height: image.naturalHeight,
+      release() { image.src = ""; URL.revokeObjectURL(url); } };
+  } catch (error) { URL.revokeObjectURL(url); throw error; }
+}
+
+export async function openPagePhoto(file) {
+  const source = await openPhotoSource(file);
+  try {
+    const { image, width, height } = source;
+    const scale = Math.min(1, Math.sqrt(6_000_000 / (width * height)));
     const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
     const context = canvas.getContext("2d", { willReadFrequently: true });
     if (!context) throw new Error("This browser cannot open the page photo.");
     context.fillStyle = "white";
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     return canvas;
-  } finally { URL.revokeObjectURL(url); }
+  } finally { source.release(); }
 }
 
 export function photoPreviewUrl(canvas) {
