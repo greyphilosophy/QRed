@@ -89,21 +89,27 @@ export function inspectPageFrame(image) {
 }
 
 export function createPageCaptureGate() {
-  let anchor = null, lastAt = null, startedAt = null, frames = 0;
+  let anchor = null, lastAt = null, startedAt = null, frames = 0, captured = false;
   return {
     update(image, now) {
       const measured = inspectPageFrame(image);
       const { samples, ...quality } = measured;
       if (measured.state !== "clear") {
-        anchor = null; startedAt = null; frames = 0; lastAt = now;
+        anchor = null; startedAt = null; frames = 0; lastAt = now; captured = false;
         return { ...quality, ready: false, progress: 0 };
       }
-      const moved = !anchor || lastAt === null || now < lastAt || now - lastAt > 1500
-        || measured.corners.some((p, i) => distance(p, anchor.corners[i]) > .012)
-        || samples.reduce((sum, value, i) => sum + Math.abs(value - anchor.samples[i]), 0) / samples.length > 9;
-      if (moved) { anchor = measured; startedAt = now; frames = 0; }
+      // After a capture, even a pale changed seal can identify the next page
+      // in the same position. Keep the larger tolerance during the steady hold.
+      const moved = !anchor || measured.corners.some((p, i) => distance(p, anchor.corners[i]) > .012)
+        || samples.reduce((sum, value, i) => sum + Math.abs(value - anchor.samples[i]), 0) / samples.length > (captured ? 2 : 9);
+      if (captured && !moved) return { ...quality, ready: false, progress: 0, state: "captured",
+        message: "Move the page to capture again, or use Capture now." };
+      if (moved || lastAt === null || now < lastAt || now - lastAt > 1500) {
+        anchor = measured; startedAt = now; frames = 0; captured = false;
+      }
       lastAt = now; frames++;
       const progress = Math.min(1, (now - startedAt) / STEADY_CAPTURE_MS, frames / 4);
+      if (progress === 1) captured = true;
       return { ...quality, ready: progress === 1, progress, state: progress === 1 ? "ready" : "hold",
         message: progress === 1 ? "Page steady. Reading its seal…" : "Hold steady — capturing automatically…" };
     },

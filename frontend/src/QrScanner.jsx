@@ -10,6 +10,7 @@ export { qrScanAction } from "./qr/decodePhoto.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
 import { photoProcessingMessage } from "./verifier/photoStatus.js";
+import { canCaptureCameraPhoto, captureCameraPhoto } from "./qr/cameraPhoto.js";
 import "./qrScanner.css";
 
 /**
@@ -29,6 +30,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
   const [readingPhoto, setReadingPhoto] = useState(false);
   const [preparing, setPreparing] = useState(false), [preparationError, setPreparationError] = useState("");
   const startGeneration = useRef(0);
+  const startingCollection = useRef(null);
   const startButton = useRef(null);
   useEffect(() => () => { startGeneration.current++; }, []);
   useEffect(() => { if (completionNotice) startButton.current?.focus(); }, [completionNotice]);
@@ -42,9 +44,13 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
   }, [onSealDetected, collectSeals]);
 
   useEffect(() => {
-    if (mode === "scanning" && scannedText && collectionProgress?.finished
-      && collectionProgress.activeSeal === scannedText) setMode("result");
-  }, [mode, scannedText, collectionProgress]);
+    // A file or PDF can finish the same collection while the camera is open.
+    // Stop from collection state, not from the last camera-only callback.
+    // Starting another scan after a finished collection must still be possible.
+    if (mode === "scanning" && collectSeals && collectionProgress?.finished
+      && (!startingCollection.current?.finished
+        || startingCollection.current.activeSeal !== collectionProgress.activeSeal)) setMode("result");
+  }, [mode, collectSeals, collectionProgress]);
 
   const scanButtonLabel = preparing ? "Preparing check…" : mode === "scanning" ? (readingPhoto ? "Cancel and resume camera" : "Capture now") : mode === "result" ? "Scan more pages" : "Check document";
   const controls = React.createElement("div", { className: "ar-controls" },
@@ -66,6 +72,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
           if (generation !== startGeneration.current) return;
           setPreparing(false);
         }
+        startingCollection.current = collectionProgress;
         setScannedText(null);
         setCaptureRequest(0);
         setMode("scanning");
@@ -218,7 +225,8 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
         setQuality(quality);
         if (!quality.ready && captureReported) { captureReported = false; setFeedback(null); }
       },
-      onCaptured: () => {
+      onCaptured: ({ captureOnly } = {}) => {
+        if (captureOnly) { capturePhoto(true); return; }
         processingCapture = true;
         setFeedback(photoProcessingMessage());
         onReadingPhoto(true);
@@ -270,10 +278,10 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       return false;
     };
 
-    function capturePhoto() {
+    function capturePhoto(preserveGate = false) {
       if (photoScanRef.current) return;
       // A queued live result must never be attached to the new still photo.
-      liveScan.reset();
+      if (!preserveGate) liveScan.reset();
       const image = captureCameraFrame(videoRef.current, canvasRef.current);
       if (!image) {
         handleScanActionRef.current({ status: "pending", message: "Camera is preparing the photo. Hold steady…" });
@@ -285,8 +293,16 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       const controller = new AbortController();
       photoScanRef.current = controller;
       onReadingPhoto(true);
-      setFeedback(photoProcessingMessage());
-      scanPhotoInWorker(image, { returnPayload, signal: controller.signal }).then(action => {
+      const nativePhoto = canCaptureCameraPhoto(videoRef.current);
+      setFeedback(nativePhoto ? "Hold steady — taking photo…" : photoProcessingMessage());
+      const read = async () => {
+        const still = nativePhoto ? await captureCameraPhoto(videoRef.current, canvasRef.current,
+          { signal: controller.signal }) : null;
+        controller.signal.throwIfAborted();
+        setFeedback(photoProcessingMessage());
+        return scanPhotoInWorker(still || image, { returnPayload, signal: controller.signal });
+      };
+      read().then(action => {
         if (photoScanRef.current !== controller) return;
         setFeedback(null);
         handleScanActionRef.current(action);
@@ -328,7 +344,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       if (timeout) { handleScanActionRef.current(timeout); return; }
       if (!frameReady || liveScan.busy) return;
       const image = captureCameraFrame(video, canvas);
-      if (image) liveScan.scan(image);
+      if (image) liveScan.scan(image, { captureOnly: canCaptureCameraPhoto(video) });
     }
 
     camera = startCameraSession({

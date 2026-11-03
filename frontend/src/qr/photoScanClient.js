@@ -81,7 +81,7 @@ export function createLiveScanWorker({ onResult, onError, returnPayload = false,
     get busy() { return busy; },
     reset,
     stop,
-    scan(image) {
+    scan(image, { captureOnly = false } = {}) {
       if (stopped || busy) return false;
       try {
         if (!worker) {
@@ -92,8 +92,10 @@ export function createLiveScanWorker({ onResult, onError, returnPayload = false,
             if (data.error) { fail(current, new Error(data.error)); return; }
             if (data.captured) {
               // This is an intermediate acknowledgement, not a decoder result.
-              // Keep busy true so no newer camera frame can replace the photo.
-              try { if (data.quality) onQuality?.(data.quality); onCaptured?.(); }
+              // A native still handoff finishes this request; its caller freezes
+              // capture while preserving this worker's page-movement gate.
+              if (data.captureOnly) busy = false;
+              try { if (data.quality) onQuality?.(data.quality); onCaptured?.({ captureOnly: !!data.captureOnly }); }
               catch (error) { fail(current, error); }
               return;
             }
@@ -108,7 +110,8 @@ export function createLiveScanWorker({ onResult, onError, returnPayload = false,
           current.onmessageerror = () => fail(current, new Error("The live scan result could not be read."));
         }
         busy = true;
-        const qualityOptions = requirePageQuality ? { requirePageQuality, frameTime: performance.now() } : {};
+        const qualityOptions = requirePageQuality ? { requirePageQuality, frameTime: performance.now(),
+          ...(captureOnly ? { captureOnly: true } : {}) } : {};
         worker.postMessage({ image: { data: image.data, width: image.width, height: image.height }, returnPayload, live: true, ...qualityOptions },
           [image.data.buffer]);
         return true;

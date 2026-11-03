@@ -8,6 +8,7 @@ import { observePageScanGuide } from "../qr/pageScanGuide.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { bytesEqual, qrPayloadBytes } from "../sealFormat.js";
 import { photoProcessingMessage } from "./photoStatus.js";
+import { canCaptureCameraPhoto, captureCameraPhoto } from "../qr/cameraPhoto.js";
 
 // Match bytes from the already authenticated collection, not an untrusted page
 // number or chunk identifier supplied by the new photo.
@@ -25,6 +26,7 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
   const guideArea = useRef(null), guide = useRef(null), live = useRef(null), busyRef = useRef(false);
   const [ready, setReady] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [quality, setQuality] = useState(null);
+  const [takingPhoto, setTakingPhoto] = useState(false);
   useEffect(() => {
     const previous = document.activeElement;
     dialog.current?.focus();
@@ -32,10 +34,14 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
     const stopGuide = observePageScanGuide(video.current, guideArea.current, guide.current);
     live.current = createLiveScanWorker({ returnPayload: true, requirePageQuality: true,
       onQuality: setQuality,
-      onCaptured: () => { busyRef.current = true; setBusy(true); setError(""); },
+      onCaptured: ({ captureOnly } = {}) => {
+        if (captureOnly) { capture({ preserveGate: true }); return; }
+        busyRef.current = true; setBusy(true); setError("");
+      },
       onResult: action => {
         if (action.text || action.texts?.length) acceptFrame(action, canvas, epoch);
         else {
+          if (action.status === "feedback") live.current.reset();
           busyRef.current = false; setBusy(false);
           if (action.message) setError(action.message);
         }
@@ -51,7 +57,7 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
         if (canvas.height !== source.videoHeight) canvas.height = source.videoHeight;
         const context = canvas.getContext("2d", { willReadFrequently: true });
         context.drawImage(source, 0, 0);
-        live.current.scan(context.getImageData(0, 0, canvas.width, canvas.height));
+        live.current.scan(context.getImageData(0, 0, canvas.width, canvas.height), { captureOnly: canCaptureCameraPhoto(source) });
       },
       onError: cause => setError(`Camera could not open. ${cause.message}`) });
     return () => {
@@ -72,28 +78,37 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
       camera.current.stop(); live.current.stop();
       onCapture(file); onClose();
       if (typeof navigator.vibrate === "function") navigator.vibrate(80);
-    } catch (cause) { if (epoch === generation.current) setError(cause.message); }
+    } catch (cause) {
+      if (epoch === generation.current) { live.current.reset(); setError(cause.message); }
+    }
     finally { if (epoch === generation.current) { busyRef.current = false; setBusy(false); } }
   }
-  async function capture() {
+  async function capture({ preserveGate = false } = {}) {
     const epoch = generation.current, source = video.current;
     if (!source?.videoWidth || busyRef.current) return;
     busyRef.current = true; setBusy(true); setError("");
-    live.current.reset();
+    if (!preserveGate) live.current.reset();
     scan.current = new AbortController();
+    const controller = scan.current;
     const canvas = document.createElement("canvas");
     canvas.width = source.videoWidth; canvas.height = source.videoHeight;
     try {
       const context = canvas.getContext("2d", { willReadFrequently: true });
       context.drawImage(source, 0, 0);
-      const action = await scanPhotoInWorker(context.getImageData(0, 0, canvas.width, canvas.height),
-        { returnPayload: true, signal: scan.current.signal });
+      const frame = context.getImageData(0, 0, canvas.width, canvas.height);
+      const nativePhoto = canCaptureCameraPhoto(source);
+      setTakingPhoto(nativePhoto);
+      const still = nativePhoto ? await captureCameraPhoto(source, canvas, { signal: controller.signal }) : null;
+      controller.signal.throwIfAborted();
+      setTakingPhoto(false);
+      const action = await scanPhotoInWorker(still || frame,
+        { returnPayload: true, signal: controller.signal });
       if (epoch !== generation.current) return;
       await acceptFrame(action, canvas, epoch);
     } catch (cause) { if (epoch === generation.current) setError(cause.message); }
     finally {
       canvas.width = canvas.height = 0;
-      if (epoch === generation.current) { busyRef.current = false; setBusy(false); }
+      if (epoch === generation.current) { busyRef.current = false; setBusy(false); setTakingPhoto(false); }
     }
   }
   return <div className="page-camera-backdrop"><section className="page-camera" role="dialog" aria-modal="true"
@@ -113,7 +128,7 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
       </div></div></div>
     {!busy && quality && <p role="status">{quality.message}</p>}
     {!busy && quality?.state === "hold" && <progress className="capture-readiness" max="1" value={quality.progress} aria-label="Steady hold before automatic capture" />}
-    {busy && <p role="status">{photoProcessingMessage()}</p>}
+    {busy && <p role="status">{takingPhoto ? "Hold steady — taking photo…" : photoProcessingMessage()}</p>}
     {error && <p role="alert">{error}</p>}
     <div className="photo-actions"><button type="button" disabled={!ready || busy} onClick={capture}>Capture now</button>
       <button type="button" onClick={onClose}>Cancel retake</button></div>

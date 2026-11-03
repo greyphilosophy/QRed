@@ -142,6 +142,21 @@ it("stops a live session permanently and ignores its queued result", () => {
   expect(worker.terminate).toHaveBeenCalledTimes(1);
 });
 
+it("preserves the live worker's movement gate when handing off a native still capture", () => {
+  const onCaptured = vi.fn(), onResult = vi.fn();
+  const live = createLiveScanWorker({ onCaptured, onResult, onError: vi.fn(), requirePageQuality: true });
+  live.scan(image(), { captureOnly: true });
+  expect(worker.postMessage.mock.calls[0][0].captureOnly).toBe(true);
+  worker.onmessage({ data: { captured: true, captureOnly: true, quality: { ready: true } } });
+  expect(onCaptured).toHaveBeenCalledWith({ captureOnly: true });
+  expect(live.busy).toBe(false);
+  expect(onResult).not.toHaveBeenCalled();
+  expect(worker.terminate).not.toHaveBeenCalled();
+  live.scan(image(), { captureOnly: true });
+  expect(Worker).toHaveBeenCalledTimes(1);
+  live.stop();
+});
+
 it.each(["decode", "load", "message", "transfer"])("stops live decoding on a %s error", kind => {
   const onError = vi.fn(), onResult = vi.fn();
   const live = createLiveScanWorker({ onResult, onError });

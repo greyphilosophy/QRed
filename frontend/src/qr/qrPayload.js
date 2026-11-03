@@ -1,4 +1,5 @@
-import { decodeTransport, qrPayloadBytes, qrPayloadText } from "../sealFormat.js";
+import { Inflate } from "pako/lib/inflate.js";
+import { decodeTransport, MAX_SEAL_TEXT_BYTES, qrPayloadBytes, qrPayloadText } from "../sealFormat.js";
 
 export const QRED_ENTRY_TEXT = "QRED.ORG";
 
@@ -29,6 +30,35 @@ export function extractQrBytePayload(data, version) {
   try { return qrPayloadText(bytes); } catch { return null; }
 }
 
+function validateScannedPayload(bytes) {
+  const record = decodeTransport(bytes);
+  if (record.multipart) return;
+  const data = record.data;
+  // Reject damaged compressed candidates before they can stop optical recovery.
+  // Framing alone is insufficient: an over-corrected QR can retain its header
+  // but contain invalid DEFLATE data or a wrong checksum. This bounded check
+  // never authenticates content; normal native decoding/signatures still run.
+  if (record.encoding === "zlib" && (data.length < 6 || (data[0] & 15) !== 8
+    || (data[0] >>> 4) > 7 || (data[0] * 256 + data[1]) % 31 !== 0 || (data[1] & 32))) {
+    throw new Error("Invalid zlib header");
+  }
+  if (record.encoding === "gzip" && (data.length < 18 || data[0] !== 31 || data[1] !== 139
+    || data[2] !== 8 || (data[3] & 224))) throw new Error("Invalid gzip header");
+  if (record.encoding !== "plaintext") {
+    const inflater = new Inflate({ windowBits: record.encoding === "zlib" ? 15 : 31, chunkSize: 16384 });
+    let length = 0;
+    inflater.onData = chunk => {
+      length += chunk.length;
+      if (length > MAX_SEAL_TEXT_BYTES) throw new Error("Compressed seal exceeds the text limit");
+    };
+    // Without forced finalization, ended is true only after the actual stream
+    // terminator and checksum. Otherwise a truncated stream could look finished.
+    if (!inflater.push(data, false) || !inflater.ended || inflater.err || inflater.strm.avail_in) {
+      throw new Error("Invalid compressed seal");
+    }
+  }
+}
+
 // binaryData is the decoder's ordinary message, already error-corrected and
 // excluding the terminator and padding. Binary signatures need not be UTF-8.
 export function qredPayloadFromScanResult(result) {
@@ -36,14 +66,14 @@ export function qredPayloadFromScanResult(result) {
   if (result.binaryData?.length) {
     try {
       const bytes = Uint8Array.from(result.binaryData);
-      decodeTransport(bytes);
+      validateScannedPayload(bytes);
       return qrPayloadText(bytes);
     } catch { /* A navigation code or ordinary QR message is not a seal. */ }
   }
   // A seal URL encoded as an ordinary QR message is also safe to accept.
   if (typeof result.data !== "string" || !/^(?:[^#]*#)?QRED[34]:/.test(result.data)) return null;
   try {
-    decodeTransport(qrPayloadBytes(result.data));
+    validateScannedPayload(qrPayloadBytes(result.data));
     return result.data;
   } catch { return null; }
 }

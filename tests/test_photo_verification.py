@@ -117,6 +117,37 @@ def persistent_state(page):
     })""")
 
 
+def test_loading_all_photos_while_camera_is_open_finishes_collection_and_checks_text(browser, sealed_text):
+    context = browser.new_context(service_workers="allow", viewport={"width": 393, "height": 873})
+    try:
+        context.route("**/api/keys/default", lambda route: route.fulfill(json={"public_key": PUBLIC_KEY}))
+        page = context.new_page()
+        page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"), wait_until="networkidle")
+        prepare_reader(page)
+        camera_paper(page, "", None, border=False)
+        page.get_by_role("button", name="Check document", exact=True).click()
+        page.wait_for_function("document.querySelector('video')?.readyState >= 2")
+        page.get_by_text("Open an existing PDF or image", exact=True).click()
+        for index, text in enumerate([TEXT, TEXT.replace("Friday", "Monday")]):
+            paper = Image.open(io.BytesIO(page_image(text)["buffer"]))
+            qr = Image.open(io.BytesIO(base64.b64decode(sealed_text[index]["qr"]))).convert("L")
+            qr = qr.point(lambda value: 224 if value < 128 else 255).resize((900, 900), Image.Resampling.NEAREST)
+            paper.paste(qr.convert("RGB"), (150, 620))
+            photo = Image.new("RGB", (1440, 1920), (55, 55, 55)); photo.paste(paper, (120, 160))
+            output = io.BytesIO(); photo.save(output, format="JPEG", quality=95)
+            page.locator("#qr-image").set_input_files({"name": f"page-{index+1}.jpg", "mimeType": "image/jpeg", "buffer": output.getvalue()})
+            expect(page.locator(".page-check-list button")).to_have_count(index + 1, timeout=30000)
+        expect(page.locator("video")).to_have_count(0, timeout=10000)
+        expect(page.get_by_role("region", name="Document check").get_by_text("All 2 pages collected.", exact=True)).to_be_visible()
+        expect(page.get_by_text("Show the next page, or review the pages captured so far.", exact=True)).to_have_count(0)
+        expect(page.get_by_role("region", name="Review Page 2 of 2").locator(".photo-differences")).to_contain_text("Monday", timeout=60000)
+        assert page.evaluate("window.__cameraTracks.every(track => track.readyState === 'ended')")
+        page.get_by_role("button", name="Finish & clear", exact=True).click()
+        expect(page.locator(".photo-stage img")).to_have_count(0)
+    finally:
+        context.close()
+
+
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
 @pytest.mark.parametrize("offline", [False, True], ids=["network-guard", "airplane-mode"])
 def test_guided_pages_find_changed_word_and_clear_without_persistence(browser, sealed_text, path, offline, tmp_path):

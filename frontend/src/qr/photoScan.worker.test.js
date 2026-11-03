@@ -55,3 +55,11 @@ it("does not announce capture or run recovery for an unsteady frame", () => {
   expect(scan.frame).not.toHaveBeenCalled();
   expect(scan.photo).not.toHaveBeenCalled();
 });
+
+it("hands off a native capture without spending time decoding the preview", () => {
+  scope.onmessage({ data: { image, live: true, requirePageQuality: true, captureOnly: true } });
+  expect(scope.postMessage).toHaveBeenCalledTimes(1);
+  expect(scope.postMessage).toHaveBeenCalledWith({ captured: true, captureOnly: true, quality: { ready: true, state: "ready" } });
+  expect(scan.photo).not.toHaveBeenCalled();
+  expect(scan.frame).not.toHaveBeenCalled();
+});

@@ -164,6 +164,7 @@ export function SealVerification({ verification }) {
     {notice && notice !== "Check cleared. Camera off." && <p role="status">{notice}</p>}
     <PhotoTextVerification results={results} seals={seals} session={verification.session} checks={verification.textChecks}
       scanPhotos={verification.scanImages?.photos} captureNotice={verification.scanImages?.notice}
+      collectionProgress={verification.progress}
       scanning={verification.scanning} verifying={busy} onReplacePhoto={verification.replacePhoto} />
     {hasLocalSeals && <div>
       <p>This collection includes a seal made with a private key file. Use the issuer’s public key file to verify it.</p>

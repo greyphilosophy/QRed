@@ -6,6 +6,62 @@ from test_photo_verification import sealed_text, camera_paper, TEXT, PUBLIC_KEY,
 
 
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
+def test_native_still_capture_keeps_more_detail_and_acknowledges_only_after_capture(browser, sealed_text, path):
+    context = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="allow")
+    page = context.new_page()
+    try:
+        context.route("**/api/keys/default", lambda route: route.fulfill(json={"public_key": PUBLIC_KEY}))
+        page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000") + path, wait_until="networkidle")
+        if path != "/":
+            page.locator("#publicKeyFileInput").set_input_files({"name": "key.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode()})
+        prepare_reader(page)
+        camera_paper(page, TEXT.replace("Friday", "Monday"), sealed_text[1]["qr"])
+        awaitable = """async () => {
+            const full = __syntheticCameraFrame.toDataURL('image/png');
+            const photo = await (await fetch(full)).blob();
+            const small = document.createElement('canvas'); small.width = 640; small.height = 853;
+            small.getContext('2d').drawImage(__syntheticPaper, 0, 0, 640, 853);
+            const preview = new Image(); preview.src = small.toDataURL(); await preview.decode();
+            __syntheticCameraFrame.width = 640; __syntheticCameraFrame.height = 853;
+            __syntheticPaper = preview;
+            window.stillRequests = [];
+            window.ImageCapture = class {
+                async getPhotoCapabilities() { return {imageWidth:{min:640,max:1440},imageHeight:{min:853,max:1920}}; }
+                async takePhoto(settings) {
+                    stillRequests.push(settings);
+                    await new Promise(resolve => { window.finishStillCapture = resolve; });
+                    return photo;
+                }
+            };
+        }"""
+        page.evaluate(awaitable)
+        baseline = persistent_state(page)
+        downloads = []; page.on("download", lambda item: downloads.append(item))
+        page.get_by_role("button", name="Check document", exact=True).click()
+        page.wait_for_function("stillRequests.length === 1")
+        expect(page.get_by_text("Hold steady — taking photo…", exact=True)).to_be_visible()
+        expect(page.get_by_text("Photo captured — processing…", exact=True)).to_have_count(0)
+        page.evaluate("finishStillCapture()")
+        expect(page.locator(".page-check-list button")).to_have_count(1, timeout=15000)
+        assert page.evaluate("stillRequests[0]") == {"fillLightMode": "off", "imageWidth": 1440, "imageHeight": 1920}
+        expect(page.get_by_text("Move the page to capture again, or use Capture now.", exact=True)).to_be_visible(timeout=5000)
+        # A still photo can take longer than the gate's normal frame-gap limit.
+        # The stationary page must not start another exposure after that delay.
+        page.wait_for_timeout(2000)
+        assert page.evaluate("stillRequests.length") == 1
+        page.get_by_role("button", name="Check this page now", exact=True).click()
+        review = page.get_by_role("region", name="Review Page 2 of 2", exact=True)
+        expect(review.locator(".photo-differences")).to_contain_text("Monday", timeout=30000)
+        assert review.locator(".photo-stage img").evaluate("img => [img.naturalWidth,img.naturalHeight]") == [1440, 1920]
+        assert persistent_state(page) == baseline
+        assert downloads == []
+        page.get_by_role("button", name="Finish & clear", exact=True).click()
+        assert page.evaluate("__cameraTracks.every(track => track.readyState === 'ended')")
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("path", ["/", "/verify.htm"])
 def test_auto_capture_quality_manual_fallback_and_retake(browser, sealed_text, path, tmp_path):
     context = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="allow")
     page = context.new_page()
