@@ -215,7 +215,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       returnPayload,
       requirePageQuality: autoCapture,
       onQuality: quality => {
-        setQuality(quality); stopGuide.update(quality);
+        setQuality(quality);
         if (!quality.ready && captureReported) { captureReported = false; setFeedback(null); }
       },
       onCaptured: () => {

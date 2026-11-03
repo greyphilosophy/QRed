@@ -175,10 +175,12 @@ The configured/default public key is for verification only. The stamping tool do
 
 On the homepage or `verify.htm`, choose **Check document** and allow camera access.
 QRed prepares its local English text reader before opening the camera. Frame each
-whole page upright, in good light, against a contrasting background. QRed detects
+whole page upright, in good light, against a contrasting background. QRed requests
+3840×2880 camera detail where available; lower resolutions remain supported. It detects
 the paper edges and waits for a sharp boundary and a steady hold of at least
-600 ms across several frames before reading its seal. The outline follows the
-detected page; live guidance explains when to move back, move closer, or wait for
+600 ms across several frames before reading its seal. Four fixed corners have
+the proportions of US Letter paper (8.5:11); align the sheet within them. They
+stay still as edge detection and guidance change. Live guidance explains when to move back, move closer, or wait for
 focus. These are capture heuristics, not proof of document completeness or text
 legibility. A sharp photograph of poorly printed, covered, or missing text still
 proceeds to comparison. The same temporary frame is used for seal
@@ -187,8 +189,16 @@ from the phone's gallery. Frames are not stacked, enhanced, or cropped to create
 the retained evidence image. Only one frame is in flight; it stays unchanged
 until its seal result is associated with it.
 
-Use **Capture now** on either verifier if the edges cannot be detected or live
-recovery needs a longer still-image attempt. This overrides the automatic capture
+Seal recovery first tries a small preview, then a perspective-corrected working
+copy calibrated to the QR's printed corner and alignment patterns. Dark text is
+missing QR evidence, resolved only by QR parity; the recovered payload still
+requires signature verification. The original photograph supplies text comparison.
+Photo decoding shares an eight-second retry budget, checked between bounded
+attempts; a device can take longer to finish its current attempt. Unreadable
+photos return retake guidance instead of exhausting every layout guess.
+
+Use **Capture now** on either verifier if the edges cannot be detected or
+automatic capture will not settle. This overrides the automatic capture
 conditions, not signature verification. Retakes use the same automatic capture
 and manual fallback. Physical phone/print trials are still needed to tune the
 capture thresholds across cameras, lighting, backgrounds, and paper conditions.

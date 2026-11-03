@@ -139,20 +139,16 @@ function geometry(map, size) {
 
 // Called only by the bounded static-photo/manual-capture recovery fallback.
 // Each code remains subject to normal byte-payload and Ed25519 verification.
-function recoverWithSampling(image, pageMapping, region, version, foregroundRobust) {
-  const refined = refineQrModuleGrid(image, pageMapping, region, version, { foregroundRobust });
-  if (!refined || refined.quality < 0.66) return null;
-  const sampled = sampleRefinedQrMatrix(image, refined.moduleMap, version, { foregroundRobust });
+export function recoverSampledQrMatrix(sampled, moduleMap, version, options = {}) {
   if (versionDistance(sampled.bits, version) > 3) return null;
   const imageQr = raster(sampled);
   const ordinary = jsQR(imageQr.data, imageQr.width, imageQr.width,
     { inversionAttempts: "dontInvert" });
-  const location = geometry(refined.moduleMap, sampled.size);
+  const location = geometry(moduleMap, sampled.size);
   let seal = ordinary?.version === version && qredPayloadFromScanResult(ordinary);
   if (seal) return { seal, code: { ...ordinary, location, pageAligned: true, refined: true } };
   if (!sampled.unknown.some(Boolean)) return null;
-  const recovered = readErasedQrMatrix(sampled.bits, sampled.unknown, version, sampled.confidence,
-    { allowSingleBitError: foregroundRobust, allowRankedErasures: !foregroundRobust });
+  const recovered = readErasedQrMatrix(sampled.bits, sampled.unknown, version, sampled.confidence, options);
   if (!recovered) return null;
   const code = {
     data: "", version, binaryData: bytePayloadFromCodewords(recovered.dataCodewords, version),
@@ -160,6 +156,14 @@ function recoverWithSampling(image, pageMapping, region, version, foregroundRobu
   };
   seal = qredPayloadFromScanResult(code);
   return seal ? { seal, code } : null;
+}
+
+function recoverWithSampling(image, pageMapping, region, version, foregroundRobust) {
+  const refined = refineQrModuleGrid(image, pageMapping, region, version, { foregroundRobust });
+  if (!refined || refined.quality < 0.66) return null;
+  const sampled = sampleRefinedQrMatrix(image, refined.moduleMap, version, { foregroundRobust });
+  return recoverSampledQrMatrix(sampled, refined.moduleMap, version,
+    { allowSingleBitError: foregroundRobust, allowRankedErasures: !foregroundRobust });
 }
 
 export function recoverRefinedQrRegion(image, pageMapping, region, version) {

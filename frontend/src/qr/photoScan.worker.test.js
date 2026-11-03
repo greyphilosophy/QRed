@@ -20,12 +20,12 @@ const image = { data: new Uint8ClampedArray(24), width: 2, height: 3 };
 const capture = () => scope.onmessage({ data: { image, live: true, requirePageQuality: true, returnPayload: true } });
 
 it("announces capture before any seal work and recovers from that same image", () => {
-  scan.frame.mockImplementation(() => {
+  scan.photo.mockImplementation(() => {
     expect(scope.postMessage).toHaveBeenCalledWith({ captured: true, quality: { ready: true, state: "ready" } });
-    return null;
+    return { status: "found", text: "recovered seal" };
   });
-  scan.photo.mockReturnValue({ status: "found", text: "recovered seal" });
   capture();
+  expect(scan.frame).not.toHaveBeenCalled();
   expect(scan.photo).toHaveBeenCalledWith(image, { returnPayload: true });
   expect(scope.postMessage).toHaveBeenLastCalledWith({ action: { status: "found", text: "recovered seal" }, quality: { ready: true, state: "ready" } });
 });
@@ -47,14 +47,11 @@ it("ends an unsuccessful captured-photo read with retake guidance", () => {
   });
 });
 
-it("does not announce capture for an unsteady frame or run recovery for a complete fast result", () => {
+it("does not announce capture or run recovery for an unsteady frame", () => {
   scan.quality.mockReturnValueOnce({ ready: false, state: "hold" });
   capture();
   expect(scope.postMessage).toHaveBeenCalledTimes(1);
   expect(scope.postMessage.mock.calls[0][0].captured).toBeUndefined();
   expect(scan.frame).not.toHaveBeenCalled();
-  scan.action.mockReturnValue({ status: "found", text: "complete" });
-  scan.seal.mockReturnValue({ total_chunks: 1 });
-  capture();
   expect(scan.photo).not.toHaveBeenCalled();
 });

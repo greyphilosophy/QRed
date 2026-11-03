@@ -17,6 +17,12 @@ beforeEach(() => {
 });
 
 describe("bounded watermark scan budget", () => {
+  it("stops between image attempts when its shared deadline expires", () => {
+    let checks = 0;
+    scanQrImage(pixels, width, height, { shouldContinue: () => checks++ < 1 });
+    expect(jsQR).toHaveBeenCalledTimes(1);
+    expect(scanModuleAwareQr).not.toHaveBeenCalled();
+  });
   it("tries one small watermark preview and maps its geometry back to the untouched original", () => {
     const width = 2048, height = 1536;
     const original = new Uint8ClampedArray(width * height * 4).fill(255);

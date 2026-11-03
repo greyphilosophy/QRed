@@ -31,7 +31,7 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
     const canvas = document.createElement("canvas"), epoch = generation.current;
     const stopGuide = observePageScanGuide(video.current, guideArea.current, guide.current);
     live.current = createLiveScanWorker({ returnPayload: true, requirePageQuality: true,
-      onQuality: value => { setQuality(value); stopGuide.update(value); },
+      onQuality: setQuality,
       onCaptured: () => { busyRef.current = true; setBusy(true); setError(""); },
       onResult: action => {
         if (action.text || action.texts?.length) acceptFrame(action, canvas, epoch);

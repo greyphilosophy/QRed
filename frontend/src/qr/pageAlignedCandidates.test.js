@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import QRCode from "qrcode";
-import { chooseVersions, refineSingles } from "./pageAlignedScan.js";
+import { chooseVersions, locatePaper, refineSingles } from "./pageAlignedScan.js";
 import { recoverRefinedQrRegion } from "./pageAlignedRecovery.js";
 
 vi.mock("./pageAlignedRecovery.js", () => ({ recoverRefinedQrRegion: vi.fn() }));
@@ -26,6 +26,30 @@ it("keeps a single 16-region limit across competing mappings and versions", () =
   const candidates = Array.from({ length: 20 }, (_, i) => hypothesis(0.9 - i * 0.01));
   expect(refineSingles({}, candidates)).toEqual([]);
   expect(recoverRefinedQrRegion).toHaveBeenCalledTimes(16);
+});
+
+it("stops refinement between candidates when the photo deadline expires", () => {
+  let checks = 0;
+  expect(refineSingles({}, [hypothesis(0.9)], () => checks++ < 1)).toEqual([]);
+  expect(recoverRefinedQrRegion).toHaveBeenCalledTimes(1);
+});
+
+it("finds mildly tinted paper on a patterned desk with two dark corners", () => {
+  const width = 400, height = 520, data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const inside = x >= 35 && x <= 365 && y >= 30 && y <= 490;
+    const rgb = inside ? (y < 110 ? [205, 190, 197] : [200, 200, 200])
+      : y > 510 ? [15, 14, 17] : (Math.floor(x / 18) + Math.floor(y / 23)) % 2
+        ? [150, 100, 180] : [60, 43, 67];
+    data.set([...rgb, 255], (y * width + x) * 4);
+  }
+  const quad = locatePaper({ data, width, height });
+  const expected = [[35, 30], [365, 30], [365, 490], [35, 490]];
+  expect(quad).toHaveLength(4);
+  quad.forEach((point, i) => {
+    expect(Math.abs(point.x - expected[i][0])).toBeLessThan(3);
+    expect(Math.abs(point.y - expected[i][1])).toBeLessThan(3);
+  });
 });
 
 it("uses a visible version field to disambiguate nearby grid sizes, without requiring it", () => {
