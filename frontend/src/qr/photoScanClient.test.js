@@ -170,3 +170,146 @@ it.each(["decode", "load", "message", "transfer"])("stops live decoding on a %s 
   expect(worker.terminate).toHaveBeenCalledTimes(1);
   expect(live.scan(image())).toBe(false);
 });
+
+it("terminates an unresponsive photo at the deadline and ignores queued success", async () => {
+  vi.useFakeTimers();
+  try {
+    const pending = scanPhotoInWorker(image());
+    const late = worker.onmessage;
+    vi.advanceTimersByTime(7999);
+    expect(worker.terminate).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    await expect(pending).resolves.toMatchObject({ status: "feedback", timedOut: true });
+    late({ data: { action: { status: "found", text: "late" } } });
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+
+it("checkpoints partial chunks without settling or extending the deadline", async () => {
+  vi.useFakeTimers();
+  try {
+    const settled = vi.fn();
+    const pending = scanPhotoInWorker(image()).then(settled);
+    vi.advanceTimersByTime(7000);
+    worker.onmessage({ data: { progress: { status: "found-multiple", texts: ["first", "second"] } } });
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    expect(worker.terminate).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1000);
+    await pending;
+    expect(settled).toHaveBeenCalledWith(expect.objectContaining({ status: "found-multiple", texts: ["first", "second"], timedOut: true }));
+  } finally { vi.useRealTimers(); }
+});
+
+it("keeps concurrent photo deadlines and partials independent", async () => {
+  vi.useFakeTimers();
+  try {
+    const first = worker, second = { postMessage: vi.fn(), terminate: vi.fn() };
+    Worker.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const one = scanPhotoInWorker(image());
+    first.onmessage({ data: { progress: { status: "found-multiple", texts: ["first"] } } });
+    vi.advanceTimersByTime(4000);
+    const two = scanPhotoInWorker(image());
+    vi.advanceTimersByTime(4000);
+    await expect(one).resolves.toMatchObject({ texts: ["first"], timedOut: true });
+    expect(second.terminate).not.toHaveBeenCalled();
+    second.onmessage({ data: { action: { status: "found", text: "second" } } });
+    await expect(two).resolves.toEqual({ status: "found", text: "second" });
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+
+it.each(["success", "cancel", "load", "message", "decode", "transfer"])("clears the photo deadline after %s", async kind => {
+  vi.useFakeTimers();
+  try {
+    const controller = new AbortController();
+    if (kind === "transfer") worker.postMessage.mockImplementation(() => { throw new Error("transfer failed"); });
+    const pending = scanPhotoInWorker(image(), { signal: controller.signal });
+    if (kind === "success") worker.onmessage({ data: { action: { status: "found", text: "on time" } } });
+    if (kind === "cancel") controller.abort();
+    if (kind === "load") worker.onerror({ preventDefault: vi.fn() });
+    if (kind === "message") worker.onmessageerror();
+    if (kind === "decode") worker.onmessage({ data: { error: "Invalid photo" } });
+    if (kind === "success") await expect(pending).resolves.toMatchObject({ text: "on time" });
+    else if (kind === "cancel") await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    else await expect(pending).rejects.toBeInstanceOf(Error);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(9000);
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+  } finally { vi.useRealTimers(); }
+});
+
+it("does not apply the seal-reading deadline to OCR preparation", async () => {
+  vi.useFakeTimers();
+  try {
+    const pending = preparePhotoReadingInWorker(image());
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(9000);
+    expect(worker.terminate).not.toHaveBeenCalled();
+    const action = { image: image(), codes: [] };
+    worker.onmessage({ data: { action } });
+    await expect(pending).resolves.toEqual(action);
+  } finally { vi.useRealTimers(); }
+});
+
+it("bounds a captured live photo, preserves chunks, and requires reset before recapture", () => {
+  vi.useFakeTimers();
+  try {
+    const onResult = vi.fn(), onError = vi.fn();
+    const live = createLiveScanWorker({ onResult, onError, requirePageQuality: true });
+    live.scan(image());
+    const late = worker.onmessage;
+    worker.onmessage({ data: { captured: true, quality: { ready: true } } });
+    worker.onmessage({ data: { progress: { status: "found-multiple", texts: ["partial"] } } });
+    vi.advanceTimersByTime(8000);
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+    expect(live.busy).toBe(false);
+    expect(onResult).toHaveBeenCalledWith(expect.objectContaining({ texts: ["partial"], timedOut: true }));
+    expect(live.scan(image())).toBe(false);
+    late({ data: { action: { status: "found", text: "late" } } });
+    expect(onResult).toHaveBeenCalledTimes(1);
+    live.reset();
+    const second = { postMessage: vi.fn(), terminate: vi.fn() };
+    Worker.mockReturnValueOnce(second);
+    expect(live.scan(image())).toBe(true);
+    second.onmessage({ data: { captured: true, quality: { ready: true } } });
+    second.onmessage({ data: { action: { status: "found", text: "fresh" } } });
+    expect(onResult).toHaveBeenLastCalledWith({ status: "found", text: "fresh" });
+    expect(onError).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    live.stop();
+  } finally { vi.useRealTimers(); }
+});
+
+it.each(["reset", "stop", "result", "error"])("clears a captured live deadline on %s", kind => {
+  vi.useFakeTimers();
+  try {
+    const onResult = vi.fn(), onError = vi.fn();
+    const live = createLiveScanWorker({ onResult, onError });
+    live.scan(image());
+    worker.onmessage({ data: { captured: true } });
+    expect(vi.getTimerCount()).toBe(1);
+    if (kind === "reset") live.reset();
+    if (kind === "stop") live.stop();
+    if (kind === "result") worker.onmessage({ data: { action: { status: "continue" } } });
+    if (kind === "error") worker.onerror({ preventDefault: vi.fn() });
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(9000);
+    expect(onResult).toHaveBeenCalledTimes(kind === "result" ? 1 : 0);
+    live.stop();
+  } finally { vi.useRealTimers(); }
+});
+
+it("does not start a captured-photo deadline for native still handoff", () => {
+  vi.useFakeTimers();
+  try {
+    const live = createLiveScanWorker({ onResult: vi.fn(), onError: vi.fn(), requirePageQuality: true });
+    live.scan(image(), { captureOnly: true });
+    worker.onmessage({ data: { captured: true, captureOnly: true, quality: { ready: true } } });
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(9000);
+    expect(worker.terminate).not.toHaveBeenCalled();
+    live.stop();
+  } finally { vi.useRealTimers(); }
+});

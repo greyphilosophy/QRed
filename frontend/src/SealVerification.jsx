@@ -142,6 +142,9 @@ export function SealVerification({ verification }) {
       if (action.status === "found-multiple") action.texts.forEach((seal, index) => addSeal(seal, index === 0 ? canvas : null));
       else if (action.status === "found") addSeal(action.text, canvas);
       else setNotice(action.message || "No readable seal found. Try another photo.");
+      // A timeout can retain useful chunks without completing the page.
+      // Set this after collection, which clears notices when adding a seal.
+      if (action.timedOut && action.message) setNotice(action.message);
     } catch (error) {
       if (request === imageRead.current && error.name !== "AbortError") setNotice(error.message);
     } finally {

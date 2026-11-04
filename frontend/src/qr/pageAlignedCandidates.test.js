@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import QRCode from "qrcode";
-import { chooseVersions, locatePaper, refineSingles } from "./pageAlignedScan.js";
+import { chooseVersions, locatePaper, refineSingles, refineQuadrants } from "./pageAlignedScan.js";
 import { recoverRefinedQrRegion } from "./pageAlignedRecovery.js";
 
 vi.mock("./pageAlignedRecovery.js", () => ({ recoverRefinedQrRegion: vi.fn() }));
@@ -89,4 +89,19 @@ it("uses a visible version field to disambiguate nearby grid sizes, without requ
   const obscured = chooseVersions(image, mapping, region);
   expect(obscured[0].version).not.toBe(28);
   expect(obscured.some(candidate => candidate.version === 28)).toBe(true);
+});
+
+
+it("checkpoints a refined quadrant before a later recovery attempt can block", () => {
+  const onSeal = vi.fn();
+  const recovered = { seal: "first-recovered-chunk", code: { version: 28 } };
+  recoverRefinedQrRegion.mockReturnValueOnce(recovered).mockImplementationOnce(() => {
+    expect(onSeal).toHaveBeenCalledWith(recovered.seal);
+    throw new Error("terminated during next quadrant");
+  });
+  const quadrants = [{ mapping: (x, y) => ({ x, y }),
+    regions: Array.from({ length: 4 }, () => ({ x: 0, y: 0, width: 0.5, height: 0.5 })),
+    versions: Array.from({ length: 4 }, () => [{ version: 28, score: 0.8 }]), codes: [] }];
+  expect(() => refineQuadrants({}, quadrants, [], () => true, onSeal)).toThrow("terminated");
+  expect(onSeal).toHaveBeenCalledTimes(1);
 });

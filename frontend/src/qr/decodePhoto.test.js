@@ -53,7 +53,7 @@ it.each(["HTTPS://QRED.ORG", "https://example.test"])("continues watermark recov
   scanWatermarkPreview.mockReturnValue({ data });
   scanPageAlignedImage.mockReturnValue([{ seal: single }]);
   expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found-multiple", texts: [single] });
-  expect(scanPageAlignedImage).toHaveBeenCalledWith(image, { deep: true, shouldContinue: expect.any(Function) });
+  expect(scanPageAlignedImage).toHaveBeenCalledWith(image, { deep: true, shouldContinue: expect.any(Function), onSeal: expect.any(Function) });
 });
 
 it("collects all four chunks even when the preview has already read one", () => {
@@ -172,4 +172,42 @@ it("continues searching when an unrelated complete footer accompanies an incompl
   scanPageAlignedImage.mockReturnValue(multiple.map(seal => ({ seal })));
   expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found-multiple", texts: [...multiple, single] });
   expect(scanPageAlignedImage).toHaveBeenCalled();
+});
+
+it("checkpoints only newly decoded chunks before slower fallback work", async () => {
+  const onProgress = vi.fn();
+  scanRectifiedSeal.mockReturnValueOnce({ seal: multiple[0] }).mockReturnValue(null);
+  scanWatermarkPreview.mockReturnValue(code(multiple[0]));
+  scanQrImage.mockReturnValue(code(multiple[1]));
+  scanFooterSeals.mockImplementation(() => {
+    expect(onProgress.mock.calls.map(([action]) => action.texts)).toEqual([[multiple[0]], [multiple[0], multiple[1]]]);
+    return [];
+  });
+  decodePhoto(image, { returnPayload: true, onProgress });
+  expect(onProgress).toHaveBeenCalledTimes(2);
+  const checkpoint = onProgress.mock.calls[0][0];
+  expect(checkpoint.texts).toEqual([multiple[0]]);
+  // Checkpointing is collection, not signature verification.
+  expect((await verifyQRedSeals([single], "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI")).status).toBe("INVALID");
+});
+
+it("does not report navigation or unrelated QR text as seal progress", () => {
+  const onProgress = vi.fn();
+  scanWatermarkPreview.mockReturnValue({ data: "https://qred.org" });
+  scanQrImage.mockReturnValue({ data: "https://example.test" });
+  decodePhoto(image, { returnPayload: true, onProgress });
+  expect(onProgress).not.toHaveBeenCalled();
+});
+
+it.each(["footer", "alignment"])("checkpoints a chunk before the next %s attempt can block", stage => {
+  const onProgress = vi.fn();
+  const scanner = stage === "footer" ? scanFooterSeals : scanPageAlignedImage;
+  scanner.mockImplementation((_image, { onSeal }) => {
+    onSeal(multiple[0]);
+    expect(onProgress).toHaveBeenCalledWith({ status: "found-multiple", texts: [multiple[0]] });
+    // Simulate termination during the next attempt, before the helper returns.
+    throw new Error("terminated during the next synchronous attempt");
+  });
+  expect(() => decodePhoto(image, { returnPayload: true, onProgress })).toThrow("terminated");
+  expect(onProgress).toHaveBeenCalledTimes(1);
 });

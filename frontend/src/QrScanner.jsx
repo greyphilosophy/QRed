@@ -249,7 +249,8 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
           // All chunks share the same captured page photograph.
           if (!onScan(text, canvasRef.current)) { shouldStop = true; break; }
         }
-        setFeedback(added ? "Page captured. Show the next page." : "This page is already captured. Show the next page.");
+        setFeedback(scanAction.timedOut ? scanAction.message
+          : added ? "Page captured. Show the next page." : "This page is already captured. Show the next page.");
         if (added && typeof navigator.vibrate === "function") navigator.vibrate(80);
         if (shouldStop) { camera.stop(); return true; }
         return false;

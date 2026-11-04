@@ -85,3 +85,14 @@ it("can stop while copying a candidate without decoding it", () => {
   expect(scanFooterSeals(image, { shouldContinue: () => ++checks < discoveryChecks + 5 })).toEqual([]);
   expect(checks).toBe(discoveryChecks + 5);
 });
+
+it("checkpoints the first footer seal before attempting later candidates", () => {
+  const recovered = [];
+  const codes = scanFooterSeals(image, {
+    onSeal: seal => recovered.push(seal),
+    shouldContinue: () => recovered.length === 0,
+  });
+  expect(recovered).toHaveLength(1);
+  expect(codes.map(qredPayloadFromScanResult)).toEqual(recovered);
+  expect(seals).toContain(recovered[0]);
+});

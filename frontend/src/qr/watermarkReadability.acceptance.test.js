@@ -539,6 +539,23 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
       .resolves.toMatchObject({ status: "INCOMPLETE" });
   }, 120000);
 
+  it("checkpoints a recovered quadrant before further page-aligned attempts", async () => {
+    const { seals } = await signed("Four-quadrant signed page\n" + "QRed evidence-".repeat(700));
+    expect(seals).toHaveLength(4);
+    const photo = printAndPhotograph(seals, {
+      width: 1000, height: 1300, ink: [61, 135, 225], tilted: true,
+    });
+    const checkpoints = [];
+    const recovered = scanPageAlignedImage(photo, {
+      deep: true,
+      onSeal: seal => checkpoints.push(seal),
+      shouldContinue: () => checkpoints.length === 0,
+    });
+    expect(checkpoints).toHaveLength(1);
+    expect(seals).toContain(checkpoints[0]);
+    expect(recovered.map(result => result.seal)).toEqual(checkpoints);
+  }, 60000);
+
   it("[WM-05] never reports a signed seal on blank paper with colored foreground alone", async () => {
     const photo = printAndPhotograph([], { ink: [216, 86, 72], finderBlocked: false });
     expect((await scanPdfPage(photo)).seals).toEqual([]);

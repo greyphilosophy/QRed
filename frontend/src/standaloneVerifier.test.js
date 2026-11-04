@@ -280,6 +280,45 @@ it("collects a page-aligned batch from one live camera frame", async () => {
   for (const [source] of snapshot.mock.calls) expect(source).toBe(document.getElementById("scanCanvas"));
 });
 
+it("keeps timeout retry guidance after collecting new or duplicate partial camera seals", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const { seals } = await createQRedSeals({ content: "A".repeat(3000), encodingStrategy: "plaintext",
+    timestamp: "2026-11-04T12:00:00Z", privateKey, publicKey });
+  expect(seals).toHaveLength(2);
+  let callbacks;
+  const reset = vi.fn(), retry = vi.fn().mockResolvedValue({ status: "feedback", message: "Retry finished." });
+  loadStandalone({
+    createLiveScanWorker: options => {
+      callbacks = options;
+      return { busy: false, reset, scan: vi.fn(), stop: vi.fn() };
+    },
+    startCameraSession: () => ({ stop: vi.fn() }),
+    scanPhotoInWorker: retry,
+    canCaptureCameraPhoto: () => false,
+  });
+  const video = document.getElementById("cameraVideo");
+  Object.defineProperties(video, { videoWidth: { value: 20 }, videoHeight: { value: 30 } });
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage() {}, getImageData: () => ({}) });
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(callbacks).toBeDefined());
+  const action = { status: "found-multiple", texts: [seals[0]], timedOut: true,
+    message: "The photo scan reached its time limit. Use Capture now to try again." };
+  callbacks.onCaptured();
+  callbacks.onResult(action);
+  await waitFor(() => expect(document.querySelectorAll(".seal-item")).toHaveLength(1));
+  expect(document.getElementById("statusText").textContent).toContain("1 of 2 QR seals");
+  expect(document.getElementById("pageGuideHint").textContent).toBe(action.message);
+  callbacks.onResult(action);
+  expect(document.getElementById("pageGuideHint").textContent).toBe(action.message);
+  const capture = document.getElementById("btnCapture");
+  expect(capture.hidden).toBe(false);
+  expect(capture.textContent).toBe("Capture now");
+  fireEvent.click(capture);
+  await waitFor(() => expect(retry).toHaveBeenCalledTimes(1));
+  expect(reset).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(document.getElementById("pageGuideHint").textContent).toBe("Retry finished."));
+});
+
 
 it("shows a mixed-document warning instead of an all-authenticated summary for a current cover and older results", async () => {
   vi.stubGlobal("crypto", webcrypto);
