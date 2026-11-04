@@ -1,16 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { createCanvas } from "@napi-rs/canvas";
+import { createCanvas, GlobalFonts } from "@napi-rs/canvas";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { readPdfPagesWithEvidence } from "./readPdfText.js";
 import { PDFDocument, degrees } from "pdf-lib";
 import { sealPdfInBrowser, prepareAccountPdfSeal } from "../pdfClientSeal.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { decodePageEvidence } from "../pageEvidence.js";
+// Do not depend on a runner's generic sans-serif fallback. The locked PDF.js
+// package already ships this font, so every OCR fixture has the same glyphs.
+const require = createRequire(import.meta.url);
+if (!GlobalFonts.registerFromPath(join(dirname(require.resolve("pdfjs-dist/package.json")),
+  "standard_fonts/LiberationSans-Regular.ttf"), "QRedOcrFixture")) throw new Error("OCR fixture font could not load");
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
 async function scanPdf(native = false) {
   const canvas = createCanvas(600, 300), context = canvas.getContext("2d");
   context.fillStyle = "white"; context.fillRect(0, 0, 600, 300);
-  context.fillStyle = "black"; context.font = "32px sans-serif";
+  context.fillStyle = "black"; context.font = "32px QRedOcrFixture";
   context.fillText("Account 123456", 30, 65); context.fillText("Amount 50.00", 30, 120);
   const pdf = await PDFDocument.create(), page = pdf.addPage([600, 700]);
   const image = await pdf.embedPng(canvas.toBuffer("image/png"));

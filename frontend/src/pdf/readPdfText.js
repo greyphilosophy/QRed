@@ -49,7 +49,10 @@ export async function withPdfDocument(file, read) {
     cMapPacked: true,
     standardFontDataUrl: `${assetBase}standard_fonts/`,
     wasmUrl: `${assetBase}wasm/`,
-    useSystemFonts: true,
+    // Node has no browser font loader and its installed fonts vary by runner.
+    // Use PDF.js bundled Standard 14 outlines for deterministic raster evidence.
+    // Keep browser font handling unchanged.
+    useSystemFonts: !import.meta.env.SSR,
     isEvalSupported: false,
     stopAtErrors: true,
   });
