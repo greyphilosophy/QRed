@@ -1,5 +1,11 @@
 import { expect, it, vi } from "vitest";
-import { collectModuleSamples, classifyModuleSamples } from "./rectifiedModuleSamples.js";
+import QRCode from "qrcode";
+import { createQRedSeals } from "../qredSealer.js";
+import { createQRedQrData } from "../qredQr.js";
+import { verifyQRedSeals } from "../qredVerifier.js";
+import { recoverSampledQrMatrix } from "./pageAlignedRecovery.js";
+import { collectModuleSamples, classifyModuleSamples, classifyLocalModuleSamples,
+  measureLocalModuleContrast } from "./rectifiedModuleSamples.js";
 
 it("reads geometry once while threshold retries retain their own ink and erasure decisions", () => {
   const version = 7, size = 45, side = size * 20;
@@ -37,3 +43,125 @@ it("keeps covered, tied and out-of-frame observations as uncertain evidence", ()
   const outside = collectModuleSamples(new Uint8Array([245]), 1, 1, () => ({ x: -1, y: 2 }), 7);
   expect(outside.values.every(value => value === 0)).toBe(true);
 });
+
+it("measures local ink and paper across a shadow instead of erasing darker watermark ink", () => {
+  const size = 45, values = new Uint8Array(size * size * 25);
+  const expected = new Uint8Array(size * size);
+  for (let row = 0; row < size; row++) for (let col = 0; col < size; col++) {
+    const i = row * size + col;
+    expected[i] = Number((col + row) % 2 === 0);
+    const paper = 252 - 42 * row / (size - 1), ink = 222 - 62 * row / (size - 1);
+    values.fill(Math.round(expected[i] ? ink : paper), i * 25, (i + 1) * 25);
+  }
+  const original = values.slice();
+  const local = classifyLocalModuleSamples({ values, size });
+  expect(local.bits).toEqual(expected);
+  expect(local.unknown.some(Boolean)).toBe(false);
+  const fixed = classifyModuleSamples({ values, size }, 230, 180);
+  expect(fixed.bits).not.toEqual(expected);
+  expect(fixed.unknown.some(Boolean)).toBe(true);
+  expect(values).toEqual(original);
+});
+
+it("keeps dark foreground and absent contrast uncertain during local calibration", () => {
+  const size = 25, values = new Uint8Array(size * size * 25);
+  for (let i = 0; i < size * size; i++) values.fill(i % 2 ? 245 : 200, i * 25, (i + 1) * 25);
+  values.fill(25, 12 * size * 25, (12 * size + 4) * 25);
+  const local = classifyLocalModuleSamples({ values, size });
+  expect(Array.from(local.unknown.slice(12 * size, 12 * size + 4))).toEqual([1, 1, 1, 1]);
+  values.fill(245);
+  expect(classifyLocalModuleSamples({ values, size }).unknown.every(Boolean)).toBe(true);
+  values.fill(0);
+  expect(classifyLocalModuleSamples({ values, size }).unknown.every(Boolean)).toBe(true);
+});
+
+it("stops local calibration when its cooperative deadline expires", () => {
+  const size = 45, values = new Uint8Array(size * size * 25).fill(245);
+  const original = values.slice();
+  let checks = 0;
+  expect(classifyLocalModuleSamples({ values, size }, {
+    shouldContinue: () => ++checks < size + 3,
+  })).toBeNull();
+  expect(checks).toBe(size + 3);
+  expect(values).toEqual(original);
+});
+
+it.each([8, 12])("matches sorted local estimates with the sliding histogram at radius %i", radius => {
+  const size = 29, values = new Uint8Array(size * size * 25);
+  for (let row = 0; row < size; row++) for (let col = 0; col < size; col++) {
+    const at = (row * size + col) * 25;
+    values.fill(100 + (row * 17 + col * 31 + row * col * 7) % 155, at, at + 25);
+  }
+  const measured = measureLocalModuleContrast({ size, values }, { radius });
+  // Independent, deliberately slow reference includes every clipped edge
+  // and every horizontal window transition, not only one central patch.
+  for (let row = 0; row < size; row++) for (let col = 0; col < size; col++) {
+    const nearby = [];
+    for (let y = Math.max(0, row - radius); y <= Math.min(size - 1, row + radius); y++)
+      for (let x = Math.max(0, col - radius); x <= Math.min(size - 1, col + radius); x++)
+        nearby.push(values[(y * size + x) * 25]);
+    nearby.sort((a, b) => a - b);
+    const paper = nearby[Math.floor(nearby.length * 0.85)];
+    const exposed = nearby.filter(value => value > paper * 0.65);
+    let ink = exposed[Math.floor(exposed.length * 0.2)], light = exposed[Math.floor(exposed.length * 0.8)];
+    for (let iteration = 0; iteration < 5; iteration++) {
+      const middle = (ink + light) / 2;
+      const dark = exposed.filter(value => value < middle), white = exposed.filter(value => value >= middle);
+      if (dark.length) ink = dark.reduce((sum, value) => sum + value, 0) / dark.length;
+      if (white.length) light = white.reduce((sum, value) => sum + value, 0) / white.length;
+    }
+    expect(measured.inkLevels[row * size + col]).toBe(ink);
+    expect(measured.paperLevels[row * size + col]).toBe(light);
+  }
+});
+
+it("reuses one calibration for nearby threshold retries without remeasuring pixels", () => {
+  const size = 29, values = new Uint8Array(size * size * 25), index = 14 * size + 14;
+  for (let i = 0; i < size * size; i++) values.fill(i % 2 ? 250 : 200, i * 25, (i + 1) * 25);
+  values.fill(223, index * 25, (index + 1) * 25);
+  const samples = { size, values }, shouldContinue = vi.fn(() => true);
+  const contrast = measureLocalModuleContrast(samples, { radius: 12, shouldContinue });
+  expect(shouldContinue).toHaveBeenCalledTimes(size * 2);
+  shouldContinue.mockClear();
+  const middle = classifyLocalModuleSamples(samples, { contrast, shouldContinue });
+  const darker = classifyLocalModuleSamples(samples, { contrast, thresholdFraction: 0.4, shouldContinue });
+  expect(middle.bits[index]).toBe(1);
+  expect(darker.bits[index]).toBe(0);
+  expect(shouldContinue).toHaveBeenCalledTimes(size * 2);
+});
+
+it("recovers exact signed bytes under varying contrast and still rejects an unrelated key", async () => {
+  const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
+  const { seals } = await createQRedSeals({
+    privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey,
+    content: "Synthetic local contrast recovery. ".repeat(35), encodingStrategy: "plaintext",
+    timestamp: "2026-11-04T12:00:00Z", pageContext: { pageNumber: 1, pageCount: 2, documentRoot: "a1".repeat(32) },
+  });
+  expect(seals).toHaveLength(1);
+  const { payloadBytes } = createQRedQrData(seals[0]);
+  const symbol = QRCode.create([{ data: payloadBytes, mode: "byte" }], {
+    version: 31, errorCorrectionLevel: "L",
+  });
+  const size = symbol.modules.size, values = new Uint8Array(size * size * 25);
+  for (let row = 0; row < size; row++) for (let col = 0; col < size; col++) {
+    const paper = 252 - 42 * row / (size - 1), ink = 222 - 62 * row / (size - 1);
+    const base = symbol.modules.get(row, col) ? ink : paper;
+    const covered = row > 10 && row < size - 10 && row % 19 === 0 && col % 4 !== 0;
+    for (let sample = 0; sample < 25; sample++) {
+      values[(row * size + col) * 25 + sample] = covered && sample < 12
+        ? 30 : Math.round(base + (sample % 5) - 2);
+    }
+  }
+  const original = values.slice(), map = (col, row) => ({ x: col, y: row });
+  const recover = sampled => recoverSampledQrMatrix(sampled, map, 31,
+    { allowSingleBitError: true, allowRankedErasures: false });
+  expect(recover(classifyModuleSamples({ values, size }, 230, 180))?.seal).not.toBe(seals[0]);
+  const recovered = recover(classifyLocalModuleSamples({ values, size }));
+  expect(recovered?.seal).toBe(seals[0]);
+  expect(values).toEqual(original);
+  await expect(verifyQRedSeals([recovered.seal], publicKey)).resolves.toMatchObject({
+    status: "VALID", signature_valid: true, page_number: 1, page_count: 2,
+  });
+  await expect(verifyQRedSeals([recovered.seal], "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI"))
+    .resolves.toMatchObject({ status: "INVALID" });
+}, 10000);
