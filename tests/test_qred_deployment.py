@@ -548,6 +548,9 @@ class TestKeyGenerationImportAndSignatureVerification:
         page.get_by_label("Page layout", exact=True).select_option("legal-footer")
         with page.expect_download(timeout=60_000) as download_info:
             page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
+            # Native-only pages now preserve an independent OCR baseline too.
+            # Exercise the explicit source-review gesture before signing.
+            page.get_by_role("button", name="Sign these machine readings", exact=True).click(timeout=60_000)
         sealed_path = tmp_path / download_info.value.suggested_filename
         download_info.value.save_as(sealed_path)
         assert sealed_path.read_bytes().startswith(b"%PDF-")
