@@ -105,5 +105,5 @@ export function comparePageReading(expected, reading, dimensions, evidence) {
     boxes: indices.map(index => words[index].bbox) }));
   if (comparison.status === "matches" && (contrastAssisted || markings.length || retryReviews.length || reference.hasOcr)) comparison.status = "uncertain";
   return { ...comparison, contrastAssisted, markings, retryReviews,
-    sealedOcr: reference.hasOcr, referenceConflicts: reference.conflicts, referenceUnresolved: reference.unresolved };
+    sealedOcr: reference.hasOcr, referenceConflicts: reference.conflicts, referenceReviews: reference.reviews, referenceUnresolved: reference.unresolved };
 }

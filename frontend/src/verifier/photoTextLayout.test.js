@@ -156,3 +156,35 @@ it("matches an invoice heading beside an address even when PDF and OCR traverse 
   const missing = comparePageReading(content, { words: reading.filter(w => w.lineId !== 3) }, size, reference);
   expect(missing.differences).toEqual([expect.objectContaining({ expected: "United States", observed: "", boxes: [expect.any(Object)] })]);
 });
+
+const innerFrame = [{ x: 100, y: 140 }, { x: 900, y: 140 }, { x: 900, y: 1260 }, { x: 100, y: 1260 }];
+it("recovers a wrong inner-frame detection only through independently anchored full-raster geometry", () => {
+  const fixture = printedFixture();
+  const shuffled = [...fixture.reading].sort((a, b) => b.lineId - a.lineId);
+  const result = comparePageReading(fixture.content, { words: shuffled, corners: innerFrame }, size, fixture.evidence);
+  expect(result).toMatchObject({ status: "matches", lineAware: true, differences: [] });
+  expect(signedPhotoLines(fixture.content, fixture.evidence, innerFrame, size, shuffled))
+    .toEqual(signedPhotoLines(fixture.content, fixture.evidence, null, size, shuffled));
+});
+it("rejects inner-frame fallback without matching full aspect and sufficient distinct spread anchors", () => {
+  const fixture = printedFixture();
+  for (const reading of [fixture.reading.filter(w => w.lineId === 0 || w.lineId === 5),
+    fixture.reading.filter(w => w.lineId < 4),
+    [...fixture.reading, ...fixture.reading.map(w => ({ ...w, lineId: `copy-${w.lineId}` }))]]) {
+    expect(signedPhotoLines(fixture.content, fixture.evidence, innerFrame, size, reading)).toBeNull();
+  }
+  expect(signedPhotoLines(fixture.content, fixture.evidence, innerFrame,
+    { ...size, height: 1800 }, fixture.reading)).toBeNull();
+});
+it("keeps swapped, missing and added text detectable after rejecting an inner frame", () => {
+  const fixture = printedFixture();
+  const changed = fixture.reading.map(w => ({ ...w, text: w.text === "125.50" ? "5.25" : w.text === "5.25" ? "125.50" : w.text }));
+  const altered = comparePageReading(fixture.content, { words: changed, corners: innerFrame }, size, fixture.evidence);
+  expect(altered).toMatchObject({ status: "differences", lineAware: true });
+  expect(altered.differences).toContainEqual(expect.objectContaining({ context: "Room 125.50 0.00", observed: "5.25" }));
+  expect(altered.differences).toContainEqual(expect.objectContaining({ context: "Tax 5.25 0.00", observed: "125.50" }));
+  const missing = comparePageReading(fixture.content, { words: fixture.reading.filter(w => w.lineId !== 2), corners: innerFrame }, size, fixture.evidence);
+  expect(missing.differences).toContainEqual(expect.objectContaining({ expected: "Room 125.50 0.00", observed: "", boxes: [expect.any(Object)] }));
+  const extra = comparePageReading(fixture.content, { words: [...fixture.reading, word("Added", 20, 700)], corners: innerFrame }, size, fixture.evidence);
+  expect(extra.differences).toContainEqual(expect.objectContaining({ expected: "", observed: "Added" }));
+});

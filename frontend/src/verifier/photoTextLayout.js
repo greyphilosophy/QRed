@@ -10,7 +10,17 @@ export function enclosingBox(boxes) {
 // Signed locations describe the ORIGINAL page. Coarse line starts and a
 // different paper aspect (for example a Letter page extended with a Legal
 // footer) are not enough to infer safe line boxes: keep sequence comparison.
-export function signedPhotoLines(text, evidence, corners, { width, height }, words = []) {
+export function signedPhotoLines(text, evidence, corners, dimensions, words = []) {
+  const detected = locateSignedLines(text, evidence, corners, dimensions, words);
+  if (detected || !corners) return detected;
+  // Edge detection can find a watermark or inner frame instead of the page.
+  // Retry the raster bounds only through the existing strict borderless path:
+  // matching full-page aspect AND an independently calibrated global transform.
+  // Never relax the detected geometry or accept unanchored image bounds.
+  return locateSignedLines(text, evidence, null, dimensions, words);
+}
+
+function locateSignedLines(text, evidence, corners, { width, height }, words) {
   const lines = text.split("\n").filter(line => line.trim());
   // A PDF raster (or an edge-to-edge scan) has no surrounding paper border.
   // Its image bounds are only a candidate, never evidence by themselves:

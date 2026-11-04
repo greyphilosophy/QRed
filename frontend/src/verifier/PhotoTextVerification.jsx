@@ -86,9 +86,10 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
           It is a machine reading, not verified transcription. Even matching readings need review against the original page.</p>}
         {comparison && <>
           {comparison.referenceConflicts?.length > 0 && <div className="photo-summary uncertain">
-            <p>PDF text and sealing-time OCR disagree. Both readings remain in the comparison; inspect the overlapping regions.</p>
+            <p>PDF text and sealing-time OCR overlap or disagree. PDF text remains the required comparison target; the OCR reading is separate evidence to review, not a second copy of the printed text.</p>
             <ul>{comparison.referenceConflicts.map((conflict, index) => <li key={index}>PDF text: {conflict.native.join(" / ")} · Sealing-time OCR: {conflict.ocr}</li>)}</ul>
           </div>}
+          {comparison.referenceUnresolved && <p className="photo-note reading-caution">Some sealing-time OCR could not be independently located outside PDF text. Review the full OCR readings in the signed reference, including any extra words or amounts. They are not additional automatic comparison targets.</p>}
           {difficultReading && <p className="photo-note reading-caution">Many characters could not be read reliably. Inspect the marked text on the paper; recognition errors can look like changes.</p>}
           <div className="photo-differences">
             {contentDifferences.length > 0 && <>

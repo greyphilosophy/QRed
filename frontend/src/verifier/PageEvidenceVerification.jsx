@@ -66,10 +66,10 @@ function EvidencePage({ page, captures, onRetake }) {
           <span>{item.text}</span> <span className="photo-note">(OCR confidence: {Math.round(item.confidence)}%)</span>
         </li>)}</ol>}
       {reference.conflicts.length > 0 && <div className="photo-summary uncertain">
-        <p>PDF text and sealing-time OCR disagree in overlapping regions. Both readings are retained. Review these conflicts:</p>
+        <p>PDF text and sealing-time OCR overlap or disagree. Both readings are retained as signed evidence. PDF text is the required comparison target; inspect these source readings:</p>
         <ul>{reference.conflicts.map((conflict, index) => <li key={index}>PDF text: {conflict.native.join(" / ")} · OCR: {conflict.ocr}</li>)}</ul>
       </div>}
-      {reference.unresolved && <p className="photo-note">The two text sources could not be fully reconciled by location. Both readings are retained for review.</p>}
+      {reference.unresolved && <p className="photo-note">The two text sources could not be fully reconciled by location. Ambiguous OCR is retained above for review, not added as a duplicate comparison target. Check any extra words or amounts against the original page.</p>}
     </section>}
     <div className="evidence-comparison">
       <figure>
