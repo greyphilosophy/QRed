@@ -227,14 +227,14 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
                   } finally { detail.width = detail.height = 0; }
                 }
                 let selected = before;
-                for (const reading of readings) if (preferTextRetry(before, reading) && preferTextRetry(selected, reading)) selected = reading;
+                for (const reading of readings) if (preferTextRetry(before, reading, candidate) && preferTextRetry(selected, reading, candidate)) selected = reading;
                 if (selected !== before) replacements.push({ candidate, words: selected });
                 const transcript = selected.map(word => word.text).join(" ");
                 for (const reading of readings) {
                   const observed = reading.map(word => word.text).join(" ");
                   // Cross-model confidence is only a heuristic. Preserve a
                   // credible losing alternative as an explicit review too.
-                  if (observed !== transcript && reading.length && (preferTextRetry(before, reading)
+                  if (observed !== transcript && reading.length && (preferTextRetry(before, reading, candidate)
                     || reading.every(word => Number.isFinite(word.confidence) && word.confidence >= OCR_REVIEW_THRESHOLD)))
                     alternateReviews.push({ original: transcript, observed, boxes: [box] });
                 }

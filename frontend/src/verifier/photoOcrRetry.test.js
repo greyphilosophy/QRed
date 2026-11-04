@@ -95,3 +95,81 @@ it("does not let a confident row hide a newly hallucinated low-confidence token"
   expect(merged.words).toEqual(before);
   expect(merged.retryReviews).toEqual([]);
 });
+
+it("does not skip adjacent missing punctuation when only blank retry padding overlaps", () => {
+  const words = [word("First", 96, 100), word("Second", 96, 134)];
+  const lines = [90, 131].map((y, i) => ({ text: `${i ? "Second" : "First"} :`,
+    bbox: { x0: 10, y0: y, x1: 500, y1: y + 40 },
+    polygon: [{ x: 10, y }, { x: 500, y }, { x: 500, y: y + 40 }, { x: 10, y: y + 40 }] }));
+  const comparison = compareLocatedPhotoText("First :\nSecond :", words, size, lines);
+  const plans = planTextRetries(words, comparison, lines, size);
+  expect(plans).toHaveLength(2);
+  expect(plans[0].indices).toEqual([0]);
+  expect(plans[1].indices).toEqual([1]);
+  expect(plans[0].bbox.y1).toBeGreaterThan(plans[1].bbox.y0);
+});
+
+it("retains a punctuation addition between adjacent retry regions without replacing it twice", () => {
+  const words = [word("First", 96, 100), { ...word("!", 96, 128, 300), bbox: { x0: 300, y0: 128, x1: 305, y1: 130 } }, word("Second", 96, 134)];
+  const lines = [90, 131].map((y, i) => ({ text: `${i ? "Second" : "First"} :`,
+    bbox: { x0: 10, y0: y, x1: 500, y1: y + 40 },
+    polygon: [{ x: 10, y }, { x: 500, y }, { x: 500, y: y + 40 }, { x: 10, y: y + 40 }] }));
+  const comparison = compareLocatedPhotoText("First :\nSecond :", words, size, lines);
+  expect(comparison.differences.some(item => item.observed.includes("!"))).toBe(true);
+  const plans = planTextRetries(words, comparison, lines, size);
+  const indices = plans.flatMap(plan => plan.indices);
+  expect(indices.filter(index => index === 1)).toHaveLength(1);
+  expect(new Set(indices).size).toBe(indices.length);
+  const unchanged = applyTextRetries(words, plans.map(candidate => ({ candidate, words: candidate.indices.map(index => words[index]) })));
+  expect(unchanged.words.some(word => word.text === "!")).toBe(true);
+});
+
+it("uses fixed observed phrase neighborhoods for short disagreements in a long row", () => {
+  const tokens = ["|", "agree", "that", "|", "am", "personally", "liable", "for", "payment", "of", "this", "account", "and", "fees"];
+  const words = tokens.map((text, index) => ({ ...word(text, 96, 100, 20 + index * 60),
+    bbox: { x0: 20 + index * 60, y0: 100, x1: 70 + index * 60, y1: 125 } }));
+  const comparison = comparePageReading(tokens.map(text => text === "|" ? "I" : text).join(" "), { words }, size);
+  const plans = planTextRetries(words, comparison, null, size);
+  expect(plans).toHaveLength(1);
+  expect(plans[0].indices).toEqual([0, 1, 2, 3, 4, 5]);
+  expect(plans[0].bbox.x1).toBeLessThan(words[6].bbox.x0);
+});
+
+it("accepts a localized stronger glyph reading without using the signed target", () => {
+  const before = [word("|", 87), word("agree", 96, 100, 150), word("|", 90, 100, 300)];
+  const after = before.map((word, index) => ({ ...word, text: index === 1 ? "agree" : "I", confidence: index === 1 ? 88 : 99 }));
+  expect(preferTextRetry(before, after)).toBe(false);
+  expect(preferTextRetry(before, after, { localized: true })).toBe(true);
+  const merged = applyTextRetries(before, [{ candidate: { ...candidate, localized: true, indices: [0, 1, 2] }, words: after }]);
+  expect(merged.retryReviews).toEqual([expect.objectContaining({ original: "| agree |", observed: "I agree I" })]);
+  expect(comparePageReading("I agree I", merged, size).status).toBe("uncertain");
+  expect(comparePageReading("| agree |", merged, size).status).toBe("differences");
+});
+it("requires every changed token to improve and correspond spatially in localized selection", () => {
+  const before = [word("|", 87), word("agree", 96, 100, 150), word("|", 90, 100, 300)];
+  const after = before.map((word, index) => ({ ...word, text: index === 1 ? "agree" : "I", confidence: index === 1 ? 88 : 99 }));
+  for (const altered of [after.map((w, i) => i === 2 ? { ...w, confidence: 91 } : w),
+    after.map((w, i) => i === 0 ? { ...w, confidence: 80 } : w),
+    after.map((w, i) => i === 0 ? { ...w, bbox: { ...w.bbox, x0: 700, x1: 800 } } : w),
+    after.map((w, i) => i === 0 ? { ...w, bbox: { x0: 20 } } : w)]) {
+    expect(preferTextRetry(before, altered, { localized: true })).toBe(false);
+  }
+});
+it("does not use the localized path to remove, join, split or move meaningful text", () => {
+  const before = [word("Do", 96), word("not", 96, 100, 150), word("pay", 96, 100, 300)];
+  for (const after of [[before[0], before[2]],
+    [{ ...before[0], text: "Donot", confidence: 96 }, before[2]],
+    [before[0], { ...before[1], text: "no" }, { ...before[1], text: "t" }, before[2]],
+    [before[2], before[1], before[0]]]) {
+    expect(preferTextRetry(before, after, { localized: true })).toBe(false);
+  }
+});
+
+it("does not treat same-count word-boundary changes as localized glyph correction", () => {
+  const before = [word("paym", 90), word("ent", 90, 100, 150)];
+  const after = [{ ...before[0], text: "pay", confidence: 96 }, { ...before[1], text: "ment", confidence: 96 }];
+  // Keep the aggregate row preference below its existing +3 condition.
+  before.push(word("unchangedlongcontext", 99, 100, 300));
+  after.push({ ...before[2], confidence: 85 });
+  expect(preferTextRetry(before, after, { localized: true })).toBe(false);
+});
