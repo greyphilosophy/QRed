@@ -37,3 +37,59 @@ export function classifyModuleSamples({ values, size }, threshold, foreground) {
   }
   return { bits, unknown, confidence, size };
 }
+
+// A shadowed print can have pale ink near 220 in one corner and near 170 in
+// another, even after paper normalization. Calibrate both ink and foreground
+// locally instead of calling all pixels below a fixed level opaque text.
+// Only observed pixels enter this estimate, never expected document bytes.
+export function classifyLocalModuleSamples({ values, size }, {
+  shouldContinue = () => true,
+} = {}) {
+  const medians = new Uint8Array(size * size), cell = new Uint8Array(SAMPLES_PER_MODULE);
+  for (let i = 0; i < medians.length; i++) {
+    if (i % size === 0 && !shouldContinue()) return null;
+    cell.set(values.subarray(i * SAMPLES_PER_MODULE, (i + 1) * SAMPLES_PER_MODULE));
+    cell.sort();
+    medians[i] = cell[Math.floor(SAMPLES_PER_MODULE / 2)];
+  }
+  const bits = new Uint8Array(size * size), unknown = new Uint8Array(bits.length);
+  const confidence = new Uint8Array(bits.length), radius = 8;
+  for (let row = 0; row < size; row++) {
+    if (!shouldContinue()) return null;
+    for (let col = 0; col < size; col++) {
+      const neighbors = [];
+      for (let y = Math.max(0, row - radius); y <= Math.min(size - 1, row + radius); y++)
+        for (let x = Math.max(0, col - radius); x <= Math.min(size - 1, col + radius); x++)
+          neighbors.push(medians[y * size + x]);
+      neighbors.sort((a, b) => a - b);
+      const paper = neighbors[Math.floor(neighbors.length * 0.85)];
+      const exposed = neighbors.filter(value => value > paper * 0.65);
+      let ink = exposed[Math.floor(exposed.length * 0.2)];
+      let light = exposed[Math.floor(exposed.length * 0.8)];
+      for (let iteration = 0; iteration < 5; iteration++) {
+        const middle = (ink + light) / 2;
+        let darkSum = 0, lightSum = 0, darkCount = 0, lightCount = 0;
+        for (const value of exposed) {
+          if (value < middle) { darkSum += value; darkCount++; }
+          else { lightSum += value; lightCount++; }
+        }
+        if (darkCount) ink = darkSum / darkCount;
+        if (lightCount) light = lightSum / lightCount;
+      }
+      const index = row * size + col, threshold = (ink + light) / 2;
+      const foreground = ink * 0.9;
+      let dark = 0, white = 0, missing = 0;
+      for (let i = index * SAMPLES_PER_MODULE; i < (index + 1) * SAMPLES_PER_MODULE; i++) {
+        if (values[i] < foreground) missing++;
+        else if (values[i] < threshold) dark++;
+        else white++;
+      }
+      const margin = Math.abs(dark - white);
+      bits[index] = Number(dark > white);
+      // Uniform/fully covered neighborhoods have no usable contrast.
+      unknown[index] = Number(!exposed.length || light - ink < 8 || missing > 0 || margin < 5);
+      confidence[index] = missing + Math.max(0, 5 - margin);
+    }
+  }
+  return { bits, unknown, confidence, size };
+}

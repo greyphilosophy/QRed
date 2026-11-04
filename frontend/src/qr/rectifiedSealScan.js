@@ -6,7 +6,7 @@ import { normalizeWatermarkLuminance } from "./watermarkFilter.js";
 import { readRectifiedQrVersion } from "./rectifiedQrVersion.js";
 import { refineQrModuleGrid } from "./qrAlignmentRefinement.js";
 import { recoverSampledQrMatrix } from "./pageAlignedRecovery.js";
-import { collectModuleSamples, classifyModuleSamples } from "./rectifiedModuleSamples.js";
+import { collectModuleSamples, classifyModuleSamples, classifyLocalModuleSamples } from "./rectifiedModuleSamples.js";
 
 const SIDE = 900, BORDER = 0.04, INTERIOR = 1 - 2 * BORDER;
 const finderDark = (row, col) => row === 0 || col === 0 || row === 6 || col === 6 ||
@@ -119,6 +119,13 @@ export function scanRectifiedSeal(image, {
         if (!shouldContinue()) return null;
         const sampled = classifyModuleSamples(observations, threshold, foreground);
         const recovered = recoverSampledQrMatrix(sampled, photoMap, version,
+          { allowSingleBitError: true, allowRankedErasures: false });
+        if (recovered) return recovered;
+      }
+      if (!shouldContinue()) return null;
+      const local = classifyLocalModuleSamples(observations, { shouldContinue });
+      if (local && shouldContinue()) {
+        const recovered = recoverSampledQrMatrix(local, photoMap, version,
           { allowSingleBitError: true, allowRankedErasures: false });
         if (recovered) return recovered;
       }

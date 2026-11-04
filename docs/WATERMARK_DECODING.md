@@ -128,6 +128,18 @@ passing a reconstructed square matrix to patched jsQR. Successful scanning
 requires recovering the complete QRed transport, and normal digest/signature
 verification still makes the trust decision.
 
+The rectified single-seal path first retains its fixed ink/foreground
+thresholds. If those fail, it makes one local-contrast retry on the same
+measured grid and cached 25-pixel module observations. A 17-by-17-module
+neighborhood estimates separate ink and paper levels after discarding dark
+foreground. This handles prints where shadow or varying contrast makes one
+corner's white paper darker than another corner's watermark ink. The local
+foreground cutoff follows measured ink brightness; covered, low-contrast,
+and ambiguous modules remain erasures. This retry checks the cooperative
+deadline between rows, does not change the photo, and retains QR parity,
+payload validation, and normal cryptographic verification. Its regression
+uses generated signed data, not private photographs or document contents.
+
 Still-photo refinement reserves up to 16 attempts for single-code layouts
 and 36 for quadrant layouts across all orientation, size and scale candidates.
 Finder/timing evidence ranks these candidates before local alignment fitting;
