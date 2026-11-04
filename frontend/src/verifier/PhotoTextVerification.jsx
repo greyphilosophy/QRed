@@ -60,9 +60,12 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
   const spacingDifferences = comparison?.differences.filter(difference => difference.spacing) || [];
   const difficultReading = comparison?.words.length >= 5 && comparison.uncertainCount > comparison.words.length * 0.3;
   const validPages = results.filter(result => result.status === "VALID" && result.signature_valid === true);
-  const unscanned = validPages.reduce((max, result) => Math.max(max, result.page_count || 0), 0) > validPages.length;
+  const unscanned = collectionProgress?.pagesTotal
+    ? collectionProgress.pagesCollected < collectionProgress.pagesTotal
+    : validPages.reduce((max, result) => Math.max(max, result.page_count || 0), 0) > validPages.length;
   return <section className="photo-check" aria-label="Document check">
     <h2>Document check</h2>
+    {collectionProgress?.documentWarning && !verifying && <p className="photo-summary" role="alert">{collectionProgress.documentWarning}</p>}
     {captureNotice && <p role="status">{captureNotice}</p>}
     {snapshot.preparing && <p role="status">Preparing text recognition on this device…</p>}
     {snapshot.error && <div role="alert"><p>{snapshot.error}</p><button onClick={() => checks.prepare().catch(() => {})}>Retry text recognition</button></div>}

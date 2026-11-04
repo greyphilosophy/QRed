@@ -270,3 +270,34 @@ it("collects all four signed chunks from one uploaded page photograph", async ()
   expect(screen.getAllByText("Page 1 of 1").length).toBeGreaterThan(0);
   expect(document.querySelector(".verification-result pre").textContent).toBe(content);
 });
+
+
+it("prominently warns when a current cover is followed by older results, while authenticating each seal", async () => {
+  const timestamp = "2026-11-04T12:00:00.000Z";
+  const makePage = (pageNumber, documentRoot, content) => createQRedSeals({
+    privateKey, publicKey, timestamp, content,
+    pageContext: { pageNumber, pageCount: 2, documentRoot },
+  });
+  const cover = await makePage(1, "a1".repeat(32), "Current cover letter");
+  const currentResults = await makePage(2, "a1".repeat(32), "Current results");
+  const oldResults = await makePage(2, "b2".repeat(32), "Older results");
+  render(<App />);
+  await act(async () => cover.seals.forEach(scanner.props.onSealDetected));
+  selectKey(publicKey);
+  await act(async () => oldResults.seals.forEach(scanner.props.onSealDetected));
+  const warning = await screen.findByRole("alert");
+  expect(warning.textContent).toContain("Mixed document pages");
+  expect(warning.textContent).toContain("cover and remaining pages");
+  expect(warning.closest("details")).toBeNull();
+  expect(scanner.props.collectionProgress).toMatchObject({ complete: false, finished: false, pagesCollected: 1 });
+  expect(screen.getByText(/Other pages have not been checked/)).toBeTruthy();
+  expect(screen.getAllByRole("heading", { name: "Seal authenticated", hidden: true })).toHaveLength(2);
+  expect(document.querySelector(".collection-progress").textContent).not.toContain("All 2 pages collected");
+
+  fireEvent.click(screen.getByRole("button", { name: "Finish & clear" }));
+  expect(screen.queryByRole("alert")).toBeNull();
+  await act(async () => [...cover.seals, ...currentResults.seals].forEach(scanner.props.onSealDetected));
+  await waitFor(() => expect(scanner.props.collectionProgress.complete).toBe(true));
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText(/Other pages have not been checked/)).toBeNull();
+});

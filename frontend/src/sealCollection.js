@@ -1,14 +1,18 @@
 import { decodeSeal, verifyQRedSeals } from "./qredVerifier.js";
 
+function documentMembership(result) {
+  return result.pdf && Number.isInteger(result.page_number)
+    && result.document_root && result.key_id && result.timestamp
+    ? JSON.stringify([result.document_root, result.key_id, result.timestamp, result.page_count, result.identity])
+    : null;
+}
+
 // Keep documents/iterations in first-seen order, with their recovered pages
 // together in numeric order. Incomplete chunks have no page metadata yet.
 export function orderSealResults(results) {
   const documents = new Map();
   for (const result of results) {
-    const identity = result.pdf && Number.isInteger(result.page_number)
-      && result.document_root && result.key_id && result.timestamp
-      ? JSON.stringify([result.document_root, result.key_id, result.timestamp, result.page_count, result.identity])
-      : result;
+    const identity = documentMembership(result) || result;
     if (!documents.has(identity)) documents.set(identity, []);
     documents.get(identity).push(result);
   }
@@ -41,16 +45,23 @@ export function sealCollectionProgress(seals, results = []) {
   const chunks = new Set(seals.map(decodeSeal)
     .filter(item => item?.document_id === active.document_id).map(item => item.chunk_number));
   const result = results.find(item => item.document_id === active.document_id);
+  const documents = new Set(results.filter(item => item.status === "VALID" || item.status === "UNVERIFIED")
+    .map(documentMembership).filter(Boolean));
+  const mixedDocuments = documents.size > 1;
+  const documentWarning = mixedDocuments
+    ? "Mixed document pages: these seals refer to different documents or signing versions. Authentic seals do not mean the pages belong together. Check that the cover and remaining pages are from the same intended version."
+    : "";
   const progress = { activeSeal, collected: chunks.size, total: active.total_chunks,
-    complete: false, finished: false };
+    complete: false, finished: false, mixedDocuments, documentWarning };
+  const messageWithWarning = message => documentWarning ? `${documentWarning} ${message}` : message;
   if (result?.status === "INVALID" || result?.status === "ERROR") {
-    return { ...progress, finished: true, message: "Seal verification failed. Review the result below." };
+    return { ...progress, finished: true, message: messageWithWarning("Seal verification failed. Review the result below.") };
   }
   if (chunks.size < active.total_chunks) {
-    return { ...progress, message: `${chunks.size} of ${active.total_chunks} QR seals collected for this page. Keep scanning.` };
+    return { ...progress, message: messageWithWarning(`${chunks.size} of ${active.total_chunks} QR seals collected for this page. Keep scanning.`) };
   }
   if (!result || result.status === "INCOMPLETE") {
-    return { ...progress, message: "Checking collected seals…" };
+    return { ...progress, message: messageWithWarning("Checking collected seals…") };
   }
   const unverified = result.status !== "VALID";
   if (result.pdf && result.page_count > 1) {
@@ -62,12 +73,12 @@ export function sealCollectionProgress(seals, results = []) {
     const complete = pages.size === result.page_count;
     let nextPage = 1;
     while (pages.has(nextPage)) nextPage++;
-    const message = complete ? `All ${result.page_count} pages collected.`
+    const message = complete ? `All ${result.page_count} pages collected${mixedDocuments ? " for this document" : ""}.`
       : `Page ${result.page_number} captured. Show page ${nextPage}. ${pages.size} of ${result.page_count} pages collected.`;
     return { ...progress, pagesCollected: pages.size, pagesTotal: result.page_count,
       complete, finished: complete,
-      message: message + (members.some(item => !item.metadata_authenticated) ? " Page counts are unverified." : "") };
+      message: messageWithWarning(message + (members.some(item => !item.metadata_authenticated) ? " Page counts are unverified." : "")) };
   }
   return { ...progress, complete: true, finished: true,
-    message: "All QR seals collected." + (unverified ? " Signature not verified." : "") };
+    message: messageWithWarning("All QR seals collected." + (unverified ? " Signature not verified." : "")) };
 }

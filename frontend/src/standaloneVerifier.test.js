@@ -279,3 +279,33 @@ it("collects a page-aligned batch from one live camera frame", async () => {
   expect(snapshot).toHaveBeenCalledTimes(1);
   for (const [source] of snapshot.mock.calls) expect(source).toBe(document.getElementById("scanCanvas"));
 });
+
+
+it("shows a mixed-document warning instead of an all-authenticated summary for a current cover and older results", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+  const timestamp = "2026-11-04T12:00:00.000Z";
+  const makePage = (pageNumber, documentRoot, content) => createQRedSeals({
+    privateKey, publicKey, timestamp, content,
+    pageContext: { pageNumber, pageCount: 2, documentRoot },
+  });
+  const cover = await makePage(1, "a1".repeat(32), "Current cover letter");
+  const currentResults = await makePage(2, "a1".repeat(32), "Current results");
+  const oldResults = await makePage(2, "b2".repeat(32), "Older results");
+  loadStandalone();
+  await window.__qredTestVerify([...cover.seals, ...oldResults.seals], publicKey);
+  expect(document.getElementById("resultStatus").textContent).toBe("Mixed document pages");
+  expect(document.getElementById("resultStatus").classList.contains("valid")).toBe(false);
+  const progress = document.querySelector(".collection-progress").textContent;
+  expect(progress).toContain("different documents or signing versions");
+  expect(progress).toContain("1 of 2 pages collected");
+  expect(progress).not.toContain("All 2 pages collected");
+  expect([...document.querySelectorAll(".verification-result h3")].map(heading => heading.textContent))
+    .toEqual(["Page 1 of 2 · Seal authenticated", "Page 2 of 2 · Seal authenticated"]);
+
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ clearRect() {} });
+  fireEvent.click(document.getElementById("btnNewScan"));
+  await window.__qredTestVerify([...cover.seals, ...currentResults.seals], publicKey);
+  expect(document.getElementById("resultStatus").textContent).toBe("Seal authenticated");
+  expect(document.querySelector(".collection-progress").textContent).toBe("All 2 pages collected.");
+});
