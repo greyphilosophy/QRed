@@ -46,7 +46,7 @@ it("maps line boxes through camera perspective and keeps crop coordinates on the
   expect(comparePageReading(text, { words: located, corners: skew }, size, evidence).status).toBe("matches");
 });
 
-it("falls back for coarse locations, missing borders, and expanded footer pages", () => {
+it("falls back for coarse locations, unanchored missing borders, and expanded footer pages", () => {
   for (const mode of [1, 2]) expect(signedPhotoLines(text, { ...evidence, layout: { ...evidence.layout, mode } }, corners, size)).toBeNull();
   expect(signedPhotoLines(text, evidence, null, size)).toBeNull();
   expect(signedPhotoLines(text, { ...evidence, width: 612, height: 792 },
@@ -100,4 +100,91 @@ it("does not calibrate to duplicated anchors and falls back when the border cann
 
 it("retains the page-wide token limit even when signed regions partition the comparison", () => {
   expect(() => compareLocatedPhotoText("word ".repeat(4001), [], size, [])).toThrow(/too much text/);
+});
+
+it("locates borderless PDF renders using independently anchored geometry, not OCR reading order", () => {
+  const fixture = printedFixture();
+  const shuffled = [...fixture.reading].sort((a, b) => b.lineId - a.lineId);
+  const result = comparePageReading(fixture.content, { words: shuffled }, size, fixture.evidence);
+  expect(result).toMatchObject({ status: "matches", lineAware: true, differences: [] });
+});
+
+it("keeps swapped, missing, extra and uncertain text visible on borderless renders", () => {
+  const fixture = printedFixture();
+  const altered = fixture.reading.map(w => ({ ...w, text: w.text === "125.50" ? "5.25" : w.text === "5.25" ? "125.50" : w.text }));
+  expect(comparePageReading(fixture.content, { words: altered }, size, fixture.evidence))
+    .toMatchObject({ status: "differences", lineAware: true });
+  const missing = fixture.reading.filter(w => w.lineId !== 2);
+  expect(comparePageReading(fixture.content, { words: missing }, size, fixture.evidence).differences)
+    .toContainEqual(expect.objectContaining({ expected: "Room 125.50 0.00", observed: "", boxes: [expect.any(Object)] }));
+  const extra = [...fixture.reading, word("Paid", 20, 700)];
+  expect(comparePageReading(fixture.content, { words: extra }, size, fixture.evidence).differences)
+    .toContainEqual(expect.objectContaining({ expected: "", observed: "Paid" }));
+  fixture.reading.at(-1).confidence = 40;
+  expect(comparePageReading(fixture.content, { words: fixture.reading }, size, fixture.evidence))
+    .toMatchObject({ status: "uncertain", lineAware: true, uncertainCount: 1 });
+});
+
+it("does not infer a borderless page from sparse, duplicated, narrow-spread or aspect-mismatched anchors", () => {
+  const fixture = printedFixture();
+  for (const reading of [[], fixture.reading.filter(w => w.lineId === 0 || w.lineId === 5),
+    fixture.reading.filter(w => w.lineId < 4), [...fixture.reading, ...fixture.reading.map(w => ({ ...w, lineId: `copy-${w.lineId}` }))]]) {
+    expect(signedPhotoLines(fixture.content, fixture.evidence, null, size, reading)).toBeNull();
+  }
+  expect(signedPhotoLines(fixture.content, fixture.evidence, null, { ...size, height: 1800 }, fixture.reading)).toBeNull();
+});
+
+it("matches an invoice heading beside an address even when PDF and OCR traverse different columns", () => {
+  const content = "Example Guest\n123 Example Street\nExample City\nUnited States\nINVOICE\nPayment due Friday\nDocument reference XYZ789";
+  const boxes = [
+    { x: .05, y: .1, width: .3, height: .03 },
+    { x: .05, y: .15, width: .3, height: .03 },
+    { x: .05, y: .2, width: .3, height: .03 },
+    { x: .05, y: .25, width: .3, height: .03 },
+    { x: .7, y: .1, width: .2, height: .03 },
+    { x: .1, y: .65, width: .8, height: .03 },
+    { x: .1, y: .85, width: .8, height: .03 },
+  ];
+  const rows = content.split("\n").map((text, i) => ({ text, confidence: 99, lineId: i,
+    bbox: { x0: boxes[i].x * size.width, x1: (boxes[i].x + boxes[i].width) * size.width,
+      y0: boxes[i].y * size.height, y1: (boxes[i].y + boxes[i].height) * size.height } }));
+  const reading = [rows[0], rows[4], rows[1], rows[2], rows[3], rows[5], rows[6]];
+  expect(comparePageReading(content, { words: reading }, size).status).toBe("differences");
+  const reference = { text: content, ...size, layout: { mode: 3, lines: boxes } };
+  expect(comparePageReading(content, { words: reading }, size, reference))
+    .toMatchObject({ lineAware: true, status: "matches", differences: [] });
+  const missing = comparePageReading(content, { words: reading.filter(w => w.lineId !== 3) }, size, reference);
+  expect(missing.differences).toEqual([expect.objectContaining({ expected: "United States", observed: "", boxes: [expect.any(Object)] })]);
+});
+
+const innerFrame = [{ x: 100, y: 140 }, { x: 900, y: 140 }, { x: 900, y: 1260 }, { x: 100, y: 1260 }];
+it("recovers a wrong inner-frame detection only through independently anchored full-raster geometry", () => {
+  const fixture = printedFixture();
+  const shuffled = [...fixture.reading].sort((a, b) => b.lineId - a.lineId);
+  const result = comparePageReading(fixture.content, { words: shuffled, corners: innerFrame }, size, fixture.evidence);
+  expect(result).toMatchObject({ status: "matches", lineAware: true, differences: [] });
+  expect(signedPhotoLines(fixture.content, fixture.evidence, innerFrame, size, shuffled))
+    .toEqual(signedPhotoLines(fixture.content, fixture.evidence, null, size, shuffled));
+});
+it("rejects inner-frame fallback without matching full aspect and sufficient distinct spread anchors", () => {
+  const fixture = printedFixture();
+  for (const reading of [fixture.reading.filter(w => w.lineId === 0 || w.lineId === 5),
+    fixture.reading.filter(w => w.lineId < 4),
+    [...fixture.reading, ...fixture.reading.map(w => ({ ...w, lineId: `copy-${w.lineId}` }))]]) {
+    expect(signedPhotoLines(fixture.content, fixture.evidence, innerFrame, size, reading)).toBeNull();
+  }
+  expect(signedPhotoLines(fixture.content, fixture.evidence, innerFrame,
+    { ...size, height: 1800 }, fixture.reading)).toBeNull();
+});
+it("keeps swapped, missing and added text detectable after rejecting an inner frame", () => {
+  const fixture = printedFixture();
+  const changed = fixture.reading.map(w => ({ ...w, text: w.text === "125.50" ? "5.25" : w.text === "5.25" ? "125.50" : w.text }));
+  const altered = comparePageReading(fixture.content, { words: changed, corners: innerFrame }, size, fixture.evidence);
+  expect(altered).toMatchObject({ status: "differences", lineAware: true });
+  expect(altered.differences).toContainEqual(expect.objectContaining({ context: "Room 125.50 0.00", observed: "5.25" }));
+  expect(altered.differences).toContainEqual(expect.objectContaining({ context: "Tax 5.25 0.00", observed: "125.50" }));
+  const missing = comparePageReading(fixture.content, { words: fixture.reading.filter(w => w.lineId !== 2), corners: innerFrame }, size, fixture.evidence);
+  expect(missing.differences).toContainEqual(expect.objectContaining({ expected: "Room 125.50 0.00", observed: "", boxes: [expect.any(Object)] }));
+  const extra = comparePageReading(fixture.content, { words: [...fixture.reading, word("Added", 20, 700)], corners: innerFrame }, size, fixture.evidence);
+  expect(extra.differences).toContainEqual(expect.objectContaining({ expected: "", observed: "Added" }));
 });

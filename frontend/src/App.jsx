@@ -1,12 +1,17 @@
 /* eslint-disable no-unused-vars */
-import React, { useEffect, useRef, useState } from "react";
+import React, { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { QrScanner } from "./QrScanner.jsx";
 import { PdfSealForm } from "./PdfSealForm.jsx";
 import { SealVerification, useSealVerification } from "./SealVerification.jsx";
 import "./verification.css";
+import "./exactPdfExperiment.css";
+
+const ExactPdfExperiment = lazy(() => import("./ExactPdfExperiment.jsx"));
 
 function App() {
   const [showPdfStampTool, setShowPdfStampTool] = useState(false);
+  const [showExactExperiment, setShowExactExperiment] = useState(false);
+  const exactEntry = useRef(null);
   const stampSection = useRef(null);
   const stampHeading = useRef(null);
   const verification = useSealVerification();
@@ -65,6 +70,15 @@ function App() {
           <PdfSealForm onUsePublicKey={verification.setPublicKey} />
         </section>
       )}
+      {showExactExperiment ? <Suspense fallback={<p role="status">Loading the experimental PDF tool…</p>}>
+        <ExactPdfExperiment onClose={() => {
+          setShowExactExperiment(false);
+          requestAnimationFrame(() => exactEntry.current?.focus());
+        }} />
+      </Suspense> : <section className="exact-pdf-entry" aria-label="Optional PDF experiment">
+        <p>Experimental: exact rendered appearance of digital PDFs. Separate from printed-page and text checks.</p>
+        <button type="button" ref={exactEntry} onClick={() => setShowExactExperiment(true)}>Open experimental exact PDF tool</button>
+      </section>}
       <footer className="policy-footer" aria-label="QRed policies and project documentation">
         <span>QRed · Tamper-evident document sealing</span>
         <nav aria-label="Policies and security information">

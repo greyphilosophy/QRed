@@ -204,7 +204,7 @@ export function SealVerification({ verification }) {
         {result.pdf && <p>Page {result.page_number} of {result.page_count}</p>}
         {result.document_root && <p>Document fingerprint: {result.document_root}</p>}
         {result.error_message && <p>{result.error_message}</p>}
-        {result.status === "INCOMPLETE" && <p>{result.collected_chunks} of {result.total_chunks} seals collected. Scan the remaining seals.</p>}
+        {result.status === "INCOMPLETE" && <p>{result.collected_chunks} of {result.required_chunks || result.total_chunks} required seals collected. Scan more seals.</p>}
         {result.content && <pre>{result.content}</pre>}
       </article>)}
     </div>

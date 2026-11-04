@@ -124,7 +124,7 @@ jobs:
   e2e-tests:
     name: E2E (${{ matrix.shard }})
     runs-on: ubuntu-latest
-    # Eight isolated runners retain every real-browser regression, with each
+    # Isolated runners retain every real-browser regression, with each
     # of the two ~69s PDF verification cases on a separate worker.
     # Newly added tests run automatically in the deployment/catch-all shard.
     strategy:
@@ -143,10 +143,14 @@ jobs:
             pytest_args: "tests/test_network_privacy.py"
           - shard: photo-verification
             pytest_args: "tests/test_photo_verification.py tests/test_auto_capture.py tests/test_capture_performance.py"
+          - shard: photo-qre
+            pytest_args: "tests/test_photo_qre.py"
           - shard: deployment-document
             pytest_args: "tests/test_qred_deployment.py::TestPlainTextSealAndVerify tests/test_qred_deployment.py::TestMultiQrDocuments tests/test_qred_deployment.py::TestPdfTextSealing tests/test_qred_deployment.py::TestImageOnlyPdfs tests/test_qred_deployment.py::TestPdfExtractionIntegrity"
+          - shard: exact-digital-pdf
+            pytest_args: "tests/test_exact_render.py"
           - shard: deployment-scanning-and-new-tests
-            pytest_args: "tests --ignore=tests/test_visual_page_seals.py --ignore=tests/test_account_stateless.py --ignore=tests/test_corrupt_pdf.py --ignore=tests/test_network_privacy.py --ignore=tests/test_photo_verification.py --ignore=tests/test_auto_capture.py --ignore=tests/test_capture_performance.py -k 'not (TestPlainTextSealAndVerify or TestMultiQrDocuments or TestPdfTextSealing or TestImageOnlyPdfs or TestPdfExtractionIntegrity)'"
+            pytest_args: "tests --ignore=tests/test_exact_render.py --ignore=tests/test_visual_page_seals.py --ignore=tests/test_account_stateless.py --ignore=tests/test_corrupt_pdf.py --ignore=tests/test_network_privacy.py --ignore=tests/test_photo_verification.py --ignore=tests/test_auto_capture.py --ignore=tests/test_capture_performance.py --ignore=tests/test_photo_qre.py -k 'not (TestPlainTextSealAndVerify or TestMultiQrDocuments or TestPdfTextSealing or TestImageOnlyPdfs or TestPdfExtractionIntegrity)'"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python

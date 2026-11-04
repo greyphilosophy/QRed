@@ -19,7 +19,11 @@ for (const variant of ["", "-simd", "-lstm", "-simd-lstm"]) {
   await cp(join(core, file), join(target, file));
 }
 await cp(join(english, "4.0.0_best_int/eng.traineddata.gz"), join(target, "eng.traineddata.gz"));
+// Legacy recognition is an independent, bounded crop retry, never the primary
+// reader. Keep its immutable URL separate from the signed OCR model.
+await mkdir(join(target, "legacy"), { recursive: true });
+await cp(join(english, "4.0.0/eng.traineddata.gz"), join(target, "legacy/eng.traineddata.gz"));
 await cp(join(engine, "LICENSE.md"), join(target, "LICENSE-tesseract.txt"));
 await cp(join(core, "LICENSE"), join(target, "LICENSE-core.txt"));
 await cp(join(english, "package.json"), join(target, "english-package.json"));
-await writeFile(join(target, "NOTICE.txt"), "OCR: Tesseract.js 6.0.1 and tesseract.js-core 6.1.2 (Apache-2.0).\nEnglish model: @tesseract.js-data/eng 1.0.0, 4.0.0_best_int.\nhttps://github.com/naptha/tessdata\nhttps://github.com/tesseract-ocr/tessdata_best (Apache-2.0)\nSee LICENSE-core.txt and english-package.json.\n");
+await writeFile(join(target, "NOTICE.txt"), "OCR: Tesseract.js 6.0.1 and tesseract.js-core 6.1.2 (Apache-2.0).\nEnglish model: @tesseract.js-data/eng 1.0.0, 4.0.0_best_int (primary), 4.0.0 (legacy crop retry).\nhttps://github.com/naptha/tessdata\nhttps://github.com/tesseract-ocr/tessdata_best (Apache-2.0)\nSee LICENSE-core.txt and english-package.json.\n");

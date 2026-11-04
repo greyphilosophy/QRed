@@ -127,3 +127,28 @@ it("does not offer a file-capture handoff and makes retakes available without lo
   expect(view.container.querySelector("input[capture]")).toBeNull();
   expect(view.container.querySelector("input[type=file]")).toBeNull();
 });
+
+it("checks scanned-only OCR text while keeping matching machine readings under review", async () => {
+  const signed = { ...page, content: "", page_count: 1, evidence: { text: "", width: 200, height: 100,
+    layout: null, ocr: { engine: "tesseract-eng-v1", lines: [{ text: "Friday", x: .05, y: .1, width: .4, height: .2, confidence: 99 }] } } };
+  const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "Friday")]} />);
+  await waitFor(() => expect(view.container.querySelector(".photo-summary.uncertain")).toBeTruthy());
+  expect(screen.getByText(/Even matching readings need review/)).toBeTruthy();
+  expect(view.container.querySelector(".photo-summary.matches")).toBeNull();
+  expect(screen.queryByText("Recognized text matches the signed text")).toBeNull();
+});
+
+it("shows conflicting source OCR separately while retaining native and extra-word discrepancies", async () => {
+  const signed = { ...page, content: "100", page_count: 1, evidence: { text: "100", width: 200, height: 100,
+    layout: { mode: 3, lines: [{ x: .05, y: .1, width: .4, height: .2 }] },
+    ocr: { engine: "tesseract-eng-v1", lines: [{ text: "900 EXTRA", x: .05, y: .1, width: .6, height: .2, confidence: 99 }] } } };
+  ocr.read.mockResolvedValue([word("900"), { ...word("EXTRA"), bbox: { x0: 100, y0: 10, x1: 160, y1: 30 } }]);
+  const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
+  await screen.findByText(/PDF text remains the required comparison target/);
+  expect(screen.getByText(/They are not additional automatic comparison targets/)).toBeTruthy();
+  expect(view.container.querySelector(".photo-differences > ol").textContent).toContain("100");
+  expect(view.container.querySelector(".photo-differences > ol").textContent).toContain("900");
+  expect(view.container.querySelector(".photo-differences > ol").textContent).toContain("EXTRA");
+  expect(view.container.querySelector(".photo-summary.differences")).toBeTruthy();
+  expect(view.container.querySelector(".photo-summary.matches")).toBeNull();
+});
