@@ -1,4 +1,5 @@
 import { locatePaper } from "./pageAlignedScan.js";
+import { estimatePaperColor } from "./paperColor.js";
 
 // Capture guidance, never a text/authenticity verdict. In particular, blurred
 // printing must not be rejected because OCR cannot read it. Measure the physical
@@ -69,7 +70,11 @@ function samplePage(image, corners) {
 export function inspectPageFrame(image) {
   if (!image?.data || image.data.length !== image.width * image.height * 4 || image.width < 40 || image.height < 40)
     return { state: "framing", message: "Waiting for camera frames…", corners: null };
-  const small = preview(image), found = locatePaper(small);
+  // Use the same illumination calibration as seal recovery. Otherwise warm
+  // paper/shadows can shift a detected edge into the surrounding desk and
+  // falsely fail the framing or focus gate before decoding can even start.
+  const small = preview(image);
+  const found = locatePaper({ ...small, paperColor: estimatePaperColor(small) });
   if (!found) return { state: "framing", message: "Show all four page corners. Try a contrasting background, or use Capture now.", corners: null };
   const corners = found.map(p => ({ x: p.x / small.width, y: p.y / small.height }));
   if (corners.some(p => p.x < .025 || p.y < .025 || p.x > .975 || p.y > .975))
