@@ -1,7 +1,8 @@
 import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
+import { scanFooterSeals } from "./footerSealScan.js";
 import { scanRectifiedSeal } from "./rectifiedSealScan.js";
-import { isQRedEntryLink } from "./qrPayload.js";
+import { isQRedEntryLink, qredPayloadFromScanResult } from "./qrPayload.js";
 import { decodeSeal, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult,
   qredTextFromScanResult } from "../qredVerifier.js";
 
@@ -60,6 +61,20 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = 8000
     const ordinaryPayload = ordinary && qredPayloadFromPhotoScanResult(data, width, height, ordinary);
     if (decodeSeal(ordinaryPayload)?.total_chunks === 1) return { status: "found", text: ordinaryPayload };
     if (decodeSeal(ordinaryPayload)) partials.add(ordinaryPayload);
+    // Isolate adjacent dark footer symbols before the expensive watermark
+    // fallback. Whole-frame finder triples can span two different symbols.
+    const footer = shouldContinue() ? scanFooterSeals(image, { shouldContinue }) : [];
+    const footerTexts = footer.map(qredPayloadFromScanResult).filter(text => decodeSeal(text));
+    for (const text of footerTexts) partials.add(text);
+    const chunks = [...partials].map(decodeSeal);
+    // This is a collection shortcut, not authentication. The verification
+    // session still checks assembled bytes and every signature normally.
+    if (footerTexts.length && chunks.every(chunk => {
+      const indexes = new Set(chunks.filter(other => other.document_id === chunk.document_id
+        && other.version === chunk.version && other.total_chunks === chunk.total_chunks
+        && other.multipart === chunk.multipart).map(other => other.chunk_number));
+      return indexes.size === chunk.total_chunks;
+    })) return { status: "found-multiple", texts: [...partials] };
     // Retain the original wider alignment search for larger print distortions.
     const rectified = shouldContinue() ? scanRectifiedSeal(image, { shouldContinue }) : null;
     if (decodeSeal(rectified?.seal)?.total_chunks === 1) return { status: "found", text: rectified.seal };

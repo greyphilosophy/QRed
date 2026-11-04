@@ -2,8 +2,8 @@ import { expect, it } from "vitest";
 import { alignmentCenters } from "./qrLowLevel.js";
 import { refineQrModuleGrid } from "./qrAlignmentRefinement.js";
 
-function shiftedPatterns(shift) {
-  const version = 14, size = 17 + version * 4, pitch = 7, margin = 50;
+function shiftedPatterns(shift, version = 14) {
+  const size = 17 + version * 4, pitch = 7, margin = 50;
   const width = size * pitch + margin * 2, height = width;
   const data = new Uint8ClampedArray(width * height * 4).fill(245);
   const centers = alignmentCenters(version);
@@ -45,4 +45,11 @@ it("stops between alignment markers when its scan budget expires", () => {
     searchRadius: 12, shouldContinue: () => ++checks < 3,
   })).toBeNull();
   expect(checks).toBe(3);
+});
+
+it.each([7, 10, 13])("fits all six available alignment markers in QR version %s", version => {
+  const { image, mapping } = shiftedPatterns(3, version);
+  const grid = refineQrModuleGrid(image, mapping, { x: 0, y: 0, width: 1, height: 1 }, version,
+    { searchRadius: 12, foregroundRobust: true });
+  expect(grid?.quality).toBe(1);
 });

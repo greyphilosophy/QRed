@@ -155,7 +155,11 @@ export function refineQrModuleGrid(image, pageMapping, region, version, {
         col: cc, row: rr, x: found.x, y: found.y, score: found.score, ri, ci,
       });
     }
-  if (points.length < Math.max(7, Math.floor((centers.length ** 2 - 3) * 0.5)))
+  // Versions 7–13 have only six alignment markers after excluding finders.
+  // Require every one rather than an impossible seven; larger grids retain
+  // their existing seven-inlier minimum and majority candidate gate.
+  const minimumInliers = Math.min(7, centers.length ** 2 - 3);
+  if (points.length < Math.max(minimumInliers, Math.floor((centers.length ** 2 - 3) * 0.5)))
     return null;
   let weights = points.map(p => Math.max(0.05, (p.score - 0.35) ** 2));
   let aff = fitAffine(points, weights);
@@ -179,7 +183,7 @@ export function refineQrModuleGrid(image, pageMapping, region, version, {
     if (Math.hypot(dx, dy) < tolerance) grid[p.ri * m + p.ci] = { dx, dy };
   }
   const inlierCount = grid.filter(Boolean).length;
-  if (inlierCount < 7) return null;
+  if (inlierCount < minimumInliers) return null;
   for (let row = 0; row < m; row++) for (let col = 0; col < m; col++) {
     const index = row * m + col;
     if (grid[index]) continue;

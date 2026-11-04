@@ -5,10 +5,12 @@ import { verifyQRedSeals } from "../qredVerifier.js";
 import { decodePhoto } from "./decodePhoto.js";
 import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
+import { scanFooterSeals } from "./footerSealScan.js";
 import { scanRectifiedSeal } from "./rectifiedSealScan.js";
 
 vi.mock("./scanQrImage.js", () => ({ scanQrImage: vi.fn(), scanWatermarkPreview: vi.fn() }));
 vi.mock("./pageAlignedScan.js", () => ({ scanPageAlignedImage: vi.fn() }));
+vi.mock("./footerSealScan.js", () => ({ scanFooterSeals: vi.fn() }));
 vi.mock("./rectifiedSealScan.js", () => ({ scanRectifiedSeal: vi.fn() }));
 afterEach(() => vi.restoreAllMocks());
 
@@ -28,6 +30,7 @@ beforeAll(async () => {
   expect(multiple).toHaveLength(4);
 });
 beforeEach(() => {
+  scanFooterSeals.mockReset().mockReturnValue([]);
   scanWatermarkPreview.mockReset().mockReturnValue(null);
   scanPageAlignedImage.mockReset().mockReturnValue([]);
   scanRectifiedSeal.mockReset().mockReturnValue(null);
@@ -124,17 +127,18 @@ it("keeps the wider alignment search after quick, preview and footer misses", as
   expect((await verifyQRedSeals([action.text], publicKey)).status).toBe("VALID");
 });
 
-it.each(["local", "preview", "wide"])("stops at the shared deadline and retains a chunk from %s", stage => {
+it.each(["local", "preview", "wide", "footer"])("stops at the shared deadline and retains a chunk from %s", stage => {
   let now = 0;
   vi.spyOn(performance, "now").mockImplementation(() => now);
   const expired = value => { now = 8001; return value; };
   if (stage === "local") scanRectifiedSeal.mockImplementation(() => expired({ seal: multiple[1] }));
   if (stage === "preview") scanWatermarkPreview.mockImplementation(() => expired(code(multiple[1])));
+  if (stage === "footer") scanFooterSeals.mockImplementation(() => expired([code(multiple[1])]));
   if (stage === "wide") scanRectifiedSeal.mockReturnValueOnce(null)
     .mockImplementationOnce(() => expired({ seal: multiple[1] }));
   expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found-multiple", texts: [multiple[1]] });
   expect(scanRectifiedSeal).toHaveBeenCalledTimes(stage === "wide" ? 2 : 1);
-  expect(scanQrImage).toHaveBeenCalledTimes(stage === "wide" ? 1 : 0);
+  expect(scanQrImage).toHaveBeenCalledTimes(["wide", "footer"].includes(stage) ? 1 : 0);
   expect(scanPageAlignedImage).not.toHaveBeenCalled();
 });
 
@@ -145,4 +149,27 @@ it("returns retake guidance when the deadline expires without a payload", () => 
   expect(decodePhoto(image, { returnPayload: true })).toMatchObject({ status: "feedback" });
   expect(scanWatermarkPreview).not.toHaveBeenCalled();
   expect(scanQrImage).not.toHaveBeenCalled();
+});
+
+it("returns a complete isolated footer group for normal signature verification", async () => {
+  scanFooterSeals.mockReturnValue(multiple.map(code));
+  const action = decodePhoto(image, { returnPayload: true });
+  expect(action).toEqual({ status: "found-multiple", texts: multiple });
+  expect(scanPageAlignedImage).not.toHaveBeenCalled();
+  expect((await verifyQRedSeals(action.texts, publicKey)).status).toBe("VALID");
+  expect((await verifyQRedSeals(action.texts, "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI")).status).toBe("INVALID");
+});
+
+it("does not stop on incomplete or duplicated isolated footer chunks", () => {
+  scanFooterSeals.mockReturnValue([code(multiple[0]), code(multiple[0])]);
+  scanPageAlignedImage.mockReturnValue(multiple.map(seal => ({ seal })));
+  expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found-multiple", texts: multiple });
+  expect(scanPageAlignedImage).toHaveBeenCalled();
+});
+
+it("continues searching when an unrelated complete footer accompanies an incomplete group", () => {
+  scanFooterSeals.mockReturnValue([code(single), code(multiple[0])]);
+  scanPageAlignedImage.mockReturnValue(multiple.map(seal => ({ seal })));
+  expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found-multiple", texts: [...multiple, single] });
+  expect(scanPageAlignedImage).toHaveBeenCalled();
 });
