@@ -5,10 +5,12 @@ import { verifyQRedSeals } from "../qredVerifier.js";
 import { decodePhoto } from "./decodePhoto.js";
 import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
+import { scanFooterSeals } from "./footerSealScan.js";
 import { scanRectifiedSeal } from "./rectifiedSealScan.js";
 
 vi.mock("./scanQrImage.js", () => ({ scanQrImage: vi.fn(), scanWatermarkPreview: vi.fn() }));
 vi.mock("./pageAlignedScan.js", () => ({ scanPageAlignedImage: vi.fn() }));
+vi.mock("./footerSealScan.js", () => ({ scanFooterSeals: vi.fn() }));
 vi.mock("./rectifiedSealScan.js", () => ({ scanRectifiedSeal: vi.fn() }));
 afterEach(() => vi.restoreAllMocks());
 
@@ -28,6 +30,7 @@ beforeAll(async () => {
   expect(multiple).toHaveLength(4);
 });
 beforeEach(() => {
+  scanFooterSeals.mockReset().mockReturnValue([]);
   scanWatermarkPreview.mockReset().mockReturnValue(null);
   scanPageAlignedImage.mockReset().mockReturnValue([]);
   scanRectifiedSeal.mockReset().mockReturnValue(null);
@@ -145,4 +148,20 @@ it("returns retake guidance when the deadline expires without a payload", () => 
   expect(decodePhoto(image, { returnPayload: true })).toMatchObject({ status: "feedback" });
   expect(scanWatermarkPreview).not.toHaveBeenCalled();
   expect(scanQrImage).not.toHaveBeenCalled();
+});
+
+it("returns a complete isolated footer group for normal signature verification", async () => {
+  scanFooterSeals.mockReturnValue(multiple.map(code));
+  const action = decodePhoto(image, { returnPayload: true });
+  expect(action).toEqual({ status: "found-multiple", texts: multiple });
+  expect(scanPageAlignedImage).not.toHaveBeenCalled();
+  expect((await verifyQRedSeals(action.texts, publicKey)).status).toBe("VALID");
+  expect((await verifyQRedSeals(action.texts, "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI")).status).toBe("INVALID");
+});
+
+it("does not stop on incomplete or duplicated isolated footer chunks", () => {
+  scanFooterSeals.mockReturnValue([code(multiple[0]), code(multiple[0])]);
+  scanPageAlignedImage.mockReturnValue(multiple.map(seal => ({ seal })));
+  expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found-multiple", texts: multiple });
+  expect(scanPageAlignedImage).toHaveBeenCalled();
 });
