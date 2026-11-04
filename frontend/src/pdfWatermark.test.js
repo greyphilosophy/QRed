@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { Buffer } from "node:buffer";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
@@ -137,7 +137,12 @@ describe("experimental PDF watermarks", () => {
     for (let index = 0; index < sizes.length; index++) {
       const page = source.addPage(sizes[index]);
       page.drawText(`Document-wide margin example, page ${index + 1}`, { x: 90, y: 620, size: 11 });
-      if (index === narrowPage) page.drawText("Narrow original content", { x: 28, y: 400, size: 10 });
+      if (index === narrowPage) {
+        // Establish sufficient original ink within the half-inch band without
+        // depending on the runner's substitute font or glyph rasterization.
+        page.drawRectangle({ x: 28, y: 400, width: 4, height: 8, color: rgb(0, 0, 0) });
+        page.drawText("Narrow original content", { x: 28, y: 400, size: 10 });
+      }
     }
     const file = new File([await source.save()], "mixed-page-margins.pdf", { type: "application/pdf" });
     const result = await sealPdfInBrowser({ file, privateKey, publicKey });
@@ -304,6 +309,22 @@ describe("experimental PDF watermarks", () => {
       } else {
         expect(watermarkLayout[page - 1]).toBeTruthy();
         [payload] = await scanPrintedPage(image);
+      }
+      if (payload !== pageSealStrings[page - 1][0] && process.env.QRED_TEST_ARTIFACT_DIR) {
+        // Synthetic-only failure evidence: preserve the exact failing raster
+        // across CI font/renderer versions instead of weakening the scan gate.
+        const directory = join(process.env.QRED_TEST_ARTIFACT_DIR, `watermark-page-${page}`);
+        mkdirSync(directory, { recursive: true });
+        writeFileSync(join(directory, "source.pdf"), Buffer.from(await file.arrayBuffer()));
+        writeFileSync(join(directory, "sealed.pdf"), Buffer.from(await blob.arrayBuffer()));
+        writeFileSync(join(directory, "poppler.png"), PNG.sync.write(image));
+        const pdfJs = await withPdfDocument(blob, pdf => renderPdfPage(pdf, page));
+        writeFileSync(join(directory, "pdfjs.png"), PNG.sync.write(pdfJs));
+        const details = { page, footerPages, watermarkLayout, node: process.version,
+          expected: pageSealStrings[page - 1], observed: payload };
+        writeFileSync(join(directory, "details.json"), JSON.stringify(details, null, 2));
+        console.error("Saved synthetic watermark failure evidence", directory,
+          { page, footerPages, layout: watermarkLayout[page - 1] });
       }
       expect(payload).toBe(pageSealStrings[page - 1][0]);
       await expect(verifyQRedSeals([payload], publicKey)).resolves.toMatchObject({ status: "VALID", page_number: page, page_count: 2 });
