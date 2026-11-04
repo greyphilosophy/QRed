@@ -1,0 +1,15 @@
+.exact-pdf-entry, .exact-pdf-experiment { max-width: 780px; box-sizing: border-box; margin: 1.5rem auto; padding: 1.5rem; color: #172033; background: #fff; border: 2px solid #8b5e12; border-radius: 12px; }
+.exact-pdf-entry p, .exact-pdf-experiment p { line-height: 1.5; }
+.exact-tool-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+.exact-pdf-experiment h2, .exact-pdf-experiment h3, .exact-pdf-experiment h4 { color: #172033; }
+.exact-pdf-experiment label { display: block; margin-top: 1rem; font-weight: 600; }
+.exact-pdf-experiment input { box-sizing: border-box; width: 100%; margin: .4rem 0; padding: .65rem; }
+.exact-pdf-entry button, .exact-pdf-experiment button { min-height: 44px; padding: .6rem .9rem; border: 1px solid #64748b; border-radius: 6px; background: #f8fafc; color: #172033; cursor: pointer; font: inherit; }
+.exact-pdf-experiment button:disabled { opacity: .55; cursor: not-allowed; }
+.exact-actions { display: flex; gap: .6rem; flex-wrap: wrap; margin: 1rem 0; }
+.exact-scope, .exact-inconclusive { background: #fff5dd; color: #68400c; padding: .85rem; border-left: 4px solid #a16a11; }
+.exact-match { background: #ecfdf3; color: #14532d; padding: .85rem; border-left: 4px solid #21844a; }
+.exact-signature { color: #172033; }
+.exact-profile, .exact-file-name { overflow-wrap: anywhere; }
+.exact-page-result { border-top: 1px solid #cbd5e1; margin-top: 1rem; padding-top: .5rem; }
+.exact-status { min-height: 1.5em; }
