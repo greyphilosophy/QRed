@@ -129,10 +129,13 @@ requires recovering the complete QRed transport, and normal digest/signature
 verification still makes the trust decision.
 
 The rectified single-seal path first retains its fixed ink/foreground
-thresholds. If those fail, it makes one local-contrast retry on the same
+thresholds. If those fail, it makes bounded local-contrast retries on the same
 measured grid and cached 25-pixel module observations. A 17-by-17-module
 neighborhood estimates separate ink and paper levels after discarding dark
-foreground. This handles prints where shadow or varying contrast makes one
+foreground. A failed midpoint cut can retry a 25-by-25 neighborhood at its
+midpoint and one nearby threshold, reusing that wider calibration. Sliding
+integer histograms preserve the sorted quantiles and cluster means without
+repeatedly sorting overlapping patches. This handles prints where shadow or varying contrast makes one
 corner's white paper darker than another corner's watermark ink. The local
 foreground cutoff follows measured ink brightness; covered, low-contrast,
 and ambiguous modules remain erasures. This retry checks the cooperative

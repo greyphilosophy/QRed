@@ -42,8 +42,8 @@ export function classifyModuleSamples({ values, size }, threshold, foreground) {
 // another, even after paper normalization. Calibrate both ink and foreground
 // locally instead of calling all pixels below a fixed level opaque text.
 // Only observed pixels enter this estimate, never expected document bytes.
-export function classifyLocalModuleSamples({ values, size }, {
-  shouldContinue = () => true,
+export function measureLocalModuleContrast({ values, size }, {
+  shouldContinue = () => true, radius = 8,
 } = {}) {
   const medians = new Uint8Array(size * size), cell = new Uint8Array(SAMPLES_PER_MODULE);
   for (let i = 0; i < medians.length; i++) {
@@ -52,31 +52,70 @@ export function classifyLocalModuleSamples({ values, size }, {
     cell.sort();
     medians[i] = cell[Math.floor(SAMPLES_PER_MODULE / 2)];
   }
+  const inkLevels = new Float64Array(size * size), paperLevels = new Float64Array(size * size);
+  const histogram = new Uint16Array(256), counts = new Uint16Array(256), sums = new Uint32Array(256);
+  for (let row = 0; row < size; row++) {
+    if (!shouldContinue()) return null;
+    histogram.fill(0);
+    const top = Math.max(0, row - radius), bottom = Math.min(size - 1, row + radius);
+    for (let y = top; y <= bottom; y++) for (let x = 0; x <= Math.min(size - 1, radius); x++)
+      histogram[medians[y * size + x]]++;
+    for (let col = 0; col < size; col++) {
+      let count = 0, sum = 0;
+      for (let value = 0; value < 256; value++) {
+        count += histogram[value]; sum += value * histogram[value];
+        counts[value] = count; sums[value] = sum;
+      }
+      const quantile = rank => {
+        let value = 0;
+        while (value < 255 && counts[value] <= rank) value++;
+        return value;
+      };
+      const paper = quantile(Math.floor(count * 0.85));
+      const excluded = Math.floor(paper * 0.65);
+      const baseCount = counts[excluded], baseSum = sums[excluded];
+      const exposed = count - baseCount, exposedSum = sum - baseSum;
+      if (exposed) {
+        let ink = quantile(baseCount + Math.floor(exposed * 0.2));
+        let light = quantile(baseCount + Math.floor(exposed * 0.8));
+        for (let iteration = 0; iteration < 5; iteration++) {
+          const split = Math.max(excluded, Math.ceil((ink + light) / 2) - 1);
+          const darkCount = counts[split] - baseCount, darkSum = sums[split] - baseSum;
+          if (darkCount) ink = darkSum / darkCount;
+          if (exposed > darkCount) light = (exposedSum - darkSum) / (exposed - darkCount);
+        }
+        inkLevels[row * size + col] = ink;
+        paperLevels[row * size + col] = light;
+      }
+      // Slide the neighborhood rather than sorting hundreds of overlapping
+      // observations again at every module. Integer histogram sums preserve
+      // the same quantiles and two-cluster averages as the sorted samples.
+      for (let y = top; y <= bottom; y++) {
+        if (col - radius >= 0) histogram[medians[y * size + col - radius]]--;
+        if (col + radius + 1 < size) histogram[medians[y * size + col + radius + 1]]++;
+      }
+    }
+  }
+  return { inkLevels, paperLevels };
+}
+
+// Reuse the measured local levels for a bounded nearby-threshold retry.
+// Resampling can move antialiased strokes across the midpoint without
+// changing the observed ink and paper clusters or the measured QR geometry.
+export function classifyLocalModuleSamples(samples, {
+  shouldContinue = () => true, contrast = null, thresholdFraction = 0.5,
+} = {}) {
+  const { values, size } = samples;
+  contrast ??= measureLocalModuleContrast(samples, { shouldContinue });
+  if (!contrast) return null;
+  const { inkLevels, paperLevels } = contrast;
   const bits = new Uint8Array(size * size), unknown = new Uint8Array(bits.length);
-  const confidence = new Uint8Array(bits.length), radius = 8;
+  const confidence = new Uint8Array(bits.length);
   for (let row = 0; row < size; row++) {
     if (!shouldContinue()) return null;
     for (let col = 0; col < size; col++) {
-      const neighbors = [];
-      for (let y = Math.max(0, row - radius); y <= Math.min(size - 1, row + radius); y++)
-        for (let x = Math.max(0, col - radius); x <= Math.min(size - 1, col + radius); x++)
-          neighbors.push(medians[y * size + x]);
-      neighbors.sort((a, b) => a - b);
-      const paper = neighbors[Math.floor(neighbors.length * 0.85)];
-      const exposed = neighbors.filter(value => value > paper * 0.65);
-      let ink = exposed[Math.floor(exposed.length * 0.2)];
-      let light = exposed[Math.floor(exposed.length * 0.8)];
-      for (let iteration = 0; iteration < 5; iteration++) {
-        const middle = (ink + light) / 2;
-        let darkSum = 0, lightSum = 0, darkCount = 0, lightCount = 0;
-        for (const value of exposed) {
-          if (value < middle) { darkSum += value; darkCount++; }
-          else { lightSum += value; lightCount++; }
-        }
-        if (darkCount) ink = darkSum / darkCount;
-        if (lightCount) light = lightSum / lightCount;
-      }
-      const index = row * size + col, threshold = (ink + light) / 2;
+      const index = row * size + col, ink = inkLevels[index], light = paperLevels[index];
+      const threshold = ink + (light - ink) * thresholdFraction;
       const foreground = ink * 0.9;
       let dark = 0, white = 0, missing = 0;
       for (let i = index * SAMPLES_PER_MODULE; i < (index + 1) * SAMPLES_PER_MODULE; i++) {
@@ -87,7 +126,7 @@ export function classifyLocalModuleSamples({ values, size }, {
       const margin = Math.abs(dark - white);
       bits[index] = Number(dark > white);
       // Uniform/fully covered neighborhoods have no usable contrast.
-      unknown[index] = Number(!exposed.length || light - ink < 8 || missing > 0 || margin < 5);
+      unknown[index] = Number(light - ink < 8 || missing > 0 || margin < 5);
       confidence[index] = missing + Math.max(0, 5 - margin);
     }
   }

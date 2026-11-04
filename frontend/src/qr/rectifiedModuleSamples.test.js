@@ -4,7 +4,8 @@ import { createQRedSeals } from "../qredSealer.js";
 import { createQRedQrData } from "../qredQr.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { recoverSampledQrMatrix } from "./pageAlignedRecovery.js";
-import { collectModuleSamples, classifyModuleSamples, classifyLocalModuleSamples } from "./rectifiedModuleSamples.js";
+import { collectModuleSamples, classifyModuleSamples, classifyLocalModuleSamples,
+  measureLocalModuleContrast } from "./rectifiedModuleSamples.js";
 
 it("reads geometry once while threshold retries retain their own ink and erasure decisions", () => {
   const version = 7, size = 45, side = size * 20;
@@ -83,6 +84,50 @@ it("stops local calibration when its cooperative deadline expires", () => {
   })).toBeNull();
   expect(checks).toBe(size + 3);
   expect(values).toEqual(original);
+});
+
+it.each([8, 12])("matches sorted local estimates with the sliding histogram at radius %i", radius => {
+  const size = 29, values = new Uint8Array(size * size * 25);
+  for (let row = 0; row < size; row++) for (let col = 0; col < size; col++) {
+    const at = (row * size + col) * 25;
+    values.fill(100 + (row * 17 + col * 31 + row * col * 7) % 155, at, at + 25);
+  }
+  const measured = measureLocalModuleContrast({ size, values }, { radius });
+  // Independent, deliberately slow reference includes every clipped edge
+  // and every horizontal window transition, not only one central patch.
+  for (let row = 0; row < size; row++) for (let col = 0; col < size; col++) {
+    const nearby = [];
+    for (let y = Math.max(0, row - radius); y <= Math.min(size - 1, row + radius); y++)
+      for (let x = Math.max(0, col - radius); x <= Math.min(size - 1, col + radius); x++)
+        nearby.push(values[(y * size + x) * 25]);
+    nearby.sort((a, b) => a - b);
+    const paper = nearby[Math.floor(nearby.length * 0.85)];
+    const exposed = nearby.filter(value => value > paper * 0.65);
+    let ink = exposed[Math.floor(exposed.length * 0.2)], light = exposed[Math.floor(exposed.length * 0.8)];
+    for (let iteration = 0; iteration < 5; iteration++) {
+      const middle = (ink + light) / 2;
+      const dark = exposed.filter(value => value < middle), white = exposed.filter(value => value >= middle);
+      if (dark.length) ink = dark.reduce((sum, value) => sum + value, 0) / dark.length;
+      if (white.length) light = white.reduce((sum, value) => sum + value, 0) / white.length;
+    }
+    expect(measured.inkLevels[row * size + col]).toBe(ink);
+    expect(measured.paperLevels[row * size + col]).toBe(light);
+  }
+});
+
+it("reuses one calibration for nearby threshold retries without remeasuring pixels", () => {
+  const size = 29, values = new Uint8Array(size * size * 25), index = 14 * size + 14;
+  for (let i = 0; i < size * size; i++) values.fill(i % 2 ? 250 : 200, i * 25, (i + 1) * 25);
+  values.fill(223, index * 25, (index + 1) * 25);
+  const samples = { size, values }, shouldContinue = vi.fn(() => true);
+  const contrast = measureLocalModuleContrast(samples, { radius: 12, shouldContinue });
+  expect(shouldContinue).toHaveBeenCalledTimes(size * 2);
+  shouldContinue.mockClear();
+  const middle = classifyLocalModuleSamples(samples, { contrast, shouldContinue });
+  const darker = classifyLocalModuleSamples(samples, { contrast, thresholdFraction: 0.4, shouldContinue });
+  expect(middle.bits[index]).toBe(1);
+  expect(darker.bits[index]).toBe(0);
+  expect(shouldContinue).toHaveBeenCalledTimes(size * 2);
 });
 
 it("recovers exact signed bytes under varying contrast and still rejects an unrelated key", async () => {

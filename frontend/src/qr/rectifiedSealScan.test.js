@@ -1,10 +1,11 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import QRCode from "qrcode";
 import { createQRedSeals } from "../qredSealer.js";
 import { createQRedQrData } from "../qredQr.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { pageWatermarkRegions } from "./pageAlignedScan.js";
 import { scanRectifiedSeal } from "./rectifiedSealScan.js";
+import * as moduleSamples from "./rectifiedModuleSamples.js";
 
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
 
@@ -12,7 +13,7 @@ const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
 // part of the sheet, making a high-percentile paper estimate brighter than
 // the exposed white modules. One global threshold then confuses them with
 // pale ink elsewhere. The decoder receives only these camera-like pixels.
-function shadowedPrint(symbol) {
+function shadowedPrint(symbol, grain) {
   const width = 1000, height = 1300, data = new Uint8ClampedArray(width * height * 4);
   const paper = { x: 50, y: 50, width: 900, height: 1165 };
   const region = pageWatermarkRegions(1, undefined, { marginPoints: 54 })[0];
@@ -26,7 +27,7 @@ function shadowedPrint(symbol) {
       const dark = inside && symbol.modules.get(row, col);
       const illumination = 240 * (1 - v * 0.45);
       const noise = ((Math.imul(x + 1, 73856093) ^ Math.imul(y + 1, 19349663)) >>> 0) % 1000 / 999 * 2 - 1;
-      value = illumination * (dark ? 0.87 - 0.12 * v : 1) + noise * (2 + 25 * v);
+      value = illumination * (dark ? 0.87 - 0.12 * v : 1) + noise * (2 + grain * v);
       if (inside && row > 15 && row < 125 && row % 19 === 0 && col % 4 !== 0) value = 40;
     }
     const at = (y * width + x) * 4;
@@ -36,7 +37,7 @@ function shadowedPrint(symbol) {
   return { data, width, height };
 }
 
-it("recovers a shadowed, grainy print through real finder fitting and the local-contrast retry", async () => {
+it.each([25, 29])("recovers a shadowed print with grain %i through real finder fitting and local retries", async grain => {
   const { seals } = await createQRedSeals({
     privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey,
     content: "Synthetic image-level local contrast recovery. ".repeat(30),
@@ -46,8 +47,14 @@ it("recovers a shadowed, grainy print through real finder fitting and the local-
   const symbol = QRCode.create([{ data: payloadBytes, mode: "byte" }], {
     version: 31, errorCorrectionLevel: "L",
   });
-  const image = shadowedPrint(symbol), original = image.data.slice();
-  const result = scanRectifiedSeal(image, { searchRadius: 12 });
+  const image = shadowedPrint(symbol, grain), original = image.data.slice();
+  // Observe calls without replacing the pixel classifier or any geometry.
+  const classify = vi.spyOn(moduleSamples, "classifyLocalModuleSamples");
+  let result;
+  try {
+    result = scanRectifiedSeal(image, { searchRadius: 12 });
+    if (grain === 29) expect(classify.mock.calls.some(([, options]) => options.thresholdFraction === 0.4)).toBe(true);
+  } finally { classify.mockRestore(); }
   expect(result?.seal).toBe(seals[0]);
   expect(image.data.every((value, index) => value === original[index])).toBe(true);
   await expect(verifyQRedSeals([result.seal], publicKey)).resolves.toMatchObject({
