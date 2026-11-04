@@ -53,30 +53,33 @@ export function captionLineCandidates(words, codes) {
   return lines;
 }
 
-// Older first-page navigation panels had corner brackets. OCR can join the
-// lower-right bracket to the URL and read the lower-left one as a pipe. Match
-// only these observed forms, at the original bracket positions beside a decoded
-// navigation link. Never exempt a whole panel or arbitrary trailing text.
-function legacyNavigationCaption(words, index, code, pageNumber) {
+// Older first-page navigation panels had corner brackets. OCR can join those
+// strokes to the URL, or split/join the caption words. Match only the fixed
+// caption characters at the original positions beside a decoded navigation
+// link. Never exempt a whole panel or arbitrary trailing text.
+function navigationCaption(words, index, code, pageNumber) {
   if (pageNumber !== 1 || code.kind !== "navigation") return null;
-  const phrase = words.slice(index, index + 3);
-  if (phrase.length !== 3 || phrase[0].text !== "Verify" || phrase[1].text !== "at"
-      || !/^[qg]red\.org(?:_[|J])?$/.test(phrase[2].text)
-      || !phrase.every(word => nearCaption(word.bbox, code))) return null;
   const size = Math.max(code.x1 - code.x0, code.y1 - code.y0);
-  const suffix = phrase[2], hasBracket = /_[|J]$/.test(suffix.text);
-  // Joined punctuation must reach the actual right corner, not merely occur
-  // anywhere near the QR. Caption words must share the expected baseline.
-  const baseline = phrase[0].bbox.y0;
-  if (phrase.some(word => Math.abs(word.bbox.y0 - baseline) > size * .12)
-      || baseline < code.y1 + size * .15 || baseline > code.y1 + size * .5
-      || (hasBracket && (suffix.bbox.x1 < code.x1 + size * .55
-        || suffix.bbox.x1 > code.x1 + size * .95))) return null;
-  const indices = [index, index + 1, index + 2], before = words[index - 1];
-  if (before?.text === "|" && nearCaption(before.bbox, code)
-      && before.bbox.x0 >= code.x0 - size * .95 && before.bbox.x1 <= code.x0 - size * .55
-      && Math.abs(before.bbox.y0 - baseline) <= size * .12) indices.unshift(index - 1);
-  return hasBracket || indices.length === 4 ? indices : null;
+  for (let count = 1; count <= 3 && index + count <= words.length; count++) {
+    const phrase = words.slice(index, index + count);
+    const compact = phrase.map(word => word.text).join("").replace(/\s/gu, "");
+    if (!/^\|?Verifyat[qg]red\.org(?:_[|J])?$/.test(compact)
+        || !phrase.every(word => nearCaption(word.bbox, code))) continue;
+    const first = phrase[0].bbox, last = phrase.at(-1).bbox;
+    const hasBracket = /_[|J]$/.test(compact), hasPrefix = compact.startsWith("|");
+    // Joined punctuation must reach the actual corner, not merely occur
+    // anywhere near the QR. Caption words must share the expected baseline.
+    if (phrase.some(word => Math.abs(word.bbox.y0 - first.y0) > size * .12)
+        || first.y0 < code.y1 + size * .15 || first.y0 > code.y1 + size * .5
+        || (hasBracket && (last.x1 < code.x1 + size * .55 || last.x1 > code.x1 + size * .95))
+        || (hasPrefix && (first.x0 < code.x0 - size * .95 || first.x0 > code.x0 - size * .55))) continue;
+    const indices = phrase.map((_, offset) => index + offset), before = words[index - 1];
+    if (!hasPrefix && before?.text === "|" && nearCaption(before.bbox, code)
+        && before.bbox.x0 >= code.x0 - size * .95 && before.bbox.x1 <= code.x0 - size * .55
+        && Math.abs(before.bbox.y0 - first.y0) <= size * .12) indices.unshift(index - 1);
+    return indices;
+  }
+  return null;
 }
 
 export function possiblePrintedMarkings(words, codes, { pageNumber } = {}) {
@@ -94,10 +97,10 @@ export function possiblePrintedMarkings(words, codes, { pageNumber } = {}) {
         overlap >= (b.x1 - b.x0) * (b.y1 - b.y0) * .5 ? [index] : [];
     });
     if (inside.length) { groups.push(inside); inside.forEach(index => used.add(index)); }
-    for (let index = 0; index < words.length - 2; index++) {
+    for (let index = 0; index < words.length; index++) {
       const phrase = words.slice(index, index + 3);
-      const legacy = legacyNavigationCaption(words, index, box, pageNumber);
-      const indices = legacy || (isPrintedCaption(phrase) && phrase.every(word => nearCaption(word.bbox, box))
+      const navigation = navigationCaption(words, index, box, pageNumber);
+      const indices = navigation || (phrase.length === 3 && isPrintedCaption(phrase) && phrase.every(word => nearCaption(word.bbox, box))
         ? [index, index + 1, index + 2] : null);
       if (indices && !indices.some(i => used.has(i))) {
         groups.push(indices);

@@ -147,3 +147,25 @@ it("handles either legacy corner separately without expanding the accepted URL g
   expect(navReading(noSuffix).differences).toEqual([]);
   expect(navReading(noSuffix).markings[0].observed).toBe("| Verify at qred.org");
 });
+
+it("handles joined legacy caption words from the bundled-font renderer without correcting their spelling", () => {
+  const joined = [
+    { text: "Verify", confidence: 44, bbox: { x0: 977, y0: 1460, x1: 1029, y1: 1475 } },
+    { text: "atgred.org_|", confidence: 36, bbox: { x0: 1033, y0: 1459, x1: 1115, y1: 1475 } },
+  ];
+  const result = navReading(joined);
+  expect(result.differences).toEqual([]);
+  expect(result.markings[0].observed).toBe("Verify atgred.org_|");
+  expect(result.status).toBe("uncertain");
+  const single = [{ text: "|Verifyatqred.org_J", confidence: 20,
+    bbox: { x0: 977, y0: 1459, x1: 1115, y1: 1475 } }];
+  expect(navReading(single).differences).toEqual([]);
+  expect(navReading(single).markings[0].observed).toBe("|Verifyatqred.org_J");
+  const misplaced = single.map(word => ({ ...word, bbox: { ...word.bbox, x0: 995 } }));
+  expect(navReading(misplaced).status).toBe("differences");
+  const missing = navReading(single, navigation, 1, "Friday Approved");
+  expect(missing.differences).toContainEqual(expect.objectContaining({ expected: "Approved", observed: "" }));
+  const injected = joined.map((word, index) => index === 1 ? { ...word, text: "atgred.org_Paid" } : word);
+  expect(navReading(injected).differences.some(d => d.observed.includes("Paid"))).toBe(true);
+  expect(navReading(joined, navigation, 2).status).toBe("differences");
+});
