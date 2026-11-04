@@ -60,3 +60,42 @@ it("reads the original visible crop in its rotated coordinate frame", async () =
   expect(dimensions).toEqual([900, 1800]);
   expect(pages[0]).toMatchObject({ width: 300, height: 600, text: "", ocr });
 });
+
+it("independently recognizes native-only pages before signing without replacing native text", async () => {
+  const pdf = await PDFDocument.create(), page = pdf.addPage([600, 700]);
+  page.drawText("Native account 123456", { x: 30, y: 650, size: 22 });
+  page.drawText("Amount 50.00", { x: 30, y: 610, size: 22 });
+  const file = new File([await pdf.save()], "synthetic-native.pdf", { type: "application/pdf" });
+  const prepared = await prepareAccountPdfSeal({ file });
+  const evidence = decodePageEvidence(prepared.pages[0].content);
+  expect(evidence.text).toBe("Native account 123456\nAmount 50.00");
+  expect(evidence.ocr.engine).toBe("tesseract-eng-v1");
+  expect(evidence.ocr.lines.map(line => line.text).join("\n")).toBe(evidence.text);
+  expect(evidence.ocr.lines.every(line => line.width > 0 && line.height > 0)).toBe(true);
+  expect(prepared.ocrPages).toHaveLength(1);
+}, 30000);
+
+it("retains a contradictory independent native-page reading and skips only truly blank pages", async () => {
+  const pdf = await PDFDocument.create(), page = pdf.addPage([600, 700]);
+  page.drawText("1 of 2", { x: 30, y: 650, size: 22 });
+  pdf.addPage([600, 700]);
+  const file = new File([await pdf.save()], "synthetic-native-and-blank.pdf", { type: "application/pdf" });
+  const ocr = { engine: "tesseract-eng-v1", lines: [{ text: "1of2", x: .05, y: .04, width: .1, height: .04, confidence: 60 }] };
+  const calls = [];
+  const pages = await readPdfPagesWithEvidence(file, page => page, { ocrReader: {
+    read: async (...args) => { calls.push(args); return ocr; },
+  } });
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toHaveLength(3); // pixels and dimensions, never native wording
+  expect(pages[0]).toMatchObject({ text: "1 of 2", blank: false, ocr });
+  expect(pages[1]).toMatchObject({ text: "", blank: true, ocr: null });
+});
+
+it("does not silently discard a failed native-page OCR baseline", async () => {
+  const pdf = await PDFDocument.create(), page = pdf.addPage([600, 700]);
+  page.drawText("Native original", { x: 30, y: 650, size: 22 });
+  const file = new File([await pdf.save()], "synthetic-native-failure.pdf", { type: "application/pdf" });
+  await expect(readPdfPagesWithEvidence(file, page => page, { ocrReader: {
+    read: async () => { throw new Error("OCR unavailable"); },
+  } })).rejects.toThrow("OCR unavailable");
+});

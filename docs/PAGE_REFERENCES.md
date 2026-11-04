@@ -177,3 +177,28 @@ prove the printed image is identical: small marks, colors, digits, faces, and
 other important details can disappear, and distinct originals can produce the
 same reference. These thumbnails are useful visual context, not reliable ID-photo
 substitution detection. Print/camera reliability still needs physical testing.
+
+### Located OCR baseline comparison
+
+For native-only PDFs as well as mixed and flattened pages, the original rendering
+is independently recognized before stamping. No extracted or signed wording is
+provided to that recognizer. The verifier separately projects the signed OCR
+boxes through the already validated page registration. Native PDF pages use
+native text anchors, never the conflicting baseline wording to locate itself.
+Without registration, a sequence-only match cannot establish a baseline match.
+Overlapping baseline boxes, multi-column native overlaps and partial source
+correspondences are marked ambiguous rather than choosing a favorable reading.
+
+The baseline panel distinguishes exactly repeated machine readings from readings
+that differ or could not be located/read. Punctuation, case, digits and word
+boundaries are not corrected to match the baseline. For example, PDF text `1 of 2`
+with pre-seal OCR `1of2` and fresh OCR `1of2` is shown as the same discrepancy in
+both OCR readings. All native differences, missing/added text, confidence warnings,
+retry alternatives and the original crops remain available. No baseline result
+changes the native comparison verdict or word highlights.
+
+This distinction is explanatory evidence, not proof that a discrepancy is harmless:
+PDF text `100`, pre-seal OCR `900` and fresh OCR `900` can also occur after a real
+change to `900`. That case still reports a native-text difference requiring review.
+Repeated OCR does not prove pixel or semantic identity, and low confidence remains
+low confidence. Older seals without OCR cannot gain this evidence retroactively.

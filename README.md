@@ -434,7 +434,7 @@ has legal identity or organizational authority.
 
 # How It Works
 
-1. The browser extracts canonical PDF text. Pages containing raster images, and nonblank pages without PDF text, are also read locally with English OCR before seals are drawn. The complete machine reading, line locations, confidence and engine version are signed separately alongside the native text; a visual/blank-page reference is retained where appropriate.
+1. The browser extracts canonical PDF text. Every nonblank page, including native-text-only pages, is independently read locally with English OCR before seals are drawn. PDF text is never supplied as a recognition hint. The complete machine reading, line locations, confidence and engine version are signed separately alongside the native text; a visual/blank-page reference is retained where appropriate.
 2. A local Ed25519 key signs the evidence and metadata, or an online account attestation binds a page commitment to provider identity and server time.
 3. Automatic encoding compares plaintext with zlib, choosing fewer QR codes and then fewer payload bytes; gzip is a fallback. Compression is reversible, not encryption.
 4. The binary record is placed in ordinary QR byte segments, split into numbered chunks when needed. Printed seals contain no document URL or hidden padding data.

@@ -1,3 +1,4 @@
+import { compareSignedOcrBaseline } from "./signedOcrBaseline.js";
 import { sealedTextReference } from "./sealedTextReference.js";
 import { preparePhotoReadingInWorker } from "../qr/photoScanClient.js";
 import { compareLocatedPhotoText, signedPhotoLines } from "./photoTextLayout.js";
@@ -104,6 +105,7 @@ export function comparePageReading(expected, reading, dimensions, evidence) {
   const markings = groups.map(indices => ({ observed: indices.map(index => words[index].text).join(" "),
     boxes: indices.map(index => words[index].bbox) }));
   if (comparison.status === "matches" && (contrastAssisted || markings.length || retryReviews.length || reference.hasOcr)) comparison.status = "uncertain";
-  return { ...comparison, contrastAssisted, markings, retryReviews,
+  const ocrBaseline = compareSignedOcrBaseline(evidence, reference, words, corners, dimensions);
+  return { ...comparison, contrastAssisted, markings, retryReviews, ocrBaseline,
     sealedOcr: reference.hasOcr, referenceConflicts: reference.conflicts, referenceReviews: reference.reviews, referenceUnresolved: reference.unresolved };
 }

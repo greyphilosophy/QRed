@@ -152,3 +152,25 @@ it("shows conflicting source OCR separately while retaining native and extra-wor
   expect(view.container.querySelector(".photo-summary.differences")).toBeTruthy();
   expect(view.container.querySelector(".photo-summary.matches")).toBeNull();
 });
+
+it("shows repeated baseline errors beside native differences, never as document identity", async () => {
+  const texts = ["Distinctive top anchor", "Independent middle anchor", "100", "Distinctive bottom anchor"];
+  const boxes = [.1, .4, .6, .85].map(y => ({ x: .1, y, width: .5, height: .04 }));
+  const evidence = { text: texts.join("\n"), width: 1000, height: 1000,
+    layout: { mode: 3, lines: boxes }, ocr: { engine: "tesseract-eng-v1", lines: texts.map((text, i) => ({
+      text: i === 2 ? "900" : text, ...boxes[i], confidence: 96 })) } };
+  const words = texts.map((text, i) => ({ text: i === 2 ? "900" : text, confidence: 99, lineId: i,
+    bbox: { x0: 100, y0: boxes[i].y * 1000, x1: 600, y1: (boxes[i].y + .04) * 1000 } }));
+  ocr.open.mockImplementation(async () => ({ width: 1000, height: 1000 }));
+  ocr.read.mockResolvedValue(words);
+  const view = render(<PhotoTextVerification results={[{ ...page, content: evidence.text, evidence }]}
+    scanPhotos={[capture(1, "first", "unused")]} />);
+  expect(await screen.findByText("Same discrepancy in both OCR readings")).toBeTruthy();
+  const baseline = screen.getByRole("region", { name: "Signed OCR baseline comparison" });
+  expect(baseline.textContent).toContain("PDF text: 100");
+  expect(baseline.textContent).toContain("Sealing-time OCR: 900");
+  expect(baseline.textContent).toContain("Photo reading: 900");
+  expect(baseline.textContent).toContain("do not prove unchanged pixels or meaning");
+  expect(view.container.querySelector(".photo-differences > ol").textContent).toContain("100");
+  expect(view.container.querySelector(".photo-summary.differences")).toBeTruthy();
+});

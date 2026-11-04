@@ -10,17 +10,17 @@ export function enclosingBox(boxes) {
 // Signed locations describe the ORIGINAL page. Coarse line starts and a
 // different paper aspect (for example a Letter page extended with a Legal
 // footer) are not enough to infer safe line boxes: keep sequence comparison.
-export function signedPhotoLines(text, evidence, corners, dimensions, words = []) {
-  const detected = locateSignedLines(text, evidence, corners, dimensions, words);
+export function signedPhotoLines(text, evidence, corners, dimensions, words = [], projection = null) {
+  const detected = locateSignedLines(text, evidence, corners, dimensions, words, projection);
   if (detected || !corners) return detected;
   // Edge detection can find a watermark or inner frame instead of the page.
   // Retry the raster bounds only through the existing strict borderless path:
   // matching full-page aspect AND an independently calibrated global transform.
   // Never relax the detected geometry or accept unanchored image bounds.
-  return locateSignedLines(text, evidence, null, dimensions, words);
+  return locateSignedLines(text, evidence, null, dimensions, words, projection);
 }
 
-function locateSignedLines(text, evidence, corners, { width, height }, words) {
+function locateSignedLines(text, evidence, corners, { width, height }, words, projection) {
   const lines = text.split("\n").filter(line => line.trim());
   // A PDF raster (or an edge-to-edge scan) has no surrounding paper border.
   // Its image bounds are only a candidate, never evidence by themselves:
@@ -62,6 +62,21 @@ function locateSignedLines(text, evidence, corners, { width, height }, words) {
     const anchors = assignPhotoLines(result, words).filter(line => compact(line.text)
       === compact(line.wordIndices.map(i => words[i].text).join(" ")));
     if (anchors.length < Math.min(lines.length, 2)) return null;
+  }
+  // Project supplemental evidence only AFTER registration against the required
+  // reference. Its potentially conflicting readings must not anchor themselves.
+  if (projection) {
+    if (projection.length > 512 || projection.some(line => !line ||
+      ![line.x, line.y, line.width, line.height].every(Number.isFinite) ||
+      line.x < 0 || line.y < 0 || line.width <= 0 || line.height <= 0 || line.height > .15 ||
+      line.x + line.width > 1.001 || line.y + line.height > 1.001)) return null;
+    return projection.map(line => {
+      const polygon = [[line.x, line.y], [line.x + line.width, line.y],
+        [line.x + line.width, line.y + line.height], [line.x, line.y + line.height]]
+        .map(([x, y]) => project(x, y));
+      return { text: line.text, polygon, wordIndices: [],
+        bbox: enclosingBox(polygon.map(p => ({ x0: p.x, y0: p.y, x1: p.x, y1: p.y }))) };
+    });
   }
   return result;
 }

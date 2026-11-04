@@ -125,7 +125,6 @@ export async function readPdfPagesWithEvidence(file, consume, { ocrReader, signa
       const page = await pdf.getPage(number);
       if ((await page.getAnnotations()).some(annotation => annotation.annotationType === AnnotationType.WIDGET)) throw new Error(formError);
       await assertReadableFonts(page, number);
-      const operations = (await page.getOperatorList({ annotationMode: AnnotationMode.ENABLE })).fnArray;
       const { items } = await page.getTextContent();
       const viewport = page.getViewport({ scale: 1 });
       const width = viewport.width, height = viewport.height;
@@ -164,12 +163,11 @@ export async function readPdfPagesWithEvidence(file, consume, { ocrReader, signa
       // A very pale/tiny mark may disappear in VQ but is never called blank here.
       const blank = !text && image.data.every((value, index) => index % 4 === 3 || value === 255);
       let ocr = null;
-      const rasterOperations = new Set([OPS.paintImageXObject, OPS.paintInlineImageXObject,
-        OPS.paintImageMaskXObject, OPS.paintImageXObjectRepeat, OPS.paintImageMaskXObjectRepeat,
-        OPS.paintInlineImageXObjectGroup, OPS.paintImageMaskXObjectGroup]);
-      if (ocrReader && !blank && (!text || operations.some(operation => rasterOperations.has(operation)))) {
+      // Read every nonblank original, including native-text-only PDFs. The
+      // independent machine baseline must not be synthesized from PDF text.
+      if (ocrReader && !blank) {
         signal?.throwIfAborted();
-        onProgress({ status: "reading PDF images", pageNumber: number, pageCount: pdf.numPages });
+        onProgress({ status: "reading original PDF text", pageNumber: number, pageCount: pdf.numPages });
         // Original visible page, before any footer, navigation label or watermark.
         // Bound memory, while retaining enough resolution for small printed text.
         const ocrScale = Math.min(3, Math.sqrt(11_500_000 / (width * height)));

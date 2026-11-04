@@ -90,6 +90,19 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
             <ul>{comparison.referenceConflicts.map((conflict, index) => <li key={index}>PDF text: {conflict.native.join(" / ")} · Sealing-time OCR: {conflict.ocr}</li>)}</ul>
           </div>}
           {comparison.referenceUnresolved && <p className="photo-note reading-caution">Some sealing-time OCR could not be independently located outside PDF text. Review the full OCR readings in the signed reference, including any extra words or amounts. They are not additional automatic comparison targets.</p>}
+          {comparison.ocrBaseline && <section aria-label="Signed OCR baseline comparison">
+            <h4>Sealing-time OCR compared by location</h4>
+            <p className="photo-note">Repeated machine readings can explain a discrepancy, but do not prove unchanged pixels or meaning.
+              Native text differences and all review warnings remain visible. Check important numbers on the original page.</p>
+            {!comparison.ocrBaseline.located ? <p>Page alignment could not be established. No baseline reading was matched by location.</p> :
+              <ul>{comparison.ocrBaseline.readings.filter(item => item.sourceDiscrepancy || item.status !== "repeated").map((item, index) => <li key={index}>
+                <strong>{item.status === "repeated" ? "Same discrepancy in both OCR readings" : item.status === "different"
+                  ? "Different from sealing-time OCR" : item.status === "unreadable" ? "Baseline text not read here" : "Ambiguous baseline location"}</strong>
+                {item.native.length > 0 && <div>PDF text: {item.native.join(" / ")}</div>}
+                <div>Sealing-time OCR: {item.baseline} <span className="photo-note">(OCR confidence: {item.confidence}%)</span></div><div>Photo reading: {item.observed || "(not read)"}</div>
+                <DifferenceCrop page={page} difference={{ ...item, spacing: true }} />
+              </li>)}</ul>}
+          </section>}
           {difficultReading && <p className="photo-note reading-caution">Many characters could not be read reliably. Inspect the marked text on the paper; recognition errors can look like changes.</p>}
           <div className="photo-differences">
             {contentDifferences.length > 0 && <>
