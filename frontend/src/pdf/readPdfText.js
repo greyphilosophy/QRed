@@ -49,7 +49,10 @@ export async function withPdfDocument(file, read) {
     cMapPacked: true,
     standardFontDataUrl: `${assetBase}standard_fonts/`,
     wasmUrl: `${assetBase}wasm/`,
-    useSystemFonts: true,
+    // Node canvas may substitute a partial system font and silently omit
+    // alphabetic glyphs. Use the bundled font programs for reliable evidence
+    // and preflight there; retain browser system-font behavior.
+    useSystemFonts: !import.meta.env.SSR,
     isEvalSupported: false,
     stopAtErrors: true,
   });
