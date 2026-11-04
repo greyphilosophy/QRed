@@ -12,6 +12,15 @@ export function enclosingBox(boxes) {
 // footer) are not enough to infer safe line boxes: keep sequence comparison.
 export function signedPhotoLines(text, evidence, corners, { width, height }, words = []) {
   const lines = text.split("\n").filter(line => line.trim());
+  // A PDF raster (or an edge-to-edge scan) has no surrounding paper border.
+  // Its image bounds are only a candidate, never evidence by themselves:
+  // require matching aspect and a single independently anchored print transform.
+  const borderless = !corners;
+  if (borderless) {
+    if (![width, height, evidence?.width, evidence?.height].every(value => Number.isFinite(value) && value > 0)
+      || Math.abs(Math.log((width / height) / (evidence.width / evidence.height))) > .02) return null;
+    corners = [{ x: 0, y: 0 }, { x: width, y: 0 }, { x: width, y: height }, { x: 0, y: height }];
+  }
   if (evidence?.text !== text || evidence.layout?.mode !== 3 || lines.length > 512
       || words.length > 4000 || !Array.isArray(evidence.layout.lines) || evidence.layout.lines.length !== lines.length || corners?.length !== 4
       || corners.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y)
@@ -26,6 +35,7 @@ export function signedPhotoLines(text, evidence, corners, { width, height }, wor
     || box.x < 0 || box.y < 0 || box.width <= 0 || box.height <= 0 || box.height > .15
     || box.x + box.width > 1.001 || box.y + box.height > 1.001)) return null;
   const adjustment = words.length ? printAdjustment(lines, evidence.layout.lines, words, mapping) : null;
+  if (borderless && !adjustment) return null;
   const project = (x, y) => adjustment ? mapping(x * adjustment.scale + adjustment.x, y * adjustment.scale + adjustment.y) : mapping(x, y);
   const result = [];
   for (let i = 0; i < lines.length; i++) {
