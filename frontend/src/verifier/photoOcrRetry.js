@@ -31,6 +31,17 @@ export function planTextRetries(words, comparison, signedLines, { width, height 
     const pad = Math.max(4, (base.y1 - base.y0) * .15);
     const box = { x0: Math.max(0, Math.floor(base.x0 - pad)), y0: Math.max(0, Math.floor(base.y0 - pad)),
       x1: Math.min(width, Math.ceil(base.x1 + pad)), y1: Math.min(height, Math.ceil(base.y1 + pad)) };
+    // Padding must not bring in strips of a neighboring line. Checking only
+    // word centers misses these clipped glyphs, which single-line OCR can
+    // hallucinate as extra punctuation. Trim padding, never signed content.
+    for (const word of words) {
+      const b = word.bbox;
+      if (!b || b.x1 <= box.x0 || b.x0 >= box.x1 || b.y1 <= box.y0 || b.y0 >= box.y1) continue;
+      if (b.y1 <= base.y0) box.y0 = Math.max(box.y0, b.y1);
+      else if (b.y0 >= base.y1) box.y1 = Math.min(box.y1, b.y0);
+      else if (b.x1 <= base.x0) box.x0 = Math.max(box.x0, b.x1);
+      else if (b.x0 >= base.x1) box.x1 = Math.min(box.x1, b.x0);
+    }
     if (box.x1 <= box.x0 || box.y1 <= box.y0 || box.y1 - box.y0 > height * .15) continue;
     // Include additions inside the crop; never replace partly cropped words.
     const indices = words.flatMap((word, index) => {
@@ -38,9 +49,10 @@ export function planTextRetries(words, comparison, signedLines, { width, height 
       return b && (b.x0 + b.x1) / 2 >= box.x0 && (b.x0 + b.x1) / 2 <= box.x1
         && (b.y0 + b.y1) / 2 >= box.y0 && (b.y0 + b.y1) / 2 <= box.y1 ? [index] : [];
     });
-    if (indices.some(index => {
-      const b = words[index].bbox;
-      return b.x0 < box.x0 || b.x1 > box.x1 || b.y0 < box.y0 || b.y1 > box.y1;
+    if (words.some(word => {
+      const b = word.bbox;
+      return b && b.x1 > box.x0 && b.x0 < box.x1 && b.y1 > box.y0 && b.y0 < box.y1
+        && (b.x0 < box.x0 || b.x1 > box.x1 || b.y0 < box.y0 || b.y1 > box.y1);
     })) continue;
     const priority = missing ? 0 : indices.some(index => comparison.words.find(w => w.sourceIndex === index)?.agrees === false) ? 1 : 2;
     candidates.push({ bbox: box, indices, priority });
@@ -67,6 +79,19 @@ function quality(words) {
 // No signed text enters this decision. Contradictory originals stay visible.
 export function preferTextRetry(before, after) {
   if (!after.length || after.length > 120 || after.some(word => !word.bbox)) return false;
+  // A row's mean confidence can hide a newly hallucinated punctuation token.
+  // Require independent confidence for new tokens rather than letting long,
+  // unchanged words outvote them. Existing uncertain readings stay visible.
+  const remaining = new Map();
+  for (const word of before) {
+    const token = String(word.text || "").normalize("NFC");
+    remaining.set(token, (remaining.get(token) || 0) + 1);
+  }
+  for (const word of after) {
+    const token = String(word.text || "").normalize("NFC"), count = remaining.get(token) || 0;
+    if (count) remaining.set(token, count - 1);
+    else if (!Number.isFinite(word.confidence) || word.confidence < OCR_REVIEW_THRESHOLD) return false;
+  }
   const oldQuality = quality(before), nextQuality = quality(after);
   const original = [...before.map(word => word.text).join("").normalize("NFC").replace(/\s/gu, "")];
   const observed = after.map(word => word.text).join("").normalize("NFC").replace(/\s/gu, "");
