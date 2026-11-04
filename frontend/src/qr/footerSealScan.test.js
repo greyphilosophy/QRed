@@ -4,6 +4,7 @@ import { createQRedSeals } from "../qredSealer.js";
 import { createQRedQrSymbol } from "../qredQr.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { qredPayloadFromScanResult } from "./qrPayload.js";
+import { decodePhoto } from "./decodePhoto.js";
 import { footerQrRegions, scanFooterSeals } from "./footerSealScan.js";
 
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
@@ -38,6 +39,9 @@ it("isolates adjacent symbols, preserves original pixels and requires normal sig
   const codes = scanFooterSeals(image);
   const recovered = codes.map(qredPayloadFromScanResult);
   expect(recovered.sort()).toEqual([...seals].sort());
+  const action = decodePhoto(image, { returnPayload: true });
+  expect(action.status).toBe("found-multiple");
+  expect([...action.texts].sort()).toEqual([...seals].sort());
   expect(hash()).toBe(before);
   await expect(verifyQRedSeals(recovered, publicKey)).resolves.toMatchObject({ status: "VALID", content });
   await expect(verifyQRedSeals(recovered, "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI"))
