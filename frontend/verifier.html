@@ -774,8 +774,9 @@
       var summaryStatus = ["ERROR", "INVALID", "INCOMPLETE", "UNVERIFIED"].find(function(value) {
         return results.some(function(result) { return result.status === value; });
       }) || status;
-      rs.textContent = summaryStatus === "VALID" ? "Seal authenticated" : summaryStatus;
-      rs.className = "result-status " + summaryStatus.toLowerCase();
+      var mixedDocuments = summaryStatus === "VALID" && options.progress && options.progress.mixedDocuments;
+      rs.textContent = mixedDocuments ? "Mixed document pages" : summaryStatus === "VALID" ? "Seal authenticated" : summaryStatus;
+      rs.className = "result-status " + (mixedDocuments ? "unverified" : summaryStatus.toLowerCase());
 
       var rm = document.getElementById("resultMeta");
       rm.innerHTML = "";

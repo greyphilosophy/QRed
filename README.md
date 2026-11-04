@@ -145,7 +145,13 @@ are collected (or verification fails). Progress shows the current page's QR coun
 or the document's page count. Any piece identifies its page's chunk count; a split
 page must be reconstructed before its document page count is available. Counts
 from unverified signatures are labeled as unverified. Different document roots,
-keys, timestamps, or page counts are kept separate. Use **Close** to pause scanning
+keys, timestamps, or page counts are kept separate. If a collection contains pages
+from different documents or signing versions, both verifiers display a **Mixed
+document pages** warning. A current cover attached to older signed results does
+not complete either document, even when every individual seal is authentic.
+If you intentionally scan multiple documents, their pages remain separate and
+completion counts apply only to the active document. Check that the cover and
+all remaining pages belong to the intended version. Use **Close** to pause scanning
 or **Clear collected seals** to start a fresh collection on the homepage.
 
 Choose **Open PDF to verify** on the homepage or `verify.htm` to read seals from

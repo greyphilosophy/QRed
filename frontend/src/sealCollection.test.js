@@ -68,7 +68,10 @@ describe("document membership", () => {
       options.publicKey = encodeBase64Url(await getPublicKeyAsync(seed));
     }
     const second = await page(2, options);
-    expect(await progress([...first.seals, ...second.seals], "")).toMatchObject({ pagesCollected: 1, finished: false });
+    const mixed = await progress([...first.seals, ...second.seals], "");
+    expect(mixed).toMatchObject({ pagesCollected: 1, finished: false, mixedDocuments: true });
+    expect(mixed.documentWarning).toContain("different documents or signing versions");
+    expect(mixed.message).toContain("Page counts are unverified");
   });
 });
 
@@ -87,4 +90,21 @@ it("handles single-page PDFs and ordinary QR content without inventing more page
   expect(await progress(single.seals)).toMatchObject({ complete: true, finished: true });
   expect(sealCollectionProgress([])).toBeNull();
   expect(sealCollectionProgress(["https://example.org"])).toBeNull();
+});
+
+
+it("warns about intentionally collected documents without invalidating or combining them", async () => {
+  const first = await Promise.all([1, 2].map(number => page(number)));
+  const second = await Promise.all([1, 2].map(number => page(number, {
+    pageContext: { pageNumber: number, pageCount: 2, documentRoot: "b2".repeat(32) },
+  })));
+  const scans = [...first, ...second].flatMap(item => item.seals);
+  const results = await verifySealCollection(scans, keys.publicKey);
+  expect(results.every(item => item.status === "VALID")).toBe(true);
+  const mixed = sealCollectionProgress(scans, results);
+  expect(mixed).toMatchObject({ pagesCollected: 2, pagesTotal: 2, complete: true, mixedDocuments: true });
+  expect(mixed.message).toContain("All 2 pages collected for this document.");
+  expect(mixed.documentWarning).toContain("Authentic seals do not mean the pages belong together");
+  expect(await progress(first.flatMap(item => item.seals)))
+    .toMatchObject({ complete: true, mixedDocuments: false, documentWarning: "" });
 });
