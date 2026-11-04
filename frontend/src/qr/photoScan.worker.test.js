@@ -26,7 +26,7 @@ it("announces capture before any seal work and recovers from that same image", (
   });
   capture();
   expect(scan.frame).not.toHaveBeenCalled();
-  expect(scan.photo).toHaveBeenCalledWith(image, { returnPayload: true });
+  expect(scan.photo).toHaveBeenCalledWith(image, { returnPayload: true, onProgress: expect.any(Function) });
   expect(scope.postMessage).toHaveBeenLastCalledWith({ action: { status: "found", text: "recovered seal" }, quality: { ready: true, state: "ready" } });
 });
 
@@ -35,7 +35,7 @@ it("retains multipart recovery after an early capture acknowledgement", () => {
   scan.seal.mockReturnValue({ total_chunks: 2 });
   scan.photo.mockReturnValue({ status: "found-multiple", texts: ["first chunk", "second chunk"] });
   capture();
-  expect(scan.photo).toHaveBeenCalledWith(image, { returnPayload: true });
+  expect(scan.photo).toHaveBeenCalledWith(image, { returnPayload: true, onProgress: expect.any(Function) });
   expect(scope.postMessage.mock.calls.at(-1)[0].action.texts).toHaveLength(2);
 });
 
@@ -62,4 +62,15 @@ it("hands off a native capture without spending time decoding the preview", () =
   expect(scope.postMessage).toHaveBeenCalledWith({ captured: true, captureOnly: true, quality: { ready: true, state: "ready" } });
   expect(scan.photo).not.toHaveBeenCalled();
   expect(scan.frame).not.toHaveBeenCalled();
+});
+
+it("posts partial chunks separately before the final photo result", () => {
+  const progress = { status: "found-multiple", texts: ["partial"] };
+  scan.photo.mockImplementation((_image, { onProgress }) => {
+    onProgress(progress);
+    return { status: "found-multiple", texts: ["partial", "final"] };
+  });
+  capture();
+  expect(scope.postMessage.mock.calls.map(([message]) => Object.keys(message)[0])).toEqual(["captured", "progress", "action"]);
+  expect(scope.postMessage).toHaveBeenCalledWith({ progress });
 });

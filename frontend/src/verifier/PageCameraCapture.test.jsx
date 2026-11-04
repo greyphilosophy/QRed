@@ -92,3 +92,14 @@ it("rejects changed chunk bytes even when the untrusted page identifier is uncha
   expect(decodeSeal(altered).document_id).toBe(decodeSeal(chunked.seals[0]).document_id);
   expect(confirmsPageSeal({ text: altered }, chunked.seals)).toBe(false);
 });
+
+it("keeps automatic capture paused after a timeout and leaves Capture now available", () => {
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: vi.fn(), getImageData: vi.fn(() => ({})) });
+  render(<PageCameraCapture pageLabel="Page 2" seals={signed.seals} onCapture={vi.fn()} onClose={vi.fn()} />);
+  ready();
+  act(() => camera.liveOptions.onCaptured());
+  act(() => camera.liveOptions.onResult({ status: "feedback", timedOut: true, message: "Use Capture now to try again." }));
+  expect(camera.reset).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert").textContent).toContain("Capture now");
+  expect(screen.getByRole("button", { name: "Capture now" }).disabled).toBe(false);
+});

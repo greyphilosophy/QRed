@@ -47,7 +47,7 @@ export function footerQrRegions(image, { shouldContinue = () => true } = {}) {
   return regions.sort((a, b) => b.width * b.height - a.width * a.height).slice(0, 8);
 }
 
-export function scanFooterSeals(image, { shouldContinue = () => true } = {}) {
+export function scanFooterSeals(image, { shouldContinue = () => true, onSeal } = {}) {
   if (!shouldContinue()) return [];
   const codes = [], found = new Set();
   for (const box of footerQrRegions(image, { shouldContinue })) {
@@ -71,6 +71,7 @@ export function scanFooterSeals(image, { shouldContinue = () => true } = {}) {
     found.add(payload);
     codes.push({ ...code, location: code.location && Object.fromEntries(
       Object.entries(code.location).map(([key, point]) => [key, { x: point.x * scale + box.x, y: point.y * scale + box.y }])) });
+    onSeal?.(payload);
   }
   return codes;
 }

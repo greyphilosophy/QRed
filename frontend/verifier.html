@@ -605,6 +605,9 @@
           if (typeof navigator.vibrate === "function") navigator.vibrate(80);
         } else if (action.text || action.texts?.length) hint.textContent = "This page is already captured. Show the next page.";
         else if (action.message) hint.textContent = action.message;
+        // Preserve recovered chunks, but do not tell the user to move on while
+        // the timed-out live worker is paused until an explicit retry.
+        if (action.timedOut && action.message) hint.textContent = action.message;
       }
 
       function cameraError(err) {

@@ -582,7 +582,7 @@ export function refineSingles(image, singles, shouldContinue = () => true) {
   return [];
 }
 
-function refineQuadrants(image, quadrants, bestCodes, shouldContinue) {
+export function refineQuadrants(image, quadrants, bestCodes, shouldContinue, onSeal) {
   let budget = 36;
   let best = bestCodes;
   for (const { mapping, regions, versions, codes } of quadrants) {
@@ -597,7 +597,10 @@ function refineQuadrants(image, quadrants, bestCodes, shouldContinue) {
         const recovered = recoverRefinedQrRegion(image, mapping, regions[index], version);
         if (!recovered) continue;
         seededVersion = version;
-        if (!found.some(other => other.seal === recovered.seal)) found.push(recovered);
+        if (!found.some(other => other.seal === recovered.seal)) {
+          found.push(recovered);
+          onSeal?.(recovered.seal);
+        }
         break;
       }
       if (budget <= 0) break;
@@ -608,7 +611,7 @@ function refineQuadrants(image, quadrants, bestCodes, shouldContinue) {
   return best;
 }
 
-function refinePage(image, singles, quadrants, bestCodes, shouldContinue) {
+function refinePage(image, singles, quadrants, bestCodes, shouldContinue, onSeal) {
   // Each layout's budget is shared by ALL orientations, formats and scales.
   // A four-quadrant miss can never consume the single-code allowance.
   singles.sort((a, b) => refinementScore(b.versions) - refinementScore(a.versions));
@@ -619,7 +622,7 @@ function refinePage(image, singles, quadrants, bestCodes, shouldContinue) {
     const recovered = refineSingles(image, singles, shouldContinue);
     if (recovered.length) return recovered;
   }
-  const recovered = refineQuadrants(image, quadrants, bestCodes, shouldContinue);
+  const recovered = refineQuadrants(image, quadrants, bestCodes, shouldContinue, onSeal);
   return recovered.length || singleFirst ? recovered : refineSingles(image, singles, shouldContinue);
 }
 
@@ -627,7 +630,7 @@ function refinePage(image, singles, quadrants, bestCodes, shouldContinue) {
  * established from visible paper edges, not from metadata or a signing layout.
  * "pageAligned: false" is handled by callers as the legacy fallback path.
  */
-export function scanPageAlignedImage(image, { deep = false, shouldContinue = () => true } = {}) {
+export function scanPageAlignedImage(image, { deep = false, shouldContinue = () => true, onSeal } = {}) {
   if (!shouldContinue()) return [];
   if (!image || !Number.isInteger(image.width) || !Number.isInteger(image.height) ||
       image.width < 160 || image.height < 160 ||
@@ -695,7 +698,10 @@ export function scanPageAlignedImage(image, { deep = false, shouldContinue = () 
     const codes = [];
     for (let i = 0; i < regions.length; i++) {
       const found = decodeRegion(sampledImage, mapping, regions[i], versions[i], budget);
-      if (found && !codes.some(other => other.seal === found.seal)) codes.push(found);
+      if (found && !codes.some(other => other.seal === found.seal)) {
+        codes.push(found);
+        onSeal?.(found.seal);
+      }
     }
     if (codes.length > bestCodes.length) bestCodes = codes;
     if (codes.length === 4) return codes;
@@ -704,5 +710,5 @@ export function scanPageAlignedImage(image, { deep = false, shouldContinue = () 
       quadrants.push({ mapping, regions, versions, codes, score });
     }
   }
-  return deep && !image.bounds ? refinePage(image, singles, quadrants, bestCodes, shouldContinue) : bestCodes;
+  return deep && !image.bounds ? refinePage(image, singles, quadrants, bestCodes, shouldContinue, onSeal) : bestCodes;
 }

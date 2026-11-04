@@ -41,7 +41,7 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
       onResult: action => {
         if (action.text || action.texts?.length) acceptFrame(action, canvas, epoch);
         else {
-          if (action.status === "feedback") live.current.reset();
+          if (action.status === "feedback" && !action.timedOut) live.current.reset();
           busyRef.current = false; setBusy(false);
           if (action.message) setError(action.message);
         }
@@ -79,7 +79,7 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
       onCapture(file); onClose();
       if (typeof navigator.vibrate === "function") navigator.vibrate(80);
     } catch (cause) {
-      if (epoch === generation.current) { live.current.reset(); setError(cause.message); }
+      if (epoch === generation.current) { if (!action.timedOut) live.current.reset(); setError(cause.message); }
     }
     finally { if (epoch === generation.current) { busyRef.current = false; setBusy(false); } }
   }

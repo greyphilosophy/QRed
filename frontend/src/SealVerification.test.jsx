@@ -271,6 +271,40 @@ it("collects all four signed chunks from one uploaded page photograph", async ()
   expect(document.querySelector(".verification-result pre").textContent).toBe(content);
 });
 
+it("retains partial uploaded seals, shows the timeout, and can finish from another photo", async () => {
+  const { seals } = await createQRedSeals({ content: "A".repeat(3000), encodingStrategy: "plaintext",
+    timestamp: "2026-11-04T12:00:00Z", privateKey, publicKey });
+  expect(seals).toHaveLength(2);
+  const message = "The photo scan reached its time limit. Choose a clearer photo.";
+  vi.mocked(scanPhotoInWorker)
+    .mockResolvedValueOnce({ status: "found-multiple", texts: [seals[0]], timedOut: true, message })
+    .mockResolvedValueOnce({ status: "found", text: seals[1] });
+  vi.stubGlobal("Image", class {
+    naturalWidth = 20; naturalHeight = 30;
+    decode() { return Promise.resolve(); }
+  });
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL() { return "blob:partial-photo"; }
+    static revokeObjectURL() {}
+  });
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+    drawImage() {}, getImageData: () => ({ data: new Uint8ClampedArray(20 * 30 * 4), width: 20, height: 30 }),
+  });
+  vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(callback =>
+    callback(new Blob(["page"], { type: "image/png" })));
+  render(<App />);
+  const choose = () => fireEvent.change(screen.getByLabelText("Choose QR image"), {
+    target: { files: [new File(["synthetic"], "page.png", { type: "image/png" })] },
+  });
+  choose();
+  await screen.findByText(message);
+  await waitFor(() => expect(scanner.props.collectionProgress).toMatchObject({ collected: 1, total: 2, finished: false }));
+  expect(screen.queryByRole("button", { name: "Cancel photo scan" })).toBeNull();
+  choose();
+  await waitFor(() => expect(scanner.props.collectionProgress).toMatchObject({ collected: 2, total: 2, finished: true }));
+  expect(screen.queryByText(message)).toBeNull();
+});
+
 
 it("prominently warns when a current cover is followed by older results, while authenticating each seal", async () => {
   const timestamp = "2026-11-04T12:00:00.000Z";
