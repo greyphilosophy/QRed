@@ -67,7 +67,22 @@ Do not describe those parameters as an issuer-approved redundancy policy.
 - `planNonoverlapErasure` accepts only a 2x render up to 3MP. It reserves all
   nonwhite source pixels, including faint ink and antialiasing; source content
   is neither resized nor rewritten. It uses M ECC and at least 1.25pt modules,
-  four-module quiet zones, 36pt default margins and 2pt source-ink guard.
+  four-module quiet zones, at least 36pt margins and at least 2pt source-ink guard.
+  Full outer quiet-zone boxes may touch, but never overlap. The source guard is
+  separate; no additional QR-to-QR gap is required outside intact quiet zones.
+  Placement runs eight fixed directional traversals and one clearance-first
+  traversal. Full plans are ranked only by minimum source-ink clearance, then
+  total clearance, with fixed traversal-order ties. No OCR result or recovered
+  wording selects a layout. This may improve an already-fitting earlier layout.
+  Search uses bounded typed arrays rather than one object per origin, at most
+  3MP origins and 16 selected boxes per traversal; clearance ordering uses
+  counting sort. An optional AbortSignal is checked before work and between
+  bounded stages/traversals.
+- `drawNonoverlapErasurePlan` draws an unmodified available plan with Normal
+  blending on its matching original page. Normal is safe only after the strict
+  whitespace/source-guard checks; it avoids whole-page compositing roundoff on
+  unrelated original gray pixels. Ordinary overlapping-watermark Multiply
+  drawing is unchanged. The caller must still perform optical preflight.
 - A plan can be unavailable because of capacity, geometry, or whitespace. The
   caller must retain its existing layout or ask for another layout. It must not
   shrink original content, remove evidence, weaken ECC or reduce modules to fit.
@@ -83,7 +98,11 @@ Do not describe those parameters as an issuer-approved redundancy policy.
 Generated-only tests cover all 1,820 choices of 12 from 16 shards, a frozen wire
 vector, offset byte views, corruption, extra parity, padding-only mutation,
 malformed headers, duplicate/mixed inputs, and the normal signature path.
-A generated PDF test preserves every original nonwhite pixel and verifies through
-normal PDF scanning with four entire printed symbols absent. Existing fixtures
+Generated PDF tests preserve every original nonwhite RGBA pixel, including gray,
+colored, faint and antialiased marks, and verify optical recovery with touching
+full quiet-zone boxes and normal PDF scanning with four printed symbols absent.
+Synthetic obstacle tests cover deterministic alternate traversal when forward
+row-major misses a symbol, full source guards and margins, nonoverlapping quiet
+zones, alpha/faint-ink exclusion, input bounds and cancellation. Existing fixtures
 and normal-layout tests remain required. Physical printing/camera and broad
 real-document layout acceptance are not established by these tests.

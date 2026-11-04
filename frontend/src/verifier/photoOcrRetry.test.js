@@ -173,3 +173,28 @@ it("does not treat same-count word-boundary changes as localized glyph correctio
   after.push({ ...before[2], confidence: 85 });
   expect(preferTextRetry(before, after, { localized: true })).toBe(false);
 });
+
+it("falls back to an observed row when the signed projection clips a neighbor, without losing a missing suffix", () => {
+  const words = [word("Previous", 98, 70), word("Label", 40, 100), word("ADDED", 98, 160, 400)];
+  const lines = [{ text: "Label 100", bbox: { x0: 10, y0: 93, x1: 350, y1: 128 },
+    polygon: [{ x: 10, y: 93 }, { x: 350, y: 93 }, { x: 350, y: 128 }, { x: 10, y: 128 }] }];
+  const comparison = compareLocatedPhotoText("Label 100", words, size, lines);
+  const plans = planTextRetries(words, comparison, lines, size);
+  const fallback = plans.find(plan => plan.indices.includes(1));
+  expect(fallback.indices).toEqual([1]);
+  expect(fallback.bbox.y0).toBeGreaterThanOrEqual(95);
+  expect(fallback.bbox.x1).toBeLessThan(350);
+  const merged = applyTextRetries(words, [{ candidate: fallback, words: [word("Label", 98, 100)] }]);
+  expect(merged.words.map(w => w.text)).toEqual(["Previous", "Label", "ADDED"]);
+  const result = compareLocatedPhotoText("Label 100", merged.words, size, lines);
+  expect(result.differences.some(d => d.expected.includes("100"))).toBe(true);
+  expect(result.differences.some(d => d.observed.includes("ADDED"))).toBe(true);
+});
+
+it("keeps partial neighbor clipping forbidden in the observed fallback too", () => {
+  const words = [word("Label", 40, 100), word("Neighbor", 98, 124, 80)];
+  const lines = [{ text: "Label", bbox: { x0: 10, y0: 95, x1: 150, y1: 126 },
+    polygon: [{ x: 10, y: 95 }, { x: 150, y: 95 }, { x: 150, y: 126 }, { x: 10, y: 126 }] }];
+  const comparison = compareLocatedPhotoText("Label", words, size, lines);
+  expect(planTextRetries(words, comparison, lines, size)).toEqual([]);
+});

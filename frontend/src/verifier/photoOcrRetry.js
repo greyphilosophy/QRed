@@ -44,36 +44,46 @@ export function planTextRetries(words, comparison, signedLines, { width, height 
     const missing = group.text && (group.wordIndices.length === 0 || missingBoxes.some(box =>
       ["x0", "y0", "x1", "y1"].every(key => box[key] === group.bbox?.[key])));
     if (!missing && !group.wordIndices.some(index => questioned.has(index))) continue;
-    const base = enclosingBox([group.bbox, ...group.wordIndices.map(index => words[index].bbox)].filter(Boolean));
-    if (!base) continue;
-    const pad = Math.max(4, (base.y1 - base.y0) * .15);
-    const box = { x0: Math.max(0, Math.floor(base.x0 - pad)), y0: Math.max(0, Math.floor(base.y0 - pad)),
-      x1: Math.min(width, Math.ceil(base.x1 + pad)), y1: Math.min(height, Math.ceil(base.y1 + pad)) };
-    // Padding must not bring in strips of a neighboring line. Checking only
-    // word centers misses these clipped glyphs, which single-line OCR can
-    // hallucinate as extra punctuation. Trim padding, never signed content.
-    for (const word of words) {
-      const b = word.bbox;
-      if (!b || b.x1 <= box.x0 || b.x0 >= box.x1 || b.y1 <= box.y0 || b.y0 >= box.y1) continue;
-      if (b.y1 <= base.y0) box.y0 = Math.max(box.y0, b.y1);
-      else if (b.y0 >= base.y1) box.y1 = Math.min(box.y1, b.y0);
-      else if (b.x1 <= base.x0) box.x0 = Math.max(box.x0, b.x1);
-      else if (b.x0 >= base.x1) box.x1 = Math.min(box.x1, b.x0);
+    const observedBase = enclosingBox(group.wordIndices.map(index => words[index].bbox));
+    const signedBase = enclosingBox([group.bbox, observedBase].filter(Boolean));
+    // A projected signed box can touch a neighboring observed row even when
+    // the actual glyphs are disjoint. If that crop fails the guards below,
+    // try only this row's observed extent. This changes the pixels reread,
+    // never the signed comparison target: unread signed suffixes stay missing.
+    const bases = [signedBase];
+    if (group.text && observedBase) bases.push(observedBase);
+    for (const base of bases) {
+      if (!base) continue;
+      const pad = Math.max(4, (base.y1 - base.y0) * .15);
+      const box = { x0: Math.max(0, Math.floor(base.x0 - pad)), y0: Math.max(0, Math.floor(base.y0 - pad)),
+        x1: Math.min(width, Math.ceil(base.x1 + pad)), y1: Math.min(height, Math.ceil(base.y1 + pad)) };
+      // Padding must not bring in strips of a neighboring line. Checking only
+      // word centers misses these clipped glyphs, which single-line OCR can
+      // hallucinate as extra punctuation. Trim padding, never signed content.
+      for (const word of words) {
+        const b = word.bbox;
+        if (!b || b.x1 <= box.x0 || b.x0 >= box.x1 || b.y1 <= box.y0 || b.y0 >= box.y1) continue;
+        if (b.y1 <= base.y0) box.y0 = Math.max(box.y0, b.y1);
+        else if (b.y0 >= base.y1) box.y1 = Math.min(box.y1, b.y0);
+        else if (b.x1 <= base.x0) box.x0 = Math.max(box.x0, b.x1);
+        else if (b.x0 >= base.x1) box.x1 = Math.min(box.x1, b.x0);
+      }
+      if (box.x1 <= box.x0 || box.y1 <= box.y0 || box.y1 - box.y0 > height * .15) continue;
+      // Include additions inside the crop; never replace partly cropped words.
+      const indices = words.flatMap((word, index) => {
+        const b = word.bbox;
+        return b && (b.x0 + b.x1) / 2 >= box.x0 && (b.x0 + b.x1) / 2 <= box.x1
+          && (b.y0 + b.y1) / 2 >= box.y0 && (b.y0 + b.y1) / 2 <= box.y1 ? [index] : [];
+      });
+      if (words.some(word => {
+        const b = word.bbox;
+        return b && b.x1 > box.x0 && b.x0 < box.x1 && b.y1 > box.y0 && b.y0 < box.y1
+          && (b.x0 < box.x0 || b.x1 > box.x1 || b.y0 < box.y0 || b.y1 > box.y1);
+      })) continue;
+      const priority = missing ? 0 : indices.some(index => comparison.words.find(w => w.sourceIndex === index)?.agrees === false) ? 1 : 2;
+      candidates.push({ bbox: box, contentBox: base, indices, priority, localized: group.localized === true });
+      break; // The observed fallback is used only when the signed crop failed.
     }
-    if (box.x1 <= box.x0 || box.y1 <= box.y0 || box.y1 - box.y0 > height * .15) continue;
-    // Include additions inside the crop; never replace partly cropped words.
-    const indices = words.flatMap((word, index) => {
-      const b = word.bbox;
-      return b && (b.x0 + b.x1) / 2 >= box.x0 && (b.x0 + b.x1) / 2 <= box.x1
-        && (b.y0 + b.y1) / 2 >= box.y0 && (b.y0 + b.y1) / 2 <= box.y1 ? [index] : [];
-    });
-    if (words.some(word => {
-      const b = word.bbox;
-      return b && b.x1 > box.x0 && b.x0 < box.x1 && b.y1 > box.y0 && b.y0 < box.y1
-        && (b.x0 < box.x0 || b.x1 > box.x1 || b.y0 < box.y0 || b.y1 > box.y1);
-    })) continue;
-    const priority = missing ? 0 : indices.some(index => comparison.words.find(w => w.sourceIndex === index)?.agrees === false) ? 1 : 2;
-    candidates.push({ bbox: box, contentBox: base, indices, priority, localized: group.localized === true });
   }
   const selected = [];
   for (const candidate of candidates.sort((a, b) => a.priority - b.priority)) {
