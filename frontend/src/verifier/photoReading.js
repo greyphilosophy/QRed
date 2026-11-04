@@ -26,7 +26,9 @@ export async function preparePhotoReading(source, { signal } = {}) {
 export const isPrintedCaption = words => /^Verify at [qg]red\.org$/.test(words.map(word => word.text).join(" "));
 function nearCaption(box, code) {
   const size = Math.max(code.x1 - code.x0, code.y1 - code.y0);
-  return box && box.y1 - box.y0 < size * .3 && box.x0 >= code.x0 - size && box.x1 <= code.x1 + size &&
+  // The half-inch navigation QR has a 16–18px caption at the usual raster scale.
+  // Geometry alone never excludes words: the exact caption must still be read.
+  return box && box.y1 - box.y0 <= size * .4 && box.x0 >= code.x0 - size && box.x1 <= code.x1 + size &&
     ((box.y0 >= code.y1 && box.y1 < code.y1 + size * .7) || (box.y1 <= code.y0 && box.y0 > code.y0 - size * .7) ||
       (box.x0 >= code.x1 && box.x1 < code.x1 + size && box.y0 >= code.y0 && box.y1 <= code.y1));
 }
@@ -51,7 +53,33 @@ export function captionLineCandidates(words, codes) {
   return lines;
 }
 
-export function possiblePrintedMarkings(words, codes) {
+// Older first-page navigation panels had corner brackets. OCR can join the
+// lower-right bracket to the URL and read the lower-left one as a pipe. Match
+// only these observed forms, at the original bracket positions beside a decoded
+// navigation link. Never exempt a whole panel or arbitrary trailing text.
+function legacyNavigationCaption(words, index, code, pageNumber) {
+  if (pageNumber !== 1 || code.kind !== "navigation") return null;
+  const phrase = words.slice(index, index + 3);
+  if (phrase.length !== 3 || phrase[0].text !== "Verify" || phrase[1].text !== "at"
+      || !/^[qg]red\.org(?:_[|J])?$/.test(phrase[2].text)
+      || !phrase.every(word => nearCaption(word.bbox, code))) return null;
+  const size = Math.max(code.x1 - code.x0, code.y1 - code.y0);
+  const suffix = phrase[2], hasBracket = /_[|J]$/.test(suffix.text);
+  // Joined punctuation must reach the actual right corner, not merely occur
+  // anywhere near the QR. Caption words must share the expected baseline.
+  const baseline = phrase[0].bbox.y0;
+  if (phrase.some(word => Math.abs(word.bbox.y0 - baseline) > size * .12)
+      || baseline < code.y1 + size * .15 || baseline > code.y1 + size * .5
+      || (hasBracket && (suffix.bbox.x1 < code.x1 + size * .55
+        || suffix.bbox.x1 > code.x1 + size * .95))) return null;
+  const indices = [index, index + 1, index + 2], before = words[index - 1];
+  if (before?.text === "|" && nearCaption(before.bbox, code)
+      && before.bbox.x0 >= code.x0 - size * .95 && before.bbox.x1 <= code.x0 - size * .55
+      && Math.abs(before.bbox.y0 - baseline) <= size * .12) indices.unshift(index - 1);
+  return hasBracket || indices.length === 4 ? indices : null;
+}
+
+export function possiblePrintedMarkings(words, codes, { pageNumber } = {}) {
   const groups = [], used = new Set();
   for (const box of codes) {
     const inside = words.flatMap((word, index) => {
@@ -68,23 +96,24 @@ export function possiblePrintedMarkings(words, codes) {
     if (inside.length) { groups.push(inside); inside.forEach(index => used.add(index)); }
     for (let index = 0; index < words.length - 2; index++) {
       const phrase = words.slice(index, index + 3);
-      if (!isPrintedCaption(phrase)) continue;
-      const near = phrase.every(word => nearCaption(word.bbox, box));
-      if (near && ![index, index + 1, index + 2].some(i => used.has(i))) {
-        groups.push([index, index + 1, index + 2]);
-        [index, index + 1, index + 2].forEach(i => used.add(i));
+      const legacy = legacyNavigationCaption(words, index, box, pageNumber);
+      const indices = legacy || (isPrintedCaption(phrase) && phrase.every(word => nearCaption(word.bbox, box))
+        ? [index, index + 1, index + 2] : null);
+      if (indices && !indices.some(i => used.has(i))) {
+        groups.push(indices);
+        indices.forEach(i => used.add(i));
       }
     }
   }
   return groups;
 }
 
-export function comparePageReading(expected, reading, dimensions, evidence) {
+export function comparePageReading(expected, reading, dimensions, evidence, options = {}) {
   const { words, codes = [], contrastAssisted = false, corners, retryReviews = [] } = Array.isArray(reading) ? { words: reading } : reading;
   const lines = signedPhotoLines(expected, evidence, corners, dimensions, words);
   const compare = input => compareLocatedPhotoText(expected, input, dimensions, lines);
   let comparison = compare(words);
-  const groups = possiblePrintedMarkings(words, codes).filter(indices => indices.every(index =>
+  const groups = possiblePrintedMarkings(words, codes, options).filter(indices => indices.every(index =>
     comparison.words.find(word => word.sourceIndex === index)?.agrees === false));
   const excluded = new Set(groups.flat());
   if (excluded.size) {

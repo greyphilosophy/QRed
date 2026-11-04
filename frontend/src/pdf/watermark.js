@@ -180,14 +180,8 @@ export async function stampWatermarks(pdf, layouts, pageSealResults) {
     // covers source content. On a full-page layout it may cover watermark
     // modules only if the resulting signed payload still passes preflight.
     page.drawRectangle({ ...entry, color: rgb(1, 1, 1) });
-    // Corner brackets frame the navigation target outside its QR quiet zone.
-    for (const [left, bottom] of [[true, true], [true, false], [false, true], [false, false]]) {
-      const x = entry.x + (left ? 1 : entry.width - 1);
-      const y = entry.y + (bottom ? 1 : entry.height - 1);
-      const start = { x, y };
-      page.drawLine({ start, end: { x: x + (left ? 6 : -6), y }, thickness: 0.6, color: rgb(0, 0, 0) });
-      page.drawLine({ start, end: { x, y: y + (bottom ? 6 : -6) }, thickness: 0.6, color: rgb(0, 0, 0) });
-    }
+    // Keep the panel undecorated. Brackets are recognized as extra letters
+    // and can join the caption, making our own output fail text comparison.
     drawQrSymbol(page, createEntryQrSymbol(),
       { x: entry.x + (entry.width - ENTRY_QR_SIZE) / 2, y: entry.y + 12, width: ENTRY_QR_SIZE, height: ENTRY_QR_SIZE }, 0);
   }
@@ -196,7 +190,9 @@ export async function stampWatermarks(pdf, layouts, pageSealResults) {
     const page = pdf.getPage(0);
     const font = await pdf.embedFont(StandardFonts.Helvetica);
     const caption = "Verify at qred.org";
-    const size = entry ? 7 : 8;
+    // Eight points still fits the verified panel while giving punctuation
+    // enough pixels to survive the standard whole-page OCR raster.
+    const size = 8;
     page.drawText(caption, { x: captionBox.x + (captionBox.width - font.widthOfTextAtSize(caption, size)) / 2,
       y: captionBox.y + 3, size, font, color: rgb(0, 0, 0) });
   }
