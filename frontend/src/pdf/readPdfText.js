@@ -49,7 +49,10 @@ export async function withPdfDocument(file, read) {
     cMapPacked: true,
     standardFontDataUrl: `${assetBase}standard_fonts/`,
     wasmUrl: `${assetBase}wasm/`,
-    useSystemFonts: true,
+    // Node has no browser font loader and its installed fonts vary by runner.
+    // Use PDF.js bundled Standard 14 outlines for deterministic raster evidence.
+    // Keep browser font handling unchanged.
+    useSystemFonts: !import.meta.env.SSR,
     isEvalSupported: false,
     stopAtErrors: true,
   });
@@ -65,7 +68,7 @@ export async function withPdfDocument(file, read) {
 // Render the visible crop with annotations, without changing the original PDF.
 // Rotation zero gives layout coordinates in the page's own coordinate system;
 // the saved page retains its original rotation and crop.
-export async function renderPdfPage(pdf, number, scale = 2, { reference = false } = {}) {
+export async function renderPdfPage(pdf, number, scale = 2, { reference = false, ocr = false } = {}) {
   const page = await pdf.getPage(number);
   const viewport = page.getViewport({ scale, rotation: reference ? page.rotate : 0 });
   if (viewport.width * viewport.height > 12_000_000) throw new Error("This page is too large for experimental watermark sealing. Choose a footer layout.");
@@ -76,6 +79,8 @@ export async function renderPdfPage(pdf, number, scale = 2, { reference = false 
     const image = canvas.context.getImageData(0, 0, canvas.canvas.width, canvas.canvas.height);
     const [x, y, right, top] = page.view;
     return { data: image.data, width: image.width, height: image.height, scale,
+      ...(ocr ? { ocrImage: typeof canvas.canvas.toBuffer === "function"
+        ? canvas.canvas.toBuffer("image/png") : canvas.canvas.toDataURL("image/png") } : {}),
       bounds: { x, y, width: right - x, height: top - y } };
   } finally {
     pdf.canvasFactory.destroy(canvas);
@@ -109,13 +114,14 @@ export async function extractPdfPageTexts(file) {
 
 // Read one page at a time so a long PDF does not retain all its full-size
 // rasters. The consumer keeps only its compact signed evidence.
-export async function readPdfPagesWithEvidence(file, consume) {
+export async function readPdfPagesWithEvidence(file, consume, { ocrReader, signal, onProgress = () => {} } = {}) {
   const { canonicalizeText } = await import("../qredSealer.js");
   return withPdfDocument(file, async pdf => {
     const { info } = await pdf.getMetadata();
     if (info.IsAcroFormPresent || info.IsXFAPresent) throw new Error(formError);
     const result = [];
     for (let number = 1; number <= pdf.numPages; number++) {
+      signal?.throwIfAborted();
       const page = await pdf.getPage(number);
       if ((await page.getAnnotations()).some(annotation => annotation.annotationType === AnnotationType.WIDGET)) throw new Error(formError);
       await assertReadableFonts(page, number);
@@ -156,8 +162,21 @@ export async function readPdfPagesWithEvidence(file, consume) {
       // An explicit blank marker requires every rendered pixel to be white.
       // A very pale/tiny mark may disappear in VQ but is never called blank here.
       const blank = !text && image.data.every((value, index) => index % 4 === 3 || value === 255);
+      let ocr = null;
+      // Read every nonblank original, including native-text-only PDFs. The
+      // independent machine baseline must not be synthesized from PDF text.
+      if (ocrReader && !blank) {
+        signal?.throwIfAborted();
+        onProgress({ status: "reading original PDF text", pageNumber: number, pageCount: pdf.numPages });
+        // Original visible page, before any footer, navigation label or watermark.
+        // Bound memory, while retaining enough resolution for small printed text.
+        const ocrScale = Math.min(3, Math.sqrt(11_500_000 / (width * height)));
+        const raster = await renderPdfPage(pdf, number, ocrScale, { reference: true, ocr: true });
+        ocr = await ocrReader.read(raster.ocrImage, raster.width, raster.height);
+        signal?.throwIfAborted();
+      }
       const validLines = lines.length === text.split("\n").filter(line => line.trim()).length ? lines : [];
-      result.push(await consume({ text, width, height, lines: validLines, image, blank,
+      result.push(await consume({ text, width, height, lines: validLines, image, blank, ocr,
         pageNumber: number, pageCount: pdf.numPages }));
       page.cleanup();
     }

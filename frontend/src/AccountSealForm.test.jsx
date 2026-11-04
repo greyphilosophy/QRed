@@ -229,3 +229,54 @@ it("keeps private PDF page content out of the provider link and all third-party 
   expect(fetch).toHaveBeenCalledWith("/api/auth/config", expect.any(Object));
   expect(fetch).toHaveBeenCalledTimes(1); // Only QRed configuration; commitments are handled by mock.
 });
+
+it("pauses private-key sealing to review OCR and only downloads after confirmation", async () => {
+  sealPdfInBrowser.mockImplementation(async ({ onReviewOcr }) => {
+    await onReviewOcr([{ pageNumber: 1, lines: [{ text: "Amount 50.00", confidence: 81 }] }]);
+    return { blob: new Blob(["sealed"]), sealResult: {} };
+  });
+  render(<PdfSealForm />);
+  fireEvent.click(screen.getByRole("button", { name: "Private key (offline)" }));
+  upload();
+  fireEvent.change(screen.getByLabelText("Private Key"), { target: { value: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes" } });
+  fireEvent.click(screen.getByRole("button", { name: "Stamp and save PDF" }));
+  await screen.findByRole("region", { name: "Review image text before signing" });
+  expect(screen.getByText("Amount 50.00")).toBeTruthy();
+  expect(HTMLAnchorElement.prototype.click).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Sign these machine readings" }));
+  await waitFor(() => expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledTimes(1));
+});
+
+it("cancels a pending OCR review without downloading or using account services", async () => {
+  sealPdfInBrowser.mockImplementation(async ({ onReviewOcr }) => {
+    await onReviewOcr([{ pageNumber: 1, lines: [] }]);
+    return { blob: new Blob(["sealed"]), sealResult: {} };
+  });
+  render(<PdfSealForm />);
+  fireEvent.click(screen.getByRole("button", { name: "Private key (offline)" }));
+  upload();
+  fireEvent.change(screen.getByLabelText("Private Key"), { target: { value: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes" } });
+  fireEvent.click(screen.getByRole("button", { name: "Stamp and save PDF" }));
+  await screen.findByRole("region", { name: "Review image text before signing" });
+  fireEvent.click(screen.getByRole("button", { name: "Cancel sealing" }));
+  await screen.findByText("PDF sealing cancelled.");
+  expect(screen.queryByRole("region", { name: "Review image text before signing" })).toBeNull();
+  expect(HTMLAnchorElement.prototype.click).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("aborts account OCR preparation when the file changes or the form unmounts", async () => {
+  prepareAccountPdfSeal.mockImplementation(() => new Promise(() => {}));
+  const view = render(<PdfSealForm />);
+  upload();
+  await waitFor(() => expect(prepareAccountPdfSeal).toHaveBeenCalledTimes(1));
+  const first = prepareAccountPdfSeal.mock.calls[0][0].signal;
+  upload();
+  await waitFor(() => expect(prepareAccountPdfSeal).toHaveBeenCalledTimes(2));
+  const second = prepareAccountPdfSeal.mock.calls[1][0].signal;
+  expect(first.aborted).toBe(true);
+  expect(second.aborted).toBe(false);
+  view.unmount();
+  expect(second.aborted).toBe(true);
+  expect(beginAccountSignIn).not.toHaveBeenCalled();
+});

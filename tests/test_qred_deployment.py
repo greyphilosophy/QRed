@@ -113,10 +113,10 @@ def make_delivery_records_pdf(path):
 
 
 def draw_dense_records_page(pdf):
-    """Enough varied text to require two seals even with automatic zlib."""
+    """Two seals including the independent native-page OCR baseline."""
     rng = random.Random(1042)
     pdf.setFont("Helvetica", 8)
-    for i in range(45):
+    for i in range(25):
         reference = "".join(rng.choices(string.ascii_letters + string.digits, k=100))
         pdf.drawString(40, 740 - i * 14, f"Record {i + 1}: {reference}")
 
@@ -401,7 +401,7 @@ class TestPdfTextSealing:
             status = "INCOMPLETE" if index == 1 else "Seal authenticated"
             show_seal_details(page)
             expect(page.get_by_role("heading", name=status, exact=True)).to_be_visible(timeout=20000)
-        expect(page.locator(".verification-result pre")).to_contain_text("Record 45:")
+        expect(page.locator(".verification-result pre")).to_contain_text("Record 25:")
 
 
 class TestImageOnlyPdfs:
@@ -548,6 +548,9 @@ class TestKeyGenerationImportAndSignatureVerification:
         page.get_by_label("Page layout", exact=True).select_option("legal-footer")
         with page.expect_download(timeout=60_000) as download_info:
             page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
+            # Native-only pages now preserve an independent OCR baseline too.
+            # Exercise the explicit source-review gesture before signing.
+            page.get_by_role("button", name="Sign these machine readings", exact=True).click(timeout=60_000)
         sealed_path = tmp_path / download_info.value.suggested_filename
         download_info.value.save_as(sealed_path)
         assert sealed_path.read_bytes().startswith(b"%PDF-")
@@ -856,7 +859,7 @@ class TestContinuousSealScanning:
         assert page.evaluate("window.cameraOpenCount") == 1
         results = page.locator(".verification-card .verification-result" if route == "/" else "#resultContent .verification-result")
         expect(results).to_have_count(2)
-        expect(results.nth(0)).to_contain_text("Record 45:")
+        expect(results.nth(0)).to_contain_text("Record 25:")
         expect(results.nth(1)).to_contain_text("Final delivery page.")
         if route == "/":
             show_seal_details(page)

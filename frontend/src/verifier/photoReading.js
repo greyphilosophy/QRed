@@ -1,3 +1,5 @@
+import { compareSignedOcrBaseline } from "./signedOcrBaseline.js";
+import { sealedTextReference } from "./sealedTextReference.js";
 import { preparePhotoReadingInWorker } from "../qr/photoScanClient.js";
 import { compareLocatedPhotoText, signedPhotoLines } from "./photoTextLayout.js";
 
@@ -26,7 +28,10 @@ export async function preparePhotoReading(source, { signal } = {}) {
 export const isPrintedCaption = words => /^Verify at [qg]red\.org$/.test(words.map(word => word.text).join(" "));
 function nearCaption(box, code) {
   const size = Math.max(code.x1 - code.x0, code.y1 - code.y0);
-  return box && box.y1 - box.y0 < size * .3 && box.x0 >= code.x0 - size && box.x1 <= code.x1 + size &&
+  // The navigation QR can be only about 53px wide while its caption glyphs
+  // are 16–18px tall. Allow that printed size, not just large footer captions.
+  // This bound only selects nearby text; exact caption recognition is still required.
+  return box && box.y1 - box.y0 <= size * .4 && box.x0 >= code.x0 - size && box.x1 <= code.x1 + size &&
     ((box.y0 >= code.y1 && box.y1 < code.y1 + size * .7) || (box.y1 <= code.y0 && box.y0 > code.y0 - size * .7) ||
       (box.x0 >= code.x1 && box.x1 < code.x1 + size && box.y0 >= code.y0 && box.y1 <= code.y1));
 }
@@ -81,7 +86,9 @@ export function possiblePrintedMarkings(words, codes) {
 
 export function comparePageReading(expected, reading, dimensions, evidence) {
   const { words, codes = [], contrastAssisted = false, corners, retryReviews = [] } = Array.isArray(reading) ? { words: reading } : reading;
-  const lines = signedPhotoLines(expected, evidence, corners, dimensions, words);
+  const reference = sealedTextReference(expected, evidence);
+  expected = reference.text;
+  const lines = signedPhotoLines(expected, reference.evidence, corners, dimensions, words);
   const compare = input => compareLocatedPhotoText(expected, input, dimensions, lines);
   let comparison = compare(words);
   const groups = possiblePrintedMarkings(words, codes).filter(indices => indices.every(index =>
@@ -97,6 +104,8 @@ export function comparePageReading(expected, reading, dimensions, evidence) {
   }
   const markings = groups.map(indices => ({ observed: indices.map(index => words[index].text).join(" "),
     boxes: indices.map(index => words[index].bbox) }));
-  if (comparison.status === "matches" && (contrastAssisted || markings.length || retryReviews.length)) comparison.status = "uncertain";
-  return { ...comparison, contrastAssisted, markings, retryReviews };
+  if (comparison.status === "matches" && (contrastAssisted || markings.length || retryReviews.length || reference.hasOcr)) comparison.status = "uncertain";
+  const ocrBaseline = compareSignedOcrBaseline(evidence, reference, words, corners, dimensions);
+  return { ...comparison, contrastAssisted, markings, retryReviews, ocrBaseline,
+    sealedOcr: reference.hasOcr, referenceConflicts: reference.conflicts, referenceReviews: reference.reviews, referenceUnresolved: reference.unresolved };
 }

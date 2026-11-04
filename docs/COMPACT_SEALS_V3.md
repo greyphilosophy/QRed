@@ -61,7 +61,7 @@ The signature and hashes are stored as bytes, without Base64/hex expansion.
 ## Multiple QRs for one page
 
 The PDF stamper permits at most four QR codes per page. Optional evidence uses
-spare capacity within the count needed for text. The decoder still accepts older
+spare capacity within the count needed for essential text and signed OCR evidence. OCR text, provenance, confidence and geometry are required once collected; capacity failures stop sealing instead of dropping them. The decoder still accepts older
 records with more chunks.
 
 First construct the complete record above. If it exceeds the maximum
