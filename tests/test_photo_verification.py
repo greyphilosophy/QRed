@@ -250,6 +250,10 @@ def test_guided_pages_find_changed_word_and_clear_without_persistence(browser, s
             })
         prepare_reader(page)
         page.wait_for_load_state("networkidle")
+        page.wait_for_function("""async () =>
+            Boolean(await caches.match('/ocr/v1/eng.traineddata.gz')) &&
+            Boolean(await caches.match('/ocr/v1/legacy/eng.traineddata.gz'))
+        """, timeout=10000)
         baseline = persistent_state(page)
         guard.check_instrumentation(page); guard.block(offline=offline)
         # Page 1 is unchanged. Page 2 carries its original valid seal but an altered word.
@@ -312,18 +316,19 @@ def test_guided_pages_find_changed_word_and_clear_without_persistence(browser, s
         context.close()
 
 
-def test_missing_ocr_resource_stops_before_camera_and_retries(browser):
+@pytest.mark.parametrize("resource", ["eng.traineddata.gz", "legacy/eng.traineddata.gz"])
+def test_missing_ocr_resource_stops_before_camera_and_retries(browser, resource):
     context = browser.new_context(service_workers="block")
     try:
         page = context.new_page()
         base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
-        context.route("**/ocr/v1/eng.traineddata.gz", lambda route: route.fulfill(status=404, body="Unavailable"))
+        context.route(f"**/ocr/v1/{resource}", lambda route: route.fulfill(status=404, body="Unavailable"))
         page.goto(base_url, wait_until="networkidle")
         page.evaluate("() => { window.__cameraRequests = 0; navigator.mediaDevices.getUserMedia = async () => { window.__cameraRequests++; throw Error('No test camera'); }; }")
         page.get_by_role("button", name="Check document", exact=True).click()
         expect(page.get_by_role("alert").filter(has_text="could not load")).to_be_visible(timeout=20000)
         assert page.evaluate("window.__cameraRequests") == 0
-        context.unroute("**/ocr/v1/eng.traineddata.gz")
+        context.unroute(f"**/ocr/v1/{resource}")
         page.get_by_role("button", name="Retry text recognition", exact=True).click()
         expect(page.get_by_role("button", name="Offline text checking ready", include_hidden=True)).to_have_count(1, timeout=60000)
     finally:

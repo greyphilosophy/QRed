@@ -236,7 +236,7 @@ Check important numbers and unmarked areas. Blur, skew, columns, watermark seals
 and QRed's added captions can affect recognition. If the original yields no text,
 a contrast-assisted reading can recover dark text over a pale watermark. Such a
 reading always needs visual review: pale writing may also have disappeared from
-that working copy. The original photo remains available. Navigation captions
+that working copy. The original photo remains available. A bounded independent legacy-English reader can retry questioned line crops from the original pixels. It never receives signed text as a hint, and changed readings keep both versions for review. Offline preparation loads both recognition models. Navigation captions
 beside decoded QRed codes (including a visible q/g OCR ambiguity) and readings inside those codes are shown
 separately as markings to inspect, never silently treated as authenticated text.
 Additional wording and the same caption elsewhere remain part of the comparison.
@@ -264,7 +264,7 @@ from the cleared screen. QRed does not upload this data, save it to the photo
 library, or write it to persistent browser storage. This is application-level
 cleanup, not a promise of forensic erasure from the browser or operating system.
 
-Only public application resources and the English OCR model are cached for offline
+Only public application resources and the English OCR models are cached for offline
 use. **Prepare for offline checking** can preload the text reader before entering
 airplane mode or opening an existing file. Keep the tab open. Captures are bounded
 to one image per page, 16 images / 32 MiB total, with four encodings in flight and

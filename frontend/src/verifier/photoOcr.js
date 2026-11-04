@@ -1,15 +1,17 @@
 import { sealedTextReference } from "./sealedTextReference.js";
 import { createWorker } from "tesseract.js";
 import { captionLineCandidates, comparePageReading, isPrintedCaption, preparePhotoReading } from "./photoReading.js";
+import { OCR_REVIEW_THRESHOLD } from "./photoTextComparison.js";
 import { signedPhotoLines } from "./photoTextLayout.js";
-import { applyTextRetries, planTextRetries, TEXT_RETRY_MS, TEXT_RETRY_PIXELS } from "./photoOcrRetry.js";
+import { applyTextRetries, planTextRetries, preferTextRetry, TEXT_RETRY_MS, TEXT_RETRY_PIXELS } from "./photoOcrRetry.js";
 
 // These versioned resources are copied from locked dependencies at build time.
 // Never use Tesseract's default CDN paths: all resources belong to this origin.
 export const OCR_ASSET_PATH = "/ocr/v1";
 
-export function createPhotoOcrReader(workerFactory = createWorker, prepareImage = preparePhotoReading) {
+export function createPhotoOcrReader(workerFactory = createWorker, prepareImage = preparePhotoReading, secondaryFactory = workerFactory) {
   let worker = null, pending = null, generation = 0;
+  let secondary = null, secondaryPending = null;
   let preprocessing = null;
   let progress = () => {};
 
@@ -35,6 +37,7 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
         // A less aggressive factor retains light-gray additions that the
         // engine's default Sauvola factor can discard beside a watermark.
         await next.setParameters({ tessedit_pageseg_mode: "3", thresholding_method: "2", thresholding_kfactor: "0.2" });
+        if (epoch !== generation) throw new Error("Reading cancelled.");
         return next;
       }).catch(error => {
         if (epoch === generation) { pending = null; worker?.terminate(); worker = null; }
@@ -44,28 +47,71 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
     return pending;
   }
 
-  return {
-    prepare,
-    async read(canvas, onProgress = () => {}, reference = {}) {
-      let pass = 0;
-      const current = await prepare(event => {
-        // Only the first whole-page reading has a useful percentage. Recovery
-        // and caption passes are additional work, not a restart of page progress.
-        if (pass === 1) onProgress(event);
+  async function prepareSecondary() {
+    if (!secondaryFactory) return null;
+    if (secondary) return secondary;
+    if (!secondaryPending) {
+      const epoch = generation;
+      secondaryPending = secondaryFactory("eng", 0, {
+        workerPath: `${OCR_ASSET_PATH}/worker.min.js`, corePath: OCR_ASSET_PATH,
+        langPath: `${OCR_ASSET_PATH}/legacy`, workerBlobURL: false, cacheMethod: "none", errorHandler: () => {},
+      }).then(async next => {
+        if (epoch !== generation) { await next.terminate(); throw new Error("Reading cancelled."); }
+        secondary = next;
+        await next.setParameters({ tessedit_pageseg_mode: "7", thresholding_method: "0" });
+        if (epoch !== generation) throw new Error("Reading cancelled.");
+        return next;
+      }).catch(error => {
+        if (epoch === generation) { secondaryPending = null; secondary?.terminate(); secondary = null; }
+        throw error;
       });
+    }
+    return secondaryPending;
+  }
+
+  function dispose() {
+    generation += 1;
+    progress = () => {};
+    preprocessing?.abort(); preprocessing = null;
+    worker?.terminate(); worker = null; pending = null;
+    secondary?.terminate(); secondary = null; secondaryPending = null;
+  }
+
+  return {
+    // Offline preparation loads both independent engines and their local models.
+    async prepare(onProgress) {
+      const epoch = generation;
+      try {
+        await prepare(onProgress);
+        if (epoch !== generation) throw new Error("Reading cancelled.");
+        await prepareSecondary();
+      }
+      catch (error) { if (epoch === generation) dispose(); throw error; }
+    },
+    async read(canvas, onProgress = () => {}, reference = {}) {
+      const readEpoch = generation, controller = new AbortController();
+      preprocessing = controller;
+      let pass = 0, current;
+      try {
+        current = await abortable(prepare(event => {
+          // Only the first whole-page reading has a useful percentage.
+          if (pass === 1) onProgress(event);
+        }), controller.signal);
+      } catch (error) {
+        if (readEpoch === generation) dispose();
+        throw error;
+      }
       // The signed text is deliberately never supplied to the recognition engine.
-      const recognize = async image => {
+      const recognize = async (image, engine = current) => {
         controller.signal.throwIfAborted();
         pass++;
-        const { data } = await current.recognize(image, {}, { text: true, blocks: true });
+        const { data } = await abortable(engine.recognize(image, {}, { text: true, blocks: true }), controller.signal);
         controller.signal.throwIfAborted();
         onProgress({ status: "processing" });
         return (data.blocks || []).flatMap((block, b) => (block.paragraphs || [])
           .flatMap((paragraph, p) => (paragraph.lines || []).flatMap((line, l) => (line.words || [])
             .map(({ text, confidence, bbox }) => ({ text, confidence, bbox, lineId: `${pass}:${b}:${p}:${l}` })))));
       };
-      const controller = new AbortController();
-      preprocessing = controller;
       let prepared;
       try {
         // OCR and bounded image preparation use separate workers. Neither QR
@@ -127,61 +173,101 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
           const lines = signedPhotoLines(comparisonReference.text, comparisonReference.evidence, prepared.corners, canvas, words);
           const candidates = planTextRetries(words, comparison, lines, canvas);
           if (candidates.length) {
-            const replacements = [], deadline = performance.now() + TEXT_RETRY_MS;
+            const replacements = [], alternateReviews = [];
             let source = null, pixels = 0;
             await current.setParameters({ tessedit_pageseg_mode: "7" });
             try {
-              // Decode the retained file lazily for crops at its original
-              // resolution, independently of the bounded whole-page canvas.
+              // Both engines see original pixels, including faint additions.
+              // Never feed expected text or a signed-text-derived whitelist.
               if (reference.file) source = await openPhotoSource(reference.file);
+              const alternate = await abortable(prepareSecondary(), controller.signal);
               controller.signal.throwIfAborted();
               const input = source?.image || canvas;
               const sx = (source?.width || canvas.width) / canvas.width;
               const sy = (source?.height || canvas.height) / canvas.height;
+              // Model preparation is a separate cold-start cost; the existing
+              // cooperative budget bounds all actual retry recognition work.
+              const deadline = performance.now() + TEXT_RETRY_MS;
               for (const candidate of candidates) {
-                if (performance.now() >= deadline) break;
-                controller.signal.throwIfAborted();
+                if (performance.now() >= deadline || pixels >= TEXT_RETRY_PIXELS) break;
                 const box = candidate.bbox, width = box.x1 - box.x0, height = box.y1 - box.y0;
-                const scale = Math.min(Math.max(1, sx, 64 / height), 3, Math.sqrt(500000 / (width * height)));
-                const detail = document.createElement("canvas");
-                detail.width = Math.max(1, Math.round(width * scale));
-                detail.height = Math.max(1, Math.round(height * scale));
-                pixels += detail.width * detail.height;
-                if (pixels > TEXT_RETRY_PIXELS) { detail.width = detail.height = 0; break; }
-                try {
-                  detail.getContext("2d").drawImage(input, box.x0 * sx, box.y0 * sy, width * sx, height * sy,
-                    0, 0, detail.width, detail.height);
-                  const read = await recognize(detail);
-                  const mapped = read.filter(word => word.bbox).map(word => ({ ...word, bbox: {
-                    x0: box.x0 + word.bbox.x0 * width / detail.width, x1: box.x0 + word.bbox.x1 * width / detail.width,
-                    y0: box.y0 + word.bbox.y0 * height / detail.height, y1: box.y0 + word.bbox.y1 * height / detail.height,
-                  } }));
-                  replacements.push({ candidate, words: mapped });
-                } finally { detail.width = detail.height = 0; }
+                const before = candidate.indices.map(index => words[index]);
+                const readings = [];
+                // Fixed order and scale per model. One shared crop/time budget.
+                for (const engine of [current, alternate].filter(Boolean)) {
+                  if (performance.now() >= deadline) break;
+                  controller.signal.throwIfAborted();
+                  const border = engine === alternate ? 20 : 0;
+                  const scale = engine === alternate ? 2 : Math.min(Math.max(1, sx, 64 / height), 3, Math.sqrt(500000 / (width * height)));
+                  const detail = document.createElement("canvas");
+                  const drawWidth = Math.max(1, Math.round(width * scale)), drawHeight = Math.max(1, Math.round(height * scale));
+                  detail.width = drawWidth + border * 2; detail.height = drawHeight + border * 2;
+                  const area = detail.width * detail.height;
+                  if (pixels + area > TEXT_RETRY_PIXELS) { detail.width = detail.height = 0; continue; }
+                  pixels += area;
+                  try {
+                    const context = detail.getContext("2d");
+                    if (border) { context.fillStyle = "white"; context.fillRect(0, 0, detail.width, detail.height); }
+                    context.drawImage(input, box.x0 * sx, box.y0 * sy, width * sx, height * sy,
+                      border, border, drawWidth, drawHeight);
+                    const reading = await recognize(detail, engine);
+                    // Reject the entire alternative if any claimed glyph lies
+                    // in synthetic padding or has invalid geometry. Do not drop
+                    // individual words to manufacture a cleaner transcript.
+                    if (reading.some(word => !word.bbox || !["x0", "y0", "x1", "y1"].every(key => Number.isFinite(word.bbox[key]))
+                      || word.bbox.x1 <= word.bbox.x0 || word.bbox.y1 <= word.bbox.y0
+                      || word.bbox.x0 < border || word.bbox.y0 < border
+                      || word.bbox.x1 > border + drawWidth || word.bbox.y1 > border + drawHeight)) continue;
+                    readings.push(reading.map(word => ({ ...word, bbox: {
+                      x0: box.x0 + (word.bbox.x0 - border) * width / drawWidth,
+                      x1: box.x0 + (word.bbox.x1 - border) * width / drawWidth,
+                      y0: box.y0 + (word.bbox.y0 - border) * height / drawHeight,
+                      y1: box.y0 + (word.bbox.y1 - border) * height / drawHeight,
+                    } })));
+                  } finally { detail.width = detail.height = 0; }
+                }
+                let selected = before;
+                for (const reading of readings) if (preferTextRetry(before, reading) && preferTextRetry(selected, reading)) selected = reading;
+                if (selected !== before) replacements.push({ candidate, words: selected });
+                const transcript = selected.map(word => word.text).join(" ");
+                for (const reading of readings) {
+                  const observed = reading.map(word => word.text).join(" ");
+                  // Cross-model confidence is only a heuristic. Preserve a
+                  // credible losing alternative as an explicit review too.
+                  if (observed !== transcript && reading.length && (preferTextRetry(before, reading)
+                    || reading.every(word => Number.isFinite(word.confidence) && word.confidence >= OCR_REVIEW_THRESHOLD)))
+                    alternateReviews.push({ original: transcript, observed, boxes: [box] });
+                }
               }
             } finally {
               source?.release();
-              if (worker === current) await current.setParameters({ tessedit_pageseg_mode: "3" });
+              if (readEpoch === generation && worker === current) await current.setParameters({ tessedit_pageseg_mode: "3" });
             }
             ({ words, retryReviews } = applyTextRetries(words, replacements));
+            retryReviews.push(...alternateReviews);
           }
         }
         return { words, codes: prepared.codes, corners: prepared.corners, contrastAssisted, retryReviews };
+      } catch (error) {
+        if (readEpoch === generation) dispose();
+        throw error;
       } finally {
         controller.abort();
         if (preprocessing === controller) preprocessing = null;
         if (prepared?.canvas) prepared.canvas.width = prepared.canvas.height = 0;
       }
     },
-    dispose() {
-      generation += 1;
-      progress = () => {};
-      preprocessing?.abort(); preprocessing = null;
-      worker?.terminate();
-      worker = null;
-      pending = null;
-    },
+    dispose,
   };
+}
+
+function abortable(promise, signal) {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(new DOMException("Reading cancelled", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
 }
 
 async function openPhotoSource(file) {
