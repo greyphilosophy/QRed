@@ -250,6 +250,10 @@ def test_guided_pages_find_changed_word_and_clear_without_persistence(browser, s
             })
         prepare_reader(page)
         page.wait_for_load_state("networkidle")
+        page.wait_for_function("""async () =>
+            Boolean(await caches.match('/ocr/v1/eng.traineddata.gz')) &&
+            Boolean(await caches.match('/ocr/v1/legacy/eng.traineddata.gz'))
+        """, timeout=10000)
         baseline = persistent_state(page)
         guard.check_instrumentation(page); guard.block(offline=offline)
         # Page 1 is unchanged. Page 2 carries its original valid seal but an altered word.
@@ -312,18 +316,19 @@ def test_guided_pages_find_changed_word_and_clear_without_persistence(browser, s
         context.close()
 
 
-def test_missing_ocr_resource_stops_before_camera_and_retries(browser):
+@pytest.mark.parametrize("resource", ["eng.traineddata.gz", "legacy/eng.traineddata.gz"])
+def test_missing_ocr_resource_stops_before_camera_and_retries(browser, resource):
     context = browser.new_context(service_workers="block")
     try:
         page = context.new_page()
         base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
-        context.route("**/ocr/v1/eng.traineddata.gz", lambda route: route.fulfill(status=404, body="Unavailable"))
+        context.route(f"**/ocr/v1/{resource}", lambda route: route.fulfill(status=404, body="Unavailable"))
         page.goto(base_url, wait_until="networkidle")
         page.evaluate("() => { window.__cameraRequests = 0; navigator.mediaDevices.getUserMedia = async () => { window.__cameraRequests++; throw Error('No test camera'); }; }")
         page.get_by_role("button", name="Check document", exact=True).click()
         expect(page.get_by_role("alert").filter(has_text="could not load")).to_be_visible(timeout=20000)
         assert page.evaluate("window.__cameraRequests") == 0
-        context.unroute("**/ocr/v1/eng.traineddata.gz")
+        context.unroute(f"**/ocr/v1/{resource}")
         page.get_by_role("button", name="Retry text recognition", exact=True).click()
         expect(page.get_by_role("button", name="Offline text checking ready", include_hidden=True)).to_have_count(1, timeout=60000)
     finally:
@@ -433,5 +438,45 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
         assert crop["y"] >= 0 and crop["y"] + crop["height"] < 844, crop
         expect(page.get_by_text("Other pages have not been checked.", exact=False)).to_be_visible()
         page.screenshot(path=str(tmp_path / "difference-first.png"))
+    finally:
+        context.close()
+
+
+def test_flattened_pdf_signs_real_browser_ocr_then_repeats_offline(browser, tmp_path):
+    """Production worker/model assets, review UI and signed image text stay local."""
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
+    from browser_helpers import stamp_and_save
+
+    raster = page_image(TEXT)["buffer"]
+    source = io.BytesIO()
+    pdf = canvas.Canvas(source, pagesize=(600, 800))
+    pdf.drawImage(ImageReader(io.BytesIO(raster)), 0, 0, width=600, height=800)
+    pdf.save()
+    context = browser.new_context(service_workers="allow", accept_downloads=True)
+    try:
+        base = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
+        guard = OfflineNetworkGuard(context, base)
+        page = context.new_page()
+        page.goto(base, wait_until="networkidle")
+        page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Private key (offline)", exact=True).click()
+        page.get_by_label("Private Key", exact=True).fill("txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=")
+        page.get_by_label("Page layout", exact=True).select_option("legal-footer")
+        for attempt in range(2):
+            if attempt:
+                wait_for_offline_resources(page, pdf=True)
+                page.wait_for_load_state("networkidle")
+                guard.block(offline=True)
+            _, result = stamp_and_save(page, {"name": "flattened.pdf", "mimeType": "application/pdf",
+                "buffer": source.getvalue()}, tmp_path / f"flattened-{attempt}.sealed.pdf")
+            evidence = result["evidence"]
+            assert evidence["text"] == ""
+            assert evidence["ocr"]["engine"] == "tesseract-eng-v1"
+            reading = "\n".join(line["text"] for line in evidence["ocr"]["lines"])
+            assert "Account 123456" in reading
+            assert "Approved total 123.45" in reading
+            assert "QRED" not in reading.upper(), "Read the original, not its navigation stamp"
+            guard.assert_quiet()
     finally:
         context.close()

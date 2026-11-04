@@ -236,7 +236,7 @@ Check important numbers and unmarked areas. Blur, skew, columns, watermark seals
 and QRed's added captions can affect recognition. If the original yields no text,
 a contrast-assisted reading can recover dark text over a pale watermark. Such a
 reading always needs visual review: pale writing may also have disappeared from
-that working copy. The original photo remains available. Navigation captions
+that working copy. The original photo remains available. A bounded independent legacy-English reader can retry questioned line crops from the original pixels. It never receives signed text as a hint, and changed readings keep both versions for review. Offline preparation loads both recognition models. Navigation captions
 beside decoded QRed codes (including a visible q/g OCR ambiguity) and readings inside those codes are shown
 separately as markings to inspect, never silently treated as authenticated text.
 Additional wording and the same caption elsewhere remain part of the comparison.
@@ -264,7 +264,7 @@ from the cleared screen. QRed does not upload this data, save it to the photo
 library, or write it to persistent browser storage. This is application-level
 cleanup, not a promise of forensic erasure from the browser or operating system.
 
-Only public application resources and the English OCR model are cached for offline
+Only public application resources and the English OCR models are cached for offline
 use. **Prepare for offline checking** can preload the text reader before entering
 airplane mode or opening an existing file. Keep the tab open. Captures are bounded
 to one image per page, 16 images / 32 MiB total, with four encodings in flight and
@@ -434,14 +434,16 @@ has legal identity or organizational authority.
 
 # How It Works
 
-1. The browser extracts canonical text and optional page evidence, or creates a visual/blank-page reference when no text is available.
+1. The browser extracts canonical PDF text. Pages containing raster images, and nonblank pages without PDF text, are also read locally with English OCR before seals are drawn. The complete machine reading, line locations, confidence and engine version are signed separately alongside the native text; a visual/blank-page reference is retained where appropriate.
 2. A local Ed25519 key signs the evidence and metadata, or an online account attestation binds a page commitment to provider identity and server time.
 3. Automatic encoding compares plaintext with zlib, choosing fewer QR codes and then fewer payload bytes; gzip is a fallback. Compression is reversible, not encryption.
 4. The binary record is placed in ordinary QR byte segments, split into numbered chunks when needed. Printed seals contain no document URL or hidden padding data.
 5. A separate first-page navigation QR is required in footer layouts and optional on watermarks. Every page retains the printed verifier address.
 6. The recipient opens qred.org and reads the seals with its camera, photo or PDF scanner.
 7. The verifier reconstructs the record, decompresses it when needed and checks the signature against a trusted key.
-8. The recipient compares recovered signed text and visual evidence with the document. OCR assists this comparison but does not authenticate every visible detail.
+8. The recipient compares recovered signed text, machine readings and visual evidence with the document. OCR-backed comparisons always require review: a signature authenticates the stored reading, not its accuracy or completeness. Native/OCR conflicts remain visible.
+
+OCR uses the same-origin, versioned Tesseract English assets. Load those assets before going offline; a missing OCR resource stops sealing rather than silently omitting machine evidence. Private-key signing offers an OCR review step; account preparation exposes the readings before sign-in. No page raster or transcript is uploaded. Image-only pages retain footer seals. Required OCR is never dropped to fit a QR: pages exceeding the four-code limit fail with an actionable message. Existing v1 page evidence still verifies; OCR evidence requires the updated v2 decoder on every verifier route and saved offline copy.
 
 # Design Goals
 

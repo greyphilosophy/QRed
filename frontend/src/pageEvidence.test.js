@@ -144,3 +144,68 @@ describe("optional evidence budget", () => {
     await expect(createQRedSeals({ content: "x".repeat(12000), pageContext, privateKey, publicKey, encodingStrategy: "plaintext" })).rejects.toThrow("4-QR limit");
   });
 });
+
+describe("mandatory signed OCR evidence", () => {
+  const ocr = { engine: "tesseract-eng-v1", lines: [{ text: "Account 123456", ...lines[0], confidence: 94.25 }] };
+  it("round-trips version 2 OCR separately from PDF text and retains legacy decoding", () => {
+    const body = encodePageEvidence({ ...base, ocr, layout: { mode: 3, lines } });
+    expect(body[0]).toBe(2);
+    const decoded = decodePageEvidence(body);
+    expect(decoded.text).toBe(base.text);
+    expect(decoded.ocr.engine).toBe(ocr.engine);
+    expect(decoded.ocr.lines[0]).toMatchObject({ text: "Account 123456", confidence: 94.25 });
+    for (const field of ["x", "y", "width", "height"]) expect(decoded.ocr.lines[0][field]).toBeCloseTo(ocr.lines[0][field], 4);
+    expect(encodePageEvidence(decoded)).toEqual(body);
+    expect(decodePageEvidence(encodePageEvidence(base)).ocr).toBeNull();
+    expect(decodePageEvidence(encodePageEvidence({ width: 1, height: 1, ocr })).text).toBe("");
+  });
+  it("rejects malformed versions, flags, counts, text, boxes, confidence and trailing bytes", () => {
+    const body = encodePageEvidence({ width: 612, height: 792, ocr });
+    for (let length = 0; length < body.length; length++) expect(() => decodePageEvidence(body.slice(0, length))).toThrow();
+    for (const [offset, value] of [[0, 1], [0, 3], [1, 0], [1, 48], [7, 2], [8, 255], [body.length - 2, 255]]) {
+      const invalid = body.slice(); invalid[offset] = value;
+      expect(() => decodePageEvidence(invalid)).toThrow();
+    }
+    expect(() => decodePageEvidence(concatenate([body, new Uint8Array([0])]))).toThrow();
+    for (const patch of [{ text: " " }, { text: "two\nlines" }, { x: -1 }, { x: NaN }, { width: 0 }, { width: 1 }, { height: Infinity }, { confidence: -1 }, { confidence: 101 }]) {
+      expect(() => encodePageEvidence({ ...base, ocr: { ...ocr, lines: [{ ...ocr.lines[0], ...patch }] } })).toThrow();
+    }
+    expect(() => encodePageEvidence({ ...base, ocr: { ...ocr, engine: "future" } })).toThrow();
+    expect(() => encodePageEvidence({ ...base, ocr: { ...ocr, lines: Array(65536).fill(ocr.lines[0]) } })).toThrow();
+    const edge = encodePageEvidence({ ...base, ocr: { ...ocr, lines: [{ ...ocr.lines[0], x: 0.999999, width: 0.000001 }] } });
+    expect(() => decodePageEvidence(edge)).not.toThrow();
+  });
+  it("authenticates OCR text, geometry and confidence with the page signature", async () => {
+    const pageEvidence = encodePageEvidence({ ...base, ocr });
+    const sealed = await createQRedSeals({ content: base.text, pageEvidence, pageContext, privateKey, publicKey, encodingStrategy: "plaintext" });
+    expect((await verifyQRedSeals(sealed.seals, publicKey)).evidence.ocr.lines[0].text).toBe("Account 123456");
+    const decoded = decodeSeal(sealed.seals[0]);
+    for (const patch of [{ text: "Account 654321" }, { x: 0.2 }, { confidence: 50 }]) {
+      const altered = encodePageEvidence({ ...base, ocr: { ...ocr, lines: [{ ...ocr.lines[0], ...patch }] } });
+      const forged = sealString(encodeEnvelope(decoded, decoded.signature, altered, "plaintext"));
+      expect((await verifyQRedSeals([forged], publicKey)).status).toBe("INVALID");
+    }
+  });
+  it("retains OCR when optional evidence cannot fit and permits necessary extra QRs", async () => {
+    for (const attested of [false, true]) {
+      const page = { ...base, text: "x".repeat(2860), ocr, lines: [], image, blank: false };
+      const plan = await planPageEvidence(page, { attested, encodingStrategy: "plaintext" });
+      expect(plan.pageEvidence).toBeTruthy();
+      expect(decodePageEvidence(plan.body).ocr.lines[0].text).toBe("Account 123456");
+      if (!attested) {
+        const sealed = await createQRedSeals({ content: page.text, pageEvidence: plan.body, pageContext, privateKey, publicKey, encodingStrategy: "plaintext" });
+        expect(sealed.seals.length).toBe(2);
+      }
+    }
+    const hugeOcr = { ...ocr, lines: [{ ...ocr.lines[0], text: "x".repeat(12000) }] };
+    await expect(planPageEvidence({ ...base, text: "", ocr: hugeOcr, image, blank: false }, { encodingStrategy: "plaintext" })).rejects.toThrow("4-QR limit");
+  });
+  it("retains the OCR pass for blank pages and image pages without recognized text", async () => {
+    const emptyOcr = { ...ocr, lines: [] };
+    for (const blank of [false, true]) {
+      const plan = await planPageEvidence({ width: 612, height: 792, text: "", blank, image, ocr: emptyOcr });
+      expect(decodePageEvidence(plan.body)).toMatchObject({ blank, ocr: emptyOcr });
+      if (!blank) expect(decodePageEvidence(plan.body).visual).toBeTruthy();
+    }
+  });
+});
