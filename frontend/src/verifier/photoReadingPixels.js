@@ -29,8 +29,10 @@ export function preparePhotoReadingPixels({ data, width, height }) {
       if (points.some(point => !Number.isFinite(point?.x) || !Number.isFinite(point?.y))) break;
       const box = { x0: Math.min(...points.map(p => p.x)), y0: Math.min(...points.map(p => p.y)),
         x1: Math.max(...points.map(p => p.x)), y1: Math.max(...points.map(p => p.y)) };
-      if ((isQRedEntryLink(text) || decodeSeal(text)) &&
-          (box.x1 - box.x0) * (box.y1 - box.y0) < width * height * .2) codes.push(box);
+      const navigation = isQRedEntryLink(text);
+      if ((navigation || decodeSeal(text)) &&
+          (box.x1 - box.x0) * (box.y1 - box.y0) < width * height * .2)
+        codes.push(navigation ? { ...box, kind: "navigation" } : box);
       // Mask only the search copy. OCR must still see ink underneath or beside
       // a copied stamp, including when somebody is using it to cover words.
       if (search === data) search = new Uint8ClampedArray(data);

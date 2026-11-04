@@ -19,7 +19,7 @@ it("automatically checks all pages in order and keeps page 2's changed word", as
   checks.update([page("one", 1), page("two", 2)], [photo(2, "two", "Monday"), photo(1, "one")]);
   await vi.waitFor(() => expect(checks.getSnapshot().pages.map(p => p.state)).toEqual(["matches", "differences"]));
   expect(reader.prepare).toHaveBeenCalledTimes(1);
-  expect(reader.read.mock.calls[1][2]).toEqual({ text: "Friday", evidence: undefined, file: { text: "Monday" } });
+  expect(reader.read.mock.calls[1][2]).toEqual({ text: "Friday", evidence: undefined, file: { text: "Monday" }, pageNumber: 2 });
   expect(checks.getSnapshot().pages[1].comparison.differences[0]).toMatchObject({ expected: "Friday", observed: "Monday" });
   expect((await open.mock.results[0].value).width).toBe(0);
   checks.dispose();
@@ -128,4 +128,19 @@ it("does not restore readiness when preloading finishes after Finish & clear", a
   checks.clear(); late.resolve();
   await expect(preparing).rejects.toThrow(/ended/);
   expect(checks.getSnapshot()).toMatchObject({ pages: [], ready: false, preparing: false });
+});
+
+it("limits legacy navigation artwork to the authenticated first page through the complete check queue", async () => {
+  const { checks, reader } = setup();
+  const code = { x0: 1019.75, y0: 1389.75, x1: 1073.156, y1: 1443.156, kind: "navigation" };
+  reader.read.mockResolvedValue({ codes: [code], words: [word("Friday"),
+    { text: "Verify", confidence: 87, bbox: { x0: 993, y0: 1459, x1: 1029, y1: 1475 } },
+    { text: "at", confidence: 91, bbox: { x0: 1035, y0: 1460, x1: 1046, y1: 1470 } },
+    { text: "qred.org_J", confidence: 0, bbox: { x0: 1048, y0: 1459, x1: 1115, y1: 1475 } },
+  ] });
+  checks.update([page("one", 1), page("two", 2)], [photo(1, "one"), photo(2, "two")]);
+  await vi.waitFor(() => expect(checks.getSnapshot().pages.map(p => p.state)).toEqual(["uncertain", "differences"]));
+  expect(checks.getSnapshot().pages[0].comparison.differences).toEqual([]);
+  expect(checks.getSnapshot().pages[1].comparison.differences[0].observed).toBe("Verify at qred.org_J");
+  checks.dispose();
 });

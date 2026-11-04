@@ -80,8 +80,16 @@ it.each([[1, 54], [1, 36], [4, 54], [4, 36]])(
       layout.entry.x + layout.entry.width > box.x && layout.entry.y < box.y + box.height &&
       layout.entry.y + layout.entry.height > box.y)).toBe(true);
     await withPdfDocument(result.blob, async pdf => {
+      const { items } = await (await pdf.getPage(1)).getTextContent();
+      expect(items.find(item => item.str === "Verify at qred.org")?.height).toBe(8);
       const image = await renderPdfPage(pdf, 1);
       const navigation = crop(image, layout.entry);
+      // Decorative corner strokes used to become r/A/L_/J OCR words. The
+      // navigation panel's corners must remain white, outside QR and caption.
+      for (const x of [2, navigation.width - 3]) for (const y of [2, navigation.height - 3]) {
+        const offset = (y * navigation.width + x) * 4;
+        expect([...navigation.data.slice(offset, offset + 3)]).toEqual([255, 255, 255]);
+      }
       expect(scanQrImage(navigation.data, navigation.width, navigation.height,
         { tryWatermark: false })?.data).toBe(ENTRY_URL);
       const scanned = await scanPdfPage(photograph(image));

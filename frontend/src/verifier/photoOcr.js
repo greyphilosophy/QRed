@@ -121,7 +121,7 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
         let retryReviews = [];
         if (reference.text?.trim() && !contrastAssisted) {
           const reading = { words, codes: prepared.codes, corners: prepared.corners };
-          const comparison = comparePageReading(reference.text, reading, canvas, reference.evidence);
+          const comparison = comparePageReading(reference.text, reading, canvas, reference.evidence, { pageNumber: reference.pageNumber });
           const lines = signedPhotoLines(reference.text, reference.evidence, prepared.corners, canvas, words);
           const candidates = planTextRetries(words, comparison, lines, canvas);
           if (candidates.length) {

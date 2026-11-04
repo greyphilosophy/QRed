@@ -22,7 +22,7 @@ it("keeps all dark ink beneath an identified stamp in the OCR image", () => {
   scanQrImage.mockReturnValueOnce({ data: "QRED.ORG", location });
   const image = frame();
   const result = preparePhotoReadingPixels(image);
-  expect(result.codes).toEqual([{ x0: 20, y0: 20, x1: 60, y1: 60 }]);
+  expect(result.codes).toEqual([{ x0: 20, y0: 20, x1: 60, y1: 60, kind: "navigation" }]);
   expect(result.image.data[(40 * 200 + 40) * 4]).toBe(100);
   expect(result.image.data[(40 * 200 + 65) * 4]).toBe(100);
   expect(scanQrImage).toHaveBeenCalledTimes(2);

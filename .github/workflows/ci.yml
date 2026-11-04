@@ -119,7 +119,17 @@ jobs:
           fi
       - name: Run heavy frontend regression tests
         working-directory: frontend
+        env:
+          QRED_TEST_ARTIFACT_DIR: ${{ github.workspace }}/test-artifacts
         run: npm test -- ${{ matrix.test_args }}
+      - name: Upload synthetic render failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: watermark-render-failure-${{ matrix.shard }}
+          path: test-artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
 
   e2e-tests:
     name: E2E (${{ matrix.shard }})

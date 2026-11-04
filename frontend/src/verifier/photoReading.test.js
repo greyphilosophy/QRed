@@ -77,3 +77,95 @@ it("keeps an oversized OCR box around QR glyphs visible as a marking", () => {
   expect(result.differences).toEqual([]);
   expect(result.markings[0].observed).toBe("j= 5 k=l");
 });
+
+// Exact raster observations from the synthetic live-browser regression. These
+// are navigation artwork, not a document-text whitelist or a panel-sized mask.
+const navigation = { x0: 1019.75, y0: 1389.75, x1: 1073.156, y1: 1443.156, kind: "navigation" };
+const legacyCaption = [
+  { text: "|", confidence: 42, bbox: { x0: 977, y0: 1462, x1: 984, y1: 1475 } },
+  { text: "Verify", confidence: 87, bbox: { x0: 993, y0: 1459, x1: 1029, y1: 1475 } },
+  { text: "at", confidence: 91, bbox: { x0: 1035, y0: 1460, x1: 1046, y1: 1470 } },
+  { text: "qred.org_|", confidence: 0, bbox: { x0: 1048, y0: 1459, x1: 1115, y1: 1475 } },
+];
+const navReading = (words = legacyCaption, code = navigation, pageNumber = 1, expected = "Friday") =>
+  comparePageReading(expected, { words: [...text, ...words], codes: [code] },
+    { width: 1224, height: 1584 }, undefined, { pageNumber });
+
+it.each(["qred.org_|", "qred.org_J"])("separates legacy navigation artwork %s on the first page, retaining its exact reading for review", url => {
+  const words = legacyCaption.map((word, i) => i === 3 ? { ...word, text: url } : word);
+  const result = navReading(words);
+  expect(result.status).toBe("uncertain");
+  expect(result.differences).toEqual([]);
+  expect(result.markings).toEqual([{ observed: `| Verify at ${url}`, boxes: words.map(word => word.bbox) }]);
+});
+it("requires a decoded navigation link and authenticated first-page context for legacy artwork", () => {
+  for (const page of [undefined, 0, 2]) {
+    expect(navReading(legacyCaption, navigation, page === undefined ? null : page).status).toBe("differences");
+  }
+  expect(navReading(legacyCaption, { ...navigation, kind: undefined }).status).toBe("differences");
+  expect(comparePageReading("Friday", { words: [...text, ...legacyCaption] }, dimensions).status).toBe("differences");
+});
+it("does not hide added words, changed addresses, arbitrary suffixes, or wrong-position bracket lookalikes", () => {
+  for (const url of ["other.org_J", "qred.org_Paid", "qred.org_1", "qred.org_JPaid", "qred.org_JJ"]) {
+    const result = navReading(legacyCaption.map((word, i) => i === 3 ? { ...word, text: url } : word));
+    expect(result.status, url).toBe("differences");
+    expect(result.differences.some(difference => difference.observed.includes(url))).toBe(true);
+  }
+  const paid = { text: "Paid", confidence: 99, bbox: { x0: 993, y0: 1480, x1: 1029, y1: 1496 } };
+  expect(navReading([...legacyCaption, paid]).differences.map(d => d.observed)).toContain("Paid");
+  const movedSuffix = legacyCaption.map((word, i) => i === 3 ? { ...word, bbox: { ...word.bbox, x1: 1090 } } : word);
+  expect(navReading(movedSuffix).status).toBe("differences");
+  const movedPrefix = legacyCaption.map((word, i) => i === 0 ? { ...word, bbox: { ...word.bbox, x0: 990, x1: 997 } } : word);
+  expect(navReading(movedPrefix).differences.map(d => d.observed)).toContain("|");
+});
+it("does not omit signed words, or let copied navigation hide missing document content", () => {
+  const exact = navReading(legacyCaption, navigation, 1, "Friday | Verify at qred.org_|");
+  expect(exact.markings).toEqual([]);
+  expect(exact.differences).toEqual([]);
+  const covered = navReading(legacyCaption, navigation, 1, "Friday Approved");
+  expect(covered.status).toBe("differences");
+  expect(covered.differences).toContainEqual(expect.objectContaining({ expected: "Approved", observed: "" }));
+});
+it("recognizes an undecorated eight-point caption beside the compact navigation QR", () => {
+  const clean = legacyCaption.slice(1).map((word, i) => i === 2
+    ? { ...word, text: "qred.org", bbox: { ...word.bbox, x1: 1101 } } : word);
+  expect(navReading(clean).differences).toEqual([]);
+  expect(navReading(clean).markings.map(mark => mark.observed)).toEqual(["Verify at qred.org"]);
+});
+
+it.each([.5, 1.5, 2])("keeps legacy navigation classification scale-independent at %s×", scale => {
+  const scaledBox = box => Object.fromEntries(Object.entries(box).map(([key, value]) => [key, value * scale]));
+  const code = { ...scaledBox({ x0: navigation.x0, y0: navigation.y0, x1: navigation.x1, y1: navigation.y1 }), kind: "navigation" };
+  const result = navReading(legacyCaption.map(word => ({ ...word, bbox: scaledBox(word.bbox) })), code);
+  expect(result.differences).toEqual([]);
+});
+it("handles either legacy corner separately without expanding the accepted URL grammar", () => {
+  const noPrefix = legacyCaption.slice(1);
+  expect(navReading(noPrefix).differences).toEqual([]);
+  const noSuffix = legacyCaption.map((word, index) => index === 3
+    ? { ...word, text: "qred.org", bbox: { ...word.bbox, x1: 1101 } } : word);
+  expect(navReading(noSuffix).differences).toEqual([]);
+  expect(navReading(noSuffix).markings[0].observed).toBe("| Verify at qred.org");
+});
+
+it("handles joined legacy caption words from the bundled-font renderer without correcting their spelling", () => {
+  const joined = [
+    { text: "Verify", confidence: 44, bbox: { x0: 977, y0: 1460, x1: 1029, y1: 1475 } },
+    { text: "atgred.org_|", confidence: 36, bbox: { x0: 1033, y0: 1459, x1: 1115, y1: 1475 } },
+  ];
+  const result = navReading(joined);
+  expect(result.differences).toEqual([]);
+  expect(result.markings[0].observed).toBe("Verify atgred.org_|");
+  expect(result.status).toBe("uncertain");
+  const single = [{ text: "|Verifyatqred.org_J", confidence: 20,
+    bbox: { x0: 977, y0: 1459, x1: 1115, y1: 1475 } }];
+  expect(navReading(single).differences).toEqual([]);
+  expect(navReading(single).markings[0].observed).toBe("|Verifyatqred.org_J");
+  const misplaced = single.map(word => ({ ...word, bbox: { ...word.bbox, x0: 995 } }));
+  expect(navReading(misplaced).status).toBe("differences");
+  const missing = navReading(single, navigation, 1, "Friday Approved");
+  expect(missing.differences).toContainEqual(expect.objectContaining({ expected: "Approved", observed: "" }));
+  const injected = joined.map((word, index) => index === 1 ? { ...word, text: "atgred.org_Paid" } : word);
+  expect(navReading(injected).differences.some(d => d.observed.includes("Paid"))).toBe(true);
+  expect(navReading(joined, navigation, 2).status).toBe("differences");
+});
