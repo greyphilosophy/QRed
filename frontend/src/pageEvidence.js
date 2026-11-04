@@ -1,10 +1,12 @@
 import { concatenate, MAX_SEAL_TEXT_BYTES, strictUtf8, utf8 } from "./sealFormat.js";
 
-// Signed page-body format 1. Coordinates are relative to the original visible
+// Signed page-body formats 1 (legacy) and 2 (OCR). Coordinates are relative to the original visible
 // page, before footer scaling. The VQ codebook is fixed, built into QRed, and
 // identified in the payload; it is never trained on or fetched for a document.
 export const MAX_VISUAL_TILES = 4096;
 export const TILE_SIZE = 4;
+export const OCR_ENGINE = "tesseract-eng-v1";
+export const MAX_OCR_LINES = 65535;
 export const CODEBOOK_ID = 1;
 export const CODEBOOK = (() => {
   const tiles = Array.from({ length: 16 }, (_, i) => new Uint8Array(16).fill(i * 17));
@@ -34,12 +36,21 @@ function dimension(value) {
 }
 function quantize(value, maximum) { return Math.round(Math.max(0, Math.min(1, value)) * maximum); }
 
-export function encodePageEvidence({ text = "", width, height, blank = false, layout = null, visual = null }) {
+function validateOcrLine(line) {
+  if (!line || typeof line.text !== "string" || !line.text.trim() || /[\r\n]/.test(line.text) ||
+    ![line.x, line.y, line.width, line.height, line.confidence].every(Number.isFinite) ||
+    line.x < 0 || line.y < 0 || line.width <= 0 || line.height <= 0 ||
+    line.x + line.width > 1 + 1e-12 || line.y + line.height > 1 + 1e-12 ||
+    line.confidence < 0 || line.confidence > 100) throw new Error("Invalid OCR line");
+}
+
+export function encodePageEvidence({ text = "", width, height, blank = false, layout = null, visual = null, ocr = null }) {
   const textBytes = utf8.encode(text);
   const mode = layout?.mode || 0;
   if (textBytes.length > MAX_SEAL_TEXT_BYTES || ![0, 1, 2, 3].includes(mode)) throw new Error("Invalid page evidence");
-  if (blank && (text || visual || mode) || !blank && !text.trim() && !visual) throw new Error("A nonblank page needs text or a visual reference");
-  const parts = [new Uint8Array([1, (blank ? 1 : 0) | (visual ? 2 : 0) | (mode << 2)]),
+  if (ocr && (ocr.engine !== OCR_ENGINE || !Array.isArray(ocr.lines) || ocr.lines.length > MAX_OCR_LINES)) throw new Error("Unsupported OCR evidence");
+  if (blank && (text || visual || mode || ocr?.lines.length) || !blank && !text.trim() && !visual && !ocr?.lines.length) throw new Error("A nonblank page needs text or a visual reference");
+  const parts = [new Uint8Array([ocr ? 2 : 1, (blank ? 1 : 0) | (visual ? 2 : 0) | (mode << 2) | (ocr ? 16 : 0)]),
     word(dimension(width)), word(dimension(height)), varint(textBytes.length), textBytes];
   if (mode) {
     const lines = layout.lines;
@@ -58,6 +69,20 @@ export function encodePageEvidence({ text = "", width, height, blank = false, la
       columns < 1 || columns > 255 || rows < 1 || rows > 255 || columns * rows > MAX_VISUAL_TILES ||
       !(indices instanceof Uint8Array) || indices.length !== columns * rows) throw new Error("Invalid visual reference");
     parts.push(new Uint8Array([CODEBOOK_ID, columns, rows]), indices);
+  }
+  if (ocr) {
+    parts.push(new Uint8Array([1]), varint(ocr.lines.length));
+    let totalTextBytes = textBytes.length;
+    for (const line of ocr.lines) {
+      validateOcrLine(line);
+      const content = utf8.encode(line.text);
+      totalTextBytes += content.length;
+      if (totalTextBytes > MAX_SEAL_TEXT_BYTES) throw new Error("OCR evidence exceeds the 8 MiB limit");
+      const x = Math.min(65534, quantize(line.x, 65535)), y = Math.min(65534, quantize(line.y, 65535));
+      const w = Math.max(1, Math.min(65535 - x, quantize(line.width, 65535)));
+      const h = Math.max(1, Math.min(65535 - y, quantize(line.height, 65535)));
+      parts.push(varint(content.length), content, word(x), word(y), word(w), word(h), word(Math.round(line.confidence * 100)));
+    }
   }
   const bytes = concatenate(parts);
   if (bytes.length > MAX_SEAL_TEXT_BYTES) throw new Error("Page evidence exceeds the 8 MiB limit");
@@ -82,14 +107,15 @@ export function decodePageEvidence(bytes) {
     }
     throw new Error("Invalid page length");
   };
-  if (byte() !== 1) throw new Error("Unsupported page evidence format");
+  const version = byte();
+  if (version !== 1 && version !== 2) throw new Error("Unsupported page evidence format");
   const flags = byte();
-  if (flags & ~15) throw new Error("Unsupported page evidence flags");
-  const blank = Boolean(flags & 1), mode = flags >> 2;
+  if (flags & ~(version === 1 ? 15 : 31) || version === 2 && !(flags & 16)) throw new Error("Unsupported page evidence flags");
+  const blank = Boolean(flags & 1), mode = (flags >> 2) & 3;
   const width = uint16(), height = uint16();
   if (!width || !height) throw new Error("Invalid page dimensions");
   const text = strictUtf8.decode(read(uint()));
-  let layout = null, visual = null;
+  let layout = null, visual = null, ocr = null;
   if (mode) {
     const count = uint();
     if (!count || count !== text.split("\n").filter(line => line.trim()).length || count > 65535) throw new Error("Line positions do not match page text");
@@ -105,8 +131,22 @@ export function decodePageEvidence(bytes) {
     if (codebook !== CODEBOOK_ID || !columns || !rows || columns * rows > MAX_VISUAL_TILES) throw new Error("Unsupported visual reference");
     visual = { codebook, columns, rows, indices: read(columns * rows).slice() };
   }
-  if (offset !== bytes.length || blank && (text || layout || visual) || !blank && !text.trim() && !visual) throw new Error("Invalid page evidence");
-  return { text, width, height, blank, layout, visual };
+  if (flags & 16) {
+    if (byte() !== 1) throw new Error("Unsupported OCR engine");
+    const count = uint();
+    // Each line needs a length, nonempty UTF-8 content, and ten geometry/confidence bytes.
+    if (count > MAX_OCR_LINES || count * 12 > bytes.length - offset) throw new Error("Invalid OCR line count");
+    const lines = Array.from({ length: count }, () => {
+      const text = strictUtf8.decode(read(uint()));
+      const line = { text, x: uint16() / 65535, y: uint16() / 65535,
+        width: uint16() / 65535, height: uint16() / 65535, confidence: uint16() / 100 };
+      validateOcrLine(line);
+      return line;
+    });
+    ocr = { engine: OCR_ENGINE, lines };
+  }
+  if (offset !== bytes.length || blank && (text || layout || visual || ocr?.lines.length) || !blank && !text.trim() && !visual && !ocr?.lines.length) throw new Error("Invalid page evidence");
+  return { text, width, height, blank, layout, visual, ocr };
 }
 
 // Area averaging preserves the overall ink/shade of a cell before VQ. Avoid

@@ -1,3 +1,4 @@
+import { scanErasureSeals } from "../qr/scanErasureSeals.js";
 import { maskQrCode } from "../qr/maskQrCode.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
 import { decodeSeal, qredPayloadFromPhotoScanResult } from "../qredVerifier.js";
@@ -78,9 +79,22 @@ export async function scanPdfPage(image, { onSeal = () => {}, signal, pageAligne
     }
     // A complete one- or four-symbol page has nothing more to discover.
     // Incomplete page scans still try the historical region-based locator.
-    if (aligned.length === 4 || aligned.length === 1 && decodeSeal(aligned[0].seal)?.total_chunks === 1) {
+    if (aligned.length === 4 && aligned.every(item => !decodeSeal(item.seal)?.erasure) || aligned.length === 1 && decodeSeal(aligned[0].seal)?.total_chunks === 1) {
       return { seals: [...seals], limited: false };
     }
+  }
+  const erasure = await scanErasureSeals(image, { signal });
+  for (const seal of erasure) if (!seals.has(seal)) {
+    seals.add(seal); await onSeal(seal, image); signal?.throwIfAborted();
+  }
+  const groups = new Map();
+  for (const seal of erasure) {
+    const record = decodeSeal(seal);
+    if (!groups.has(record.document_id)) groups.set(record.document_id, { required: record.required_chunks, indexes: new Set() });
+    groups.get(record.document_id).indexes.add(record.chunk_number);
+  }
+  if (groups.size && [...groups.values()].every(group => group.indexes.size >= group.required)) {
+    return { seals: [...seals], limited: false };
   }
   // Never clone and subdivide the full 12–48 MP original merely because the
   // page-aligned scan was incomplete. The legacy fallback operates on its own

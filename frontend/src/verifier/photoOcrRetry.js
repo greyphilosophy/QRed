@@ -22,33 +22,78 @@ export function planTextRetries(words, comparison, signedLines, { width, height 
   const candidates = [];
   const missingBoxes = comparison.differences.filter(difference => difference.expected && !difference.observed)
     .flatMap(difference => difference.boxes || []);
-  for (const group of groups) {
+  const disagreements = new Set(comparison.words.filter(word => word.agrees === false).map(word => word.sourceIndex));
+  const retryGroups = groups.flatMap(group => {
+    if (group.wordIndices.length <= 12) return [group];
+    // A long row can hide a short recognition error behind dozens of strong
+    // unchanged words. Read a fixed observed neighborhood, never expected words.
+    const ordered = [...group.wordIndices].sort((a, b) => words[a].bbox.x0 - words[b].bbox.x0);
+    const windows = [];
+    for (let index = 0; index < ordered.length; index++) if (disagreements.has(ordered[index])) {
+      const left = Math.max(0, index - 2), right = Math.min(ordered.length, index + 3);
+      const last = windows.at(-1);
+      if (last && left < last.right && right - last.left <= 9) last.right = right;
+      else windows.push({ left, right });
+    }
+    return [...windows.map(({ left, right }) => {
+      const wordIndices = ordered.slice(left, right);
+      return { wordIndices, localized: true, bbox: enclosingBox(wordIndices.map(index => words[index].bbox)) };
+    }), group];
+  });
+  for (const group of retryGroups) {
     const missing = group.text && (group.wordIndices.length === 0 || missingBoxes.some(box =>
       ["x0", "y0", "x1", "y1"].every(key => box[key] === group.bbox?.[key])));
     if (!missing && !group.wordIndices.some(index => questioned.has(index))) continue;
-    const base = enclosingBox([group.bbox, ...group.wordIndices.map(index => words[index].bbox)].filter(Boolean));
-    if (!base) continue;
-    const pad = Math.max(4, (base.y1 - base.y0) * .15);
-    const box = { x0: Math.max(0, Math.floor(base.x0 - pad)), y0: Math.max(0, Math.floor(base.y0 - pad)),
-      x1: Math.min(width, Math.ceil(base.x1 + pad)), y1: Math.min(height, Math.ceil(base.y1 + pad)) };
-    if (box.x1 <= box.x0 || box.y1 <= box.y0 || box.y1 - box.y0 > height * .15) continue;
-    // Include additions inside the crop; never replace partly cropped words.
-    const indices = words.flatMap((word, index) => {
-      const b = word.bbox;
-      return b && (b.x0 + b.x1) / 2 >= box.x0 && (b.x0 + b.x1) / 2 <= box.x1
-        && (b.y0 + b.y1) / 2 >= box.y0 && (b.y0 + b.y1) / 2 <= box.y1 ? [index] : [];
-    });
-    if (indices.some(index => {
-      const b = words[index].bbox;
-      return b.x0 < box.x0 || b.x1 > box.x1 || b.y0 < box.y0 || b.y1 > box.y1;
-    })) continue;
-    const priority = missing ? 0 : indices.some(index => comparison.words.find(w => w.sourceIndex === index)?.agrees === false) ? 1 : 2;
-    candidates.push({ bbox: box, indices, priority });
+    const observedBase = enclosingBox(group.wordIndices.map(index => words[index].bbox));
+    const signedBase = enclosingBox([group.bbox, observedBase].filter(Boolean));
+    // A projected signed box can touch a neighboring observed row even when
+    // the actual glyphs are disjoint. If that crop fails the guards below,
+    // try only this row's observed extent. This changes the pixels reread,
+    // never the signed comparison target: unread signed suffixes stay missing.
+    const bases = [signedBase];
+    if (group.text && observedBase) bases.push(observedBase);
+    for (const base of bases) {
+      if (!base) continue;
+      const pad = Math.max(4, (base.y1 - base.y0) * .15);
+      const box = { x0: Math.max(0, Math.floor(base.x0 - pad)), y0: Math.max(0, Math.floor(base.y0 - pad)),
+        x1: Math.min(width, Math.ceil(base.x1 + pad)), y1: Math.min(height, Math.ceil(base.y1 + pad)) };
+      // Padding must not bring in strips of a neighboring line. Checking only
+      // word centers misses these clipped glyphs, which single-line OCR can
+      // hallucinate as extra punctuation. Trim padding, never signed content.
+      for (const word of words) {
+        const b = word.bbox;
+        if (!b || b.x1 <= box.x0 || b.x0 >= box.x1 || b.y1 <= box.y0 || b.y0 >= box.y1) continue;
+        if (b.y1 <= base.y0) box.y0 = Math.max(box.y0, b.y1);
+        else if (b.y0 >= base.y1) box.y1 = Math.min(box.y1, b.y0);
+        else if (b.x1 <= base.x0) box.x0 = Math.max(box.x0, b.x1);
+        else if (b.x0 >= base.x1) box.x1 = Math.min(box.x1, b.x0);
+      }
+      if (box.x1 <= box.x0 || box.y1 <= box.y0 || box.y1 - box.y0 > height * .15) continue;
+      // Include additions inside the crop; never replace partly cropped words.
+      const indices = words.flatMap((word, index) => {
+        const b = word.bbox;
+        return b && (b.x0 + b.x1) / 2 >= box.x0 && (b.x0 + b.x1) / 2 <= box.x1
+          && (b.y0 + b.y1) / 2 >= box.y0 && (b.y0 + b.y1) / 2 <= box.y1 ? [index] : [];
+      });
+      if (words.some(word => {
+        const b = word.bbox;
+        return b && b.x1 > box.x0 && b.x0 < box.x1 && b.y1 > box.y0 && b.y0 < box.y1
+          && (b.x0 < box.x0 || b.x1 > box.x1 || b.y0 < box.y0 || b.y1 > box.y1);
+      })) continue;
+      const priority = missing ? 0 : indices.some(index => comparison.words.find(w => w.sourceIndex === index)?.agrees === false) ? 1 : 2;
+      candidates.push({ bbox: box, contentBox: base, indices, priority, localized: group.localized === true });
+      break; // The observed fallback is used only when the signed crop failed.
+    }
   }
   const selected = [];
   for (const candidate of candidates.sort((a, b) => a.priority - b.priority)) {
-    if (selected.some(other => Math.min(other.bbox.x1, candidate.bbox.x1) > Math.max(other.bbox.x0, candidate.bbox.x0)
-      && Math.min(other.bbox.y1, candidate.bbox.y1) > Math.max(other.bbox.y0, candidate.bbox.y0))) continue;
+    // Adjacent lines may share blank padding without sharing content. Never
+    // skip a line just because that padding overlaps. Unpadded source regions
+    // and assigned observations must remain disjoint, so no word is replaced
+    // twice and competing crops of the same content cannot both be applied.
+    if (selected.some(other => other.indices.some(index => candidate.indices.includes(index))
+      || Math.min(other.contentBox.x1, candidate.contentBox.x1) > Math.max(other.contentBox.x0, candidate.contentBox.x0)
+      && Math.min(other.contentBox.y1, candidate.contentBox.y1) > Math.max(other.contentBox.y0, candidate.contentBox.y0))) continue;
     selected.push(candidate);
     if (selected.length === MAX_TEXT_RETRIES) break;
   }
@@ -65,8 +110,21 @@ function quality(words) {
 }
 
 // No signed text enters this decision. Contradictory originals stay visible.
-export function preferTextRetry(before, after) {
+export function preferTextRetry(before, after, { localized = false } = {}) {
   if (!after.length || after.length > 120 || after.some(word => !word.bbox)) return false;
+  // A row's mean confidence can hide a newly hallucinated punctuation token.
+  // Require independent confidence for new tokens rather than letting long,
+  // unchanged words outvote them. Existing uncertain readings stay visible.
+  const remaining = new Map();
+  for (const word of before) {
+    const token = String(word.text || "").normalize("NFC");
+    remaining.set(token, (remaining.get(token) || 0) + 1);
+  }
+  for (const word of after) {
+    const token = String(word.text || "").normalize("NFC"), count = remaining.get(token) || 0;
+    if (count) remaining.set(token, count - 1);
+    else if (!Number.isFinite(word.confidence) || word.confidence < OCR_REVIEW_THRESHOLD) return false;
+  }
   const oldQuality = quality(before), nextQuality = quality(after);
   const original = [...before.map(word => word.text).join("").normalize("NFC").replace(/\s/gu, "")];
   const observed = after.map(word => word.text).join("").normalize("NFC").replace(/\s/gu, "");
@@ -76,15 +134,33 @@ export function preferTextRetry(before, after) {
   // confident, more complete reading that retains every original character,
   // without consulting what the signed page says the missing text should be.
   const moreComplete = nextQuality.size > oldQuality.size && retained === original.length;
+  // This separate acceptance path applies only to short observed phrase crops.
+  // Cross-model row means can obscure a clearly stronger reading of one glyph.
+  // Require unchanged token count/order and strong one-to-one spatial overlap;
+  // EVERY changed token must independently improve by 3 points and clear the
+  // review threshold. Token-count changes and pure word-boundary shifts do
+  // not qualify. Character changes still require explicit reread review.
+  const corrections = localized && original.join("") !== observed && before.length > 0 && before.length <= 9 && before.length === after.length
+    && before.some((word, i) => word.text.normalize("NFC") !== after[i].text.normalize("NFC"))
+    && before.every((word, i) => {
+      const next = after[i], a = word.bbox, b = next.bbox;
+      if (!a || !b || ![a.x0, a.y0, a.x1, a.y1, b.x0, b.y0, b.x1, b.y1].every(Number.isFinite)
+        || a.x1 <= a.x0 || a.y1 <= a.y0 || b.x1 <= b.x0 || b.y1 <= b.y0) return false;
+      const overlap = Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0))
+        * Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+      if (overlap < (a.x1 - a.x0) * (a.y1 - a.y0) * .5 || overlap < (b.x1 - b.x0) * (b.y1 - b.y0) * .5) return false;
+      return word.text.normalize("NFC") === next.text.normalize("NFC")
+        || Number.isFinite(word.confidence) && next.confidence >= OCR_REVIEW_THRESHOLD && next.confidence >= word.confidence + 3;
+    });
   return nextQuality.confidence >= OCR_REVIEW_THRESHOLD && nextQuality.size >= oldQuality.size * .6
-    && (!before.length || moreComplete || nextQuality.confidence >= oldQuality.confidence + 3);
+    && (!before.length || moreComplete || corrections || nextQuality.confidence >= oldQuality.confidence + 3);
 }
 
 export function applyTextRetries(words, replacements) {
   const removed = new Set(), inserts = new Map(), extra = [], retryReviews = [];
   for (const { candidate, words: reading } of replacements) {
     const before = candidate.indices.map(index => words[index]);
-    if (!preferTextRetry(before, reading)) continue;
+    if (!preferTextRetry(before, reading, candidate)) continue;
     const original = before.map(word => word.text).join(" ");
     const observed = reading.map(word => word.text).join(" ");
     if (original && original.normalize("NFC") !== observed.normalize("NFC"))

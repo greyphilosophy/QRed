@@ -1,3 +1,4 @@
+import { encodeBase64Url } from "../sealFormat.js";
 import { decodeSeal, verifyQRedSeals } from "../qredVerifier.js";
 import { verifySealCollection, sealCollectionProgress } from "../sealCollection.js";
 
@@ -18,7 +19,23 @@ export function createVerificationSession() {
     getSnapshot: () => snapshot,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     add(seals) {
-      const next = [...new Set([...snapshot.seals, ...[seals].flat().filter(seal => decodeSeal(seal))])];
+      const incoming = [seals].flat();
+      const reject = () => {
+        revision += 1;
+        publish({ busy: false, results: [{ status: "ERROR", error_message: "Seal collection exceeds the input limit" }] });
+        return false;
+      };
+      if (incoming.length > 4096 || incoming.some(seal => typeof seal === "string" && seal.length > 8192) ||
+          incoming.reduce((sum, seal) => sum + (typeof seal === "string" ? seal.length : 0), 0) > 24 * 1024 * 1024) return reject();
+      const unique = new Map();
+      for (const seal of [...snapshot.seals, ...incoming]) {
+        const decoded = decodeSeal(seal);
+        if (!decoded) continue;
+        const identity = encodeBase64Url(decoded.bytes);
+        if (!unique.has(identity)) unique.set(identity, seal);
+      }
+      const next = [...unique.values()];
+      if (next.length > 4096 || next.reduce((sum, seal) => sum + seal.length, 0) > 24 * 1024 * 1024) return reject();
       if (next.length === snapshot.seals.length) return false;
       revision += 1;
       publish({ seals: next, results: [], busy: true });
@@ -28,7 +45,7 @@ export function createVerificationSession() {
       const request = ++revision;
       const seals = snapshot.seals;
       publish({ busy: seals.length > 0, results: [] });
-      const ordered = await verifySealCollection(seals, publicKey, verify);
+      const ordered = await verifySealCollection(seals, publicKey, verify, { shouldContinue: () => request === revision });
       if (request !== revision) return;
       publish({ results: ordered, busy: false });
       return ordered;

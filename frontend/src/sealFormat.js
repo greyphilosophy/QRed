@@ -1,3 +1,4 @@
+import { isErasureBytes, decodeErasureChunk } from "./erasureTransport.js";
 import { decodeIdentity, encodeIdentity } from "./attestation.js";
 
 // QRed v3 local signatures and v4 account attestations share compact transport.
@@ -180,6 +181,7 @@ export function encodeChunk(digest, index, count, data, version = "3") {
 
 export function decodeTransport(bytes) {
   if (bytes.length > MAX_QR_PAYLOAD_BYTES) throw new Error("Seal exceeds QR capacity");
+  if (isErasureBytes(bytes)) return decodeErasureChunk(bytes);
   if (hasMagic(bytes, RECORD_MAGIC) || hasMagic(bytes, ATTESTED_MAGIC)) {
     const envelope = decodeEnvelope(bytes);
     return { ...envelope, format_id: `QRED${envelope.version}`, document_id: `S-${encodeBase64Url(envelope.signature)}`,
@@ -197,7 +199,7 @@ export function decodeTransport(bytes) {
 }
 
 export function sealString(bytes, bootstrapUrl = DEFAULT_BOOTSTRAP_URL) {
-  const version = hasMagic(bytes, ATTESTED_MAGIC) || hasMagic(bytes, ATTESTED_CHUNK_MAGIC) ? "4" : "3";
+  const version = hasMagic(bytes, ATTESTED_MAGIC) || hasMagic(bytes, ATTESTED_CHUNK_MAGIC) || isErasureBytes(bytes) && bytes[3] === 52 ? "4" : "3";
   return `${(bootstrapUrl || DEFAULT_BOOTSTRAP_URL).split("#")[0]}#QRED${version}:${encodeBase64Url(bytes)}`;
 }
 
@@ -213,7 +215,7 @@ export function qrPayloadBytes(value) {
 }
 
 export function qrPayloadText(bytes) {
-  if (hasMagic(bytes, RECORD_MAGIC) || hasMagic(bytes, CHUNK_MAGIC) || hasMagic(bytes, ATTESTED_MAGIC) || hasMagic(bytes, ATTESTED_CHUNK_MAGIC)) {
+  if (isErasureBytes(bytes) || hasMagic(bytes, RECORD_MAGIC) || hasMagic(bytes, CHUNK_MAGIC) || hasMagic(bytes, ATTESTED_MAGIC) || hasMagic(bytes, ATTESTED_CHUNK_MAGIC)) {
     decodeTransport(bytes);
     return sealString(bytes);
   }

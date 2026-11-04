@@ -1,3 +1,4 @@
+import { recoverErasureRecord } from "./erasureTransport.js";
 /**
  * qredVerifier.js — verify and decode QRed seal strings
  *
@@ -72,7 +73,9 @@ export function decodeSeal(sealString) {
 }
 
 export async function verifyQRedSeals(seals, publicKey, authorities = trustedAuthorities) {
-  if (!Array.isArray(seals) || !seals.length) return { status: "ERROR", error_message: "No valid chunks found" };
+  if (!Array.isArray(seals) || !seals.length || seals.length > 4096 ||
+      seals.some(seal => typeof seal !== "string" || seal.length > 8192) ||
+      seals.reduce((sum, seal) => sum + seal.length, 0) > 24 * 1024 * 1024) return { status: "ERROR", error_message: "No valid chunks found" };
   const chunks = new Map();
   let first, length = 0;
   for (const seal of seals) {
@@ -90,12 +93,14 @@ export async function verifyQRedSeals(seals, publicKey, authorities = trustedAut
   }
   const missing = [];
   for (let index = 0; index < first.total_chunks; index += 1) if (!chunks.has(index)) missing.push(index);
-  if (missing.length) return { status: "INCOMPLETE", document_id: first.document_id,
-    collected_chunks: chunks.size, total_chunks: first.total_chunks, error_message: `Missing chunks: [${missing.join(", ")}]` };
+  if (first.erasure ? chunks.size < first.required_chunks : missing.length) return { status: "INCOMPLETE", document_id: first.document_id,
+    collected_chunks: chunks.size, total_chunks: first.total_chunks, required_chunks: first.required_chunks,
+    error_message: first.erasure ? `Need ${first.required_chunks} distinct erasure shards; collected ${chunks.size}` : `Missing chunks: [${missing.join(", ")}]` };
   let metadata = first, content, body, evidence;
   try {
     if (first.multipart) {
-      const record = concatenate(Array.from({ length: first.total_chunks }, (_, index) => chunks.get(index).data));
+      const record = first.erasure ? await recoverErasureRecord([...chunks.values()].map(chunk => chunk.bytes))
+        : concatenate(Array.from({ length: first.total_chunks }, (_, index) => chunks.get(index).data));
       if (!bytesEqual((await sha256(record)).subarray(0, first.digest.length), first.digest)) return { status: "INVALID", error_message: "Seal set digest does not match its contents" };
       metadata = decodeEnvelope(record);
       if (metadata.version !== first.version) throw new Error("Seal version does not match its chunks");

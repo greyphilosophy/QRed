@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { comparePageReading, possiblePrintedMarkings } from "./photoReading.js";
+import { captionLineCandidates, comparePageReading, possiblePrintedMarkings } from "./photoReading.js";
 
 const box = { x0: 100, y0: 200, x1: 160, y1: 260 };
 const word = (text, x0, y0, width = 20) => ({ text, confidence: 99, bbox: { x0, y0, x1: x0 + width, y1: y0 + 12 } });
@@ -76,4 +76,25 @@ it("keeps an oversized OCR box around QR glyphs visible as a marking", () => {
   expect(result.status).toBe("uncertain");
   expect(result.differences).toEqual([]);
   expect(result.markings[0].observed).toBe("j= 5 k=l");
+});
+
+it("rechecks a small navigation caption whose text is taller than 30 percent of the QR", () => {
+  const nav = { x0: 1019.75, y0: 125.75, x1: 1073.16, y1: 179.16 };
+  const words = [
+    { text: "Verify", confidence: 94, bbox: { x0: 993, y0: 195, x1: 1029, y1: 211 } },
+    { text: "at", confidence: 91, bbox: { x0: 1035, y0: 196, x1: 1046, y1: 206 } },
+    { text: "qred.org_J|", confidence: 7, bbox: { x0: 1048, y0: 195, x1: 1115, y1: 211 } },
+  ];
+  expect(captionLineCandidates(words, [nav])).toEqual([
+    { indices: [0, 1, 2], x0: 993, y0: 195, x1: 1115, y1: 211 },
+  ]);
+  // Discovery never authorizes discarding OCR errors or nearby additions.
+  expect(possiblePrintedMarkings(words, [nav])).toEqual([]);
+  const exact = words.map(w => w.text === "qred.org_J|" ? { ...w, text: "qred.org" } : w);
+  expect(possiblePrintedMarkings(exact, [nav])).toEqual([[0, 1, 2]]);
+  const added = [...exact, { text: "Paid", confidence: 99,
+    bbox: { x0: 1000, y0: 214, x1: 1030, y1: 228 } }];
+  const result = comparePageReading("Friday", { words: [...text, ...added], codes: [nav] },
+    { width: 1224, height: 1584 });
+  expect(result.differences.map(d => d.observed)).toContain("Paid");
 });

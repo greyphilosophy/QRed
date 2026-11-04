@@ -87,7 +87,15 @@ def stamp_and_save(page, source, destination=None):
     with page.expect_download(timeout=60000) as saved:
         page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
         page.wait_for_function("""() => window.__lastSealResult ||
+            document.querySelector('[aria-label="Review image text before signing"]') ||
             document.querySelector('#stamp-result')?.textContent.includes('PDF sealing failed:')""", timeout=60000)
+        review = page.get_by_role("button", name="Sign these machine readings", exact=True)
+        if review.count():
+            # All caller fixtures are synthetic; exercise the explicit review
+            # gesture rather than bypassing it through an internal API.
+            review.click()
+            page.wait_for_function("""() => window.__lastSealResult ||
+                document.querySelector('#stamp-result')?.textContent.includes('PDF sealing failed:')""", timeout=60000)
         message = page.locator("#stamp-result").inner_text()
         assert "PDF sealing failed:" not in message, message
     if destination is None:
