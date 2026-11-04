@@ -465,7 +465,7 @@ def test_flattened_pdf_signs_real_browser_ocr_then_repeats_offline(browser, tmp_
                 guard.block(offline=True)
             _, result = stamp_and_save(page, {"name": "flattened.pdf", "mimeType": "application/pdf",
                 "buffer": source.getvalue()}, tmp_path / f"flattened-{attempt}.sealed.pdf")
-            evidence = result["full_result"]["evidence"]
+            evidence = result["evidence"]
             assert evidence["text"] == ""
             assert evidence["ocr"]["engine"] == "tesseract-eng-v1"
             reading = "\n".join(line["text"] for line in evidence["ocr"]["lines"])
