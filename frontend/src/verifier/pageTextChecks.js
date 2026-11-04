@@ -1,3 +1,4 @@
+import { sealedTextReference } from "./sealedTextReference.js";
 import { createPhotoOcrReader, openPagePhoto } from "./photoOcr.js";
 import { comparePageReading } from "./photoReading.js";
 
@@ -85,11 +86,11 @@ export function createPageTextChecks({ reader = createPhotoOcrReader(), open = o
       if (verifying) return;
       const keep = new Set();
       for (const page of results) {
-        if (page.status !== "VALID" || page.signature_valid !== true || !page.content?.trim()) continue;
+        if (page.status !== "VALID" || page.signature_valid !== true || !sealedTextReference(page.content, page.evidence).text.trim()) continue;
         const id = page.document_id;
         keep.add(id);
         const capture = photos.find(photo => photo.documentId === id);
-        const reference = `${page.key_id}:${page.page_hash}:${page.content}`;
+        const reference = `${page.key_id}:${page.page_hash}:${page.content}:${JSON.stringify(page.evidence?.ocr ?? null)}`;
         const old = records.get(id);
         if (old && old.reference === reference && old.captureId === capture?.id) continue;
         if (job?.record === old && old) cancelJob();

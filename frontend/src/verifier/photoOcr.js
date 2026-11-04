@@ -1,3 +1,4 @@
+import { sealedTextReference } from "./sealedTextReference.js";
 import { createWorker } from "tesseract.js";
 import { captionLineCandidates, comparePageReading, isPrintedCaption, preparePhotoReading } from "./photoReading.js";
 import { signedPhotoLines } from "./photoTextLayout.js";
@@ -119,10 +120,11 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
           words = words.flatMap((word, index) => replacements.get(index) || (removed.has(index) ? [] : [word]));
         }
         let retryReviews = [];
-        if (reference.text?.trim() && !contrastAssisted) {
+        const comparisonReference = sealedTextReference(reference.text, reference.evidence);
+        if (comparisonReference.text.trim() && !contrastAssisted) {
           const reading = { words, codes: prepared.codes, corners: prepared.corners };
           const comparison = comparePageReading(reference.text, reading, canvas, reference.evidence);
-          const lines = signedPhotoLines(reference.text, reference.evidence, prepared.corners, canvas, words);
+          const lines = signedPhotoLines(comparisonReference.text, comparisonReference.evidence, prepared.corners, canvas, words);
           const candidates = planTextRetries(words, comparison, lines, canvas);
           if (candidates.length) {
             const replacements = [], deadline = performance.now() + TEXT_RETRY_MS;

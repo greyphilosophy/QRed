@@ -94,3 +94,20 @@ it("does not let a pending old capture overwrite its replacement", async () => {
   await act(async () => finishCapture({ width: 1224, height: 432 }));
   expect(selected().getAttribute("src")).toBe("blob:photo-height-2016");
 });
+
+it("shows authenticated OCR source, confidence, conflicts and its own line locations", () => {
+  const box = { x: .25, y: .125, width: .5, height: .05 };
+  render(<PageEvidenceVerification results={[{ ...page, evidence: { ...evidence,
+    layout: { mode: 3, lines: [box] }, ocr: { engine: "tesseract-eng-v1",
+      lines: [{ ...box, text: "Account 123458", confidence: 42 }] } } }]} />);
+  expect(screen.getByText(/signature authenticates this machine reading, not its accuracy/)).toBeTruthy();
+  expect(screen.getByText(/OCR confidence: 42%/)).toBeTruthy();
+  expect(screen.getByText(/Both readings are retained/)).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Locate signed text"), { target: { value: "1" } });
+  expect(screen.getByLabelText("Signed line location").querySelector("rect").getAttribute("x")).toBe("0.25");
+});
+it("shows an empty sealing-time OCR result as visual review rather than a match", () => {
+  render(<PageEvidenceVerification results={[{ ...page, evidence: { ...evidence, text: "", layout: null,
+    ocr: { engine: "tesseract-eng-v1", lines: [] } } }]} />);
+  expect(screen.getByText(/No text was recognized at sealing time/)).toBeTruthy();
+});

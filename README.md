@@ -434,14 +434,16 @@ has legal identity or organizational authority.
 
 # How It Works
 
-1. The browser extracts canonical text and optional page evidence, or creates a visual/blank-page reference when no text is available.
+1. The browser extracts canonical PDF text. Pages containing raster images, and nonblank pages without PDF text, are also read locally with English OCR before seals are drawn. The complete machine reading, line locations, confidence and engine version are signed separately alongside the native text; a visual/blank-page reference is retained where appropriate.
 2. A local Ed25519 key signs the evidence and metadata, or an online account attestation binds a page commitment to provider identity and server time.
 3. Automatic encoding compares plaintext with zlib, choosing fewer QR codes and then fewer payload bytes; gzip is a fallback. Compression is reversible, not encryption.
 4. The binary record is placed in ordinary QR byte segments, split into numbered chunks when needed. Printed seals contain no document URL or hidden padding data.
 5. A separate first-page navigation QR is required in footer layouts and optional on watermarks. Every page retains the printed verifier address.
 6. The recipient opens qred.org and reads the seals with its camera, photo or PDF scanner.
 7. The verifier reconstructs the record, decompresses it when needed and checks the signature against a trusted key.
-8. The recipient compares recovered signed text and visual evidence with the document. OCR assists this comparison but does not authenticate every visible detail.
+8. The recipient compares recovered signed text, machine readings and visual evidence with the document. OCR-backed comparisons always require review: a signature authenticates the stored reading, not its accuracy or completeness. Native/OCR conflicts remain visible.
+
+OCR uses the same-origin, versioned Tesseract English assets. Load those assets before going offline; a missing OCR resource stops sealing rather than silently omitting machine evidence. Private-key signing offers an OCR review step; account preparation exposes the readings before sign-in. No page raster or transcript is uploaded. Image-only pages retain footer seals. Required OCR is never dropped to fit a QR: pages exceeding the four-code limit fail with an actionable message. Existing v1 page evidence still verifies; OCR evidence requires the updated v2 decoder on every verifier route and saved offline copy.
 
 # Design Goals
 

@@ -129,3 +129,15 @@ it("does not restore readiness when preloading finishes after Finish & clear", a
   await expect(preparing).rejects.toThrow(/ended/);
   expect(checks.getSnapshot()).toMatchObject({ pages: [], ready: false, preparing: false });
 });
+
+it("queues authenticated image-only OCR and still requires review when it matches", async () => {
+  const { checks, reader } = setup();
+  const p = { ...page("scan", 1, ""), evidence: { text: "", width: 100, height: 100, layout: null,
+    ocr: { engine: "tesseract-eng-v1", lines: [{ text: "Friday", x: .05, y: .05, width: .9, height: .2, confidence: 99 }] } } };
+  checks.update([{ ...p, signature_valid: false }], [photo(1, "scan")]);
+  expect(reader.read).not.toHaveBeenCalled();
+  checks.update([p], [photo(1, "scan")]);
+  await vi.waitFor(() => expect(checks.getSnapshot().pages[0].state).toBe("uncertain"));
+  expect(checks.getSnapshot().pages[0].comparison.sealedOcr).toBe(true);
+  checks.dispose();
+});

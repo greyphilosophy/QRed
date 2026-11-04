@@ -1,3 +1,4 @@
+import { sealedTextReference } from "./sealedTextReference.js";
 import { preparePhotoReadingInWorker } from "../qr/photoScanClient.js";
 import { compareLocatedPhotoText, signedPhotoLines } from "./photoTextLayout.js";
 
@@ -84,7 +85,9 @@ export function possiblePrintedMarkings(words, codes) {
 
 export function comparePageReading(expected, reading, dimensions, evidence) {
   const { words, codes = [], contrastAssisted = false, corners, retryReviews = [] } = Array.isArray(reading) ? { words: reading } : reading;
-  const lines = signedPhotoLines(expected, evidence, corners, dimensions, words);
+  const reference = sealedTextReference(expected, evidence);
+  expected = reference.text;
+  const lines = signedPhotoLines(expected, reference.evidence, corners, dimensions, words);
   const compare = input => compareLocatedPhotoText(expected, input, dimensions, lines);
   let comparison = compare(words);
   const groups = possiblePrintedMarkings(words, codes).filter(indices => indices.every(index =>
@@ -100,6 +103,7 @@ export function comparePageReading(expected, reading, dimensions, evidence) {
   }
   const markings = groups.map(indices => ({ observed: indices.map(index => words[index].text).join(" "),
     boxes: indices.map(index => words[index].bbox) }));
-  if (comparison.status === "matches" && (contrastAssisted || markings.length || retryReviews.length)) comparison.status = "uncertain";
-  return { ...comparison, contrastAssisted, markings, retryReviews };
+  if (comparison.status === "matches" && (contrastAssisted || markings.length || retryReviews.length || reference.hasOcr)) comparison.status = "uncertain";
+  return { ...comparison, contrastAssisted, markings, retryReviews,
+    sealedOcr: reference.hasOcr, referenceConflicts: reference.conflicts, referenceUnresolved: reference.unresolved };
 }

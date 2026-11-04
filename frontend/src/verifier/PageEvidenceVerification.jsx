@@ -1,5 +1,6 @@
 /* eslint-disable no-unused-vars */
 import React, { useEffect, useId, useRef, useState } from "react";
+import { sealedTextReference } from "./sealedTextReference.js";
 import { renderVisualReference } from "../pageEvidence.js";
 import { openPagePhoto, photoPreviewUrl } from "./photoOcr.js";
 
@@ -8,8 +9,11 @@ function EvidencePage({ page, captures, onRetake }) {
   const id = useId(), canvas = useRef(null), generation = useRef(0), currentUrl = useRef(null);
   const [line, setLine] = useState(-1), [photo, setPhoto] = useState(null), [error, setError] = useState("");
   const firstCapture = captures[0];
-  const lines = evidence.text.split("\n").filter(text => text.trim());
-  const position = evidence.layout?.lines[line];
+  const reference = sealedTextReference(evidence.text, evidence);
+  const lines = evidence.text.split("\n").filter(text => text.trim()).map((text, index) => ({
+    text, box: evidence.layout?.lines[index], source: "PDF text",
+  })).concat((evidence.ocr?.lines || []).map(item => ({ text: item.text, box: item, source: "Sealing-time OCR" })));
+  const position = lines[line]?.box;
   useEffect(() => {
     if (!evidence.visual || !canvas.current) return;
     const image = renderVisualReference(evidence.visual);
@@ -53,6 +57,20 @@ function EvidencePage({ page, captures, onRetake }) {
       The signature authenticates this stored reference. It is a lossy grayscale reconstruction, not a full image of the original.
       Small changes, colors, digits, and face substitutions may be lost. Compare important details using the signed text or the original document.
     </p>}
+    {evidence.ocr && <section aria-label="Sealing-time OCR evidence">
+      <h3>Sealing-time OCR evidence</h3>
+      <p className="photo-note">Source: {evidence.ocr.engine}. The signature authenticates this machine reading, not its accuracy.
+        OCR may miss or misread text, even at high confidence. Native PDF text is stored separately and unchanged. Review against the original page.</p>
+      {!evidence.ocr.lines.length ? <p className="photo-summary uncertain">No text was recognized at sealing time. Inspect the visual reference and original page.</p>
+        : <ol>{evidence.ocr.lines.map((item, index) => <li key={index}>
+          <span>{item.text}</span> <span className="photo-note">(OCR confidence: {Math.round(item.confidence)}%)</span>
+        </li>)}</ol>}
+      {reference.conflicts.length > 0 && <div className="photo-summary uncertain">
+        <p>PDF text and sealing-time OCR disagree in overlapping regions. Both readings are retained. Review these conflicts:</p>
+        <ul>{reference.conflicts.map((conflict, index) => <li key={index}>PDF text: {conflict.native.join(" / ")} · OCR: {conflict.ocr}</li>)}</ul>
+      </div>}
+      {reference.unresolved && <p className="photo-note">The two text sources could not be fully reconciled by location. Both readings are retained for review.</p>}
+    </section>}
     <div className="evidence-comparison">
       <figure>
         <figcaption>{evidence.blank ? "Signed blank-page reference" : "Signed page reference"}</figcaption>
@@ -74,14 +92,14 @@ function EvidencePage({ page, captures, onRetake }) {
       </figure>
     </div>
     <p className="photo-note">A successful QR scan may show only part of the page. Use a clear photo of the entire printed page for comparison.</p>
-    {evidence.layout && <>
+    {(evidence.layout || evidence.ocr?.lines.length > 0) && <>
       <label htmlFor={`${id}-line`}>Locate signed text</label>
       <select id={`${id}-line`} value={line} onChange={event => setLine(Number(event.target.value))}>
         <option value="-1">Choose a line to highlight on the reference</option>
-        {lines.map((text, index) => <option key={index} value={index}>{index + 1}: {text.slice(0, 100)}</option>)}
+        {lines.map((text, index) => <option key={index} value={index}>{index + 1}: {evidence.ocr ? `${text.source}: ` : ""}{text.text.slice(0, 100)}</option>)}
       </select>
-      {line >= 0 && <p className="photo-selected">{lines[line]}</p>}
-      <p className="photo-note">{evidence.layout.mode === 1 ? "Locations use a coarse 16 × 16 grid." : evidence.layout.mode === 2 ? "Locations mark approximate line starts." : "Boxes mark the extracted text lines."} Positions refer to the original page, before the seal footer was added.</p>
+      {line >= 0 && <p className="photo-selected">{lines[line]?.text}</p>}
+      <p className="photo-note">{evidence.layout?.mode === 1 ? "Locations use a coarse 16 × 16 grid." : evidence.layout?.mode === 2 ? "Locations mark approximate line starts." : "Boxes mark the source text lines and OCR readings."} Positions refer to the original page, before the seal footer was added.</p>
     </>}
     {onRetake && <button type="button" onClick={() => onRetake(page)}>Retake this page for visual review</button>}
     <p className="photo-note">Compare these views yourself; QRed does not give an automatic image-match verdict. Photos stay on this device. No text-recognition download is needed for this view.</p>

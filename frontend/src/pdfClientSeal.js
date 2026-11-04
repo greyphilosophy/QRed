@@ -3,6 +3,7 @@ import { LEGAL_FOOTER_HEIGHT, LEGAL_PAGE_HEIGHT } from "./pdf/pageScaling.js";
 import { QR_SIZE, planQrStampLayout, planQrStampLayoutForFooterBand } from "./pdf/qrLayout.js";
 import { planPageEvidence } from "./pdf/pageEvidencePlan.js";
 import { flattenPdfForSealing } from "./pdf/flattenPdf.js";
+import { createSealingOcrReader } from "./pdf/sealingOcr.js";
 import { renderSealedPdf } from "./pdf/renderSealedPdf.js";
 export { qrPngBytes } from "./pdf/renderSealedPdf.js";
 
@@ -42,11 +43,17 @@ async function documentMerkleRoot(pageTexts) {
   return level[0];
 }
 
-async function preparePageSealing({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attested, pageScalingStrategy = "automatic" }) {
+async function preparePageSealing({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attested, pageScalingStrategy = "automatic", signal, onProgress }) {
+  signal?.throwIfAborted();
   const { readPdfPagesWithEvidence } = await import("./pdf/readPdfText.js");
-  const plans = await readPdfPagesWithEvidence(file, page => planPageEvidence(page, {
-    attested, multiple: page.pageCount > 1, encodingStrategy,
-  }));
+  const ocrReader = createSealingOcrReader({ signal, onProgress });
+  let plans;
+  try {
+    plans = await readPdfPagesWithEvidence(file, page => planPageEvidence(page, {
+      attested, multiple: page.pageCount > 1, encodingStrategy,
+    }), { ocrReader, signal, onProgress });
+  } finally { await ocrReader.dispose(); }
+  signal?.throwIfAborted();
   const merkleRoot = await documentMerkleRoot(plans.map(page => page.body));
   const timestamp = new Date().toISOString();
   const contexts = plans.map((_, index) => ({
@@ -60,7 +67,9 @@ async function preparePageSealing({ file, privateKey, publicKey, bootstrapUrl, e
   }));
   return {
     pages,
+    ocrPages: plans.flatMap((page, index) => page.ocr ? [{ pageNumber: index + 1, ...page.ocr }] : []),
     async complete(attestations = null) {
+      signal?.throwIfAborted();
       if (attested && (!Array.isArray(attestations) || attestations.length !== plans.length)) {
         throw new Error("Missing page attestations");
       }
@@ -79,10 +88,13 @@ async function preparePageSealing({ file, privateKey, publicKey, bootstrapUrl, e
   };
 }
 
-async function createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages, pageScalingStrategy }) {
+async function createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages, pageScalingStrategy, signal, onProgress, onReviewOcr }) {
   const prepared = await preparePageSealing({
-    file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attested: Boolean(attestPages), pageScalingStrategy,
+    file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attested: Boolean(attestPages), pageScalingStrategy, signal, onProgress,
   });
+  signal?.throwIfAborted();
+  if (prepared.ocrPages.length && onReviewOcr) await onReviewOcr(prepared.ocrPages);
+  signal?.throwIfAborted();
   const attestations = attestPages ? await attestPages(prepared.pages) : null;
   return prepared.complete(attestations);
 }
@@ -97,6 +109,7 @@ async function finishPdfSeal({ file, prepared, pageSealResults, plans, pageScali
     blob, sealResult: firstResult, stampedQrValues: firstResult?.seals ?? [],
     pageSealResults, pageSealStrings, flattenedFieldCount: prepared.flattenedFieldCount,
     watermarkLayout, footerPages, footerReasons,
+    ocrPages: plans.flatMap((page, index) => page.ocr ? [{ pageNumber: index + 1, ...page.ocr }] : []),
   };
 }
 
@@ -104,13 +117,14 @@ async function finishPdfSeal({ file, prepared, pageSealResults, plans, pageScali
 // No PDF, page text or keys are persisted or passed to any provider; these
 // values live only in this browsing context's memory.
 export async function prepareAccountPdfSeal({ file, bootstrapUrl = DEFAULT_BOOTSTRAP_URL,
-  encodingStrategy = "automatic", pageScalingStrategy = "automatic" }) {
+  encodingStrategy = "automatic", pageScalingStrategy = "automatic", signal, onProgress }) {
   const prepared = await flattenPdfForSealing(file);
   const plan = await preparePageSealing({
-    file: prepared.file, bootstrapUrl, encodingStrategy, attested: true, pageScalingStrategy,
+    file: prepared.file, bootstrapUrl, encodingStrategy, attested: true, pageScalingStrategy, signal, onProgress,
   });
   return {
     pages: plan.pages,
+    ocrPages: plan.ocrPages,
     async finish(attestations) {
       const { results, plans } = await plan.complete(attestations);
       return finishPdfSeal({
@@ -120,10 +134,10 @@ export async function prepareAccountPdfSeal({ file, bootstrapUrl = DEFAULT_BOOTS
   };
 }
 
-export async function sealPdfInBrowser({ file, privateKey, publicKey, attestPages, bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic", pageScalingStrategy = "automatic" }) {
+export async function sealPdfInBrowser({ file, privateKey, publicKey, attestPages, bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic", pageScalingStrategy = "automatic", signal, onProgress, onReviewOcr }) {
   const prepared = await flattenPdfForSealing(file);
   file = prepared.file;
-  const { results: pageSealResults, plans } = await createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages, pageScalingStrategy });
+  const { results: pageSealResults, plans } = await createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages, pageScalingStrategy, signal, onProgress, onReviewOcr });
   return finishPdfSeal({
     file, prepared, pageSealResults, plans, pageScalingStrategy,
   });

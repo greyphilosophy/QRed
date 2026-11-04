@@ -127,3 +127,13 @@ it("does not offer a file-capture handoff and makes retakes available without lo
   expect(view.container.querySelector("input[capture]")).toBeNull();
   expect(view.container.querySelector("input[type=file]")).toBeNull();
 });
+
+it("checks scanned-only OCR text while keeping matching machine readings under review", async () => {
+  const signed = { ...page, content: "", page_count: 1, evidence: { text: "", width: 200, height: 100,
+    layout: null, ocr: { engine: "tesseract-eng-v1", lines: [{ text: "Friday", x: .05, y: .1, width: .4, height: .2, confidence: 99 }] } } };
+  const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "Friday")]} />);
+  await waitFor(() => expect(view.container.querySelector(".photo-summary.uncertain")).toBeTruthy());
+  expect(screen.getByText(/Even matching readings need review/)).toBeTruthy();
+  expect(view.container.querySelector(".photo-summary.matches")).toBeNull();
+  expect(screen.queryByText("Recognized text matches the signed text")).toBeNull();
+});
