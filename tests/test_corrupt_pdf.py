@@ -219,6 +219,12 @@ def _upload_file_to_stamp_tool(
         expect(seal_btn).to_be_enabled(timeout=SEAL_BUTTON_TIMEOUT)
         seal_btn.click(timeout=5_000)
         expect(page.locator("#stamp-result")).to_have_text(
+            re.compile(r"^(Sealed |PDF sealing failed:|Review the machine-read image text)"), timeout=60_000
+        )
+        review = page.get_by_role("button", name="Sign these machine readings", exact=True)
+        if review.count():
+            review.click()
+        expect(page.locator("#stamp-result")).to_have_text(
             re.compile(r"^(Sealed |PDF sealing failed:)"), timeout=60_000
         )
     except Exception as e:
