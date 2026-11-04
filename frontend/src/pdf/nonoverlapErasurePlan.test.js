@@ -6,6 +6,8 @@ import { planNonoverlapErasure, drawNonoverlapErasurePlan } from "./nonoverlapEr
 import { withPdfDocument, renderPdfPage } from "./readPdfText.js";
 import { drawQrSymbol } from "./qrDrawing.js";
 import { scanErasureSeals, erasureCandidates } from "../qr/scanErasureSeals.js";
+import { decodePhotoWithErasure } from "../qr/decodePhotoWithErasure.js";
+import { recoverErasureRecord } from "../erasureTransport.js";
 import { verifySealCollection } from "../sealCollection.js";
 import { scanPdfSeals } from "../verifier/scanPdf.js";
 const keys = { privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=", publicKey: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=" };
@@ -53,6 +55,19 @@ it("normal PDF scanning authenticates with four entire symbols absent", async ()
   const scanned = await scanPdfSeals(blob, { onSeal: value => values.push(value) });
   expect(scanned).toMatchObject({ pageCount: 1, pagesWithSeals: 1, sealCount: 12, missingPages: [], failedPages: [] });
   expect(await verifySealCollection(values, keys.publicKey)).toMatchObject([{ status: "VALID", page_number: 1 }]);
+}, 30000);
+it.each([2, 8 / 3])("captured-photo decoding recovers twelve shards at render scale %s without changing its evidence", async scale => {
+  const rendered = await withPdfDocument(new Blob([await stamped([0, 5, 10, 15])]), doc => renderPdfPage(doc, 1, scale, { reference: true }));
+  // A camera supplies pixels only, never PDF geometry or known QR locations.
+  const photo = { width: rendered.width, height: rendered.height, data: rendered.data };
+  const before = await crypto.subtle.digest("SHA-256", photo.data);
+  const action = await decodePhotoWithErasure(photo, { returnPayload: true });
+  expect(action.status).toBe("found-multiple"); expect(action.texts).toHaveLength(12);
+  expect(await recoverErasureRecord(action.texts.map(qrPayloadBytes))).toEqual(record);
+  expect(await verifySealCollection(action.texts, keys.publicKey)).toMatchObject([{ status: "VALID", content: "Invoice 1042\nAmount 50.00" }]);
+  expect(new Uint8Array(await crypto.subtle.digest("SHA-256", photo.data))).toEqual(new Uint8Array(before));
+  // Seal authentication is separate from the OCR comparison of this photo.
+  expect(action).not.toHaveProperty("ocr"); expect(action).not.toHaveProperty("signature_valid");
 }, 30000);
 it("returns explicit fallback reasons rather than shrinking text, modules, or evidence", async () => {
   const data = new Uint8ClampedArray(original.data.length).fill(254);

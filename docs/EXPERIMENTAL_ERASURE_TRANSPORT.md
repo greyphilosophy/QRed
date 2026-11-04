@@ -93,6 +93,39 @@ Do not describe those parameters as an issuer-approved redundancy policy.
   Original document pixels remain the comparison input. This initial discovery
   targets upright modest-resolution pages, not arbitrary camera perspective.
 
+## Captured-photo scanning
+
+The photo worker awaits `decodePhotoWithErasure` for chosen images and captured
+camera pages when payload collection is enabled. It tries QRE discovery before
+the existing photo decoder. Ordinary live previews, generic QR text scanning,
+and the synchronous `decodePhoto` / `decodeCanvasFrame` compatibility APIs retain
+their existing behavior. The synchronous helpers are not a no-Worker UI fallback.
+
+Photos retain the existing 80MP input cap. An image above the discovery scanner's
+3MP limit gets one separate, area-averaged RGBA copy capped at 2MP. Resizing uses
+only image pixels; it does not receive expected text, seal bytes, or known symbol
+locations. Smaller inputs use their original pixels. Only decoded strings leave
+this stage: reduced coordinates and images never replace the original photograph
+or become OCR evidence. Normal PDF import continues to render at scale at most 2
+and is not changed by this photo-specific copy.
+
+The shared cooperative photo budget is at most 8 seconds. Discovery, including
+copy preparation, gets at most one quarter of that budget, capped at 2 seconds;
+the legacy decoder receives only the time remaining. Discovery, component
+enumeration, copy/crop work, and QR attempts check their deadlines between
+bounded operations. An interrupted candidate search returns no candidate prefix;
+a completed search still refuses floods over 64 candidates or 4MP of crop work.
+These are cooperative budgets, not hard real-time guarantees for a single QR
+decode. Cancelling a browser photo terminates its worker and discards stale
+results; direct asynchronous callers can provide an AbortSignal.
+
+Partial QRE observations survive legacy recovery, and exact repeated strings are
+deduplicated without discarding conflicting bytes. Having k distinct shards in
+every observed group only skips further optical search. Reconstruction, digest,
+extra-parity, signature, authority and OCR checks remain separate and unchanged.
+The existing multi-record photograph association can require a retake when an
+unrelated complete seal accompanies an incomplete record on one image.
+
 ## Verification evidence
 
 Generated-only tests cover all 1,820 choices of 12 from 16 shards, a frozen wire
@@ -101,6 +134,11 @@ malformed headers, duplicate/mixed inputs, and the normal signature path.
 Generated PDF tests preserve every original nonwhite RGBA pixel, including gray,
 colored, faint and antialiased marks, and verify optical recovery with touching
 full quiet-zone boxes and normal PDF scanning with four printed symbols absent.
+Captured-photo tests cover twelve-shard recovery at 144 and 192dpi, unchanged
+source pixel hashes, reduced discovery copies, hostile candidate/crop limits,
+deadlines, cancellation and asynchronous worker handling. Generated browser
+fixtures separately cover seal authentication and real OCR comparisons for an
+unchanged page, four missing symbols, changed amount, deleted text and added text.
 Synthetic obstacle tests cover deterministic alternate traversal when forward
 row-major misses a symbol, full source guards and margins, nonoverlapping quiet
 zones, alpha/faint-ink exclusion, input bounds and cancellation. Existing fixtures

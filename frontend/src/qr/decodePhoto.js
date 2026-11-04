@@ -3,6 +3,7 @@ import { scanPageAlignedImage } from "./pageAlignedScan.js";
 import { scanFooterSeals } from "./footerSealScan.js";
 import { scanRectifiedSeal } from "./rectifiedSealScan.js";
 import { isQRedEntryLink, qredPayloadFromScanResult } from "./qrPayload.js";
+import { validatePhotoImage } from "./photoScanImage.js";
 import { decodeSeal, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult,
   qredTextFromScanResult } from "../qredVerifier.js";
 
@@ -25,13 +26,11 @@ export function qrFrameAction(image, code, options = {}) {
 }
 
 // The same decoder serves a chosen photo and a manually captured camera frame.
-// Browser callers run this synchronous work in photoScan.worker.js.
+// Kept synchronous for existing callers. The browser worker wraps this with
+// bounded asynchronous QRE discovery in decodePhotoWithErasure.js.
 export function decodePhoto(image, { returnPayload = false, maxDurationMs = 8000 } = {}) {
+  validatePhotoImage(image);
   const { data, width, height } = image;
-  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0
-    || width * height > 80_000_000 || data?.length !== width * height * 4) {
-    throw new Error("This photo cannot be scanned at its current size. Choose a smaller photo.");
-  }
   // Cooperatively stop between bounded attempts. A miss must return retake
   // guidance instead of spending a minute exhausting layout guesses.
   const started = performance.now(), deadline = started + maxDurationMs;

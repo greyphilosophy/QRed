@@ -47,3 +47,19 @@ Use only synthetic text and a disposable or public test key:
 
 Rendering, simulated compression, and injected browser camera frames remain
 useful automated checks, but cannot establish physical print/phone reliability.
+
+## Generated QRE photo-path regression
+
+`generate_qre_photo.mjs` creates the public-test-key invoice images used by
+`tests/test_photo_qre.py`. It uses the real non-overlap planner and PDF drawer,
+then checks optical shard recovery, the ordinary signature, and preservation of
+every original nonwhite pixel before emitting PNGs into pytest's temporary
+directory. No saved user document or prior signed payload is used.
+
+The production-browser test uploads those PNG bytes through the image picker
+and observes real worker requests without substituting decoder or OCR results.
+It separates seal authentication from the unchanged, amount-change, deletion,
+addition, and four-missing-shard text verdicts. Pixel hashes check that the
+initial OCR request and displayed page use the original image. Offline/network
+guards and storage/clear checks cover the same workflow. This generated test
+runs in the dedicated `photo-qre` CI shard, not the deployment catch-all.
