@@ -16,7 +16,7 @@ beforeAll(async () => {
   page.drawText("Amount 50.00", { x: 72, y: 660, size: 18, font });
   source = await pdf.save();
   original = await withPdfDocument(new Blob([source]), doc => renderPdfPage(doc, 1, 2, { reference: true }));
-  const sealed = await createQRedSeals({ ...keys, content: "Invoice 1042\nAmount 50.00", pageContext: { pageNumber: 1, pageCount: 1 } });
+  const sealed = await createQRedSeals({ ...keys, timestamp: "2026-11-04T07:00:00Z", content: "Invoice 1042\nAmount 50.00", pageContext: { pageNumber: 1, pageCount: 1 } });
   record = qrPayloadBytes(sealed.seals[0]);
   plan = await planNonoverlapErasure(original, record);
 }, 30000);
