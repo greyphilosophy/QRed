@@ -435,3 +435,43 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
         page.screenshot(path=str(tmp_path / "difference-first.png"))
     finally:
         context.close()
+
+
+def test_flattened_pdf_signs_real_browser_ocr_then_repeats_offline(browser, tmp_path):
+    """Production worker/model assets, review UI and signed image text stay local."""
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
+    from browser_helpers import stamp_and_save
+
+    raster = page_image(TEXT)["buffer"]
+    source = io.BytesIO()
+    pdf = canvas.Canvas(source, pagesize=(600, 800))
+    pdf.drawImage(ImageReader(io.BytesIO(raster)), 0, 0, width=600, height=800)
+    pdf.save()
+    context = browser.new_context(service_workers="allow", accept_downloads=True)
+    try:
+        base = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
+        guard = OfflineNetworkGuard(context, base)
+        page = context.new_page()
+        page.goto(base, wait_until="networkidle")
+        page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Private key (offline)", exact=True).click()
+        page.get_by_label("Private Key", exact=True).fill("txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=")
+        page.get_by_label("Page layout", exact=True).select_option("legal-footer")
+        for attempt in range(2):
+            if attempt:
+                wait_for_offline_resources(page, pdf=True)
+                page.wait_for_load_state("networkidle")
+                guard.block(offline=True)
+            _, result = stamp_and_save(page, {"name": "flattened.pdf", "mimeType": "application/pdf",
+                "buffer": source.getvalue()}, tmp_path / f"flattened-{attempt}.sealed.pdf")
+            evidence = result["full_result"]["evidence"]
+            assert evidence["text"] == ""
+            assert evidence["ocr"]["engine"] == "tesseract-eng-v1"
+            reading = "\n".join(line["text"] for line in evidence["ocr"]["lines"])
+            assert "Account 123456" in reading
+            assert "Approved total 123.45" in reading
+            assert "QRED" not in reading.upper(), "Read the original, not its navigation stamp"
+            guard.assert_quiet()
+    finally:
+        context.close()
