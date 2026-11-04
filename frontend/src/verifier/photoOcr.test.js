@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
-import { createPhotoOcrReader } from "./photoOcr.js";
+import { createPhotoOcrReader as createReader } from "./photoOcr.js";
+const createPhotoOcrReader = (factory, prepareImage) => createReader(factory, prepareImage, null);
 
 function worker() {
   return { setParameters: vi.fn().mockResolvedValue(), terminate: vi.fn().mockResolvedValue(),
@@ -177,4 +178,117 @@ it("cancels an in-flight retry without publishing it or retaining its original-r
     expect(f.decoded().src).toBe("");
     expect([...f.copies, f.prepared].every(c => c.width === 0 && c.height === 0)).toBe(true);
   } finally { vi.unstubAllGlobals(); }
+});
+
+it("prepares both same-origin models and releases both after a failed secondary load", async () => {
+  const primary = worker(), alternate = worker(), factory = vi.fn().mockResolvedValue(primary);
+  const secondaryFactory = vi.fn().mockRejectedValueOnce(new Error("Missing alternate model")).mockResolvedValue(alternate);
+  const reader = createReader(factory, () => ({ canvas: {}, codes: [] }), secondaryFactory);
+  await expect(reader.prepare()).rejects.toThrow("Missing alternate model");
+  expect(primary.terminate).toHaveBeenCalledTimes(1);
+  await reader.prepare();
+  expect(secondaryFactory).toHaveBeenLastCalledWith("eng", 0, expect.objectContaining({
+    workerPath: "/ocr/v1/worker.min.js", corePath: "/ocr/v1", langPath: "/ocr/v1/legacy", cacheMethod: "none",
+  }));
+  expect(alternate.setParameters).toHaveBeenCalledWith({ tessedit_pageseg_mode: "7", thresholding_method: "0" });
+  reader.dispose();
+  expect(alternate.terminate).toHaveBeenCalledTimes(1);
+});
+it("terminates a secondary worker that initializes after cancellation", async () => {
+  const primary = worker(), alternate = worker();
+  let finish;
+  const reader = createReader(() => Promise.resolve(primary), () => ({ canvas: {}, codes: [] }),
+    () => new Promise(resolve => { finish = resolve; }));
+  const preparing = reader.prepare();
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  reader.dispose(); finish(alternate);
+  await expect(preparing).rejects.toThrow(/cancelled/);
+  expect(alternate.terminate).toHaveBeenCalledTimes(1);
+  expect(primary.terminate).toHaveBeenCalledTimes(1);
+});
+
+async function alternateFixture(expected, observed = "Total", { outside = false, partial = false } = {}) {
+  const primary = worker(), alternate = worker(), copies = [];
+  const pack = words => ({ data: { blocks: [{ paragraphs: [{ lines: [{ words }] }] }] } });
+  const initial = { text: "TotaI", confidence: 40, bbox: { x0: 100, y0: 200, x1: 200, y1: 230 } };
+  primary.recognize.mockResolvedValue(pack([initial]));
+  alternate.recognize.mockImplementation(async canvas => pack([{ text: observed, confidence: 96,
+    bbox: partial ? { x0: 30 } : { x0: outside ? 0 : 30, y0: 30, x1: canvas.width - 30, y1: canvas.height - 30 } }]));
+  vi.stubGlobal("document", { createElement: () => {
+    const drawImage = vi.fn(), fillRect = vi.fn();
+    const canvas = { width: 0, height: 0, getContext: () => ({ drawImage, fillRect }), drawImage, fillRect };
+    copies.push(canvas); return canvas;
+  } });
+  const reader = createReader(() => Promise.resolve(primary), () => ({ canvas: {}, codes: [] }), () => Promise.resolve(alternate));
+  try {
+    const result = await reader.read({ width: 1000, height: 1400 }, () => {}, { text: expected });
+    return { result, calls: alternate.recognize.mock.calls, copies };
+  } finally { reader.dispose(); vi.unstubAllGlobals(); }
+}
+it("selects the same alternate reading for identical pixels regardless of signed text", async () => {
+  const first = await alternateFixture("Total"), changedReference = await alternateFixture("Other");
+  expect(first.result.words.map(word => word.text)).toEqual(["Total"]);
+  expect(changedReference.result.words).toEqual(first.result.words);
+  expect(first.result.retryReviews).toEqual([expect.objectContaining({ original: "TotaI", observed: "Total" })]);
+  expect(first.calls).toHaveLength(1);
+  expect(first.calls[0].slice(1)).toEqual([{}, { text: true, blocks: true }]);
+  expect(first.copies[1].drawImage).toHaveBeenCalledWith(expect.any(Object), 95, 195, 110, 40, 20, 20, 220, 80);
+  expect(first.copies.every(canvas => canvas.width === 0 && canvas.height === 0)).toBe(true);
+});
+it("does not correct an altered amount or deleted punctuation to the signed reference", async () => {
+  const { comparePageReading } = await import("./photoReading.js");
+  for (const [expected, observed] of [["100", "900"], ["Label:", "Label"], ["I agree", "| agree"], ["1 of 2", "9 of 2"]]) {
+    const { result } = await alternateFixture(expected, observed);
+    expect(result.words[0].text).toBe(observed);
+    expect(comparePageReading(expected, result, { width: 1000, height: 1400 }).status).toBe("differences");
+    expect(result.retryReviews.length).toBeGreaterThan(0);
+  }
+});
+
+it.each([{ outside: true }, { partial: true }])("rejects an alternate transcript with invalid crop geometry %j", async geometry => {
+  const { result } = await alternateFixture("Total", "Total", geometry);
+  expect(result.words[0].text).toBe("TotaI");
+  expect(result.retryReviews).toEqual([]);
+});
+it("does not let a cancelled read's late rejection dispose a newer session", async () => {
+  const old = worker(), next = worker();
+  let rejectOld, finishNew;
+  old.recognize.mockImplementation(() => new Promise((_, reject) => { rejectOld = reject; }));
+  next.recognize.mockImplementation(() => new Promise(resolve => { finishNew = resolve; }));
+  const factory = vi.fn().mockResolvedValueOnce(old).mockResolvedValueOnce(next);
+  const reader = createReader(factory, () => ({ canvas: {}, codes: [] }), null);
+  const first = reader.read({ width: 100, height: 200 });
+  const cancelled = expect(first).rejects.toMatchObject({ name: "AbortError" });
+  await vi.waitFor(() => expect(rejectOld).toBeTypeOf("function"));
+  reader.dispose();
+  const second = reader.read({ width: 100, height: 200 });
+  await vi.waitFor(() => expect(finishNew).toBeTypeOf("function"));
+  rejectOld(new Error("Old worker stopped"));
+  await cancelled;
+  expect(next.terminate).not.toHaveBeenCalled();
+  finishNew({ data: { blocks: [] } });
+  // Empty first pass causes a contrast read, which uses the same worker.
+  next.recognize.mockResolvedValue({ data: { blocks: [] } });
+  await expect(second).resolves.toMatchObject({ words: [] });
+  reader.dispose();
+});
+it("shares the crop pixel budget across both engines", async () => {
+  const { TEXT_RETRY_PIXELS } = await import("./photoOcrRetry.js");
+  const pack = words => ({ data: { blocks: [{ paragraphs: [{ lines: words.map(word => ({ words: [word] })) }] }] } });
+  const initial = Array.from({ length: 12 }, (_, i) => ({ text: `row${i}`, confidence: 20,
+    bbox: { x0: 20, y0: 50 + i * 130, x1: 920, y1: 120 + i * 130 } }));
+  const primary = worker(), alternate = worker(), sizes = [];
+  primary.recognize.mockResolvedValueOnce(pack(initial)).mockImplementation(async canvas => {
+    sizes.push(canvas.width * canvas.height); return pack([]);
+  });
+  alternate.recognize.mockImplementation(async canvas => { sizes.push(canvas.width * canvas.height); return pack([]); });
+  vi.stubGlobal("document", { createElement: () => ({ width: 0, height: 0,
+    getContext: () => ({ drawImage: vi.fn(), fillRect: vi.fn() }) }) });
+  const reader = createReader(() => Promise.resolve(primary), () => ({ canvas: {}, codes: [] }), () => Promise.resolve(alternate));
+  try {
+    await reader.read({ width: 1000, height: 2000 }, () => {}, { text: "Independent reference" });
+    expect(alternate.recognize).toHaveBeenCalled();
+    expect(sizes.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(TEXT_RETRY_PIXELS);
+    expect(sizes.length).toBeLessThan(24);
+  } finally { reader.dispose(); vi.unstubAllGlobals(); }
 });

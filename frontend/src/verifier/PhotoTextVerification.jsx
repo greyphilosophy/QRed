@@ -82,12 +82,19 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
           {page.state === "reading" ? photoProcessingMessage(page.progress) : labels[page.state]}</p>
         {page.state === "reading" && <progress max="1" value={page.progress ?? undefined} aria-label="Printed-text recognition" />}
         {page.error && <p role="alert">{page.error}</p>}
+        {page.page.evidence?.ocr && <p className="photo-note reading-caution">The comparison includes authenticated sealing-time OCR ({page.page.evidence.ocr.engine}).
+          It is a machine reading, not verified transcription. Even matching readings need review against the original page.</p>}
         {comparison && <>
+          {comparison.referenceConflicts?.length > 0 && <div className="photo-summary uncertain">
+            <p>PDF text and sealing-time OCR overlap or disagree. PDF text remains the required comparison target; the OCR reading is separate evidence to review, not a second copy of the printed text.</p>
+            <ul>{comparison.referenceConflicts.map((conflict, index) => <li key={index}>PDF text: {conflict.native.join(" / ")} · Sealing-time OCR: {conflict.ocr}</li>)}</ul>
+          </div>}
+          {comparison.referenceUnresolved && <p className="photo-note reading-caution">Some sealing-time OCR could not be independently located outside PDF text. Review the full OCR readings in the signed reference, including any extra words or amounts. They are not additional automatic comparison targets.</p>}
           {difficultReading && <p className="photo-note reading-caution">Many characters could not be read reliably. Inspect the marked text on the paper; recognition errors can look like changes.</p>}
           <div className="photo-differences">
             {contentDifferences.length > 0 && <>
               <ol>{contentDifferences.map((difference, index) => <li key={index}>
-                <div><strong>Signed text:</strong> {difference.expected || "(no text here)"}</div>
+                <div><strong>{comparison.sealedOcr ? "Signed reference (PDF text / OCR):" : "Signed text:"}</strong> {difference.expected || "(no text here)"}</div>
                 <div><strong>Photo reading:</strong> {difference.observed || "(not read — inspect for missing text)"}</div>
                 <DifferenceCrop page={page} difference={difference} />
                 {difference.context && <p className="photo-note">Signed wording nearby: {difference.context}</p>}
@@ -97,7 +104,7 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
               <summary>Word spacing to review ({spacingDifferences.length})</summary>
               <p className="photo-note">The characters agree, but words were split or joined. Check the spacing on the paper.</p>
               <ol>{spacingDifferences.map((difference, index) => <li key={index}>
-                <div><strong>Signed text:</strong> {difference.expected}</div>
+                <div><strong>{comparison.sealedOcr ? "Signed reference (PDF text / OCR):" : "Signed text:"}</strong> {difference.expected}</div>
                 <div><strong>Photo reading:</strong> {difference.observed}</div>
                 <DifferenceCrop page={page} difference={difference} />
               </li>)}</ol>
@@ -106,7 +113,7 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
               <summary>Typography to review ({typographyDifferences.length})</summary>
               <p className="photo-note">Quotes, dashes, or joined letters were read differently. Check the highlighted photo to confirm the printed characters.</p>
               <ol>{typographyDifferences.map((difference, index) => <li key={index}>
-                <div><strong>Signed text:</strong> {difference.expected}</div>
+                <div><strong>{comparison.sealedOcr ? "Signed reference (PDF text / OCR):" : "Signed text:"}</strong> {difference.expected}</div>
                 <div><strong>Photo reading:</strong> {difference.observed}</div>
                 <DifferenceCrop page={page} difference={difference} />
                 {difference.context && <p className="photo-note">Signed wording nearby: {difference.context}</p>}

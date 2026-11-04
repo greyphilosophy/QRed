@@ -33,6 +33,7 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [pageScalingStrategy, setPageScalingStrategy] = useState("automatic");
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [ocrReview, setOcrReview] = useState(null);
   const [method, setMethod] = useState(null);
   const [preparedProviders, setPreparedProviders] = useState(null);
   const [preparingProviders, setPreparingProviders] = useState(false);
@@ -79,6 +80,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       if (!enabled.length) throw new Error("No account sign-in providers are enabled");
       const prepared = await prepareAccountPdfSeal({
         file, bootstrapUrl: BOOTSTRAP_URL, encodingStrategy: "automatic", pageScalingStrategy,
+        signal: controller.signal,
       });
       if (controller.signal.aborted) return;
       const results = await Promise.allSettled(enabled.map(async providerId => {
@@ -223,7 +225,8 @@ export function PdfSealForm({ onUsePublicKey }) {
   function cancelSealing() {
     activeRequest.current?.controller.abort();
     setAuthenticating(false);
-    setMessage("Account sealing cancelled.");
+    setOcrReview(null);
+    setMessage("PDF sealing cancelled.");
     setPrepareRetry(value => value + 1);
   }
 
@@ -341,7 +344,17 @@ export function PdfSealForm({ onUsePublicKey }) {
       setMessage(accountMode ? "Preparing your PDF locally before opening " + selectedProvider.label + "…" : "Sealing in this browser…");
       const { blob, sealResult, flattenedFieldCount, footerPages = [], footerReasons = {} } = await sealPdfInBrowser({
         file, privateKey, publicKey: matchingPublicKey, bootstrapUrl: BOOTSTRAP_URL,
-        encodingStrategy: "automatic", pageScalingStrategy,
+        encodingStrategy: "automatic", pageScalingStrategy, signal: controller.signal,
+        onReviewOcr: pages => new Promise((resolve, reject) => {
+          const abort = () => { setOcrReview(null); reject(new DOMException("Sealing cancelled", "AbortError")); };
+          controller.signal.addEventListener("abort", abort, { once: true });
+          setMessage("Review the machine-read image text before signing.");
+          setOcrReview({ pages, finish: () => {
+            controller.signal.removeEventListener("abort", abort);
+            setOcrReview(null); setMessage("Sealing in this browser…"); resolve();
+          } });
+        }),
+        onProgress: event => { if (event.pageNumber) setMessage(`Reading image text locally on page ${event.pageNumber} of ${event.pageCount}…`); },
       });
       if (controller.signal.aborted) return;
       const url = URL.createObjectURL(blob);
@@ -367,7 +380,7 @@ export function PdfSealForm({ onUsePublicKey }) {
         ...(flattenedFieldCount ? [`Flattened ${flattenedFieldCount} form field(s). Check the values in your sealed copy.`] : []),
       ].join("\n"));
     } catch (error) {
-      setMessage(controller.signal.aborted ? "Account sealing cancelled." : `PDF sealing failed: ${error.message}`);
+      setMessage(controller.signal.aborted ? "PDF sealing cancelled." : `PDF sealing failed: ${error.message}`);
     } finally {
       if (activeRequest.current === request) activeRequest.current = null;
       setAuthenticating(false);
@@ -381,6 +394,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       <p className="key-help">
         Your PDF stays on this device. Account sign-in sends page fingerprints to QRed, not the file itself.
       </p>
+      <p className="key-help">Image text is read locally with English OCR and signed as a separate machine reading alongside PDF text. OCR can miss or misread characters; a signature authenticates the reading, not its accuracy. Review important values against the original.</p>
       <div className="demo-grid">
         <div className="demo-input">
           <label htmlFor="pdf-to-stamp">Open PDF</label>
@@ -457,6 +471,15 @@ export function PdfSealForm({ onUsePublicKey }) {
             </p>
             {file && method !== "private-key" && preparingProviders &&
               <p className="key-help" role="status">Preparing sign-in…</p>}
+            {preparedProviders?.prepared.ocrPages?.length > 0 && <details open>
+              <summary>Review machine-read image text before signing</summary>
+              <p>These English OCR readings will be signed exactly as shown. They are not verified transcriptions. If a reading is wrong, cancel and correct the source PDF before sealing.</p>
+              {preparedProviders.prepared.ocrPages.map(page => <section key={page.pageNumber}>
+                <h3>Page {page.pageNumber}</h3>
+                {page.lines.length ? page.lines.map((line, index) => <p key={index}>{line.text} <small>(OCR confidence {line.confidence}%)</small></p>)
+                  : <p>No text recognized. Inspect the original image; this does not prove the page has no text.</p>}
+              </section>)}
+            </details>}
             {file && method !== "private-key" && prepareError &&
               <p role="status">{prepareError} <button type="button" onClick={() =>
                 setPrepareRetry(value => value + 1)}>Retry preparation</button></p>}
@@ -464,7 +487,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       </div>
       <details className="stamp-method-details">
         <summary>About seals, privacy and page layouts</summary>
-        <p>QRed signs the page's text and, where space allows, approximate text positions and a small visual reference. It uses a watermark when possible, otherwise a footer. Image-only and blank pages use special references; form fields are flattened.</p>
+        <p>QRed signs the page's text and, where space allows, approximate text positions and a small visual reference. It uses a watermark when possible, otherwise a footer. Image-only pages include a separate signed OCR reading and use a footer. OCR readings, including uncertain text, are retained; sealing stops if required evidence cannot fit. Blank pages use special references; form fields are flattened.</p>
         <p>Review the saved PDF before sharing. Fine visual details, including digits or faces, may not be preserved in the reference. A valid seal does not guarantee every visible detail is unchanged.</p>
         <p>For account sealing, QRed receives SHA-256 page commitments and account details, but not your original PDF, extracted text, or private key. These commitments are unsalted: QRed's server could recognize repeated pages or test guesses about their contents. Your chosen provider receives the login request, not your document fingerprints.</p>
         <p>Account seals include the provider's name, profile name, email, account identifier and signing time, all readable by anyone with the seal. A profile name does not establish legal identity or signing authority. QRed does not independently verify Microsoft or Amazon email ownership. Finished seals can be checked offline.</p>
@@ -527,7 +550,16 @@ export function PdfSealForm({ onUsePublicKey }) {
         onClick={checkSignInStatus} disabled={checkingAccount}>
         {checkingAccount ? "Checking sign-in..." : "Check sign-in status"}
       </button>}
-      {loading && usesAccount && <button type="button" onClick={cancelSealing}>Cancel sealing</button>}
+      {ocrReview && <section aria-label="Review image text before signing">
+        <h3>Review machine-read image text</h3>
+        <p>The seal will preserve these English OCR readings, including possible errors. Compare important values with your PDF. Cancel if you need to correct the source.</p>
+        {ocrReview.pages.map(page => <section key={page.pageNumber}><h4>Page {page.pageNumber}</h4>
+          {page.lines.length ? page.lines.map((line, index) => <p key={index}>{line.text} <small>(OCR confidence {line.confidence}%)</small></p>)
+            : <p>No text recognized. This does not establish that the image has no text.</p>}
+        </section>)}
+        <button type="button" onClick={ocrReview.finish}>Sign these machine readings</button>
+      </section>}
+      {loading && <button type="button" onClick={cancelSealing}>Cancel sealing</button>}
       {message && (
         <p id="stamp-result" role="status" style={{ marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155", whiteSpace: "pre-wrap" }}>
           {message}

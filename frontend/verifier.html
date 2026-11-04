@@ -411,6 +411,7 @@
         documentId: decoded.document_id,
         chunkNumber: decoded.chunk_number,
         totalChunks: decoded.total_chunks,
+        requiredChunks: decoded.required_chunks,
       };
     }
 
@@ -755,7 +756,7 @@
           if (decoded) {
             var div = document.createElement("div");
             div.className = "seal-item";
-            div.innerHTML = "<div class='seal-index'>" + (decoded.chunkNumber + 1) + "</div><div>" + escapeHtml(decoded.documentId) + " / " + decoded.totalChunks + " chunks</div>";
+            div.innerHTML = "<div class='seal-index'>" + (decoded.chunkNumber + 1) + "</div><div>" + escapeHtml(decoded.documentId) + " / " + decoded.totalChunks + (decoded.requiredChunks ? " chunks (any " + decoded.requiredChunks + " needed)" : " chunks") + "</div>";
             sealList.appendChild(div);
           }
         }

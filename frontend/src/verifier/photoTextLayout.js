@@ -10,8 +10,27 @@ export function enclosingBox(boxes) {
 // Signed locations describe the ORIGINAL page. Coarse line starts and a
 // different paper aspect (for example a Letter page extended with a Legal
 // footer) are not enough to infer safe line boxes: keep sequence comparison.
-export function signedPhotoLines(text, evidence, corners, { width, height }, words = []) {
+export function signedPhotoLines(text, evidence, corners, dimensions, words = []) {
+  const detected = locateSignedLines(text, evidence, corners, dimensions, words);
+  if (detected || !corners) return detected;
+  // Edge detection can find a watermark or inner frame instead of the page.
+  // Retry the raster bounds only through the existing strict borderless path:
+  // matching full-page aspect AND an independently calibrated global transform.
+  // Never relax the detected geometry or accept unanchored image bounds.
+  return locateSignedLines(text, evidence, null, dimensions, words);
+}
+
+function locateSignedLines(text, evidence, corners, { width, height }, words) {
   const lines = text.split("\n").filter(line => line.trim());
+  // A PDF raster (or an edge-to-edge scan) has no surrounding paper border.
+  // Its image bounds are only a candidate, never evidence by themselves:
+  // require matching aspect and a single independently anchored print transform.
+  const borderless = !corners;
+  if (borderless) {
+    if (![width, height, evidence?.width, evidence?.height].every(value => Number.isFinite(value) && value > 0)
+      || Math.abs(Math.log((width / height) / (evidence.width / evidence.height))) > .02) return null;
+    corners = [{ x: 0, y: 0 }, { x: width, y: 0 }, { x: width, y: height }, { x: 0, y: height }];
+  }
   if (evidence?.text !== text || evidence.layout?.mode !== 3 || lines.length > 512
       || words.length > 4000 || !Array.isArray(evidence.layout.lines) || evidence.layout.lines.length !== lines.length || corners?.length !== 4
       || corners.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y)
@@ -26,6 +45,7 @@ export function signedPhotoLines(text, evidence, corners, { width, height }, wor
     || box.x < 0 || box.y < 0 || box.width <= 0 || box.height <= 0 || box.height > .15
     || box.x + box.width > 1.001 || box.y + box.height > 1.001)) return null;
   const adjustment = words.length ? printAdjustment(lines, evidence.layout.lines, words, mapping) : null;
+  if (borderless && !adjustment) return null;
   const project = (x, y) => adjustment ? mapping(x * adjustment.scale + adjustment.x, y * adjustment.scale + adjustment.y) : mapping(x, y);
   const result = [];
   for (let i = 0; i < lines.length; i++) {

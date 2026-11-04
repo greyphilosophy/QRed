@@ -88,3 +88,26 @@ it("handles single-page PDFs and ordinary QR content without inventing more page
   expect(sealCollectionProgress([])).toBeNull();
   expect(sealCollectionProgress(["https://example.org"])).toBeNull();
 });
+
+it("rejects oversized raw collections before invoking verification", async () => {
+  const verify = () => { throw new Error("must not run"); };
+  expect(await verifySealCollection(Array(4097).fill("x"), "", verify)).toMatchObject([{ status: "ERROR", error_message: "Seal collection exceeds the input limit" }]);
+  expect(await verifySealCollection(["x".repeat(8193)], "", verify)).toMatchObject([{ status: "ERROR" }]);
+});
+
+it("caps retained decoded output and stops cancelled verification batches", async () => {
+  const sets = [];
+  for (let i = 0; i < 8; i++) sets.push(...(await page(1, { content: `Document ${i}` })).seals);
+  const huge = "x".repeat(8 * 1024 * 1024);
+  let calls = 0;
+  const oversized = await verifySealCollection(sets, "", async () => { calls++; return { status: "UNVERIFIED", content: huge }; });
+  expect(oversized).toMatchObject([{ status: "ERROR", error_message: "Decoded seal collection exceeds the output limit" }]);
+  expect(calls).toBe(4);
+  calls = 0;
+  expect(await verifySealCollection(sets, "", async () => { calls++; return { status: "VALID" }; }, { shouldContinue: () => calls < 4 })).toEqual([]);
+  expect(calls).toBe(4);
+});
+it("reports collection-wide budget failures as terminal rather than checking forever", async () => {
+  const seals = (await page(1)).seals;
+  expect(sealCollectionProgress(seals, [{ status: "ERROR", error_message: "Collection limit" }])).toMatchObject({ complete: false, finished: true, message: "Seal verification failed. Review the result below." });
+});
