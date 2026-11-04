@@ -60,6 +60,23 @@ describe("automatic whole-page capture", () => {
     expect(inspectPageFrame(paper({ ink: true })).state).toBe("clear");
     expect(inspectPageFrame(paper()).state).toBe("clear");
   });
+  it("captures warm, shadowed paper on a patterned desk without changing the original pixels", () => {
+    const width = 800, height = 1000;
+    const data = new Uint8ClampedArray(width * height * 4);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      const inside = x >= 34 && x < 774 && y >= 60 && y < 960;
+      const light = inside ? 220 * (1 - y / height * .4) : 170 + (x * 7 + y * 11) % 20;
+      const tint = inside ? [1.05, 1, .95] : [1.1, 1, .9];
+      const at = (y * width + x) * 4;
+      for (let channel = 0; channel < 3; channel++) data[at + channel] = Math.min(255, light * tint[channel]);
+      data[at + 3] = 255;
+    }
+    const original = data.slice(), image = { width, height, data };
+    const gate = createPageCaptureGate();
+    for (const time of [0, 200, 400]) expect(gate.update(image, time).state).toBe("hold");
+    expect(gate.update(image, STEADY_CAPTURE_MS)).toMatchObject({ state: "ready", ready: true });
+    expect(data.every((value, index) => value === original[index])).toBe(true);
+  });
   it("finds a tilted page rather than requiring a perfect rectangle", () => {
     const image = paper(), corners = [{x:110,y:70},{x:720,y:150},{x:650,y:900},{x:90,y:820}];
     for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
