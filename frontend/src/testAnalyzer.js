@@ -85,7 +85,7 @@ export function createTestAnalyzerController({ uploadZone, fileInput: _fileInput
       : result.evidence
         ? `Recovered ${result.evidence.blank ? "blank-page marker" : "visual page reference"} (signature not verified). Open the verifier to authenticate and compare this page.`
         : result.status === "INCOMPLETE"
-          ? `Seal ${decoded.chunk_number + 1} of ${decoded.total_chunks}. Collect all seals in the verifier to restore the text.`
+          ? `Seal ${decoded.chunk_number + 1} of ${decoded.total_chunks}. Collect ${decoded.required_chunks || "all"} distinct seals in the verifier to restore the text.`
           : `Cannot restore seal text: ${result.error_message}`;
     section.dataset.sealPayloadState = "found";
     section.innerHTML = `<h4>QRed seal found</h4>

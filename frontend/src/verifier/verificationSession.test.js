@@ -59,3 +59,24 @@ it("keeps other pages usable when one verifier fails", async () => {
   expect(session.getSnapshot().results.map(result => result.status)).toEqual(["ERROR", "UNVERIFIED"]);
   expect(session.getSnapshot().results[0].error_message).toBe("Cannot read this record");
 });
+
+it("bounds raw input before parsing and invalidates a pending verification on rejection", async () => {
+  const session = createVerificationSession();
+  expect(session.add(Array(4097).fill("ignored"))).toBe(false);
+  expect(session.getSnapshot()).toMatchObject({ seals: [], busy: false, results: [{ status: "ERROR" }] });
+  expect(session.add("x".repeat(8193))).toBe(false);
+});
+
+it("deduplicates the same transport bytes across different bootstrap URLs", async () => {
+  const value = await seal("Same bytes"), session = createVerificationSession();
+  expect(session.add(value)).toBe(true);
+  expect(session.add("https://example.org/" + value.slice(value.indexOf("#")))).toBe(false);
+  expect(session.getSnapshot().seals).toHaveLength(1);
+});
+it("cannot restore successful results after an oversized-input rejection", async () => {
+  const session = createVerificationSession(); session.add(await seal("Pending"));
+  const pending = deferred(), running = session.verify(keys.publicKey, () => pending.promise);
+  session.add(Array(4097).fill("ignored")); pending.resolve({ status: "VALID", content: "Pending" });
+  await running;
+  expect(session.getSnapshot()).toMatchObject({ busy: false, results: [{ status: "ERROR" }] });
+});

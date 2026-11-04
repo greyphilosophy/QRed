@@ -1,3 +1,4 @@
+import { encodeErasureChunks } from "./erasureTransport.js";
 import { MAX_PDF_SEALS, recordQrCount } from "./sealBudget.js";
 import { decodePageEvidence } from "./pageEvidence.js";
 import { signAsync as signEd25519 } from "@noble/ed25519";
@@ -57,7 +58,7 @@ export function canonicalizeText(text) {
 export async function createQRedSeals({
   content, privateKey, publicKey, pageContext = null, pageEvidence = null, attestation = null,
   timestamp = new Date().toISOString(), bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic",
-  preferFourQrPage = false,
+  preferFourQrPage = false, experimentalErasure = null,
 }) {
   const canonical = canonicalizeText(content);
   const evidence = pageEvidence ? decodePageEvidence(pageEvidence) : null;
@@ -89,12 +90,13 @@ export async function createQRedSeals({
     signature = await signEd25519(sealSignatureMessage(metadata, textBytes), privateBytes);
   }
   const { candidates, failures } = await encodedBodyCandidates(textBytes, encodingStrategy, async (body, encoding) => {
-    const chunks = await splitRecord(encodeEnvelope(metadata, signature, body, encoding), metadata.version,
-      { preferFourQrPage: Boolean(pageContext && preferFourQrPage) });
+    const record = encodeEnvelope(metadata, signature, body, encoding);
+    const chunks = experimentalErasure ? await encodeErasureChunks(record, experimentalErasure)
+      : await splitRecord(record, metadata.version, { preferFourQrPage: Boolean(pageContext && preferFourQrPage) });
     return { chunks, qr_count: chunks.length, payload_bytes: chunks.reduce((sum, chunk) => sum + chunk.length, 0) };
   });
   const selected = selectBodyEncoding({ candidates, failures }, encodingStrategy);
-  if (pageContext && selected.qr_count > MAX_PDF_SEALS) throw new Error(`PDF page ${pageContext.pageNumber} exceeds the ${MAX_PDF_SEALS}-QR limit. Shorten the page or split its content across pages.`);
+  if (pageContext && !experimentalErasure && selected.qr_count > MAX_PDF_SEALS) throw new Error(`PDF page ${pageContext.pageNumber} exceeds the ${MAX_PDF_SEALS}-QR limit. Shorten the page or split its content across pages.`);
   const plaintext = candidates.find(item => item.encoding === "plaintext");
   return {
     ...metadata, ...(evidence ? { evidence } : {}), bootstrap_url: (bootstrapUrl || DEFAULT_BOOTSTRAP_URL).split("#")[0],

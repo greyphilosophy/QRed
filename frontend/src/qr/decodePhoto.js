@@ -73,7 +73,7 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = 8000
       const indexes = new Set(chunks.filter(other => other.document_id === chunk.document_id
         && other.version === chunk.version && other.total_chunks === chunk.total_chunks
         && other.multipart === chunk.multipart).map(other => other.chunk_number));
-      return indexes.size === chunk.total_chunks;
+      return indexes.size >= (chunk.required_chunks || chunk.total_chunks);
     })) return { status: "found-multiple", texts: [...partials] };
     // Retain the original wider alignment search for larger print distortions.
     const rectified = shouldContinue() ? scanRectifiedSeal(image, { shouldContinue }) : null;

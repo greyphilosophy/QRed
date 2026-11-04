@@ -15,21 +15,54 @@ export function orderSealResults(results) {
   return [...documents.values()].flatMap(pages => [...pages].sort((a, b) => a.page_number - b.page_number));
 }
 
-export async function verifySealCollection(seals, publicKey, verify = verifyQRedSeals) {
+// Conservative retained-output accounting: UTF-16 strings, typed-array bytes,
+// and object/entry overhead. Stop traversal as soon as its budget is exhausted.
+function outputSize(value, limit) {
+  const pending = [value], seen = new Set(); let size = 0;
+  while (pending.length && size <= limit) {
+    const item = pending.pop();
+    if (typeof item === "string") { size += item.length * 2; continue; }
+    if (!item || typeof item !== "object") { size += 8; continue; }
+    if (seen.has(item)) continue;
+    seen.add(item);
+    if (ArrayBuffer.isView(item)) { size += item.byteLength; continue; }
+    const values = Object.values(item); size += 64 + values.length * 16;
+    for (const child of values) pending.push(child);
+  }
+  return size;
+}
+export async function verifySealCollection(seals, publicKey, verify = verifyQRedSeals, { shouldContinue = () => true } = {}) {
+  if (!Array.isArray(seals) || seals.length > 4096 || seals.some(seal => typeof seal !== "string" || seal.length > 8192) ||
+      seals.reduce((sum, seal) => sum + seal.length, 0) > 24 * 1024 * 1024) {
+    return [{ status: "ERROR", error_message: "Seal collection exceeds the input limit" }];
+  }
   const groups = new Map();
   for (const seal of seals) {
     const id = decodeSeal(seal)?.document_id || "";
     if (!groups.has(id)) groups.set(id, []);
     groups.get(id).push(seal);
   }
-  return orderSealResults(await Promise.all([...groups].map(async ([id, group]) => {
-    try {
-      const result = await verify(group, publicKey);
-      return { ...result, document_id: result.document_id || id };
-    } catch (error) {
-      return { status: "ERROR", document_id: id, error_message: error.message || String(error) };
+  const entries = [...groups], results = [];
+  let remaining = 64 * 1024 * 1024;
+  // Both transient verification work and retained decoded evidence are bounded.
+  for (let start = 0; start < entries.length; start += 4) {
+    if (!shouldContinue()) return [];
+    const batch = await Promise.all(entries.slice(start, start + 4).map(async ([id, group]) => {
+      try {
+        const result = await verify(group, publicKey);
+        return { ...result, document_id: result.document_id || id };
+      } catch (error) {
+        return { status: "ERROR", document_id: id, error_message: error.message || String(error) };
+      }
+    }));
+    if (!shouldContinue()) return [];
+    for (const result of batch) {
+      remaining -= outputSize(result, remaining);
+      if (remaining < 0) return [{ status: "ERROR", error_message: "Decoded seal collection exceeds the output limit" }];
+      results.push(result);
     }
-  })));
+  }
+  return orderSealResults(results);
 }
 
 // A chunk identifies its page record, not its PDF. Page membership becomes
@@ -40,14 +73,15 @@ export function sealCollectionProgress(seals, results = []) {
   if (!active) return null;
   const chunks = new Set(seals.map(decodeSeal)
     .filter(item => item?.document_id === active.document_id).map(item => item.chunk_number));
-  const result = results.find(item => item.document_id === active.document_id);
-  const progress = { activeSeal, collected: chunks.size, total: active.total_chunks,
+  const result = results.find(item => item.document_id === active.document_id)
+    || results.find(item => item.status === "ERROR" && !item.document_id);
+  const progress = { activeSeal, collected: chunks.size, total: active.required_chunks || active.total_chunks,
     complete: false, finished: false };
   if (result?.status === "INVALID" || result?.status === "ERROR") {
     return { ...progress, finished: true, message: "Seal verification failed. Review the result below." };
   }
-  if (chunks.size < active.total_chunks) {
-    return { ...progress, message: `${chunks.size} of ${active.total_chunks} QR seals collected for this page. Keep scanning.` };
+  if (chunks.size < (active.required_chunks || active.total_chunks)) {
+    return { ...progress, message: `${chunks.size} of ${active.required_chunks || active.total_chunks} ${active.erasure ? "required " : ""}QR seals collected for this page. Keep scanning.` };
   }
   if (!result || result.status === "INCOMPLETE") {
     return { ...progress, message: "Checking collected seals…" };
@@ -69,5 +103,5 @@ export function sealCollectionProgress(seals, results = []) {
       message: message + (members.some(item => !item.metadata_authenticated) ? " Page counts are unverified." : "") };
   }
   return { ...progress, complete: true, finished: true,
-    message: "All QR seals collected." + (unverified ? " Signature not verified." : "") };
+    message: (active.erasure ? "Enough QR seals recovered." : "All QR seals collected.") + (unverified ? " Signature not verified." : "") };
 }

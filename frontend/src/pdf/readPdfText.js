@@ -79,6 +79,7 @@ export async function renderPdfPage(pdf, number, scale = 2, { reference = false,
     const image = canvas.context.getImageData(0, 0, canvas.canvas.width, canvas.canvas.height);
     const [x, y, right, top] = page.view;
     return { data: image.data, width: image.width, height: image.height, scale,
+      rotation: reference ? page.rotate : 0, userUnit: page.userUnit,
       ...(ocr ? { ocrImage: typeof canvas.canvas.toBuffer === "function"
         ? canvas.canvas.toBuffer("image/png") : canvas.canvas.toDataURL("image/png") } : {}),
       bounds: { x, y, width: right - x, height: top - y } };
