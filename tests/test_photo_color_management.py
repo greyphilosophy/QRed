@@ -129,3 +129,72 @@ def test_selected_jpeg_matches_color_managed_browser_pixels(browser, tagged, ori
         assert not [url for url in requests if url.startswith(("http:", "https:"))]
     finally:
         context.close()
+
+
+def test_signed_p3_jpeg_is_recovered_and_authenticated_offline(browser):
+    """A public synthetic blue-ink footer uses the real UI and unchanged watchdog.
+
+    This sanity gate is deliberately readable. It does not assert that a
+    marginal private photograph or a particular phone will also recover.
+    """
+    from playwright.sync_api import expect
+    from browser_helpers import (BASE_URL, OfflineNetworkGuard, show_file_inputs,
+                                 show_seal_details, wait_for_offline_resources)
+
+    fixture = Path(__file__).parent / "fixtures/compact-qr/invoice-full-300dpi.png"
+    with Image.open(fixture) as image:
+        tinted = ImageOps.colorize(image.convert("L"), black=(60, 80, 115), white=(248, 248, 248))
+        output = io.BytesIO()
+        tinted.save(output, "JPEG", quality=95, subsampling=0, icc_profile=DISPLAY_P3_ICC)
+    context = browser.new_context(service_workers="allow", viewport={"width": 430, "height": 932})
+    try:
+        guard = OfflineNetworkGuard(context)
+        context.add_init_script("""(() => {
+            const OriginalWorker = window.Worker;
+            window.__colorScanResults = [];
+            window.Worker = class extends OriginalWorker {
+                constructor(...args) {
+                    super(...args);
+                    this.addEventListener('message', ({data}) => {
+                        if (this.__colorScanStart != null && data.action?.status
+                                && data.action.status !== 'continue') {
+                            window.__colorScanResults.push({status: data.action.status,
+                                timedOut: data.action.timedOut === true,
+                                elapsedMs: performance.now() - this.__colorScanStart});
+                        }
+                    });
+                }
+                postMessage(value, options) {
+                    if (value?.image && !value.prepareReading)
+                        this.__colorScanStart = performance.now();
+                    return super.postMessage(value, options);
+                }
+            };
+        })();""")
+        page = context.new_page()
+        page.goto(BASE_URL, wait_until="networkidle")
+        wait_for_offline_resources(page, photo=True)
+        guard.block()
+        show_file_inputs(page)
+        page.get_by_label("Choose QR image", exact=True).set_input_files({
+            "name": "synthetic-blue-ink-display-p3.jpg", "mimeType": "image/jpeg",
+            "buffer": output.getvalue(),
+        })
+        issuer_input = page.get_by_label("Open issuer public key file", exact=True)
+        expect(issuer_input).to_be_attached(timeout=15000)
+        issuer_input.set_input_files({"name": "public-test-key.txt", "mimeType": "text/plain",
+                                     "buffer": b"eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="})
+        show_seal_details(page)
+        expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_be_visible(timeout=15000)
+        expect(page.locator(".verification-result pre")).to_contain_text("Approved total: $123.45")
+        results = page.evaluate("window.__colorScanResults")
+        assert len(results) == 1, results
+        assert results[0]["status"] == "found" and not results[0]["timedOut"], results
+        assert results[0]["elapsedMs"] < 8000, results
+        issuer_input.set_input_files({"name": "wrong-test-key.txt", "mimeType": "text/plain",
+                                     "buffer": b"Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI="})
+        show_seal_details(page)
+        expect(page.get_by_role("heading", name="INVALID", exact=True)).to_be_visible()
+        guard.assert_quiet()
+    finally:
+        context.close()
