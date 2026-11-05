@@ -297,12 +297,105 @@ it("retains partial uploaded seals, shows the timeout, and can finish from anoth
     target: { files: [new File(["synthetic"], "page.png", { type: "image/png" })] },
   });
   choose();
-  await screen.findByText(message);
+  const feedback = await screen.findByText(text => text.startsWith(message));
+  expect(feedback.textContent).toContain("Selected photo: 20 × 30");
   await waitFor(() => expect(scanner.props.collectionProgress).toMatchObject({ collected: 1, total: 2, finished: false }));
   expect(screen.queryByRole("button", { name: "Cancel photo scan" })).toBeNull();
   choose();
   await waitFor(() => expect(scanner.props.collectionProgress).toMatchObject({ collected: 2, total: 2, finished: true }));
-  expect(screen.queryByText(message)).toBeNull();
+  expect(screen.queryByText(text => text.startsWith(message))).toBeNull();
+});
+
+it.each([[6000, 8000, 3000, 4000], [4032, 3024, 4000, 3000], [600, 800, 600, 800]])(
+  "bounds the homepage selected %i×%i photo to %i×%i without rejecting small QR images",
+  async (width, height, workingWidth, workingHeight) => {
+    const photo = { naturalWidth: width, naturalHeight: height, decode: () => Promise.resolve(), src: "" };
+    vi.stubGlobal("Image", vi.fn(function () { return photo; }));
+    const revoke = vi.fn();
+    vi.stubGlobal("URL", class extends URL {
+      static createObjectURL() { return "blob:selected-photo"; }
+      static revokeObjectURL(url) { revoke(url); }
+    });
+    const drawImage = vi.fn(), getImageData = vi.fn((_x, _y, width, height) => ({
+      data: new Uint8ClampedArray(4), width, height,
+    }));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage, getImageData });
+    vi.mocked(scanPhotoInWorker).mockResolvedValue({ status: "feedback", message: "No readable seal found." });
+    render(<App />);
+    const input = screen.getByLabelText("Choose QR image");
+    const click = vi.spyOn(input, "click");
+    // The homepage camera button selects this same file input, rather than
+    // a second route that could silently retain the old full-size decoder.
+    act(() => scanner.props.onChoosePhoto());
+    expect(click).toHaveBeenCalledOnce();
+    fireEvent.change(input, { target: { files: [new File(["synthetic"], "page.png", { type: "image/png" })] } });
+    await waitFor(() => expect(scanPhotoInWorker).toHaveBeenCalledOnce());
+    const [pixels, options] = vi.mocked(scanPhotoInWorker).mock.calls[0];
+    expect(pixels).toMatchObject({ width: workingWidth, height: workingHeight });
+    expect(pixels.width * pixels.height).toBeLessThanOrEqual(12_000_000);
+    expect(options).toMatchObject({ returnPayload: true, signal: expect.any(AbortSignal) });
+    expect(drawImage).toHaveBeenCalledWith(photo, 0, 0, workingWidth, workingHeight);
+    expect(getImageData).toHaveBeenCalledWith(0, 0, workingWidth, workingHeight);
+    const notice = await screen.findByText(text => text.startsWith("No readable seal found."));
+    expect(notice.textContent).toContain(`Selected photo: ${workingWidth} × ${workingHeight}`);
+    expect(notice.textContent).toContain("prepared in ");
+    if (width !== workingWidth) expect(notice.textContent).toContain(`from ${width} × ${height}`);
+    expect(notice.textContent).not.toContain("Camera photo");
+    expect(photo.src).toBe("");
+    expect(revoke).toHaveBeenCalledWith("blob:selected-photo");
+  });
+
+it.each(["cancel", "clear", "replace"])("releases a selected photo still opening after %s without waiting for it", async reason => {
+  const photos = [];
+  vi.stubGlobal("Image", vi.fn(function () {
+    const photo = { naturalWidth: 6000, naturalHeight: 8000, src: "",
+      decode: () => new Promise(resolve => { photo.finish = resolve; }) };
+    photos.push(photo);
+    return photo;
+  }));
+  const revoke = vi.fn();
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL() { return `blob:opening-${photos.length + 1}`; }
+    static revokeObjectURL(url) { revoke(url); }
+  });
+  const drawImage = vi.fn();
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage });
+  render(<App />);
+  const choose = () => fireEvent.change(screen.getByLabelText("Choose QR image"), {
+    target: { files: [new File(["synthetic"], "page.png", { type: "image/png" })] },
+  });
+  choose();
+  if (reason === "cancel") fireEvent.click(screen.getByRole("button", { name: "Cancel photo scan" }));
+  else if (reason === "clear") fireEvent.click(screen.getByRole("button", { name: "Finish & clear" }));
+  else choose();
+  await waitFor(() => expect(revoke).toHaveBeenCalledOnce());
+  expect(photos[0].src).toBe("");
+  expect(scanPhotoInWorker).not.toHaveBeenCalled();
+  await act(async () => photos[0].finish());
+  expect(drawImage).not.toHaveBeenCalled();
+  expect(scanPhotoInWorker).not.toHaveBeenCalled();
+  if (reason === "replace") expect(screen.getByRole("button", { name: "Cancel photo scan" })).toBeTruthy();
+});
+
+it.each([[0, 800], [10000, 10000]])("rejects an invalid %i×%i selected image before allocating decoder pixels", async (width, height) => {
+  vi.stubGlobal("Image", class {
+    naturalWidth = width; naturalHeight = height;
+    decode() { return Promise.resolve(); }
+  });
+  const revoke = vi.fn();
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL() { return "blob:invalid-photo"; }
+    static revokeObjectURL(url) { revoke(url); }
+  });
+  const context = vi.spyOn(HTMLCanvasElement.prototype, "getContext");
+  render(<App />);
+  fireEvent.change(screen.getByLabelText("Choose QR image"), {
+    target: { files: [new File(["synthetic"], "page.png", { type: "image/png" })] },
+  });
+  await screen.findByText("This photo could not be opened at a usable size. Choose another photo.");
+  expect(context).not.toHaveBeenCalled();
+  expect(scanPhotoInWorker).not.toHaveBeenCalled();
+  expect(revoke).toHaveBeenCalledWith("blob:invalid-photo");
 });
 
 

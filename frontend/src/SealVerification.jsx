@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { preparePhotoScanner, scanPhotoInWorker } from "./qr/photoScanClient.js";
+import { readCameraPhotoFile, cameraCaptureFeedback } from "./qr/cameraPhoto.js";
 import { decodeSeal } from "./qredVerifier.js";
 import { isQRedEntryLink } from "./qr/qrPayload.js";
 import { readSigningKeyFile } from "./signingKeys.js";
@@ -115,29 +116,26 @@ export function SealVerification({ verification }) {
     const controller = new AbortController();
     imageScan.current = controller;
     const request = ++imageRead.current;
-    const url = URL.createObjectURL(file);
     let canvas;
     setReadingImage(true);
     setNotice("");
     try {
-      const image = new Image();
-      image.src = url;
-      await image.decode();
-      if (request !== imageRead.current) return;
-      if (!image.naturalWidth || !image.naturalHeight || image.naturalWidth * image.naturalHeight > 80_000_000) {
-        throw new Error("This photo cannot be scanned at its current size. Choose a smaller photo.");
-      }
       canvas = document.createElement("canvas");
-      canvas.width = image.naturalWidth;
-      canvas.height = image.naturalHeight;
-      const context = canvas.getContext("2d");
-      context.drawImage(image, 0, 0);
-      const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-      image.src = "";
+      let captureDiagnostic = null;
+      // The homepage camera's Choose photo button uses this same input. Keep
+      // its working pixels bounded like standalone/retake file selection,
+      // without imposing a full-page resolution floor on ordinary QR images.
+      const pixels = await readCameraPhotoFile(file, canvas, {
+        signal: controller.signal, requireHighResolution: false,
+        onDiagnostic: diagnostic => { captureDiagnostic = diagnostic; },
+      });
+      if (request !== imageRead.current) return;
+      if (!pixels) throw new Error("This photo could not be opened at a usable size. Choose another photo.");
       // A single photographed sheet can contain four adjacent watermark
       // chunks. Recover them all without asking the user to upload the same
       // image four times. Keep the page photo once for later comparison.
-      const action = await scanPhotoInWorker(pixels, { returnPayload: true, signal: controller.signal });
+      const action = cameraCaptureFeedback(
+        await scanPhotoInWorker(pixels, { returnPayload: true, signal: controller.signal }), captureDiagnostic);
       if (request !== imageRead.current) return;
       if (action.status === "found-multiple") action.texts.forEach((seal, index) => addSeal(seal, index === 0 ? canvas : null));
       else if (action.status === "found") addSeal(action.text, canvas);
@@ -148,7 +146,6 @@ export function SealVerification({ verification }) {
     } catch (error) {
       if (request === imageRead.current && error.name !== "AbortError") setNotice(error.message);
     } finally {
-      URL.revokeObjectURL(url);
       if (canvas) canvas.width = canvas.height = 0;
       if (request === imageRead.current) { imageScan.current = null; setReadingImage(false); }
     }
