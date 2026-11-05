@@ -10,6 +10,7 @@ import { PhotoTextVerification } from "./verifier/PhotoTextVerification.jsx";
 import { createScanPhotoCollection } from "./verifier/scanPhotos.js";
 import { PdfSealInput } from "./verifier/PdfSealInput.jsx";
 import { authProvider } from "./authProviders.js";
+import { PhotoScanProgress, usePhotoScanProgress } from "./qr/PhotoScanProgress.jsx";
 
 export function useSealVerification() {
   const [collection] = useState(createVerificationSession);
@@ -81,12 +82,14 @@ export function SealVerification({ verification }) {
   const [readingImage, setReadingImage] = useState(false);
   const imageRead = useRef(0);
   const imageScan = useRef(null);
+  const photoProgress = usePhotoScanProgress();
   useEffect(() => { preparePhotoScanner(); }, []);
   useEffect(() => {
     imageRead.current += 1;
+    photoProgress.clear();
     setReadingImage(false); setKeyFileStatus("");
     return () => { imageRead.current += 1; imageScan.current?.abort(); };
-  }, [verification.session]);
+  }, [verification.session, photoProgress]);
   const { seals, setPublicKey, results, notice, setNotice, busy, addSeal } = verification;
   const hasLocalSeals = seals.some(seal => decodeSeal(seal)?.version === "3");
 
@@ -116,6 +119,7 @@ export function SealVerification({ verification }) {
     const controller = new AbortController();
     imageScan.current = controller;
     const request = ++imageRead.current;
+    const progress = photoProgress.begin("opening");
     let canvas;
     setReadingImage(true);
     setNotice("");
@@ -131,11 +135,12 @@ export function SealVerification({ verification }) {
       });
       if (request !== imageRead.current) return;
       if (!pixels) throw new Error("This photo could not be opened at a usable size. Choose another photo.");
+      progress.phase("decoding");
       // A single photographed sheet can contain four adjacent watermark
       // chunks. Recover them all without asking the user to upload the same
       // image four times. Keep the page photo once for later comparison.
       const action = cameraCaptureFeedback(
-        await scanPhotoInWorker(pixels, { returnPayload: true, signal: controller.signal }), captureDiagnostic);
+        await scanPhotoInWorker(pixels, { returnPayload: true, signal: controller.signal, onStage: progress.stage }), captureDiagnostic);
       if (request !== imageRead.current) return;
       if (action.status === "found-multiple") action.texts.forEach((seal, index) => addSeal(seal, index === 0 ? canvas : null));
       else if (action.status === "found") addSeal(action.text, canvas);
@@ -146,6 +151,7 @@ export function SealVerification({ verification }) {
     } catch (error) {
       if (request === imageRead.current && error.name !== "AbortError") setNotice(error.message);
     } finally {
+      progress.stop();
       if (canvas) canvas.width = canvas.height = 0;
       if (request === imageRead.current) { imageScan.current = null; setReadingImage(false); }
     }
@@ -155,12 +161,17 @@ export function SealVerification({ verification }) {
     imageRead.current += 1;
     imageScan.current?.abort();
     imageScan.current = null;
+    photoProgress.clear();
     setReadingImage(false);
     setNotice("Photo scan cancelled.");
   }
 
   return <section className="verification-card" aria-label="Seal verification" id="document-check">
     <div className="verification-actions"><button type="button" onClick={verification.clear}>Finish &amp; clear</button></div>
+    {readingImage && <div>
+      <PhotoScanProgress progress={photoProgress} />
+      <button type="button" onClick={cancelImageScan}>Cancel photo scan</button>
+    </div>}
     {notice && notice !== "Check cleared. Camera off." && <p role="status">{notice}</p>}
     <PhotoTextVerification results={results} seals={seals} session={verification.session} checks={verification.textChecks}
       scanPhotos={verification.scanImages?.photos} captureNotice={verification.scanImages?.notice}
@@ -182,10 +193,6 @@ export function SealVerification({ verification }) {
     </details>
     <label htmlFor="qr-image">Choose QR image</label>
     <input id="qr-image" type="file" accept="image/*" onChange={readImage} />
-    {readingImage && <div>
-      <p role="status">Reading photo… Large page watermarks can take a moment.</p>
-      <button type="button" onClick={cancelImageScan}>Cancel photo scan</button>
-    </div>}
     <PdfSealInput onSeal={addSeal} session={verification.session} />
     </details>
     <details className="verification-details"><summary>Seal details and recovered text</summary>

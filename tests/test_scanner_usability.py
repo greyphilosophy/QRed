@@ -135,12 +135,20 @@ def test_large_photo_can_be_cancelled_then_another_seal_verified_offline(browser
         page.get_by_label("Choose QR image", exact=True).set_input_files({
             "name": "synthetic-large-page.jpg", "mimeType": "image/jpeg", "buffer": buffer.getvalue(),
         })
-        expect(page.get_by_role("status").filter(has_text="Reading photo")).to_be_visible()
+        expect(page.get_by_role("progressbar", name="Photo seal scan")).to_be_visible()
+        assert page.get_by_role("progressbar", name="Photo seal scan").get_attribute("value") is None
+        # The worker can stay in one expensive step while the main-thread clock
+        # keeps advancing. No percentage is invented from its time budget.
+        first_time = page.locator(".photo-scan-timing").inner_text()
+        page.wait_for_function("before => document.querySelector('.photo-scan-timing')?.textContent !== before",
+                               arg=first_time, timeout=2000)
+        expect(page.locator(".photo-scan-step")).to_be_visible()
         ticks = page.evaluate("scanHeartbeat")
         page.wait_for_function("ticks => scanHeartbeat > ticks + 3", arg=ticks, timeout=2000)
         page.get_by_role("button", name="Cancel photo scan", exact=True).click(timeout=2000)
         expect(page.get_by_text("Photo scan cancelled.", exact=True)).to_be_visible()
         expect(page.get_by_role("button", name="Cancel photo scan", exact=True)).to_have_count(0)
+        expect(page.get_by_role("progressbar", name="Photo seal scan")).to_have_count(0)
 
         fixture = Path(__file__).parent / "fixtures" / "compact-qr" / "invoice-footer-300dpi.png"
         show_file_inputs(page)
@@ -167,13 +175,14 @@ def test_live_worker_has_no_backlog_and_capture_can_resume_the_same_camera_offli
         wait_for_offline_resources(page, photo=True)
         page.evaluate("""() => {
             window.liveTest = { requests: 0, responses: 0, pending: 0, maxPending: 0,
-                readsWhileBusy: 0, opens: 0, ticks: 0, terminated: 0, decodedVideo: 0, photos: [] };
+                readsWhileBusy: 0, opens: 0, ticks: 0, terminated: 0, decodedVideo: 0, photos: [], stages: [] };
             const NativeWorker = window.Worker;
             window.Worker = class extends NativeWorker {
                 pending = false;
                 constructor(...args) {
                     super(...args);
-                    this.addEventListener('message', () => {
+                    this.addEventListener('message', event => {
+                        if (event.data.scanStage) liveTest.stages.push(event.data.scanStage);
                         if (this.pending) {
                             this.pending = false; liveTest.pending--; liveTest.responses++;
                         }
@@ -223,12 +232,25 @@ def test_live_worker_has_no_backlog_and_capture_can_resume_the_same_camera_offli
         page.get_by_role("button", name="Capture now", exact=True).click()
         expect(page.get_by_role("button", name="Cancel and resume camera", exact=True)).to_be_visible()
         page.wait_for_function("liveTest.photos.length === 1", timeout=5000)
+        page.wait_for_function("liveTest.stages.length > 0", timeout=5000)
+        expect(page.get_by_role("progressbar", name="Photo seal scan")).to_be_visible()
+        assert page.get_by_role("progressbar", name="Photo seal scan").get_attribute("value") is None
+        initial_time = page.locator(".photo-scan-timing").inner_text()
+        page.wait_for_function("before => document.querySelector('.photo-scan-timing')?.textContent !== before",
+                               arg=initial_time, timeout=2000)
+        # On mobile the progress panel must leave the cancellation control clear.
+        if path == "/":
+            progress_box = page.locator(".photo-scan-progress").bounding_box()
+            controls_box = page.locator(".ar-display-scanning .ar-controls").bounding_box()
+            assert progress_box and controls_box
+            assert progress_box["y"] + progress_box["height"] <= controls_box["y"]
         assert page.evaluate("liveTest.pending") == 0
         ticks = page.evaluate("liveTest.ticks")
         page.wait_for_function("ticks => liveTest.ticks > ticks + 2", arg=ticks, timeout=2000)
         before = page.evaluate("liveTest.requests")
         page.get_by_role("button", name="Cancel and resume camera", exact=True).click()
         expect(page.get_by_role("button", name="Capture now", exact=True)).to_be_visible()
+        expect(page.get_by_role("progressbar", name="Photo seal scan")).not_to_be_visible()
         page.wait_for_function("before => liveTest.requests > before", arg=before, timeout=3000)
         assert page.evaluate("liveTestStream.getTracks().every(track => track.readyState === 'live')")
         state = page.evaluate("liveTest")

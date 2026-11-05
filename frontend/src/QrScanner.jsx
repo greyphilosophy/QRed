@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { scanQrImage } from "./qr/scanQrImage.js";
 import { decodeSeal } from "./qredVerifier.js";
 import { decodePhoto, qrFrameAction } from "./qr/decodePhoto.js";
@@ -9,7 +9,7 @@ export { QR_CAMERA_CONSTRAINTS, findPreferredMainCamera, getPreferredCameraStrea
 export { qrScanAction } from "./qr/decodePhoto.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
-import { photoProcessingMessage } from "./verifier/photoStatus.js";
+import { PhotoScanProgress, usePhotoScanProgress } from "./qr/PhotoScanProgress.jsx";
 import { canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback, cameraPhotoFailure, cameraCaptureContext } from "./qr/cameraPhoto.js";
 import "./qrScanner.css";
 
@@ -192,6 +192,8 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
 }
 
 function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPayload, autoCapture }) {
+  const progress = usePhotoScanProgress();
+  const progressSnapshot = useSyncExternalStore(progress.subscribe, progress.getSnapshot, progress.getSnapshot);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const guideAreaRef = useRef(null);
@@ -215,6 +217,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
 
   useEffect(() => {
     const seen = new Set();
+    let activeProgress = null;
     let captureReported = false;
     let processingCapture = false;
     let captureDiagnostic = null;
@@ -236,14 +239,17 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
         if (captureOnly) { capturePhoto(true); return; }
         processingCapture = true;
         captureDiagnostic = cameraFrameDiagnostic(canvasRef.current);
-        setFeedback(photoProcessingMessage());
+        activeProgress = progress.begin("decoding");
+        setFeedback(null);
         onReadingPhoto(true);
       },
+      onStage: stage => activeProgress?.stage(stage),
       onResult: action => {
+        if (processingCapture) activeProgress?.stop();
         if (processingCapture) { processingCapture = false; onReadingPhoto(false); }
         handleScanActionRef.current(action);
       },
-      onError: error => { processingCapture = false; onReadingPhoto(false); camera.stop(); setError(error.message); },
+      onError: error => { activeProgress?.stop(); processingCapture = false; onReadingPhoto(false); camera.stop(); setError(error.message); },
     });
 
     handleScanActionRef.current = (scanAction) => {
@@ -294,8 +300,22 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       if (!preserveGate) liveScan.reset();
       captureDiagnostic = null;
       manualCaptureFailed = false;
-      const image = captureCameraFrame(videoRef.current, canvasRef.current);
+      activeProgress?.stop();
+      const attemptProgress = progress.begin("capturing");
+      activeProgress = attemptProgress;
+      let image;
+      try { image = captureCameraFrame(videoRef.current, canvasRef.current); }
+      catch {
+        attemptProgress.stop();
+        pendingManualCaptureRef.current = false;
+        pendingManualCaptureStartedAtRef.current = null;
+        manualCaptureFailed = autoCapture && !preserveGate;
+        onReadingPhoto(false);
+        setFeedback("The camera frame could not be read. Try Capture now again, or choose a photo.");
+        return;
+      }
       if (!image) {
+        attemptProgress.stop();
         handleScanActionRef.current({ status: "pending", message: "Camera is preparing the photo. Hold steady…" });
         return;
       }
@@ -308,7 +328,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       const nativePhoto = canCaptureCameraPhoto(videoRef.current);
       const captureContext = cameraCaptureContext(image, preserveGate, lastQuality);
       captureDiagnostic = cameraFrameDiagnostic(image);
-      setFeedback(nativePhoto ? "Hold steady — taking photo…" : photoProcessingMessage());
+      setFeedback(null);
       const read = async () => {
         const still = nativePhoto ? await captureCameraPhoto(videoRef.current, canvasRef.current,
           { signal: controller.signal, requireHighResolution: autoCapture, onDiagnostic: diagnostic => {
@@ -316,8 +336,8 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
           } }) : null;
         controller.signal.throwIfAborted();
         if (autoCapture && !still) return cameraPhotoFailure(captureDiagnostic);
-        setFeedback(photoProcessingMessage());
-        return scanPhotoInWorker(still || image, { returnPayload, signal: controller.signal });
+        attemptProgress.phase("decoding");
+        return scanPhotoInWorker(still || image, { returnPayload, signal: controller.signal, onStage: attemptProgress.stage });
       };
       read().then(action => {
         if (photoScanRef.current !== controller) return;
@@ -330,12 +350,14 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
           setFeedback(error.message);
         }
       }).finally(() => {
+        attemptProgress.stop();
         if (photoScanRef.current !== controller) return;
         photoScanRef.current = null;
         onReadingPhoto(false);
       });
     }
     photoActionRef.current = () => {
+      activeProgress?.stop();
       if (processingCapture) {
         processingCapture = false; liveScan.reset();
         onReadingPhoto(false); setFeedback(null); setQuality(null);
@@ -374,6 +396,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       prepareStream: applyCameraQualityControls,
       onFrame: scanFrame,
       onError: (error, stage) => {
+        activeProgress?.stop();
         liveScan.stop();
         setError((stage === "play" ? "Camera preview could not start: " : "Camera access needed: ")
           + (error.message || "environment camera"));
@@ -381,6 +404,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
     });
 
     return () => {
+      progress.clear();
       pendingManualCaptureRef.current = false;
       pendingManualCaptureStartedAtRef.current = null;
       cameraReadyRef.current = false;
@@ -394,7 +418,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       if (capturedCanvas) capturedCanvas.width = capturedCanvas.height = 0;
       stopGuide();
     };
-  }, [onScan, returnPayload, onReadingPhoto, autoCapture]);
+  }, [onScan, returnPayload, onReadingPhoto, autoCapture, progress]);
 
   useEffect(() => {
     if (captureRequest > 0 && !error) photoActionRef.current();
@@ -424,7 +448,8 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
     ),
     React.createElement("canvas", { ref: canvasRef, style: { display: "none" } }),
     !cameraReady ? React.createElement(CameraLoadingIndicator, { message: feedback || "Starting camera…" }) : null,
-    cameraReady ? React.createElement("div", { className: "ar-scan-feedback", role: "status", "aria-live": "polite" },
+    React.createElement(PhotoScanProgress, { progress }),
+    cameraReady && !progressSnapshot ? React.createElement("div", { className: "ar-scan-feedback", role: "status", "aria-live": "polite" },
       quality && !feedback ? React.createElement("span", null, quality.message) : null,
       feedback ? React.createElement("span", null, feedback) : null,
       !quality && !feedback ? "Keep all four page corners visible. Avoid glare." : null,

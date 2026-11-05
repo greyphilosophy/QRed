@@ -147,8 +147,8 @@ def test_capture_notice_keeps_the_photo_when_the_camera_moves(browser, sealed_te
             window.__captureNotices = 0;
             new MutationObserver(() => {
                 if (!window.__moveOnCapture) return;
-                const statuses = document.querySelectorAll('.ar-scan-feedback, #pageGuideHint, .page-camera [role="status"]');
-                if (![...statuses].some(node => node.textContent === 'Photo captured — processing…')) return;
+                const statuses = document.querySelectorAll('.photo-scan-progress [role="status"]');
+                if (![...statuses].some(node => node.textContent === 'Reading photo…')) return;
                 window.__moveOnCapture = false;
                 if (!window.__captureNotices) window.__noticeBeforeSeal = !document.querySelector('.page-check-list button');
                 window.__captureNotices++;

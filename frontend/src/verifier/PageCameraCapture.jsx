@@ -7,7 +7,7 @@ import { createLiveScanWorker, scanPhotoInWorker } from "../qr/photoScanClient.j
 import { observePageScanGuide } from "../qr/pageScanGuide.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { bytesEqual, qrPayloadBytes } from "../sealFormat.js";
-import { photoProcessingMessage } from "./photoStatus.js";
+import { PhotoScanProgress, usePhotoScanProgress } from "../qr/PhotoScanProgress.jsx";
 import { captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext } from "../qr/cameraPhoto.js";
 
 // Match bytes from the already authenticated collection, not an untrusted page
@@ -29,7 +29,8 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
   const guideArea = useRef(null), guide = useRef(null), live = useRef(null), busyRef = useRef(false);
   const [ready, setReady] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [quality, setQuality] = useState(null);
-  const [takingPhoto, setTakingPhoto] = useState(false);
+  const progress = usePhotoScanProgress();
+  const liveProgress = useRef(null);
   useEffect(() => {
     const previous = document.activeElement;
     cameraFailed.current = false;
@@ -45,11 +46,14 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
       onCaptured: ({ captureOnly } = {}) => {
         if (epoch !== generation.current || busyRef.current || manualFailure.current) return;
         if (captureOnly) { capture({ preserveGate: true }); return; }
+        liveProgress.current = progress.begin("decoding");
         captureDiagnostic.current = cameraFrameDiagnostic(canvas);
         busyRef.current = true; setBusy(true); setError("");
       },
+      onStage: stage => liveProgress.current?.stage(stage),
       onResult: action => {
         if (epoch !== generation.current || scan.current) return;
+        liveProgress.current?.stop();
         action = cameraCaptureFeedback(action, captureDiagnostic.current);
         if (action.text || action.texts?.length) acceptFrame(action, canvas, epoch);
         else {
@@ -57,7 +61,7 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
           busyRef.current = false; setBusy(false);
           if (action.message) setError(action.message);
         }
-      }, onError: cause => { if (epoch !== generation.current) return; busyRef.current = false; setBusy(false); setError(cause.message); } });
+      }, onError: cause => { if (epoch !== generation.current) return; liveProgress.current?.stop(); busyRef.current = false; setBusy(false); setError(cause.message); } });
     camera.current = startCameraSession({ video: video.current, requestStream: getPreferredCameraStream,
       prepareStream: applyCameraQualityControls,
       onFrame: () => {
@@ -71,10 +75,11 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
         context.drawImage(source, 0, 0);
         live.current.scan(context.getImageData(0, 0, canvas.width, canvas.height), { captureOnly: true });
       },
-      onError: cause => { if (epoch === generation.current) { cameraAvailable.current = false; cameraFailed.current = true; setError(`Camera could not open. ${cause.message} Choose a high-resolution photo instead.`); } } });
+      onError: cause => { if (epoch === generation.current) { liveProgress.current?.stop(); cameraAvailable.current = false; cameraFailed.current = true; setError(`Camera could not open. ${cause.message} Choose a high-resolution photo instead.`); } } });
     return () => {
       generation.current++; pickerSession.current = null; cameraAvailable.current = false;
       picker.removeEventListener("cancel", resumePhotoPicker);
+      progress.clear();
       scan.current?.abort(); live.current?.stop(); camera.current?.stop();
       canvas.width = canvas.height = 0; stopGuide(); previous?.focus?.();
     };
@@ -103,9 +108,10 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
   }
   function cancelAttempt() {
     pickerSession.current = null;
+    progress.clear(); liveProgress.current = null;
     scan.current?.abort(); scan.current = null;
     manualFailure.current = true;
-    busyRef.current = false; setBusy(false); setTakingPhoto(false);
+    busyRef.current = false; setBusy(false);
   }
   function resumePhotoPicker() {
     const pending = pickerSession.current;
@@ -145,7 +151,7 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
     const current = () => epoch === generation.current && scan.current === controller && !controller.signal.aborted;
     const canvas = document.createElement("canvas");
     captureDiagnostic.current = null;
-    setTakingPhoto(!file);
+    const attemptProgress = progress.begin(file ? "opening" : "capturing");
     const captureContext = file ? {} : cameraCaptureContext(
       { width: source.videoWidth, height: source.videoHeight }, preserveGate, lastQuality.current);
     try {
@@ -155,7 +161,6 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
       const still = file ? await readCameraPhotoFile(file, canvas, options)
         : await captureCameraPhoto(source, canvas, options);
       if (!current()) return;
-      setTakingPhoto(false);
       if (!still) {
         acquisitionFailed.current = true;
         // Automatic shots keep their page-movement gate. A manual failure must
@@ -164,13 +169,16 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
         setError(cameraPhotoFailure(captureDiagnostic.current).message);
         return;
       }
-      const action = await scanPhotoInWorker(still, { returnPayload: true, signal: controller.signal });
+      attemptProgress.phase("decoding");
+      const action = await scanPhotoInWorker(still, { returnPayload: true, signal: controller.signal, onStage: attemptProgress.stage });
+      attemptProgress.stop();
       if (!current()) return;
       await acceptFrame(cameraCaptureFeedback(action, captureDiagnostic.current), canvas, epoch, controller);
     } catch (cause) { if (current() && cause.name !== "AbortError") setError(cause.message); }
     finally {
+      attemptProgress.stop();
       canvas.width = canvas.height = 0;
-      if (current()) { scan.current = null; busyRef.current = false; setBusy(false); setTakingPhoto(false); }
+      if (current()) { scan.current = null; busyRef.current = false; setBusy(false); }
     }
   }
   return <div className="page-camera-backdrop"><section className="page-camera" role="dialog" aria-modal="true"
@@ -190,7 +198,7 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
       </div></div></div>
     {!busy && !acquisitionFailed.current && quality && <p role="status">{quality.message}</p>}
     {!busy && !acquisitionFailed.current && quality?.state === "hold" && <progress className="capture-readiness" max="1" value={quality.progress} aria-label="Steady hold before automatic capture" />}
-    {busy && <p role="status">{takingPhoto ? "Hold steady — taking photo…" : photoProcessingMessage()}</p>}
+    <PhotoScanProgress progress={progress} />
     {error && <p role="alert">{error}</p>}
     <div className="photo-actions"><button type="button" disabled={!ready || busy} onClick={capture}>Capture now</button>
       <button type="button" onClick={choosePhoto}>Choose photo</button>

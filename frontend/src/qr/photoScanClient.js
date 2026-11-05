@@ -24,7 +24,7 @@ export function preparePhotoScanner() {
   })().catch(() => { preparation = undefined; });
 }
 
-function runPhotoWorker(image, { signal, ...request }) {
+function runPhotoWorker(image, { signal, onStage, ...request }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(new DOMException("Scan cancelled", "AbortError")); return; }
     const worker = new Worker(workerUrl, { type: "module" });
@@ -42,7 +42,14 @@ function runPhotoWorker(image, { signal, ...request }) {
     signal?.addEventListener("abort", abort, { once: true });
     worker.onmessage = ({ data }) => {
       if (finished) return;
-      if (data.scanStage) { stage = scanStageDiagnostic(data.scanStage) || stage; return; }
+      if (data.scanStage) {
+        const next = scanStageDiagnostic(data.scanStage);
+        if (next) {
+          stage = next;
+          try { onStage?.(next); } catch (error) { finish(error); }
+        }
+        return;
+      }
       if (data.progress) { partial = data.progress; return; }
       finish(data.error ? new Error(data.error) : null, data.action);
     };
@@ -64,8 +71,8 @@ function runPhotoWorker(image, { signal, ...request }) {
   });
 }
 
-export function scanPhotoInWorker(image, { signal, returnPayload = false } = {}) {
-  return runPhotoWorker(image, { signal, returnPayload });
+export function scanPhotoInWorker(image, { signal, onStage, returnPayload = false } = {}) {
+  return runPhotoWorker(image, { signal, onStage, returnPayload });
 }
 
 export function preparePhotoReadingInWorker(image, { signal } = {}) {
@@ -74,7 +81,7 @@ export function preparePhotoReadingInWorker(image, { signal } = {}) {
 
 // No frame queue: callers keep the submitted canvas unchanged until onResult
 // runs, and check busy before drawing the next camera frame into that canvas.
-export function createLiveScanWorker({ onResult, onError, returnPayload = false, requirePageQuality = false, onQuality, onCaptured }) {
+export function createLiveScanWorker({ onResult, onError, returnPayload = false, requirePageQuality = false, onQuality, onCaptured, onStage }) {
   let worker = null, busy = false, stopped = false, paused = false;
   let timeout, partial = null, stage = null;
   const clearDeadline = () => { clearTimeout(timeout); timeout = undefined; partial = null; stage = null; };
@@ -107,7 +114,14 @@ export function createLiveScanWorker({ onResult, onError, returnPayload = false,
           current.onmessage = ({ data }) => {
             if (worker !== current || stopped || !busy) return;
             if (data.error) { fail(current, new Error(data.error)); return; }
-            if (data.scanStage) { stage = scanStageDiagnostic(data.scanStage) || stage; return; }
+            if (data.scanStage) {
+              const next = scanStageDiagnostic(data.scanStage);
+              if (next) {
+                stage = next;
+                try { onStage?.(next); } catch (error) { fail(current, error); }
+              }
+              return;
+            }
             if (data.progress) { partial = data.progress; return; }
             if (data.captured) {
               // This is an intermediate acknowledgement, not a decoder result.

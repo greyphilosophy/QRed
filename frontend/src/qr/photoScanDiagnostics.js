@@ -16,6 +16,11 @@ export function scanStageDiagnostic(value) {
   return { stage: value.stage, elapsedMs: Math.round(value.elapsedMs) };
 }
 
+export function scanStageLabel(value) {
+  const diagnostic = scanStageDiagnostic(value);
+  return diagnostic ? STAGE_LABELS[diagnostic.stage] : null;
+}
+
 export function scanStageFeedback(value) {
   const diagnostic = scanStageDiagnostic(value);
   if (!diagnostic) return "";

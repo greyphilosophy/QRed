@@ -331,6 +331,7 @@
         </div>
       </div>
       <p class="page-scan-hint" id="pageGuideHint" role="status" hidden>Show all four page corners and hold steady for automatic capture.</p>
+      <div id="photoScanProgress" hidden></div>
       <progress class="capture-readiness" id="captureReadiness" max="1" value="0" aria-label="Steady hold before automatic capture" hidden></progress>
 
       <div class="controls">
@@ -395,11 +396,11 @@
     import { observePageScanGuide } from "./src/qr/pageScanGuide.js";
     import { getPreferredCameraStream, applyCameraQualityControls } from "./src/qr/cameraControls.js";
     import { captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext } from "./src/qr/cameraPhoto.js";
+    import { mountPhotoScanProgress } from "./src/qr/mountPhotoScanProgress.js";
     import { createLiveScanWorker, preparePhotoScanner, scanPhotoInWorker } from "./src/qr/photoScanClient.js";
     import { decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
     import { mountPhotoTextVerification } from "./src/verifier/mountPhotoTextVerification.jsx";
     import { createScanPhotoCollection } from "./src/verifier/scanPhotos.js";
-    import { photoProcessingMessage } from "./src/verifier/photoStatus.js";
     import { mountPdfSealInput } from "./src/verifier/mountPdfSealInput.jsx";
     import { readSigningKeyFile } from "./src/signingKeys.js";
     import { authProvider } from "./src/authProviders.js";
@@ -433,6 +434,12 @@
       photoPickerGeneration: 0,
     };
 
+    var photoScanProgress = mountPhotoScanProgress(document.getElementById("photoScanProgress"));
+    photoScanProgress.subscribe(function() {
+      // During acquisition/decoding, the stage status replaces camera guidance.
+      // Restore the latest quality/result feedback when that capture settles.
+      document.getElementById("pageGuideHint").hidden = !!photoScanProgress.getSnapshot() || !state.isScanning;
+    });
     var collection = createVerificationSession();
     var photoComparison = mountPhotoTextVerification(document.getElementById("photoTextComparison"));
     var scanPhotos = createScanPhotoCollection(function(images) {
@@ -615,6 +622,7 @@
       var readiness = document.getElementById("captureReadiness");
       var seen = new Set();
       var processingCapture = false;
+      var liveProgress = null;
       var captureDiagnostic = null;
       var lastQuality = null;
       var acquisitionFailed = false, manualFailure = false;
@@ -668,13 +676,17 @@
           if (!active() || state.photoScan || manualFailure) return;
           if (captureOnly) { btnCapture.onclick({ preserveGate: true }); return; }
           processingCapture = true;
+          liveProgress = photoScanProgress.begin("decoding");
           captureDiagnostic = cameraFrameDiagnostic(canvas);
-          hint.textContent = photoProcessingMessage();
           readiness.hidden = true;
           btnCapture.textContent = "Cancel and resume camera";
         },
+        onStage: function(stage) {
+          if (active() && processingCapture && !state.photoScan) liveProgress?.stage(stage);
+        },
         onResult: function(action) {
           if (!active() || state.photoScan) return;
+          liveProgress?.stop(); liveProgress = null;
           if (processingCapture) { processingCapture = false; btnCapture.textContent = "Capture now"; }
           collectFrame(action);
         },
@@ -684,6 +696,7 @@
       state.isScanning = true;
       updatePhotoComparison();
       function cancelPhoto({ resumeCamera = false } = {}) {
+        photoScanProgress.clear(); liveProgress = null;
         state.photoScan?.abort(); state.photoScan = null;
         processingCapture = false;
         manualFailure = !resumeCamera;
@@ -709,10 +722,10 @@
         if (!preserveGate) liveScan.reset();
         acquisitionFailed = false; manualFailure = false;
         var controller = new AbortController(); state.photoScan = controller;
+        var progress = photoScanProgress.begin(file ? "opening" : "capturing");
         var photoCanvas = document.createElement("canvas");
         function current() { return active() && state.photoScan === controller && !controller.signal.aborted; }
         btnCapture.textContent = "Cancel and resume camera";
-        hint.textContent = file ? "Opening photo on this device…" : "Hold steady — taking photo…";
         readiness.hidden = true;
         captureDiagnostic = null;
         var captureContext = file ? {} : cameraCaptureContext(
@@ -729,12 +742,13 @@
             collectFrame(cameraPhotoFailure(captureDiagnostic));
             return;
           }
-          hint.textContent = photoProcessingMessage();
-          var action = await scanPhotoInWorker(still, { returnPayload: true, signal: controller.signal });
+          progress.phase("decoding");
+          var action = await scanPhotoInWorker(still, { returnPayload: true, signal: controller.signal, onStage: progress.stage });
           if (current()) collectFrame(action, photoCanvas);
         } catch (error) {
           if (current() && error.name !== "AbortError") hint.textContent = error.message;
         } finally {
+          progress.stop();
           photoCanvas.width = photoCanvas.height = 0;
           if (state.photoScan === controller) { state.photoScan = null; btnCapture.textContent = "Capture now"; }
         }
@@ -763,6 +777,7 @@
     }
 
     function stopScanning() {
+      photoScanProgress.clear();
       state.isScanning = false;
       state.camera?.stop();
       state.camera = null;

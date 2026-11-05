@@ -18,6 +18,26 @@
 .ar-camera .page-scan-guide-area { inset: 5rem 1.25rem 14rem; }
 .ar-display-scanning .ar-scan-feedback { width: min(86vw, 560px); }
 
+/* Keep scan steps above the controls without moving the fixed page guide. */
+.ar-camera > .photo-scan-progress {
+  position: absolute;
+  left: 50%;
+  bottom: calc(clamp(1rem, 3vw, 2rem) + 5rem);
+  transform: translateX(-50%);
+  z-index: 5;
+  box-sizing: border-box;
+  width: min(86vw, 560px);
+  margin: 0;
+  padding: .85rem 1rem;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 16px;
+  background: rgba(15, 23, 42, .9);
+  color: #e2e8f0;
+  text-align: center;
+  pointer-events: none;
+}
+.ar-camera > .photo-scan-progress progress { margin-left: auto; margin-right: auto; }
+
 .homepage .ar-display-result { min-height: 0; max-width: 780px; margin: 0 auto; padding: 1rem; display: grid; gap: 1rem; }
 .ar-display-result .ar-result-panel { position: static; transform: none; width: 100%; max-height: none; padding: 1rem; }
 .ar-display-result .ar-controls { position: static; transform: none; width: 100%; border-radius: 20px; }
@@ -37,6 +57,7 @@
 @media (max-width: 640px) {
   .ar-display-scanning { min-height: calc(100dvh - 1rem); }
   .ar-camera .page-scan-guide-area { bottom: 17rem; }
+  .ar-camera > .photo-scan-progress { bottom: calc(clamp(1rem, 3vw, 2rem) + 8.5rem); }
   /* Keep the feedback's reserved two-row control area after a page is
      collected: primary action above the two secondary choices. */
   .ar-display-scanning .ar-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -55,7 +76,8 @@
     flex-direction: column;
     border-radius: 24px;
   }
-  .ar-display-scanning .ar-scan-feedback {
+  .ar-display-scanning .ar-scan-feedback,
+  .ar-camera > .photo-scan-progress {
     bottom: 1rem;
     left: 1.25rem;
     right: 11rem;
