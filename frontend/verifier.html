@@ -392,7 +392,7 @@
     import { startCameraSession } from "./src/qr/cameraSession.js";
     import { observePageScanGuide } from "./src/qr/pageScanGuide.js";
     import { getPreferredCameraStream, applyCameraQualityControls } from "./src/qr/cameraControls.js";
-    import { canCaptureCameraPhoto, captureCameraPhoto } from "./src/qr/cameraPhoto.js";
+    import { canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback } from "./src/qr/cameraPhoto.js";
     import { createLiveScanWorker, preparePhotoScanner, scanPhotoInWorker } from "./src/qr/photoScanClient.js";
     import { decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
     import { mountPhotoTextVerification } from "./src/verifier/mountPhotoTextVerification.jsx";
@@ -585,6 +585,7 @@
       var readiness = document.getElementById("captureReadiness");
       var seen = new Set();
       var processingCapture = false;
+      var captureDiagnostic = null;
       btnCapture.hidden = false; btnCapture.textContent = "Capture now";
 
       placeholder.style.display = "none";
@@ -594,6 +595,7 @@
       state.stopPageGuide = observePageScanGuide(video, guideArea, document.getElementById("pageGuide"));
 
       function collectFrame(action) {
+        action = cameraCaptureFeedback(action, captureDiagnostic);
         var added = false;
         (action.texts || [action.text]).filter(Boolean).forEach(function(text) {
           if (seen.has(text)) return;
@@ -627,6 +629,7 @@
         onCaptured: function({ captureOnly } = {}) {
           if (captureOnly) { btnCapture.onclick({ preserveGate: true }); return; }
           processingCapture = true;
+          captureDiagnostic = cameraFrameDiagnostic(canvas);
           hint.textContent = photoProcessingMessage();
           readiness.hidden = true;
           btnCapture.textContent = "Cancel and resume camera";
@@ -662,8 +665,11 @@
           var ctx = canvas.getContext("2d", { willReadFrequently: true }); ctx.drawImage(video, 0, 0);
           var frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
           var nativePhoto = canCaptureCameraPhoto(video);
+          captureDiagnostic = cameraFrameDiagnostic(canvas);
           if (nativePhoto) hint.textContent = "Hold steady — taking photo…";
-          var still = nativePhoto ? await captureCameraPhoto(video, canvas, { signal: controller.signal }) : null;
+          var still = nativePhoto ? await captureCameraPhoto(video, canvas, { signal: controller.signal, onDiagnostic: function(diagnostic) {
+            if (state.photoScan === controller) captureDiagnostic = diagnostic;
+          } }) : null;
           controller.signal.throwIfAborted();
           hint.textContent = photoProcessingMessage();
           var action = await scanPhotoInWorker(still || frame,

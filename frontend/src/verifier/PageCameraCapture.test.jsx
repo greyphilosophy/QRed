@@ -15,7 +15,7 @@ vi.mock("../qr/photoScanClient.js", () => ({ scanPhotoInWorker: camera.scan, cre
   return { busy: false, scan: vi.fn(), reset: camera.reset, stop: vi.fn() };
 } }));
 vi.mock("./scanPhotos.js", () => ({ snapshotScanPhoto: camera.snapshot }));
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
 const signed = await createQRedSeals({ content: "Friday", privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=",
   publicKey: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=" });
 function ready() {
@@ -101,5 +101,26 @@ it("keeps automatic capture paused after a timeout and leaves Capture now availa
   act(() => camera.liveOptions.onResult({ status: "feedback", timedOut: true, message: "Use Capture now to try again." }));
   expect(camera.reset).not.toHaveBeenCalled();
   expect(screen.getByRole("alert").textContent).toContain("Capture now");
+  expect(screen.getByRole("alert").textContent).toContain("Camera frame: 800 × 1000");
   expect(screen.getByRole("button", { name: "Capture now" }).disabled).toBe(false);
+});
+
+it("sends native still pixels to retake decoding and preserves their dimensions in timeout guidance", async () => {
+  const pixels = { width: 1200, height: 1600, data: new Uint8ClampedArray(1200 * 1600 * 4) };
+  const bitmap = { width: 1200, height: 1600, close: vi.fn() };
+  const context = { drawImage: vi.fn(), getImageData: vi.fn(() => pixels) };
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context);
+  vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: () => Promise.resolve(new Blob()) }; }));
+  vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
+  camera.scan.mockResolvedValue({ status: "feedback", timedOut: true, message: "The scan reached its time limit." });
+  const capture = vi.fn();
+  render(<PageCameraCapture pageLabel="Page 2" seals={signed.seals} onCapture={capture} onClose={vi.fn()} />);
+  camera.options.video.srcObject = { getVideoTracks: () => [{ kind: "video", readyState: "live" }] };
+  ready(); fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
+  await waitFor(() => expect(camera.scan).toHaveBeenCalled());
+  expect(camera.scan.mock.calls[0][0]).toBe(pixels);
+  expect(context.drawImage).toHaveBeenCalledWith(bitmap, 0, 0, 1200, 1600);
+  expect((await screen.findByRole("alert")).textContent).toContain("Camera photo: 1200 × 1600");
+  expect(capture).not.toHaveBeenCalled();
+  expect(camera.reset).toHaveBeenCalledTimes(1);
 });

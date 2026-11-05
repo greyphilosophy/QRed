@@ -47,3 +47,21 @@ start a timeout in the live worker; its separate photo request owns that budget.
 This guard makes an unsuccessful scan stop sooner. It does not repair optical
 recovery and must not be used as evidence that a previously unreadable seal now
 reads successfully.
+
+## Camera input and failure details
+
+Native still acquisition retains its separate 1.8-second total deadline. Missing
+or explicitly unsupported optional capability discovery can fall back to still
+capture without resolution preferences. If advertised dimensions are rejected
+with a settings-related error, capture retries once without those dimensions,
+within the same deadline. Both attempts explicitly keep flash off. Permission,
+security and camera-operation failures are not retried. Late results cannot
+replace the frozen frame or update its diagnostic.
+
+If seal reading fails, camera interfaces show whether the submitted pixels came
+from a native camera photo or a video frame, their actual width and height, and a
+fixed fallback reason when available. These details stay in that camera session;
+no device labels/IDs, exception text, document content or pixels are logged,
+stored or transmitted by the diagnostic. It reports the frozen decoder input,
+not the size of the current on-screen video. This compatibility change does not
+establish successful recovery of any previously unreadable physical page.

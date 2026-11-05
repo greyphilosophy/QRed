@@ -10,7 +10,7 @@ export { qrScanAction } from "./qr/decodePhoto.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
 import { photoProcessingMessage } from "./verifier/photoStatus.js";
-import { canCaptureCameraPhoto, captureCameraPhoto } from "./qr/cameraPhoto.js";
+import { canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback } from "./qr/cameraPhoto.js";
 import "./qrScanner.css";
 
 /**
@@ -214,6 +214,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
     const seen = new Set();
     let captureReported = false;
     let processingCapture = false;
+    let captureDiagnostic = null;
     const capturedCanvas = canvasRef.current;
     let camera;
     const stopGuide = observePageScanGuide(videoRef.current, guideAreaRef.current, guideRef.current);
@@ -228,6 +229,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       onCaptured: ({ captureOnly } = {}) => {
         if (captureOnly) { capturePhoto(true); return; }
         processingCapture = true;
+        captureDiagnostic = cameraFrameDiagnostic(canvasRef.current);
         setFeedback(photoProcessingMessage());
         onReadingPhoto(true);
       },
@@ -239,6 +241,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
     });
 
     handleScanActionRef.current = (scanAction) => {
+      scanAction = cameraCaptureFeedback(scanAction, captureDiagnostic);
       if (scanAction.status === "found-multiple") {
         captureReported = true;
         let shouldStop = false, added = false;
@@ -283,6 +286,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       if (photoScanRef.current) return;
       // A queued live result must never be attached to the new still photo.
       if (!preserveGate) liveScan.reset();
+      captureDiagnostic = null;
       const image = captureCameraFrame(videoRef.current, canvasRef.current);
       if (!image) {
         handleScanActionRef.current({ status: "pending", message: "Camera is preparing the photo. Hold steady…" });
@@ -295,10 +299,13 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       photoScanRef.current = controller;
       onReadingPhoto(true);
       const nativePhoto = canCaptureCameraPhoto(videoRef.current);
+      captureDiagnostic = cameraFrameDiagnostic(image);
       setFeedback(nativePhoto ? "Hold steady — taking photo…" : photoProcessingMessage());
       const read = async () => {
         const still = nativePhoto ? await captureCameraPhoto(videoRef.current, canvasRef.current,
-          { signal: controller.signal }) : null;
+          { signal: controller.signal, onDiagnostic: diagnostic => {
+            if (photoScanRef.current === controller) captureDiagnostic = diagnostic;
+          } }) : null;
         controller.signal.throwIfAborted();
         setFeedback(photoProcessingMessage());
         return scanPhotoInWorker(still || image, { returnPayload, signal: controller.signal });

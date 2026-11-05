@@ -8,7 +8,7 @@ import { observePageScanGuide } from "../qr/pageScanGuide.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { bytesEqual, qrPayloadBytes } from "../sealFormat.js";
 import { photoProcessingMessage } from "./photoStatus.js";
-import { canCaptureCameraPhoto, captureCameraPhoto } from "../qr/cameraPhoto.js";
+import { canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback } from "../qr/cameraPhoto.js";
 
 // Match bytes from the already authenticated collection, not an untrusted page
 // number or chunk identifier supplied by the new photo.
@@ -21,7 +21,7 @@ export function confirmsPageSeal(action, seals) {
 // Retakes stay in the browser camera. No file-capture handoff or gallery save.
 export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose }) {
   const video = useRef(null), camera = useRef(null), generation = useRef(0);
-  const scan = useRef(null);
+  const scan = useRef(null), captureDiagnostic = useRef(null);
   const dialog = useRef(null);
   const guideArea = useRef(null), guide = useRef(null), live = useRef(null), busyRef = useRef(false);
   const [ready, setReady] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState("");
@@ -36,9 +36,11 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
       onQuality: setQuality,
       onCaptured: ({ captureOnly } = {}) => {
         if (captureOnly) { capture({ preserveGate: true }); return; }
+        captureDiagnostic.current = cameraFrameDiagnostic(canvas);
         busyRef.current = true; setBusy(true); setError("");
       },
       onResult: action => {
+        action = cameraCaptureFeedback(action, captureDiagnostic.current);
         if (action.text || action.texts?.length) acceptFrame(action, canvas, epoch);
         else {
           if (action.status === "feedback" && !action.timedOut) live.current.reset();
@@ -71,7 +73,7 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
       if (!confirmsPageSeal(action, seals)) {
         throw new Error(action.text || action.texts?.length
           ? `This seal does not match ${pageLabel}. Show that page, including its seal. Your previous check is unchanged.`
-          : `The page seal could not be read. Include the whole page and its seal, then try again. Your previous check is unchanged.`);
+          : action.message || `The page seal could not be read. Include the whole page and its seal, then try again. Your previous check is unchanged.`);
       }
       const file = await snapshotScanPhoto(canvas);
       if (epoch !== generation.current) return;
@@ -97,14 +99,17 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
       context.drawImage(source, 0, 0);
       const frame = context.getImageData(0, 0, canvas.width, canvas.height);
       const nativePhoto = canCaptureCameraPhoto(source);
+      captureDiagnostic.current = cameraFrameDiagnostic(canvas);
       setTakingPhoto(nativePhoto);
-      const still = nativePhoto ? await captureCameraPhoto(source, canvas, { signal: controller.signal }) : null;
+      const still = nativePhoto ? await captureCameraPhoto(source, canvas, { signal: controller.signal, onDiagnostic: diagnostic => {
+        if (epoch === generation.current && scan.current === controller) captureDiagnostic.current = diagnostic;
+      } }) : null;
       controller.signal.throwIfAborted();
       setTakingPhoto(false);
       const action = await scanPhotoInWorker(still || frame,
         { returnPayload: true, signal: controller.signal });
       if (epoch !== generation.current) return;
-      await acceptFrame(action, canvas, epoch);
+      await acceptFrame(cameraCaptureFeedback(action, captureDiagnostic.current), canvas, epoch);
     } catch (cause) { if (epoch === generation.current) setError(cause.message); }
     finally {
       canvas.width = canvas.height = 0;

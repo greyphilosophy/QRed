@@ -8,7 +8,7 @@ import { PNG } from "pngjs";
 import { getPreferredCameraStream, applyCameraQualityControls } from "./qr/cameraControls.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
-import { canCaptureCameraPhoto, captureCameraPhoto } from "./qr/cameraPhoto.js";
+import { canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback } from "./qr/cameraPhoto.js";
 import { createQrFrameScanner } from "./qr/scanQrImage.js";
 import { createLiveScanWorker, scanPhotoInWorker } from "./qr/photoScanClient.js";
 import { qrFrameAction } from "./qr/decodePhoto.js";
@@ -57,7 +57,7 @@ function loadStandalone(overrides = {}) {
   });
   const bindings = {
     getPreferredCameraStream, applyCameraQualityControls, authProvider, startCameraSession, observePageScanGuide, createLiveScanWorker, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
-    preparePhotoScanner: vi.fn(), scanPhotoInWorker, photoProcessingMessage, canCaptureCameraPhoto, captureCameraPhoto,
+    preparePhotoScanner: vi.fn(), scanPhotoInWorker, photoProcessingMessage, canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback,
     createScanPhotoCollection: callback => createScanPhotoCollection(callback, async () => new Blob(["frame"], { type: "image/png" })),
     mountPhotoTextVerification: () => ({ update: vi.fn(), prepare: vi.fn().mockResolvedValue(), clear: vi.fn() }),
     mountPdfSealInput: () => ({ update: vi.fn() }),
@@ -303,20 +303,24 @@ it("keeps timeout retry guidance after collecting new or duplicate partial camer
   await waitFor(() => expect(callbacks).toBeDefined());
   const action = { status: "found-multiple", texts: [seals[0]], timedOut: true,
     message: "The photo scan reached its time limit. Use Capture now to try again." };
+  const retained = document.getElementById("scanCanvas");
+  retained.width = 20; retained.height = 30;
   callbacks.onCaptured();
   callbacks.onResult(action);
   await waitFor(() => expect(document.querySelectorAll(".seal-item")).toHaveLength(1));
   expect(document.getElementById("statusText").textContent).toContain("1 of 2 QR seals");
-  expect(document.getElementById("pageGuideHint").textContent).toBe(action.message);
+  expect(document.getElementById("pageGuideHint").textContent).toContain(action.message);
+  expect(document.getElementById("pageGuideHint").textContent).toContain("Camera frame: 20 × 30");
   callbacks.onResult(action);
-  expect(document.getElementById("pageGuideHint").textContent).toBe(action.message);
+  expect(document.getElementById("pageGuideHint").textContent).toContain(action.message);
+  expect(document.getElementById("pageGuideHint").textContent).toContain("Camera frame: 20 × 30");
   const capture = document.getElementById("btnCapture");
   expect(capture.hidden).toBe(false);
   expect(capture.textContent).toBe("Capture now");
   fireEvent.click(capture);
   await waitFor(() => expect(retry).toHaveBeenCalledTimes(1));
   expect(reset).toHaveBeenCalledTimes(1);
-  await waitFor(() => expect(document.getElementById("pageGuideHint").textContent).toBe("Retry finished."));
+  await waitFor(() => expect(document.getElementById("pageGuideHint").textContent).toContain("Retry finished."));
 });
 
 
@@ -347,4 +351,26 @@ it("shows a mixed-document warning instead of an all-authenticated summary for a
   await window.__qredTestVerify([...cover.seals, ...currentResults.seals], publicKey);
   expect(document.getElementById("resultStatus").textContent).toBe("Seal authenticated");
   expect(document.querySelector(".collection-progress").textContent).toBe("All 2 pages collected.");
+});
+
+it("uses native still pixels and shows their dimensions after a standalone camera timeout", async () => {
+  const pixels = { width: 40, height: 60, data: new Uint8ClampedArray(40 * 60 * 4) };
+  const bitmap = { width: 40, height: 60, close: vi.fn() };
+  vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: () => Promise.resolve(new Blob()) }; }));
+  vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
+  const scan = vi.fn().mockResolvedValue({ status: "feedback", timedOut: true, message: "The scan reached its time limit." });
+  loadStandalone({ startCameraSession: () => ({ stop: vi.fn() }), scanPhotoInWorker: scan,
+    createLiveScanWorker: () => ({ busy: false, reset: vi.fn(), scan: vi.fn(), stop: vi.fn() }) });
+  const video = document.getElementById("cameraVideo");
+  video.srcObject = { getVideoTracks: () => [{ kind: "video", readyState: "live" }] };
+  Object.defineProperties(video, { videoWidth: { value: 20 }, videoHeight: { value: 30 } });
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage() {}, getImageData: () => pixels });
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(document.getElementById("btnCapture").hidden).toBe(false));
+  fireEvent.click(document.getElementById("btnCapture"));
+  await waitFor(() => expect(scan).toHaveBeenCalledTimes(1));
+  expect(scan.mock.calls[0][0]).toBe(pixels);
+  expect(document.getElementById("scanCanvas").width).toBe(40);
+  expect(document.getElementById("scanCanvas").height).toBe(60);
+  await waitFor(() => expect(document.getElementById("pageGuideHint").textContent).toContain("Camera photo: 40 × 60"));
 });
