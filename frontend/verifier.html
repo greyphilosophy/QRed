@@ -430,6 +430,7 @@
       defaultKeysPromise: null,
       publicKey: "",
       startGeneration: 0,
+      photoPickerGeneration: 0,
     };
 
     var collection = createVerificationSession();
@@ -493,12 +494,22 @@
     };
 
     btnChoosePhoto.onclick = function() {
-      state.cancelPhoto?.();
+      var pickerGeneration = ++state.photoPickerGeneration;
+      var sessionGeneration = state.startGeneration;
+      var camera = state.camera, cancel = state.cancelPhoto;
+      cancel?.();
+      pagePhotoInput.oncancel = function() {
+        if (state.photoPickerGeneration !== pickerGeneration) return;
+        state.photoPickerGeneration++; pagePhotoInput.oncancel = null;
+        if (camera && state.isScanning && state.startGeneration === sessionGeneration
+          && state.camera === camera && state.cancelPhoto === cancel) cancel({ resumeCamera: true });
+      };
       pagePhotoInput.click();
     };
     pagePhotoInput.onchange = function(event) {
       var file = event.target.files?.[0]; event.target.value = "";
-      if (!file) return;
+      if (!file) { pagePhotoInput.oncancel?.(); return; }
+      state.photoPickerGeneration++; pagePhotoInput.oncancel = null;
       if (!state.isScanning) {
         state.startGeneration++;
         startScanning({ openCamera: false });
@@ -670,18 +681,26 @@
       state.liveScan = liveScan;
       state.isScanning = true;
       updatePhotoComparison();
-      function cancelPhoto() {
+      function cancelPhoto({ resumeCamera = false } = {}) {
         state.photoScan?.abort(); state.photoScan = null;
         processingCapture = false;
-        manualFailure = true;
+        manualFailure = !resumeCamera;
+        if (resumeCamera) {
+          acquisitionFailed = false;
+          // Begin a fresh steady hold, without reusing a queued quality result
+          // or a cancelled photo. Choosing a file keeps the camera gate paused.
+          liveScan.reset();
+        }
+        readiness.hidden = true;
         btnCapture.textContent = "Capture now";
-        hint.textContent = "Capture cancelled. Use Capture now or Choose photo to try again.";
+        hint.textContent = resumeCamera ? "Capture cancelled. Frame the page and hold steady to capture automatically."
+          : "Capture cancelled. Use Capture now or Choose photo to try again.";
       }
       state.cancelPhoto = cancelPhoto;
       async function acquirePhoto({ preserveGate = false, file } = {}) {
         if (!active()) return;
         if (state.photoScan || processingCapture) {
-          cancelPhoto();
+          cancelPhoto({ resumeCamera: !file });
           if (!file) return;
         }
         if (!file && (!video.videoWidth || !video.videoHeight)) { hint.textContent = "Camera is preparing. Try Capture now in a moment, or choose a photo."; return; }
@@ -747,6 +766,7 @@
       state.liveScan = null;
       state.photoScan?.abort(); state.photoScan = null;
       state.cancelPhoto = null; state.readPhoto = null;
+      state.photoPickerGeneration++; pagePhotoInput.oncancel = null;
       pagePhotoInput.value = "";
       btnCapture.hidden = true; btnCapture.onclick = null;
       document.getElementById("captureReadiness").hidden = true;

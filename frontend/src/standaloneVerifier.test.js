@@ -409,6 +409,111 @@ function selectedStandalonePhoto({ width = 2000, height = 3000, decode = () => P
   URL.revokeObjectURL = vi.fn();
   return image;
 }
+it.each(["native capture", "photo decoding"])("resumes quality guidance and automatic native capture after cancelling %s", async stage => {
+  let finish;
+  const capture = vi.fn();
+  const setup = setupStandaloneCapture({ captureCameraPhoto: capture });
+  capture.mockResolvedValue(setup.pixels);
+  if (stage === "native capture") capture.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  else setup.scan.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(setup.camera).toBeDefined());
+  fireEvent.click(document.getElementById("btnCapture"));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  const signal = capture.mock.calls[0][2].signal;
+  const scansBeforeCancel = setup.scan.mock.calls.length;
+  const resetsBeforeCancel = setup.live.reset.mock.calls.length;
+  fireEvent.click(document.getElementById("btnCapture"));
+  expect(signal.aborted).toBe(true);
+  expect(document.getElementById("btnCapture").textContent).toBe("Capture now");
+  expect(setup.live.reset).toHaveBeenCalledTimes(resetsBeforeCancel + 1);
+  setup.camera.onFrame();
+  expect(setup.live.scan).toHaveBeenCalledTimes(1);
+  expect(setup.live.scan.mock.calls[0][1]).toEqual({ captureOnly: true });
+  expect(setup.scan).toHaveBeenCalledTimes(scansBeforeCancel);
+  finish(stage === "native capture" ? setup.pixels : { status: "feedback", message: "Cancelled result must stay hidden." });
+  await Promise.resolve(); await Promise.resolve();
+  expect(setup.scan).toHaveBeenCalledTimes(scansBeforeCancel);
+  expect(document.getElementById("pageGuideHint").textContent).not.toContain("Cancelled result");
+  setup.callbacks.onQuality({ state: "hold", message: "Hold steady.", progress: .5 });
+  expect(document.getElementById("pageGuideHint").textContent).toBe("Hold steady.");
+  // A new stable-page signal takes a real still without another shutter tap.
+  setup.callbacks.onCaptured({ captureOnly: true });
+  await waitFor(() => expect(capture).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(setup.scan).toHaveBeenCalledTimes(scansBeforeCancel + 1));
+  expect(capture.mock.calls[1][2]).toMatchObject({ requireHighResolution: true });
+  expect(setup.scan.mock.calls.at(-1)[0]).toBe(setup.pixels);
+});
+it("keeps automatic capture paused while the explicit photo picker is open", async () => {
+  const capture = vi.fn().mockResolvedValue(null);
+  const setup = setupStandaloneCapture({ captureCameraPhoto: capture });
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(setup.camera).toBeDefined());
+  fireEvent.click(document.getElementById("btnChoosePhoto"));
+  setup.camera.onFrame();
+  setup.callbacks.onCaptured({ captureOnly: true });
+  expect(setup.live.scan).not.toHaveBeenCalled();
+  expect(capture).not.toHaveBeenCalled();
+  expect(setup.scan).not.toHaveBeenCalled();
+});
+it("resumes guidance and automatic native capture after dismissing the photo picker", async () => {
+  const capture = vi.fn();
+  const setup = setupStandaloneCapture({ captureCameraPhoto: capture });
+  capture.mockResolvedValue(setup.pixels);
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(setup.camera).toBeDefined());
+  fireEvent.click(document.getElementById("btnChoosePhoto"));
+  document.getElementById("pagePhotoInput").dispatchEvent(new Event("cancel"));
+  setup.camera.onFrame();
+  expect(setup.live.scan).toHaveBeenCalledTimes(1);
+  expect(setup.live.scan.mock.calls[0][1]).toEqual({ captureOnly: true });
+  expect(capture).not.toHaveBeenCalled();
+  setup.callbacks.onCaptured({ captureOnly: true });
+  await waitFor(() => expect(setup.scan).toHaveBeenCalledTimes(1));
+  expect(capture).toHaveBeenCalledTimes(1);
+  expect(capture.mock.calls[0][2]).toMatchObject({ requireHighResolution: true });
+});
+it.each([false, true])("ignores a stale picker dismissal when another picker is open (restarted session: %s)", async restart => {
+  const capture = vi.fn();
+  const setup = setupStandaloneCapture({ captureCameraPhoto: capture });
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(setup.camera).toBeDefined());
+  fireEvent.click(document.getElementById("btnChoosePhoto"));
+  const input = document.getElementById("pagePhotoInput"), staleCancel = input.oncancel;
+  if (restart) {
+    const oldCamera = setup.camera;
+    document.getElementById("photoTextComparison").scrollIntoView = vi.fn();
+    fireEvent.click(document.getElementById("btnScan"));
+    fireEvent.click(document.getElementById("btnScan"));
+    await waitFor(() => expect(setup.camera).not.toBe(oldCamera));
+  }
+  fireEvent.click(document.getElementById("btnChoosePhoto"));
+  const currentCancel = input.oncancel;
+  staleCancel();
+  expect(input.oncancel).toBe(currentCancel);
+  setup.camera.onFrame();
+  setup.callbacks.onCaptured({ captureOnly: true });
+  expect(setup.live.scan).not.toHaveBeenCalled();
+  expect(capture).not.toHaveBeenCalled();
+  input.dispatchEvent(new Event("cancel"));
+  setup.camera.onFrame();
+  expect(setup.live.scan).toHaveBeenCalledTimes(1);
+  expect(setup.live.scan.mock.calls[0][1]).toEqual({ captureOnly: true });
+});
+it("does not resume a camera when dismissing a picker in a photo-only session", async () => {
+  const capture = vi.fn();
+  const setup = setupStandaloneCapture({ captureCameraPhoto: capture });
+  selectedStandalonePhoto();
+  fireEvent.change(document.getElementById("pagePhotoInput"), { target: { files: [new File(["synthetic"], "page.jpg")] } });
+  await waitFor(() => expect(setup.scan).toHaveBeenCalledTimes(1));
+  const resets = setup.live.reset.mock.calls.length;
+  fireEvent.click(document.getElementById("btnChoosePhoto"));
+  document.getElementById("pagePhotoInput").dispatchEvent(new Event("cancel"));
+  expect(setup.camera).toBeUndefined();
+  expect(setup.live.reset).toHaveBeenCalledTimes(resets);
+  expect(setup.live.scan).not.toHaveBeenCalled();
+  expect(capture).not.toHaveBeenCalled();
+});
 it.each(["unsupported", "too small", "rejected"])("never decodes standalone preview pixels when native capture is %s", async failure => {
   if (failure !== "unsupported") {
     vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: () => failure === "rejected"

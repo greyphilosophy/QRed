@@ -54,10 +54,19 @@ def test_native_still_capture_keeps_more_detail_and_acknowledges_only_after_capt
         # The stationary page must not start another exposure after that delay.
         page.wait_for_timeout(2000)
         assert page.evaluate("stillRequests.length") == 1
+        if path == "/":
+            # Capture, Choose photo, and Check this page must stay inside the
+            # same two-row area instead of covering the stationary guide's advice.
+            controls = page.locator(".ar-display-scanning .ar-controls").bounding_box()
+            feedback = page.locator(".ar-display-scanning .ar-scan-feedback").bounding_box()
+            assert controls and feedback
+            assert feedback["y"] + feedback["height"] <= controls["y"]
         page.get_by_role("button", name="Check this page now", exact=True).click()
         review = page.get_by_role("region", name="Review Page 2 of 2", exact=True)
         expect(review.locator(".photo-differences")).to_contain_text("Monday", timeout=30000)
-        assert review.locator(".photo-stage img").evaluate("img => [img.naturalWidth,img.naturalHeight]") == [2880, 3840]
+        # The review copy has the existing 6MP retention cap; the decoder below
+        # must still receive the full-resolution native capture.
+        assert review.locator(".photo-stage img").evaluate("img => [img.naturalWidth,img.naturalHeight]") == [2121, 2828]
         decoded = assert_document_preview_not_decoded(page)
         assert decoded and all(request["width"] == 2880 and request["height"] == 3840 for request in decoded)
         assert persistent_state(page) == baseline

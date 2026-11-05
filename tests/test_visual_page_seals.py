@@ -10,7 +10,7 @@ import subprocess
 import pytest
 from PIL import Image, ImageDraw
 from playwright.sync_api import expect
-from browser_helpers import show_seal_details, show_file_inputs, prepare_text_for_offline, OfflineNetworkGuard, stamp_and_save, wait_for_offline_resources, NATIVE_PHOTO_CAMERA_SCRIPT
+from browser_helpers import show_seal_details, show_file_inputs, prepare_text_for_offline, OfflineNetworkGuard, stamp_and_save, wait_for_offline_resources, NATIVE_PHOTO_CAMERA_SCRIPT, observe_document_scan_requests
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
@@ -255,6 +255,7 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
             setInterval(() => frame.getContext('2d').drawImage(image, 0, 0, frame.width, frame.height), 100);
         }""", full_page)
         page.evaluate(NATIVE_PHOTO_CAMERA_SCRIPT)
+        observe_document_scan_requests(page)
         reference.get_by_role("button", name="Retake this page for visual review", exact=True).click()
         page.get_by_role("dialog").get_by_role("button", name="Capture now").click()
         photo = reference.get_by_role("img", name="Page photo beside the signed visual reference")
@@ -263,8 +264,14 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
         # Under CI load PNG decoding/re-encoding can exceed Playwright's
         # default five-second assertion timeout. The exact full-page pixels
         # still have to be present; accepting the QR crop is not sufficient.
-        expect(photo).to_have_js_property("naturalWidth", 2040, timeout=30000)
-        expect(photo).to_have_js_property("naturalHeight", 3360, timeout=30000)
+        # Seal decoding receives the actual native still. The independent
+        # session-retention limit is 6 MP: sqrt(6M / (2040 * 3360)).
+        expect(photo).to_have_js_property("naturalWidth", 1909, timeout=30000)
+        expect(photo).to_have_js_property("naturalHeight", 3144, timeout=30000)
+        decoded = [request for request in page.evaluate("__documentScanRequests")
+                   if not request["live"] and not request["prepareReading"]]
+        assert len(decoded) == 1
+        assert (decoded[0]["width"], decoded[0]["height"]) == (2040, 3360)
         guard.assert_quiet()
         if not blank and path == "/":
             page.screenshot(path=str(tmp_path / "visual-reference-mobile.png"), full_page=True)

@@ -71,6 +71,8 @@ merely in requested settings. This operational floor is motivated by the
 smallest successful measured full-page replay before the later low-resolution
 recovery improvements. It is not a readability guarantee or an authenticity
 check. Camera processing, focus, lighting and page occupancy still matter.
+Seal decoding receives this capture before the existing 6 MP cap is applied to
+the separate session-only review/OCR copy.
 
 Missing or explicitly unsupported optional capability discovery can fall back
 to `takePhoto` without resolution preferences. Rejected advertised dimensions
