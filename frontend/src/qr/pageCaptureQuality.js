@@ -67,7 +67,7 @@ function samplePage(image, corners) {
   return values;
 }
 
-export function inspectPageFrame(image) {
+export function inspectPageFrame(image, { captureOnly = false } = {}) {
   if (!image?.data || image.data.length !== image.width * image.height * 4 || image.width < 40 || image.height < 40)
     return { state: "framing", message: "Waiting for camera frames…", corners: null };
   // Use the same illumination calibration as seal recovery. Otherwise warm
@@ -82,7 +82,12 @@ export function inspectPageFrame(image) {
   const pixels = corners.map(p => ({ x: p.x * image.width, y: p.y * image.height }));
   const width = (distance(pixels[0], pixels[1]) + distance(pixels[2], pixels[3])) / 2;
   const height = (distance(pixels[0], pixels[3]) + distance(pixels[1], pixels[2])) / 2;
-  if (Math.min(width, height) < 420 || width * height < image.width * image.height * .28)
+  // A native still is validated separately for document detail. Its video
+  // preview only guides framing and focus, and can be much smaller than the
+  // photograph. Requiring 420 preview pixels makes capture impossible on
+  // low-resolution streams, even while a well-framed page fills the view.
+  const minimumSide = captureOnly ? Math.min(420, Math.min(image.width, image.height) * .6) : 420;
+  if (Math.min(width, height) < minimumSide || width * height < image.width * image.height * .28)
     return { state: "small", message: "Move closer while keeping all four corners visible.", corners };
   const samples = samplePage(image, pixels);
   if (percentile([...samples], .8) < 65)
@@ -96,8 +101,8 @@ export function inspectPageFrame(image) {
 export function createPageCaptureGate() {
   let anchor = null, lastAt = null, startedAt = null, frames = 0, captured = false;
   return {
-    update(image, now) {
-      const measured = inspectPageFrame(image);
+    update(image, now, options) {
+      const measured = inspectPageFrame(image, options);
       const { samples, ...quality } = measured;
       if (measured.state !== "clear") {
         anchor = null; startedAt = null; frames = 0; lastAt = now; captured = false;
