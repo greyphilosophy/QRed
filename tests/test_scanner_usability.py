@@ -132,10 +132,13 @@ def test_large_photo_can_be_cancelled_then_another_seal_verified_offline(browser
             setInterval(() => scanHeartbeat++, 25);
         }""")
         show_file_inputs(page)
+        page.get_by_label("Choose QR image", exact=True).scroll_into_view_if_needed()
         page.get_by_label("Choose QR image", exact=True).set_input_files({
             "name": "synthetic-large-page.jpg", "mimeType": "image/jpeg", "buffer": buffer.getvalue(),
         })
         expect(page.get_by_role("progressbar", name="Photo seal scan")).to_be_visible()
+        expect(page.get_by_role("progressbar", name="Photo seal scan")).to_be_in_viewport()
+        expect(page.get_by_role("button", name="Cancel photo scan", exact=True)).to_be_in_viewport()
         assert page.get_by_role("progressbar", name="Photo seal scan").get_attribute("value") is None
         # The worker can stay in one expensive step while the main-thread clock
         # keeps advancing. No percentage is invented from its time budget.
@@ -145,6 +148,14 @@ def test_large_photo_can_be_cancelled_then_another_seal_verified_offline(browser
         expect(page.locator(".photo-scan-step")).to_be_visible()
         ticks = page.evaluate("scanHeartbeat")
         page.wait_for_function("ticks => scanHeartbeat > ticks + 3", arg=ticks, timeout=2000)
+        # Replacing an active photo must reveal its progress again after the
+        # user returns to the lower file input, without relying on busy toggling.
+        page.get_by_label("Choose QR image", exact=True).scroll_into_view_if_needed()
+        page.get_by_label("Choose QR image", exact=True).set_input_files({
+            "name": "synthetic-replacement-page.jpg", "mimeType": "image/jpeg", "buffer": buffer.getvalue(),
+        })
+        expect(page.get_by_role("progressbar", name="Photo seal scan")).to_be_in_viewport()
+        expect(page.get_by_role("button", name="Cancel photo scan", exact=True)).to_be_in_viewport()
         page.get_by_role("button", name="Cancel photo scan", exact=True).click(timeout=2000)
         expect(page.get_by_text("Photo scan cancelled.", exact=True)).to_be_visible()
         expect(page.get_by_role("button", name="Cancel photo scan", exact=True)).to_have_count(0)
