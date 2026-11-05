@@ -68,3 +68,30 @@ it("can recover an omitted column even when the first pass was confident about i
   expect(comparePageReading("Room 125.50", merged, size).status).toBe("uncertain");
   expect(preferTextRetry([word("Room", 98)], [word("Room extra", 70)])).toBe(false);
 });
+
+
+it("trims retry padding before it clips the edge of the next line", () => {
+  const words = [word("Total", 50), word("Following", 98, 127)];
+  const comparison = comparePageReading("Total Following", { words }, size);
+  const plans = planTextRetries(words, comparison, null, size);
+  expect(plans).toHaveLength(1);
+  expect(plans[0].indices).toEqual([0]);
+  expect(plans[0].bbox.y1).toBe(127);
+});
+
+it("rejects a crop that clips a neighboring word even if its center is outside", () => {
+  const words = [word("Total", 50), word("Neighbor", 98, 124, 80)];
+  const comparison = comparePageReading("Total Neighbor", { words }, size);
+  expect(planTextRetries(words, comparison, null, size)).toEqual([]);
+});
+
+it("does not let a confident row hide a newly hallucinated low-confidence token", () => {
+  const before = [word("Service", 94), word("charge", 94), word("24.00", 94)];
+  expect(preferTextRetry(before, [...before, word("~~", 40)])).toBe(false);
+  expect(preferTextRetry(before.map(w => ({ ...w, confidence: 85 })),
+    [...before, word("~", 40)])).toBe(false);
+  const merged = applyTextRetries(before, [{ candidate: { ...candidate, indices: [0, 1, 2] },
+    words: [...before, word("~", 40)] }]);
+  expect(merged.words).toEqual(before);
+  expect(merged.retryReviews).toEqual([]);
+});

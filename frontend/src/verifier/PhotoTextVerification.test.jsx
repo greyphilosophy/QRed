@@ -19,6 +19,18 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it("shows a faint addition from the first reading when contrast-assisted text agrees", async () => {
+  ocr.read.mockResolvedValue({ words: [word("Friday")], originalReading: [word("Friday"),
+    { ...word("Paid"), confidence: 40, bbox: {x0:10,y0:50,x1:90,y1:70} }], contrastAssisted: true });
+  const view = render(<PhotoTextVerification results={[page]} scanPhotos={[capture(1, "first", "unused")]} />);
+  await screen.findByText("First reading to review (1)");
+  expect(view.container.querySelector(".photo-summary.uncertain")).toBeTruthy();
+  const original = view.container.querySelector(".photo-original-reading");
+  expect(original.textContent).toContain("Paid");
+  expect(within(original).getByRole("img", { name: "Magnified photo difference", hidden: true })).toBeTruthy();
+  expect(view.container.querySelector(".photo-summary.matches")).toBeNull();
+});
+
 it("separates word spacing and conflicting rereads without hiding substantive differences", async () => {
   const signed = { ...page, content: "Account 123456 Pay 100" };
   ocr.read.mockResolvedValue({ words: [word("Account123456"), word("Pay"), word("900")],

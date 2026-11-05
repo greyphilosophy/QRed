@@ -155,11 +155,39 @@ it("rereads native-resolution pixels independently, maps the crop back, and rele
     expect(f.copies[0].drawImage).toHaveBeenCalledWith(f.decoded(), 190, 390, 220, 80, 0, 0, 220, 80);
     expect(f.engine.recognize.mock.calls.every(([, options, output]) =>
       Object.keys(options).length === 0 && output.text === true && output.blocks === true)).toBe(true);
-    expect(f.engine.setParameters).toHaveBeenLastCalledWith({ tessedit_pageseg_mode: "3" });
+    expect(f.engine.setParameters).toHaveBeenLastCalledWith({ tessedit_pageseg_mode: "3", thresholding_kfactor: "0.2" });
     expect(f.urls.revokeObjectURL).toHaveBeenCalledWith("blob:retained-photo");
     expect(f.decoded().src).toBe("");
     expect([...f.copies, f.prepared].every(c => c.width === 0 && c.height === 0)).toBe(true);
   } finally { f.reader.dispose(); vi.unstubAllGlobals(); }
+});
+
+it.each([true, false])("bounds a poor-page reread and retains the original when selected (%s)", async better => {
+  const first = "Invoice total payable by next Friday".split(" ").map((text, i) => ({
+    text, confidence: 40, bbox: { x0: 10 + i * 20, y0: 10, x1: 28 + i * 20, y1: 25 },
+  }));
+  const second = better ? first.map(w => ({ ...w, confidence: 96, text: w.text === "Friday" ? "Monday" : w.text })) : [first[0]];
+  const pack = words => ({ data: { blocks: [{ paragraphs: [{ lines: [{ words }] }] }] } });
+  const engine = worker();
+  engine.recognize.mockResolvedValueOnce(pack(first)).mockResolvedValueOnce(pack(second));
+  const copies = [];
+  vi.stubGlobal("document", { createElement: () => {
+    const copy = { width: 0, height: 0, getContext: () => Object.fromEntries(
+      ["fillRect", "beginPath", "moveTo", "lineTo", "closePath", "clip", "drawImage"].map(key => [key, vi.fn()])) };
+    copies.push(copy); return copy;
+  } });
+  const reader = createPhotoOcrReader(() => Promise.resolve(engine), () => ({ canvas: {}, codes: [],
+    corners: [{x:0,y:0},{x:200,y:0},{x:200,y:100},{x:0,y:100}] }));
+  try {
+    const reading = await reader.read({ width: 200, height: 100 });
+    expect(engine.recognize).toHaveBeenCalledTimes(2);
+    expect(reading.words.map(w => w.text)).toEqual((better ? second : first).map(w => w.text));
+    expect(reading.contrastAssisted).toBe(better);
+    expect(reading.originalReading?.map(w => w.text)).toEqual(better ? first.map(w => w.text) : undefined);
+    expect(copies.every(c => c.width === 0 && c.height === 0)).toBe(true);
+    expect(engine.setParameters).toHaveBeenLastCalledWith({ thresholding_kfactor: "0.2" });
+    expect(engine.recognize.mock.calls.every(([, options]) => Object.keys(options).length === 0)).toBe(true);
+  } finally { reader.dispose(); vi.unstubAllGlobals(); }
 });
 
 it("cancels an in-flight retry without publishing it or retaining its original-resolution image", async () => {

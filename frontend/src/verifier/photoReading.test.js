@@ -13,6 +13,15 @@ it("keeps a contrast-assisted agreement uncertain, and still detects changed or 
   expect(comparePageReading("Friday", { words: [...text, word("extra", 10, 50)], contrastAssisted: true }, dimensions).status).toBe("differences");
   expect(comparePageReading("Friday", { words: [], contrastAssisted: true }, dimensions).status).toBe("unreadable");
 });
+
+it("retains a faint added word from the first reading even if the second agrees", () => {
+  const first = [...text, { ...word("Paid", 10, 50), confidence: 35 }];
+  const result = comparePageReading("Friday", { words: text, originalReading: first, contrastAssisted: true }, dimensions);
+  expect(result.status).toBe("uncertain");
+  expect(result.originalComparison.status).toBe("differences");
+  expect(result.originalComparison.differences).toContainEqual(expect.objectContaining({ observed: "Paid", expected: "" }));
+  expect(comparePageReading("Monday", { words: text, originalReading: first, contrastAssisted: true }, dimensions).status).toBe("differences");
+});
 it("separates likely QR markings for visible review without declaring a match", () => {
   const result = comparePageReading("Friday", { words: [...text, word("[=]", 110, 220), ...caption], codes: [box] }, dimensions);
   expect(result.status).toBe("uncertain");

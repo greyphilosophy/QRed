@@ -8,6 +8,25 @@ const frame = () => ({ width: 200, height: 200, data: new Uint8ClampedArray(200 
 const location = { topLeftCorner: { x: 20, y: 20 }, topRightCorner: { x: 60, y: 20 },
   bottomLeftCorner: { x: 20, y: 60 }, bottomRightCorner: { x: 60, y: 60 } };
 
+it("locates warm, shadowed paper before making the contrast copy", () => {
+  const width = 800, height = 1000, data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const inside = x >= 34 && x < 774 && y >= 60 && y < 960;
+    const light = inside ? 220 * (1 - y / height * .4) : 170 + (x * 7 + y * 11) % 20;
+    const tint = inside ? [1.05, 1, .95] : [1.1, 1, .9];
+    const offset = (y * width + x) * 4;
+    for (let channel = 0; channel < 3; channel++) data[offset + channel] = light * tint[channel];
+    data[offset + 3] = 255;
+  }
+  const { corners } = preparePhotoReadingPixels({ data, width, height });
+  expect(corners).toHaveLength(4);
+  const expected = [[34, 60], [774, 60], [774, 960], [34, 960]];
+  corners.forEach((point, i) => {
+    expect(Math.abs(point.x - expected[i][0])).toBeLessThan(5);
+    expect(Math.abs(point.y - expected[i][1])).toBeLessThan(5);
+  });
+});
+
 it("only removes pale ink in the contrast copy and bounds a no-code search to one attempt", () => {
   const image = frame(); image.data.set([224, 224, 224, 255], 0);
   const { image: prepared, codes } = preparePhotoReadingPixels(image);
