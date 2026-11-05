@@ -39,6 +39,7 @@ it.each([
   { width: 1201, height: 1601, paperColor: [0.95, 1, 1.07] },
   { width: 3000, height: 4000, paperColor: [0.95, 1, 1.07] },
   { width: 160, height: 9500, paperColor: [1.2, 1, 0.85] },
+  { width: 1601, height: 1201, paperColor: [1.25, 1, 0.8] },
 ])("preserves every preview byte at $width by $height", ({ width, height, paperColor }) => {
   const data = new Uint8ClampedArray(width * height * 4);
   let value = 123;

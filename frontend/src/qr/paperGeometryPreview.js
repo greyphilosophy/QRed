@@ -1,5 +1,3 @@
-import { paperColorChannel } from "./paperColor.js";
-
 const MAX_GEOMETRY_PIXELS = 1_500_000;
 
 // Only page geometry uses this small preview. Fine watermark evidence stays
@@ -12,6 +10,12 @@ export function previewForPaperEdges(image) {
   const w = Math.max(160, Math.floor(width * scale));
   const h = Math.max(160, Math.floor(height * scale));
   const pixels = new Uint8ClampedArray(w * h * 4);
+  // Channel correction depends only on its byte value and this photo's gain.
+  // Cache the exact quarter-contribution, not the final average: each write
+  // below must still perform the original intermediate clamped rounding.
+  const contributions = [0, 1, 2].map(channel => Float64Array.from(
+    { length: 256 }, (_, value) => (paperColor
+      ? Math.min(255, Math.round(value * paperColor[channel])) : value) / 4));
   // Source columns do not change between rows. Avoid recalculating their
   // rounding/clamping and allocating iterators for every one of 1.5M pixels.
   const columns = new Int32Array(w * 3);
@@ -31,10 +35,11 @@ export function previewForPaperEdges(image) {
       const a = previous + columns[x * 3], b = current + columns[x * 3 + 1];
       const c = current + columns[x * 3 + 2], d = next + columns[x * 3 + 1];
       for (let channel = 0; channel < 3; channel++) {
-        pixels[out + channel] = paperColorChannel(data, a, channel, paperColor) / 4;
-        pixels[out + channel] += paperColorChannel(data, b, channel, paperColor) / 4;
-        pixels[out + channel] += paperColorChannel(data, c, channel, paperColor) / 4;
-        pixels[out + channel] += paperColorChannel(data, d, channel, paperColor) / 4;
+        const values = contributions[channel];
+        pixels[out + channel] = values[data[a + channel]];
+        pixels[out + channel] += values[data[b + channel]];
+        pixels[out + channel] += values[data[c + channel]];
+        pixels[out + channel] += values[data[d + channel]];
       }
       pixels[out + 3] = 255;
     }

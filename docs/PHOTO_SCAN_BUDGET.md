@@ -146,3 +146,53 @@ normal runtime variation; they are not a browser camera or phone benchmark.
 The eight-second budget is unchanged. This optimization does not establish
 that a reported manual-capture timeout or automatic-acquisition failure is
 fixed; those require their own reproducible workflow evidence.
+
+## Reusing measured photo work
+
+The narrow and wider rectified passes now share one request-local scanner. It
+retains paper geometry and completed profile preparation (warp, normalized
+pixels, measured finders/version), instead of rebuilding them for the same
+frozen photo. Native normalization and completed sharpening are also reused.
+Interrupted sharpening returns no buffer and is not cached. The cache is never
+shared between photos, and the wider search still measures its own alignment
+markers. At most three 900-pixel-square profiles can be retained, approximately
+12 MB, plus the existing bounded native grayscale buffers. The worker's normal
+completion/cancellation/deadline releases this request state.
+
+Alignment searches cache only each marker's small luminance neighborhood, with a
+65,536-pixel limit (512 KiB of double-precision values); larger neighborhoods use
+direct reads. Sample coordinates, arithmetic order, tie-breaking and the measured
+grid stay unchanged. A small lookup table also reuses the exact gain correction
+for each possible input byte in the geometry preview. All four intermediate
+clamped writes still occur. Neither optimization lowers resolution or changes
+recovery thresholds, signature checks, stage order or either time allowance.
+
+Tests check exact preview bytes (including 3000 by 4000 and clipped tint gains),
+reference grid coordinates for fractional/tinted evidence, bounded allocations,
+source-pixel read counts, expired calls, request isolation, and narrow/wide
+preparation reuse. Existing perspective, shadow, text, native-sampling, corruption
+and wrong-authority tests remain required. Work-count and exact-output checks are
+preferred to fragile millisecond assertions in unit tests.
+
+An interleaved local production-bundle comparison used two earlier 12 MP photos,
+three runs per variant at normal speed and at 25%/20% process duty. Only the
+separate decoder process was paused with SIGSTOP/SIGCONT; a supervising process
+kept an independent eight-second wall-time watchdog. This is CPU-pressure testing,
+not a simulation of a particular phone, browser or camera. The same input bytes
+and recovered transport hashes were used in both variants, without uploading
+private photographs or payloads.
+
+At normal speed, median decoder times changed from 1.089 to 0.904 seconds on one
+photo and 0.707 to 0.473 seconds on the other. At 25% duty, completed reads changed
+from 1/3 to 2/3 and 2/3 to 3/3 respectively. At 20%, they changed from 0/3 to 1/3
+and remained 3/3. All failed trials are included. Host scheduling varied noticeably,
+including an unthrottled baseline outlier and a delayed supervising timer. These
+small samples demonstrate useful headroom, not a reliability rate or phone latency
+promise. The current failed selected photo was not identified from its screenshot,
+so these results do not establish that that failure is fixed.
+
+A checkpoint such as “refining the page grid (7.7 s into decoding)” reports when
+that stage began, not 7.7 seconds spent refining. It can mean almost all the budget
+was consumed by preceding attempts. The existing four-second narrow-pass cutoff
+and expensive fallbacks can still produce timeouts under heavier CPU pressure;
+this change does not replace physical-phone acceptance or justify a longer wait.
