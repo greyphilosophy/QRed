@@ -17,6 +17,24 @@ function paper({ x = 90, y = 100, width = 600, height = 800, desk = 55, ink = fa
 }
 
 describe("automatic whole-page capture", () => {
+  it.each([[320, 400], [360, 450], [480, 600]])("uses a %i × %i preview for framing, not as the native photo resolution", (width, height) => {
+    const source = paper(), data = new Uint8ClampedArray(width * height * 4);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      const at = (Math.floor(y * source.height / height) * source.width + Math.floor(x * source.width / width)) * 4;
+      data.set(source.data.subarray(at, at + 4), (y * width + x) * 4);
+    }
+    const image = { width, height, data };
+    // Low-detail video remains unsuitable for decoding, but can guide a
+    // separately validated high-resolution native still photograph.
+    expect(inspectPageFrame(image).state).toBe("small");
+    expect(inspectPageFrame(image, { captureOnly: true }).state).toBe("clear");
+    const gate = createPageCaptureGate();
+    for (const time of [0, 200, 400]) expect(gate.update(image, time, { captureOnly: true }).ready).toBe(false);
+    expect(gate.update(image, 600, { captureOnly: true })).toMatchObject({ state: "ready", ready: true });
+  });
+  it("still rejects a small native-photo preview page instead of bypassing framing", () => {
+    expect(inspectPageFrame(paper({ x: 220, y: 280, width: 360, height: 440 }), { captureOnly: true }).state).toBe("small");
+  });
   it("waits for several steady frames and a real hold interval", () => {
     const gate = createPageCaptureGate(), image = paper();
     expect(gate.update(image, 0)).toMatchObject({ state: "hold", ready: false, progress: 0 });

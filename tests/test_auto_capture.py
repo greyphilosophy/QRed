@@ -23,10 +23,10 @@ def test_native_still_capture_keeps_more_detail_and_acknowledges_only_after_capt
             still.width = __syntheticNativePhoto.naturalWidth; still.height = __syntheticNativePhoto.naturalHeight;
             still.getContext('2d').drawImage(__syntheticNativePhoto, 0, 0);
             const photo = await new Promise(resolve => still.toBlob(resolve, 'image/png'));
-            const small = document.createElement('canvas'); small.width = 640; small.height = 853;
-            small.getContext('2d').drawImage(__syntheticPaper, 0, 0, 640, 853);
+            const small = document.createElement('canvas'); small.width = 360; small.height = 480;
+            small.getContext('2d').drawImage(__syntheticPaper, 0, 0, 360, 480);
             const preview = new Image(); preview.src = small.toDataURL(); await preview.decode();
-            __syntheticCameraFrame.width = 640; __syntheticCameraFrame.height = 853;
+            __syntheticCameraFrame.width = 360; __syntheticCameraFrame.height = 480;
             __syntheticPaper = preview;
             window.stillRequests = [];
             window.ImageCapture = class {
@@ -38,6 +38,8 @@ def test_native_still_capture_keeps_more_detail_and_acknowledges_only_after_capt
                 }
             };
         }"""
+        # A low-resolution preview must still guide a high-detail native photo.
+        # The former 420px minimum could never pass on a 360px-wide stream.
         page.evaluate(awaitable)
         observe_document_scan_requests(page)
         baseline = persistent_state(page)

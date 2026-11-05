@@ -12,7 +12,7 @@ import subprocess
 import time
 
 import pytest
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from playwright.sync_api import expect
 from reportlab.pdfgen import canvas
 
@@ -63,7 +63,7 @@ def printed_workflow_page(browser, tmp_path_factory):
         return image.convert("RGB")
 
 
-def camera_frames(printed, *, degraded=False):
+def camera_frames(printed, *, degraded=False, preview_size=(768, 960)):
     """Independent full-detail still plus lower-resolution changing previews.
 
     The mild print-scale/lighting/JPEG variation is deliberately fixed. It is
@@ -81,12 +81,16 @@ def camera_frames(printed, *, degraded=False):
         encoded = io.BytesIO()
         still.save(encoded, format="JPEG", quality=92)
         still = Image.open(io.BytesIO(encoded.getvalue())).convert("RGB")
-    preview = still.resize((768, 960), Image.Resampling.LANCZOS)
+    # Preview aspect/resolution can differ from the still. Letterbox without
+    # stretching or increasing the original printed evidence resolution.
+    preview = Image.new("RGB", preview_size, (55, 55, 55))
+    scaled = ImageOps.contain(still, preview_size, Image.Resampling.LANCZOS)
+    preview.paste(scaled, ((preview.width - scaled.width) // 2, (preview.height - scaled.height) // 2))
     frames = {
         "native": still,
         "clear": preview,
         "soft": preview.filter(ImageFilter.GaussianBlur(5)),
-        "clipped": paper.resize((768, 960), Image.Resampling.LANCZOS),
+        "clipped": paper.resize(preview_size, Image.Resampling.LANCZOS),
     }
     urls = {}
     for name, image in frames.items():
@@ -102,7 +106,8 @@ def install_changing_camera(page, frames):
         for (const [name, url] of Object.entries(urls)) {
             const image = new Image(); image.src = url; await image.decode(); images[name] = image;
         }
-        const frame = document.createElement('canvas'); frame.width = 768; frame.height = 960;
+        const frame = document.createElement('canvas');
+        frame.width = images.clear.naturalWidth; frame.height = images.clear.naturalHeight;
         const context = frame.getContext('2d');
         window.__workflowCamera = {mode: 'clipped', opens: 0, tracks: [], ticks: 0, captures: []};
         window.__syntheticNativePhoto = images.native;
@@ -111,8 +116,8 @@ def install_changing_camera(page, frames):
             const at = performance.now() / 250;
             context.fillStyle = '#373737'; context.fillRect(0, 0, frame.width, frame.height);
             context.drawImage(images[moving ? 'clear' : __workflowCamera.mode],
-                moving ? Math.round(35 * Math.sin(at)) : 0,
-                moving ? Math.round(25 * Math.cos(at)) : 0);
+                moving ? Math.round(frame.width * 35 / 768 * Math.sin(at)) : 0,
+                moving ? Math.round(frame.height * 25 / 960 * Math.cos(at)) : 0);
         };
         window.__showWorkflowFrame = mode => {
             __workflowCamera.mode = mode;
@@ -151,8 +156,9 @@ def install_changing_camera(page, frames):
 
 
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
-@pytest.mark.parametrize("degraded", [False, True], ids=["clear", "scaled-dim-jpeg"])
-def test_full_printed_page_guidance_capture_and_verification(browser, printed_workflow_page, path, degraded):
+@pytest.mark.parametrize("degraded,preview_size", [(False, (768, 960)), (True, (768, 960)), (False, (360, 480))],
+                         ids=["clear", "scaled-dim-jpeg", "low-resolution-preview"])
+def test_full_printed_page_guidance_capture_and_verification(browser, printed_workflow_page, path, degraded, preview_size):
     context = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="allow")
     try:
         context.route("**/api/keys/default", lambda route: route.fulfill(json={"public_key": PUBLIC_KEY}))
@@ -163,7 +169,7 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
                 "name": "public.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode(),
             })
         prepare_text_for_offline(page)
-        install_changing_camera(page, camera_frames(printed_workflow_page, degraded=degraded))
+        install_changing_camera(page, camera_frames(printed_workflow_page, degraded=degraded, preview_size=preview_size))
         page.get_by_role("button", name="Check document", exact=True).click()
         guide = page.locator(".ar-scan-feedback, #pageGuideHint").first
         expect(guide).to_contain_text("four page corners", timeout=15000)
@@ -208,6 +214,8 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
             expect(review.locator(".photo-markings")).to_contain_text("Verify")
         else:
             expect(review.locator(".photo-summary")).to_have_text("Recognized text matches the signed text")
+        previews = page.evaluate("__documentScanRequests.filter(request => request.live)")
+        assert previews and all((request["width"], request["height"]) == preview_size for request in previews)
         decoded = assert_document_preview_not_decoded(page)
         assert len(decoded) == 1, decoded
         assert (decoded[0]["width"], decoded[0]["height"]) == (2400, 3000)
@@ -217,7 +225,7 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         assert page.evaluate("__workflowCamera.opens") == 1
         assert page.evaluate("__workflowCamera.tracks.every(track => track.readyState === 'ended')")
         longest_task = page.evaluate("Math.max(0, ...__workflowLongTasks)")
-        print("Scanner workflow: " + json.dumps({"path": path, "degraded": degraded,
+        print("Scanner workflow: " + json.dumps({"path": path, "degraded": degraded, "preview_size": preview_size,
             "guidance_to_authenticated_seconds": authenticated - started,
             "ocr_seconds": finished - authenticated, "longest_ui_task_ms": longest_task}))
         assert finished - started < 25, "Full-page camera capture and checking exceeded its CI guard"
