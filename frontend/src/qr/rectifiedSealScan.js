@@ -7,8 +7,9 @@ import { readRectifiedQrVersion } from "./rectifiedQrVersion.js";
 import { refineQrModuleGrid } from "./qrAlignmentRefinement.js";
 import { recoverSampledQrMatrix } from "./pageAlignedRecovery.js";
 import { collectModuleSamples, classifyModuleSamples, classifyLocalModuleSamples,
-  measureLocalModuleContrast } from "./rectifiedModuleSamples.js";
+  measureLocalModuleContrast, sharpenModuleLuminance } from "./rectifiedModuleSamples.js";
 
+const MAX_NATIVE_SAMPLE_PIXELS = 12_000_000;
 const SIDE = 900, BORDER = 0.04, INTERIOR = 1 - 2 * BORDER;
 const finderDark = (row, col) => row === 0 || col === 0 || row === 6 || col === 6 ||
   (row >= 2 && row <= 4 && col >= 2 && col <= 4);
@@ -84,12 +85,39 @@ function measuredThreshold(gray, corners) {
   return Math.round((median(dark) + median(light)) / 2);
 }
 
+function recoverObservations(observations, photoMap, version, thresholds, shouldContinue) {
+  for (const threshold of thresholds) for (const foreground of [160, 180]) {
+    if (!shouldContinue()) return null;
+    const sampled = classifyModuleSamples(observations, threshold, foreground);
+    const recovered = recoverSampledQrMatrix(sampled, photoMap, version,
+      { allowSingleBitError: true, allowRankedErasures: false });
+    if (recovered) return recovered;
+  }
+  for (const radius of [8, 12]) {
+    if (!shouldContinue()) return null;
+    // Preserve the narrow estimate first. A wider neighborhood is less
+    // sensitive to foreground/resampling; reuse it for two nearby cuts.
+    const contrast = measureLocalModuleContrast(observations, { radius, shouldContinue });
+    if (!contrast) return null;
+    for (const thresholdFraction of radius === 8 ? [0.5] : [0.5, 0.4]) {
+      const local = classifyLocalModuleSamples(observations,
+        { contrast, thresholdFraction, shouldContinue });
+      if (!local || !shouldContinue()) return null;
+      const recovered = recoverSampledQrMatrix(local, photoMap, version,
+        { allowSingleBitError: true, allowRankedErasures: false });
+      if (recovered) return recovered;
+    }
+  }
+  return null;
+}
+
 export function scanRectifiedSeal(image, {
   shouldContinue = () => true, searchRadius = 39,
 } = {}) {
   if (image.width < 160 || image.height < 160 || !shouldContinue()) return null;
   image = { data: image.data, width: image.width, height: image.height,
     paperColor: estimatePaperColor(image) };
+  let originalGray = null, sharpenedGray = null;
   const quad = locatePaper(image), mapping = quad && pageHomography(quad);
   if (!mapping) return null;
   for (const profile of [{ marginPoints: 54 }, { marginPoints: 36 }, { legacy: true }]) {
@@ -116,28 +144,28 @@ export function scanRectifiedSeal(image, {
         const p = grid.moduleMap(col, row);
         return working.toPhoto(p.x, p.y);
       };
-      for (const threshold of thresholds) for (const foreground of [160, 180]) {
-        if (!shouldContinue()) return null;
-        const sampled = classifyModuleSamples(observations, threshold, foreground);
-        const recovered = recoverSampledQrMatrix(sampled, photoMap, version,
-          { allowSingleBitError: true, allowRankedErasures: false });
-        if (recovered) return recovered;
-      }
-      for (const radius of [8, 12]) {
-        if (!shouldContinue()) return null;
-        // Preserve the narrow estimate first. A wider neighborhood is less
-        // sensitive to foreground/resampling; reuse it for two nearby cuts.
-        const contrast = measureLocalModuleContrast(observations, { radius, shouldContinue });
-        if (!contrast) return null;
-        for (const thresholdFraction of radius === 8 ? [0.5] : [0.5, 0.4]) {
-          const local = classifyLocalModuleSamples(observations,
-            { contrast, thresholdFraction, shouldContinue });
-          if (!local || !shouldContinue()) return null;
-          const recovered = recoverSampledQrMatrix(local, photoMap, version,
-            { allowSingleBitError: true, allowRankedErasures: false });
-          if (recovered) return recovered;
-        }
-      }
+      const recovered = recoverObservations(observations, photoMap, version, thresholds, shouldContinue);
+      if (recovered) return recovered;
+      if (!shouldContinue()) return null;
+      // Keep fitting public QR patterns on the bounded square copy, but do
+      // not require its resampling blur to determine the observed modules.
+      // Smaller camera frames can lose the narrow gap between pale QR ink
+      // and text when warped a second time. Read the original pixels through
+      // that same measured map only after the established fast path misses.
+      if (image.width * image.height > MAX_NATIVE_SAMPLE_PIXELS) continue;
+      originalGray ??= normalizeWatermarkLuminance(image.data, image.width, image.height);
+      if (!shouldContinue()) return null;
+      const native = collectModuleSamples(originalGray, image.width, image.height, photoMap, version);
+      const nativeRecovered = recoverObservations(native, photoMap, version, thresholds, shouldContinue);
+      if (nativeRecovered) return nativeRecovered;
+      if (!shouldContinue()) return null;
+      // Bilinear camera resizing can soften the native modules too. Allow
+      // one measured edge-emphasis retry, still under the shared deadline.
+      sharpenedGray ??= sharpenModuleLuminance(originalGray, image.width, image.height, { shouldContinue });
+      if (!sharpenedGray || !shouldContinue()) return null;
+      const sharp = collectModuleSamples(sharpenedGray, image.width, image.height, photoMap, version);
+      const sharpRecovered = recoverObservations(sharp, photoMap, version, thresholds, shouldContinue);
+      if (sharpRecovered) return sharpRecovered;
     }
   }
   return null;

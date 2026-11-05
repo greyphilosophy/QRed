@@ -87,7 +87,8 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
         return { image: null, diagnostic: { source: "native-still", width: bitmap.width, height: bitmap.height, reason: "low-resolution" } };
       if (!requireHighResolution && bitmap.width * bitmap.height < canvas.width * canvas.height) return fallback("smaller-photo");
       const scale = Math.min(1, Math.sqrt(12_000_000 / (bitmap.width * bitmap.height)));
-      const widthPixels = Math.round(bitmap.width * scale), heightPixels = Math.round(bitmap.height * scale);
+      // Rounding both axes upward can cross the native decoder's exact pixel cap.
+      const widthPixels = Math.floor(bitmap.width * scale), heightPixels = Math.floor(bitmap.height * scale);
       const context = canvas.getContext("2d", { willReadFrequently: true });
       if (!context) return fallback("invalid-photo");
       replacingFrame = true;
@@ -171,7 +172,7 @@ export async function readCameraPhotoFile(file, canvas, { signal, onDiagnostic, 
     if (!width || !height || width * height > 80_000_000) return failure("invalid-photo");
     if (requireHighResolution && !hasDocumentPhotoDetail(width, height)) return failure("low-resolution");
     const scale = Math.min(1, Math.sqrt(12_000_000 / (width * height)));
-    const widthPixels = Math.round(width * scale), heightPixels = Math.round(height * scale);
+    const widthPixels = Math.floor(width * scale), heightPixels = Math.floor(height * scale);
     const context = canvas.getContext("2d", { willReadFrequently: true });
     if (!context) return failure("invalid-photo");
     // As with native capture, do not fall back to old pixels if drawing fails.
