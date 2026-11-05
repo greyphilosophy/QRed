@@ -8,47 +8,83 @@ for (let row = 0; row < 5; row++) for (let col = 0; col < 5; col++)
   DARK[row * 5 + col] = Number(row === 0 || row === 4 || col === 0 || col === 4 ||
     (row === 2 && col === 2));
 const OFFSETS = [-0.2, 0.2];
+const MAX_ALIGNMENT_CACHE_PIXELS = 65_536;
 
-function grayAt(image, x, y) {
-  const sx = Math.round(x), sy = Math.round(y);
-  if (sx < 0 || sy < 0 || sx >= image.width || sy >= image.height) return 0;
-  const index = (sy * image.width + sx) * 4;
-  return photoLuminance(image, index);
+function alignmentLuminance(image, expected, ux, uy, vx, vy, searchRadius) {
+  // Sample only this marker's bounded neighborhood once. A wide search visits
+  // the same pixels thousands of times; do not convert the whole phone image
+  // or retain a cache after the marker has been matched.
+  const reachX = searchRadius + 4 + 2.2 * 1.03 * (Math.abs(ux) + Math.abs(vx));
+  const reachY = searchRadius + 4 + 2.2 * 1.03 * (Math.abs(uy) + Math.abs(vy));
+  const left = Math.max(0, Math.floor(expected.x - reachX));
+  const top = Math.max(0, Math.floor(expected.y - reachY));
+  const right = Math.min(image.width - 1, Math.ceil(expected.x + reachX));
+  const bottom = Math.min(image.height - 1, Math.ceil(expected.y + reachY));
+  const width = Math.max(0, right - left + 1), height = Math.max(0, bottom - top + 1);
+  // Preserve double-precision luminance, including thirds, for exactly the
+  // same matching scores and tie-breaking as direct source-pixel reads.
+  if (width * height > MAX_ALIGNMENT_CACHE_PIXELS)
+    return { ...image, left: 0, top: 0, gray: null };
+  const gray = new Float64Array(width * height);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++)
+    gray[y * width + x] = photoLuminance(image, ((top + y) * image.width + left + x) * 4);
+  return { gray, width, height, left, top };
 }
 
-function matchScore(image, cx, cy, ux, uy, vx, vy, foregroundRobust) {
-  const values = foregroundRobust ? new Float32Array(25) : null;
-  let paper = 0, sum = 0, sumSq = 0, sumP = 0, sumPSq = 0, cross = 0, n = 0;
-  for (let row = 0; row < 5; row++) for (let col = 0; col < 5; col++) {
-    let best = 0;
+function grayAt(image, x, y) {
+  const sx = Math.round(x) - image.left, sy = Math.round(y) - image.top;
+  if (sx < 0 || sy < 0 || sx >= image.width || sy >= image.height) return 0;
+  return image.gray ? image.gray[sy * image.width + sx]
+    : photoLuminance(image, (sy * image.width + sx) * 4);
+}
+
+// Every candidate for one scale reads the same four positions within each
+// public pattern module. Prepare the products once, preserving their original
+// addition order so floating-point rounding chooses the same photo pixels.
+function alignmentSamples(ux, uy, vx, vy) {
+  const x = new Float64Array(200), y = new Float64Array(200);
+  let index = 0;
+  for (let row = 0; row < 5; row++) for (let col = 0; col < 5; col++)
     for (const oy of OFFSETS) for (const ox of OFFSETS) {
-      const x = cx + (col - 2 + ox) * ux + (row - 2 + oy) * vx;
-      const y = cy + (col - 2 + ox) * uy + (row - 2 + oy) * vy;
-      const pixel = grayAt(image, x, y);
-      if (!foregroundRobust) {
-        if (!pixel) return -1;
-        const pattern = DARK[row * 5 + col] ? -1 : 1;
-        sum += pixel; sumSq += pixel * pixel;
-        sumP += pattern; sumPSq += pattern * pattern;
-        cross += pattern * pixel; n++;
-      }
-      if (foregroundRobust) best = Math.max(best, pixel);
+      x[index] = (col - 2 + ox) * ux; y[index++] = (col - 2 + ox) * uy;
+      x[index] = (row - 2 + oy) * vx; y[index++] = (row - 2 + oy) * vy;
     }
-    if (foregroundRobust) {
-      values[row * 5 + col] = best;
+  return { x, y };
+}
+
+function matchScore(image, cx, cy, samples, values) {
+  const { x, y } = samples;
+  let paper = 0, sum = 0, sumSq = 0, sumP = 0, sumPSq = 0, cross = 0, n = 0;
+  if (values) {
+    for (let module = 0; module < 25; module++) {
+      let best = 0;
+      for (let index = module * 8; index < module * 8 + 8; index += 2)
+        best = Math.max(best, grayAt(image,
+          cx + x[index] + x[index + 1], cy + y[index] + y[index + 1]));
+      values[module] = best;
       paper = Math.max(paper, best);
     }
-  }
-  // Letter strokes are darker than the pale watermark. Compare exposed
-  // pixels within each module and discard fully obscured modules, while
-  // requiring at least two thirds of the public pattern as real evidence.
-  for (let i = 0; foregroundRobust && i < values.length; i++) {
-    const pixel = values[i];
-    if (pixel < paper * 0.75) continue;
-    const pattern = DARK[i] ? -1 : 1;
-    sum += pixel; sumSq += pixel * pixel;
-    sumP += pattern; sumPSq += pattern * pattern;
-    cross += pattern * pixel; n++;
+    // Letter strokes are darker than the pale watermark. Compare exposed
+    // pixels within each module and discard fully obscured modules, while
+    // requiring at least two thirds of the public pattern as real evidence.
+    for (let i = 0; i < values.length; i++) {
+      const pixel = values[i];
+      if (pixel < paper * 0.75) continue;
+      const pattern = DARK[i] ? -1 : 1;
+      sum += pixel; sumSq += pixel * pixel;
+      sumP += pattern; sumPSq += pattern * pattern;
+      cross += pattern * pixel; n++;
+    }
+  } else {
+    for (let index = 0; index < 200; index += 2) {
+      const pixel = grayAt(image,
+        cx + x[index] + x[index + 1], cy + y[index] + y[index + 1]);
+      if (!pixel) return -1;
+      const pattern = DARK[Math.floor(index / 8)] ? -1 : 1;
+      sum += pixel; sumSq += pixel * pixel;
+      sumP += pattern; sumPSq += pattern * pattern;
+      cross += pattern * pixel; n++;
+    }
   }
   if (n < 17) return -1;
   const variance = sumSq - sum * sum / n, patternVariance = sumPSq - sumP * sumP / n;
@@ -57,10 +93,15 @@ function matchScore(image, cx, cy, ux, uy, vx, vy, foregroundRobust) {
 }
 
 function locateAlignment(image, expected, ux, uy, vx, vy, foregroundRobust, searchRadius) {
+  image = alignmentLuminance(image, expected, ux, uy, vx, vy, searchRadius);
   let best = { score: -1, x: expected.x, y: expected.y };
+  // Reuse this tiny scratch array rather than allocating once per shift.
+  const values = foregroundRobust ? new Float32Array(25) : null;
+  const samples = new Map([0.97, 1, 1.03].map(scale =>
+    [scale, alignmentSamples(ux * scale, uy * scale, vx * scale, vy * scale)]));
   const tryShift = (dx, dy, scale) => {
     const score = matchScore(image, expected.x + dx, expected.y + dy,
-      ux * scale, uy * scale, vx * scale, vy * scale, foregroundRobust);
+      samples.get(scale), values);
     const tied = foregroundRobust && Math.abs(score - best.score) < 1e-7;
     const closer = dx * dx + dy * dy < (best.x - expected.x) ** 2 + (best.y - expected.y) ** 2;
     if (score > best.score + (foregroundRobust ? 1e-7 : 0) || (tied && closer))

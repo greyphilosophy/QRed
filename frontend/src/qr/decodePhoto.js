@@ -2,7 +2,7 @@ import { PHOTO_SCAN_BUDGET_MS } from "./photoScanBudget.js";
 import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
 import { scanFooterSeals } from "./footerSealScan.js";
-import { scanRectifiedSeal } from "./rectifiedSealScan.js";
+import { createRectifiedSealScanner } from "./rectifiedSealScan.js";
 import { isQRedEntryLink, qredPayloadFromScanResult } from "./qrPayload.js";
 import { decodeSeal, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult,
   qredTextFromScanResult } from "../qredVerifier.js";
@@ -56,8 +56,9 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
   if (returnPayload) {
     // Try the measured whole-page grid before general-purpose QR location.
     // Reserve half the cooperative budget for other layouts if this misses.
+    const scanRectified = createRectifiedSealScanner(image);
     const fastDeadline = started + maxDurationMs / 2;
-    const fast = attempt("rectified-fast", () => scanRectifiedSeal(image, {
+    const fast = attempt("rectified-fast", () => scanRectified({
       searchRadius: 12, shouldContinue: () => performance.now() < fastDeadline,
     }));
     if (decodeSeal(fast?.seal)?.total_chunks === 1) return { status: "found", text: fast.seal };
@@ -92,7 +93,7 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
       return indexes.size === chunk.total_chunks;
     })) return { status: "found-multiple", texts: [...partials] };
     // Retain the original wider alignment search for larger print distortions.
-    const rectified = shouldContinue() ? attempt("rectified-wide", () => scanRectifiedSeal(image, { shouldContinue })) : null;
+    const rectified = shouldContinue() ? attempt("rectified-wide", () => scanRectified({ shouldContinue })) : null;
     if (decodeSeal(rectified?.seal)?.total_chunks === 1) return { status: "found", text: rectified.seal };
     keepPartial(rectified?.seal);
     const aligned = shouldContinue() ? attempt("page-aligned", () => scanPageAlignedImage(image,

@@ -6,12 +6,14 @@ import { decodePhoto } from "./decodePhoto.js";
 import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
 import { scanFooterSeals } from "./footerSealScan.js";
-import { scanRectifiedSeal } from "./rectifiedSealScan.js";
+import { scanRectifiedSeal, createRectifiedSealScanner } from "./rectifiedSealScan.js";
 
 vi.mock("./scanQrImage.js", () => ({ scanQrImage: vi.fn(), scanWatermarkPreview: vi.fn() }));
 vi.mock("./pageAlignedScan.js", () => ({ scanPageAlignedImage: vi.fn() }));
 vi.mock("./footerSealScan.js", () => ({ scanFooterSeals: vi.fn() }));
-vi.mock("./rectifiedSealScan.js", () => ({ scanRectifiedSeal: vi.fn() }));
+vi.mock("./rectifiedSealScan.js", () => ({
+  scanRectifiedSeal: vi.fn(), createRectifiedSealScanner: vi.fn(),
+}));
 afterEach(() => vi.restoreAllMocks());
 
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
@@ -30,6 +32,7 @@ beforeAll(async () => {
   expect(multiple).toHaveLength(4);
 });
 beforeEach(() => {
+  createRectifiedSealScanner.mockReset().mockImplementation(image => options => scanRectifiedSeal(image, options));
   scanFooterSeals.mockReset().mockReturnValue([]);
   scanWatermarkPreview.mockReset().mockReturnValue(null);
   scanPageAlignedImage.mockReset().mockReturnValue([]);
@@ -121,10 +124,18 @@ it("keeps the wider alignment search after quick, preview and footer misses", as
   const action = decodePhoto(image, { returnPayload: true });
   expect(action).toEqual({ status: "found", text: single });
   expect(scanRectifiedSeal).toHaveBeenCalledTimes(2);
+  expect(createRectifiedSealScanner).toHaveBeenCalledTimes(1);
+  expect(createRectifiedSealScanner).toHaveBeenCalledWith(image);
   expect(scanRectifiedSeal).toHaveBeenLastCalledWith(image, { shouldContinue: expect.any(Function) });
   expect(scanQrImage.mock.invocationCallOrder[0]).toBeLessThan(scanRectifiedSeal.mock.invocationCallOrder[1]);
   expect(scanPageAlignedImage).not.toHaveBeenCalled();
   expect((await verifyQRedSeals([action.text], publicKey)).status).toBe("VALID");
+});
+
+it("never shares rectified preparation between separate photo requests", () => {
+  decodePhoto(image, { returnPayload: true });
+  decodePhoto(image, { returnPayload: true });
+  expect(createRectifiedSealScanner).toHaveBeenCalledTimes(2);
 });
 
 it.each(["local", "preview", "wide", "footer"])("stops at the shared deadline and retains a chunk from %s", stage => {

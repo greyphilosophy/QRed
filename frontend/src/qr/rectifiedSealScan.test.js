@@ -4,8 +4,11 @@ import { createQRedSeals } from "../qredSealer.js";
 import { createQRedQrData } from "../qredQr.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { pageWatermarkRegions } from "./pageAlignedScan.js";
-import { scanRectifiedSeal } from "./rectifiedSealScan.js";
+import { scanRectifiedSeal, createRectifiedSealScanner } from "./rectifiedSealScan.js";
 import * as moduleSamples from "./rectifiedModuleSamples.js";
+import * as pageGeometry from "./pageAlignedScan.js";
+import * as watermarkFilter from "./watermarkFilter.js";
+import * as recovery from "./pageAlignedRecovery.js";
 
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
 
@@ -126,3 +129,75 @@ it("does not start native sampling after the shared deadline expires", async () 
     expect(samples.mock.calls[0].slice(1, 3)).toEqual([900, 900]);
   } finally { samples.mockRestore(); }
 }, 20000);
+
+it("reuses measured preparation across narrow and wide attempts on one frozen photo only", async () => {
+  const { seals } = await createQRedSeals({
+    privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey,
+    content: "Synthetic request-local preparation. ".repeat(30), encodingStrategy: "plaintext",
+    timestamp: "2026-11-04T12:00:00Z",
+  });
+  const { payloadBytes } = createQRedQrData(seals[0]);
+  const symbol = QRCode.create([{ data: payloadBytes, mode: "byte" }], { version: 31, errorCorrectionLevel: "L" });
+  const image = shadowedPrint(symbol, 0), original = image.data.slice();
+  const locate = vi.spyOn(pageGeometry, "locatePaper");
+  const normalize = vi.spyOn(watermarkFilter, "normalizeWatermarkLuminance");
+  try {
+    const scan = createRectifiedSealScanner(image);
+    // Construction and an already-expired call do no pixel work.
+    expect(scan({ shouldContinue: () => false })).toBeNull();
+    expect(locate).not.toHaveBeenCalled();
+    expect(scan({ searchRadius: 12 })?.seal).toBe(seals[0]);
+    const preparedCount = normalize.mock.calls.length;
+    expect(preparedCount).toBeGreaterThan(0);
+    expect(scan({ searchRadius: 39 })?.seal).toBe(seals[0]);
+    expect(locate).toHaveBeenCalledTimes(1);
+    expect(normalize).toHaveBeenCalledTimes(preparedCount);
+    expect(image.data.every((value, index) => value === original[index])).toBe(true);
+    // Even identical source pixels in another request get independent state.
+    expect(createRectifiedSealScanner(image)({ searchRadius: 12 })?.seal).toBe(seals[0]);
+    expect(locate).toHaveBeenCalledTimes(2);
+    expect(normalize).toHaveBeenCalledTimes(preparedCount * 2);
+  } finally { locate.mockRestore(); normalize.mockRestore(); }
+}, 20000);
+
+it("retains completed native normalization after a narrow deadline without starting sharpening", async () => {
+  const { seals } = await createQRedSeals({
+    privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey,
+    content: "Synthetic interrupted native preparation. ".repeat(30), encodingStrategy: "plaintext",
+    timestamp: "2026-11-04T12:00:00Z",
+  });
+  const { payloadBytes } = createQRedQrData(seals[0]);
+  const symbol = QRCode.create([{ data: payloadBytes, mode: "byte" }], { version: 31, errorCorrectionLevel: "L" });
+  const image = shadowedPrint(symbol, 0), nativeBuffers = [];
+  let running = true;
+  const collect = moduleSamples.collectModuleSamples;
+  const samples = vi.spyOn(moduleSamples, "collectModuleSamples").mockImplementation((gray, width, ...args) => {
+    const observed = collect(gray, width, ...args);
+    if (width === image.width) { nativeBuffers.push(gray); running = false; }
+    return observed;
+  });
+  const decode = vi.spyOn(recovery, "recoverSampledQrMatrix").mockReturnValue(null);
+  const normalize = vi.spyOn(watermarkFilter, "normalizeWatermarkLuminance");
+  const sharpen = vi.spyOn(moduleSamples, "sharpenModuleLuminance");
+  try {
+    const scan = createRectifiedSealScanner(image);
+    expect(scan({ searchRadius: 12, shouldContinue: () => running })).toBeNull();
+    running = true;
+    expect(scan({ searchRadius: 39, shouldContinue: () => running })).toBeNull();
+    expect(nativeBuffers).toHaveLength(2);
+    expect(nativeBuffers[1]).toBe(nativeBuffers[0]);
+    expect(normalize.mock.calls.filter(([, width]) => width === image.width)).toHaveLength(1);
+    expect(sharpen).not.toHaveBeenCalled();
+  } finally { samples.mockRestore(); decode.mockRestore(); normalize.mockRestore(); sharpen.mockRestore(); }
+}, 20000);
+
+it("does not repeatedly locate absent paper in the same request", () => {
+  const image = { width: 180, height: 180, data: new Uint8ClampedArray(180 * 180 * 4).fill(255) };
+  const locate = vi.spyOn(pageGeometry, "locatePaper");
+  try {
+    const scan = createRectifiedSealScanner(image);
+    expect(scan({ searchRadius: 12 })).toBeNull();
+    expect(scan({ searchRadius: 39 })).toBeNull();
+    expect(locate).toHaveBeenCalledTimes(1);
+  } finally { locate.mockRestore(); }
+});
