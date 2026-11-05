@@ -8,7 +8,7 @@ import { observePageScanGuide } from "../qr/pageScanGuide.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { bytesEqual, qrPayloadBytes } from "../sealFormat.js";
 import { photoProcessingMessage } from "./photoStatus.js";
-import { captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback } from "../qr/cameraPhoto.js";
+import { captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext } from "../qr/cameraPhoto.js";
 
 // Match bytes from the already authenticated collection, not an untrusted page
 // number or chunk identifier supplied by the new photo.
@@ -22,6 +22,7 @@ export function confirmsPageSeal(action, seals) {
 export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose }) {
   const video = useRef(null), camera = useRef(null), generation = useRef(0);
   const scan = useRef(null), captureDiagnostic = useRef(null), photoInput = useRef(null);
+  const lastQuality = useRef(null);
   const acquisitionFailed = useRef(false), manualFailure = useRef(false);
   const pickerSession = useRef(null), cameraAvailable = useRef(false), cameraFailed = useRef(false);
   const dialog = useRef(null);
@@ -38,7 +39,9 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
     picker.addEventListener("cancel", resumePhotoPicker);
     const stopGuide = observePageScanGuide(video.current, guideArea.current, guide.current);
     live.current = createLiveScanWorker({ returnPayload: true, requirePageQuality: true,
-      onQuality: value => { if (epoch === generation.current && !busyRef.current) setQuality(value); },
+      onQuality: value => {
+        if (epoch === generation.current && !busyRef.current) { lastQuality.current = { state: value.state }; setQuality(value); }
+      },
       onCaptured: ({ captureOnly } = {}) => {
         if (epoch !== generation.current || busyRef.current || manualFailure.current) return;
         if (captureOnly) { capture({ preserveGate: true }); return; }
@@ -143,9 +146,11 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
     const canvas = document.createElement("canvas");
     captureDiagnostic.current = null;
     setTakingPhoto(!file);
+    const captureContext = file ? {} : cameraCaptureContext(
+      { width: source.videoWidth, height: source.videoHeight }, preserveGate, lastQuality.current);
     try {
       const options = { signal: controller.signal, requireHighResolution: true, onDiagnostic: diagnostic => {
-        if (current()) captureDiagnostic.current = diagnostic;
+        if (current()) captureDiagnostic.current = { ...diagnostic, ...captureContext };
       } };
       const still = file ? await readCameraPhotoFile(file, canvas, options)
         : await captureCameraPhoto(source, canvas, options);

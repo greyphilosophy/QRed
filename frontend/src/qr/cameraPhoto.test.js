@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { canCaptureCameraPhoto, captureCameraPhoto, cameraCaptureFeedback, cameraFrameDiagnostic, cameraPhotoFailure, readCameraPhotoFile, NATIVE_PHOTO_TIMEOUT_MS } from "./cameraPhoto.js";
+import { canCaptureCameraPhoto, captureCameraPhoto, cameraCaptureFeedback, cameraFrameDiagnostic, cameraPhotoFailure, readCameraPhotoFile, NATIVE_PHOTO_TIMEOUT_MS, cameraCaptureContext } from "./cameraPhoto.js";
 
 const track = { kind: "video", readyState: "live" };
 const video = { srcObject: { getVideoTracks: () => [track] } };
@@ -287,4 +287,17 @@ it("ignores malformed extra capture metadata and never renders arbitrary fields"
   expect(cameraCaptureFeedback(action, { source: "native-still", width: 3000, height: 4000,
     sourceWidth: "private", sourceHeight: 8000, preparationMs: Infinity, deviceId: "private", text: "private" }).message)
     .toBe("No seal. Camera photo: 3000 × 4000.");
+});
+
+it("snapshots only preview dimensions, trigger and an allowlisted guide state", () => {
+  const frame = { width: 640, height: 480, data: "private pixels" };
+  const quality = { state: "small", message: "private message", samples: [1, 2] };
+  const context = cameraCaptureContext(frame, false, quality);
+  expect(context).toEqual({ trigger: "manual", previewWidth: 640, previewHeight: 480, guideState: "small" });
+  frame.width = 3000; quality.state = "ready";
+  const action = { status: "feedback", message: "No seal." };
+  expect(cameraCaptureFeedback(action, { source: "native-still", width: 3000, height: 4000, ...context }).message)
+    .toBe("No seal. Camera photo: 3000 × 4000. Before photo: manual capture, 640 × 480 preview, last guide: page too small.");
+  expect(cameraCaptureContext({ width: 0, height: 1 }, true, { state: "private" }))
+    .toEqual({ trigger: "automatic" });
 });

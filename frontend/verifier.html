@@ -394,7 +394,7 @@
     import { startCameraSession } from "./src/qr/cameraSession.js";
     import { observePageScanGuide } from "./src/qr/pageScanGuide.js";
     import { getPreferredCameraStream, applyCameraQualityControls } from "./src/qr/cameraControls.js";
-    import { captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback } from "./src/qr/cameraPhoto.js";
+    import { captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext } from "./src/qr/cameraPhoto.js";
     import { createLiveScanWorker, preparePhotoScanner, scanPhotoInWorker } from "./src/qr/photoScanClient.js";
     import { decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
     import { mountPhotoTextVerification } from "./src/verifier/mountPhotoTextVerification.jsx";
@@ -616,6 +616,7 @@
       var seen = new Set();
       var processingCapture = false;
       var captureDiagnostic = null;
+      var lastQuality = null;
       var acquisitionFailed = false, manualFailure = false;
       var generation = state.startGeneration;
       function active() { return state.isScanning && state.startGeneration === generation && state.liveScan === liveScan; }
@@ -659,6 +660,7 @@
         requirePageQuality: true,
         onQuality: function(quality) {
           if (!active() || state.photoScan || processingCapture || (acquisitionFailed && quality.state === "captured")) return;
+          lastQuality = { state: quality.state };
           hint.textContent = quality.message;
           readiness.hidden = quality.state !== "hold"; readiness.value = quality.progress;
         },
@@ -713,9 +715,11 @@
         hint.textContent = file ? "Opening photo on this device…" : "Hold steady — taking photo…";
         readiness.hidden = true;
         captureDiagnostic = null;
+        var captureContext = file ? {} : cameraCaptureContext(
+          { width: video.videoWidth, height: video.videoHeight }, preserveGate, lastQuality);
         try {
           var options = { signal: controller.signal, requireHighResolution: true, onDiagnostic: function(diagnostic) {
-            if (current()) captureDiagnostic = diagnostic;
+            if (current()) captureDiagnostic = { ...diagnostic, ...captureContext };
           } };
           var still = file ? await readCameraPhotoFile(file, photoCanvas, options)
             : await captureCameraPhoto(video, photoCanvas, options);

@@ -96,6 +96,12 @@ includes native acquisition or file decoding plus canvas preparation, before
 the seal-reading budget starts. Neither pixel count nor preparation time proves
 that the captured watermark is sharp or readable.
 
+Native capture failures during seal reading also retain whether the trigger was
+manual or automatic, the actual preview dimensions, and the last allowlisted
+guidance state before the photo. This records what the gate last reported; it
+does not infer a camera fault or claim the later live preview matches the
+captured photo. Explicitly selected files do not inherit camera guidance.
+
 On a seal-reader timeout, a fixed-name checkpoint identifies the last reported
 decoder step and when it began relative to decoding. These checkpoints do not
 extend the watchdog, settle a request, or replace partial recovered chunks.

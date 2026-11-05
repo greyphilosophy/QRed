@@ -4,6 +4,24 @@ export const NATIVE_PHOTO_TIMEOUT_MS = 5000;
 export const MIN_DOCUMENT_PHOTO_PIXELS = 4_000_000;
 export const MIN_DOCUMENT_PHOTO_LONG_SIDE = 2560;
 const pendingTracks = new WeakSet();
+const GUIDE_LABELS = Object.freeze({
+  framing: "page corners needed", small: "page too small", dark: "more light needed",
+  soft: "page edges soft", clear: "page clear", hold: "steady hold pending",
+  ready: "steady hold passed", captured: "page already captured",
+});
+
+// Snapshot only the last guidance state and actual preview dimensions before
+// a native photo replaces the canvas. The later live view is a different frame.
+export function cameraCaptureContext(frame, automatic, quality) {
+  return {
+    trigger: automatic ? "automatic" : "manual",
+    ...(Number.isInteger(frame?.width) && Number.isInteger(frame?.height)
+      && frame.width > 0 && frame.height > 0 && frame.width * frame.height <= 80_000_000
+      ? { previewWidth: frame.width, previewHeight: frame.height } : {}),
+    ...(typeof quality?.state === "string" && Object.hasOwn(GUIDE_LABELS, quality.state)
+      ? { guideState: quality.state } : {}),
+  };
+}
 
 export function canCaptureCameraPhoto(video) {
   const track = video?.srcObject?.getVideoTracks?.()[0];
@@ -38,7 +56,14 @@ export function cameraCaptureFeedback(action, capture) {
     details.push(`from ${capture.sourceWidth} × ${capture.sourceHeight}`);
   if (Number.isFinite(capture.preparationMs) && capture.preparationMs >= 0 && capture.preparationMs <= 600_000)
     details.push(`prepared in ${(capture.preparationMs / 1000).toFixed(1)} s`);
-  return { ...action, message: `${action.message} ${source}: ${capture.width} × ${capture.height}${details.length ? ` (${details.join(", ")})` : ""}.${reason ? ` ${reason}` : ""}` };
+  const context = [];
+  if (["manual", "automatic"].includes(capture.trigger)) context.push(`${capture.trigger} capture`);
+  if (Number.isInteger(capture.previewWidth) && Number.isInteger(capture.previewHeight)
+    && capture.previewWidth > 0 && capture.previewHeight > 0 && capture.previewWidth * capture.previewHeight <= 80_000_000)
+    context.push(`${capture.previewWidth} × ${capture.previewHeight} preview`);
+  if (typeof capture.guideState === "string" && Object.hasOwn(GUIDE_LABELS, capture.guideState))
+    context.push(`last guide: ${GUIDE_LABELS[capture.guideState]}`);
+  return { ...action, message: `${action.message} ${source}: ${capture.width} × ${capture.height}${details.length ? ` (${details.join(", ")})` : ""}.${context.length ? ` Before photo: ${context.join(", ")}.` : ""}${reason ? ` ${reason}` : ""}` };
 }
 
 const unsupportedOptions = error => ["NotSupportedError", "OverconstrainedError", "TypeError"].includes(error?.name);

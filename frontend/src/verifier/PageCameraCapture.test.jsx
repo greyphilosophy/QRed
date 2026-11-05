@@ -125,12 +125,15 @@ it("sends native still pixels to retake decoding and preserves their dimensions 
   const capture = vi.fn();
   render(<PageCameraCapture pageLabel="Page 2" seals={signed.seals} onCapture={capture} onClose={vi.fn()} />);
   camera.options.video.srcObject = { getVideoTracks: () => [{ kind: "video", readyState: "live" }] };
-  ready(); fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
+  ready();
+  act(() => camera.liveOptions.onQuality({ state: "soft", message: "Page edges soft." }));
+  fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
   await waitFor(() => expect(camera.scan).toHaveBeenCalled());
   expect(camera.scan.mock.calls[0][0]).toBe(pixels);
   expect(context.drawImage).toHaveBeenCalledWith(bitmap, 0, 0, 2000, 3000);
   expect((await screen.findByRole("alert")).textContent).toContain("Camera photo: 2000 × 3000");
   expect(screen.getByRole("alert").textContent).toContain("Last reported step: reading conventional QR codes (4.1 s into decoding).");
+  expect(screen.getByRole("alert").textContent).toContain("manual capture, 800 × 1000 preview, last guide: page edges soft");
   expect(capture).not.toHaveBeenCalled();
   expect(camera.reset).toHaveBeenCalledTimes(1);
 });
