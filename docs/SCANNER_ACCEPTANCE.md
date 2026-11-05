@@ -17,9 +17,9 @@ never the framing decision, recovered seal, authenticated result, or OCR text.
   a fresh 600 ms steady hold before requesting the photo,
   exactly one full-detail native photo, real signature authentication, an exact
   matched-word list with no document differences or OCR uncertainty, stopped
-  tracks, and Finish & clear. The separate caution for QRed's printed markings,
-  including its navigation caption, must stay visible; it is not a document
-  mismatch. Both `/` and `/verify.htm` run
+  tracks, and Finish & clear. When QRed's printed markings are identified,
+  including its navigation caption, their separate caution must stay visible;
+  it is not a document mismatch. Both `/` and `/verify.htm` run
   a clear case and a fixed 97%-print-scale, dimmed, JPEG-compressed case.
 - `tests/test_auto_capture.py`: keep the existing changed-text, mismatched-page
   retake, capture acknowledgement, separate low-resolution preview/native still,

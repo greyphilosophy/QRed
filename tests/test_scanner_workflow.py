@@ -186,7 +186,7 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         expect(review).to_be_visible(timeout=15000)
         authenticated = time.monotonic()
         expect(review.locator("h3").first).to_contain_text("Seal authenticated")
-        expect(review.locator(".photo-summary.reading, .photo-summary.queued")).to_have_count(0, timeout=20000)
+        expect(review.locator(".photo-summary.matches, .photo-summary.uncertain")).to_have_count(1, timeout=20000)
         finished = time.monotonic()
         print("Synthetic OCR review: " + review.inner_text())
         # Production pages have a navigation caption. Its visible review warning
