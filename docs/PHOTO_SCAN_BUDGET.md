@@ -86,7 +86,12 @@ and the [W3C capture algorithm](https://www.w3.org/TR/image-capture/#dom-imageca
 Camera interfaces offer explicit local photo selection if native acquisition
 is unavailable. This does not automatically open a phone camera app, save to the
 photo library or upload images. The main page also retains its general-purpose
-existing image input for ordinary QR images. Close, Cancel, replacement and
+existing image input for ordinary QR images. That input also serves the main
+camera's **Choose photo** button. All selected-photo routes now use the same
+12 MP working-copy limit before seal decoding, including photos only slightly
+above 12 MP. The general-purpose input keeps smaller QR images at their original
+size and does not impose the full-page minimum-resolution requirement.
+Close, Cancel, replacement and
 Finish & clear discard pending work and cannot publish late pixels/results.
 
 If seal reading fails after a photo is submitted, the interface shows the
@@ -95,6 +100,14 @@ photo, its original dimensions are shown separately. The preparation time
 includes native acquisition or file decoding plus canvas preparation, before
 the seal-reading budget starts. Neither pixel count nor preparation time proves
 that the captured watermark is sharp or readable.
+
+The selected-photo cap reduces canvas/readback memory and avoids resizing a
+larger upload repeatedly inside the eight-second seal-reading budget. It also
+keeps selected working pixels eligible for the decoder's bounded native-sampling
+fallback. This does not raise the time limit or prove that an unreadable photo
+will decode. File opening and canvas preparation still occur before that budget;
+their reported time must not be mistaken for seal-decoding time. Cancel discards
+a still-opening file immediately without waiting for image decoding to settle.
 
 Native capture failures during seal reading also retain whether the trigger was
 manual or automatic, the actual preview dimensions, and the last allowlisted
