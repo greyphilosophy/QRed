@@ -12,10 +12,14 @@ never the framing decision, recovered seal, authenticated result, or OCR text.
 
 - `tests/test_scanner_workflow.py`: stamp a synthetic invoice through the actual
   PDF UI, rasterize the entire stamped page at 240 DPI, and put that whole page
-  into the camera workflow. Feed a clipped preview, a defocused preview, then a
+  into the camera workflow. Feed clipped, defocused, and moving previews, then a
   steady page. No shutter click or file input is allowed. Check no early capture,
-  exactly one full-detail native photo, real signature authentication, exact OCR
-  agreement, stopped tracks, and Finish & clear. Both `/` and `/verify.htm` run
+  a fresh 600 ms steady hold before requesting the photo,
+  exactly one full-detail native photo, real signature authentication, an exact
+  matched-word list with no document differences or OCR uncertainty, stopped
+  tracks, and Finish & clear. The separate caution for QRed's printed markings,
+  including its navigation caption, must stay visible; it is not a document
+  mismatch. Both `/` and `/verify.htm` run
   a clear case and a fixed 97%-print-scale, dimmed, JPEG-compressed case.
 - `tests/test_auto_capture.py`: keep the existing changed-text, mismatched-page
   retake, capture acknowledgement, separate low-resolution preview/native still,

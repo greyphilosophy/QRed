@@ -22,6 +22,12 @@ from browser_helpers import (
 )
 from test_visual_page_seals import PRIVATE_KEY, PUBLIC_KEY
 
+LINES = [
+    "Scanner workflow invoice 1042", "Account 123456", "Approved total 123.45",
+    "Payment due Friday", "Room 100.50", "Breakfast 12.00", "Parking 5.00",
+    "Reference confirmed", "Keep this page for your records",
+]
+
 
 @pytest.fixture(scope="module")
 def printed_workflow_page(browser, tmp_path_factory):
@@ -30,13 +36,9 @@ def printed_workflow_page(browser, tmp_path_factory):
     source = io.BytesIO()
     pdf = canvas.Canvas(source, pagesize=(612, 792))
     pdf.setFont("Helvetica", 14)
-    pdf.drawString(72, 700, "Scanner workflow invoice 1042")
+    pdf.drawString(72, 700, LINES[0])
     pdf.setFont("Helvetica", 12)
-    for index, line in enumerate([
-        "Account 123456", "Approved total 123.45", "Payment due Friday",
-        "Room 100.50", "Breakfast 12.00", "Parking 5.00",
-        "Reference confirmed", "Keep this page for your records",
-    ]):
+    for index, line in enumerate(LINES[1:]):
         pdf.drawString(72, 660 - index * 36, line)
     pdf.showPage()
     pdf.save()
@@ -102,16 +104,25 @@ def install_changing_camera(page, frames):
         }
         const frame = document.createElement('canvas'); frame.width = 768; frame.height = 960;
         const context = frame.getContext('2d');
-        window.__workflowCamera = {mode: 'clipped', opens: 0, tracks: [], ticks: 0};
+        window.__workflowCamera = {mode: 'clipped', opens: 0, tracks: [], ticks: 0, captures: []};
         window.__syntheticNativePhoto = images.native;
+        const draw = () => {
+            const moving = __workflowCamera.mode === 'moving';
+            const at = performance.now() / 250;
+            context.fillStyle = '#373737'; context.fillRect(0, 0, frame.width, frame.height);
+            context.drawImage(images[moving ? 'clear' : __workflowCamera.mode],
+                moving ? Math.round(35 * Math.sin(at)) : 0,
+                moving ? Math.round(25 * Math.cos(at)) : 0);
+        };
         window.__showWorkflowFrame = mode => {
             __workflowCamera.mode = mode;
-            context.drawImage(images[mode], 0, 0);
+            if (mode === 'clear') __workflowCamera.clearAt = performance.now();
+            draw();
         };
         __showWorkflowFrame('clipped');
         const timer = setInterval(() => {
             __workflowCamera.ticks++;
-            context.drawImage(images[__workflowCamera.mode], 0, 0);
+            draw();
         }, 100);
         navigator.mediaDevices.getUserMedia = async () => {
             __workflowCamera.opens++;
@@ -127,6 +138,15 @@ def install_changing_camera(page, frames):
         }).observe({type: 'longtask'});
     }""", frames)
     page.evaluate(NATIVE_PHOTO_CAMERA_SCRIPT)
+    page.evaluate("""() => {
+        const NativePhoto = window.ImageCapture;
+        window.ImageCapture = class extends NativePhoto {
+            takePhoto(settings) {
+                __workflowCamera.captures.push({at: performance.now(), mode: __workflowCamera.mode});
+                return super.takePhoto(settings);
+            }
+        };
+    }""")
     observe_document_scan_requests(page)
 
 
@@ -149,10 +169,12 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         expect(guide).to_contain_text("four page corners", timeout=15000)
         # Every invalid phase lasts longer than the 600 ms steady hold. A
         # timer-only auto-capture or a bypassed quality gate must fail here.
-        for mode, advice in [("clipped", "four page corners"), ("soft", "edges look soft")]:
+        for mode, advice in [("clipped", "four page corners"), ("soft", "edges look soft"),
+                             ("moving", "Hold steady")]:
             page.evaluate("mode => __showWorkflowFrame(mode)", mode)
             expect(guide).to_contain_text(advice, timeout=10000)
             before = page.evaluate("__documentScanRequests.filter(request => request.live).length")
+            page.wait_for_timeout(800)
             page.wait_for_function("before => __documentScanRequests.filter(request => request.live).length >= before + 5", arg=before)
             assert page.evaluate("__syntheticStillRequests.length") == 0
             expect(page.locator(".page-check-list button")).to_have_count(0)
@@ -163,15 +185,35 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         review = page.get_by_role("region", name="Review Page 1 of 1", exact=True)
         expect(review).to_be_visible(timeout=15000)
         authenticated = time.monotonic()
-        expect(review.locator("h3")).to_contain_text("Seal authenticated")
-        expect(review.locator(".photo-summary")).to_have_text(
-            "Recognized text matches the signed text", timeout=20000)
+        expect(review.locator("h3").first).to_contain_text("Seal authenticated")
+        expect(review.locator(".photo-summary.reading, .photo-summary.queued")).to_have_count(0, timeout=20000)
         finished = time.monotonic()
+        print("Synthetic OCR review: " + review.inner_text())
+        # Production pages have a navigation caption. Its visible review warning
+        # must remain, even when every signed document word agrees exactly.
+        # Do not turn that conservative result into an unconditional green match.
+        review.get_by_label("Show matching words too", exact=True).check()
+        expected_words = [word for line in LINES for word in line.split()]
+        words = review.locator('.photo-stage svg[aria-label="Text comparison highlights"] .photo-word')
+        expect(words).to_have_count(len(expected_words))
+        assert words.evaluate_all("nodes => nodes.map(node => node.getAttribute('aria-label'))") == [
+            "Matching text: " + word for word in expected_words]
         assert review.locator(".photo-differences").inner_text() == ""
+        expect(review.locator(".photo-legend .matched")).to_have_text(f"Matching: {len(expected_words)}")
+        expect(review.locator(".photo-legend .different")).to_have_text("Different or extra: 0")
+        expect(review.locator(".photo-legend .uncertain")).to_have_text("Uncertain: 0")
+        expect(review.locator(".reading-caution, .photo-retries")).to_have_count(0)
+        if review.locator(".photo-summary").inner_text() == "Some readings need review":
+            expect(review.locator(".photo-markings")).to_be_visible()
+            expect(review.locator(".photo-markings")).to_contain_text("Verify")
+        else:
+            expect(review.locator(".photo-summary")).to_have_text("Recognized text matches the signed text")
         decoded = assert_document_preview_not_decoded(page)
         assert len(decoded) == 1, decoded
         assert (decoded[0]["width"], decoded[0]["height"]) == (2400, 3000)
         assert page.evaluate("__syntheticStillRequests.length") == 1
+        assert page.evaluate("__workflowCamera.captures[0].mode") == "clear"
+        assert page.evaluate("__workflowCamera.captures[0].at - __workflowCamera.clearAt") >= 600
         assert page.evaluate("__workflowCamera.opens") == 1
         assert page.evaluate("__workflowCamera.tracks.every(track => track.readyState === 'ended')")
         longest_task = page.evaluate("Math.max(0, ...__workflowLongTasks)")
