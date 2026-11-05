@@ -7,6 +7,7 @@ import { isChromaticForeground } from "./watermarkFilter.js";
 import { readErasedQrMatrix } from "./qrErasureRecovery.js";
 import { recoverRefinedQrRegion } from "./pageAlignedRecovery.js";
 import { estimatePaperColor, paperColorChannel, photoLuminance } from "./paperColor.js";
+import { previewForPaperEdges } from "./paperGeometryPreview.js";
 import { encodedVersion } from "./qrLowLevel.js";
 
 // Keep the generous default unless the original page already prints closer
@@ -30,7 +31,6 @@ const PHOTO_PAGE_FORMATS = [
 // Only the page-edge detector uses a small preview. QR module evidence is
 // ALWAYS sampled from the original full-resolution pixels.
 const MAX_PHOTO_PIXELS = 80_000_000;
-const MAX_GEOMETRY_PIXELS = 1_500_000;
 const MODULE_RENDER_PIXELS = 4;
 const FINDER_LOCATIONS = ["topRight", "bottomLeft"];
 
@@ -99,32 +99,6 @@ function intersect(vertical, horizontal) {
 
 function distance(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 
-// Read a bounded geometry preview instead of copying a 12–48 MP phone photo.
-// Nearest neighboring samples are averaged for edge stability, without
-// softening or discarding fine watermark modules in the original image.
-function previewForPaperEdges(image) {
-  const { width, height, data } = image;
-  if (width * height <= MAX_GEOMETRY_PIXELS) return image;
-  const scale = Math.sqrt(MAX_GEOMETRY_PIXELS / (width * height));
-  const w = Math.max(160, Math.floor(width * scale));
-  const h = Math.max(160, Math.floor(height * scale));
-  const pixels = new Uint8ClampedArray(w * h * 4);
-  const offsets = [[-1, -1], [0, 0], [1, 0], [0, 1]];
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const sx = Math.round((x + 0.5) * width / w - 0.5);
-    const sy = Math.round((y + 0.5) * height / h - 0.5);
-    const out = (y * w + x) * 4;
-    for (const [dx, dy] of offsets) {
-      const px = Math.min(width - 1, Math.max(0, sx + dx));
-      const py = Math.min(height - 1, Math.max(0, sy + dy));
-      const input = (py * width + px) * 4;
-      for (let channel = 0; channel < 3; channel++)
-        pixels[out + channel] += paperColorChannel(data, input, channel, image.paperColor) / offsets.length;
-    }
-    pixels[out + 3] = 255;
-  }
-  return { data: pixels, width: w, height: h };
-}
 
 function locatePaperAtResolution(image) {
   const { data, width, height } = image;

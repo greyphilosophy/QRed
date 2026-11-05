@@ -8,7 +8,7 @@ import { PNG } from "pngjs";
 import { getPreferredCameraStream, applyCameraQualityControls } from "./qr/cameraControls.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
-import { captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback } from "./qr/cameraPhoto.js";
+import { captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext } from "./qr/cameraPhoto.js";
 import { createQrFrameScanner } from "./qr/scanQrImage.js";
 import { createLiveScanWorker, scanPhotoInWorker } from "./qr/photoScanClient.js";
 import { qrFrameAction } from "./qr/decodePhoto.js";
@@ -60,7 +60,7 @@ function loadStandalone(overrides = {}) {
   });
   const bindings = {
     getPreferredCameraStream, applyCameraQualityControls, authProvider, startCameraSession, observePageScanGuide, createLiveScanWorker, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
-    preparePhotoScanner: vi.fn(), scanPhotoInWorker, photoProcessingMessage, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback,
+    preparePhotoScanner: vi.fn(), scanPhotoInWorker, photoProcessingMessage, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext,
     createScanPhotoCollection: callback => createScanPhotoCollection(callback, async () => new Blob(["frame"], { type: "image/png" })),
     mountPhotoTextVerification: () => ({ update: vi.fn(), prepare: vi.fn().mockResolvedValue(), clear: vi.fn() }),
     mountPdfSealInput: () => ({ update: vi.fn() }),
@@ -360,27 +360,35 @@ it("shows a mixed-document warning instead of an all-authenticated summary for a
   expect(document.querySelector(".collection-progress").textContent).toBe("All 2 pages collected.");
 });
 
-it("uses native still pixels and shows their dimensions after a standalone camera timeout", async () => {
+it.each(["manual", "automatic"])("keeps %s trigger and guide metadata after a standalone camera timeout", async mode => {
   const pixels = { width: 2000, height: 3000, data: new Uint8ClampedArray(4) };
   const bitmap = { width: 2000, height: 3000, close: vi.fn() };
   vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: () => Promise.resolve(new Blob()) }; }));
   vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
   const scan = vi.fn().mockResolvedValue({ status: "feedback", timedOut: true, message: "The scan reached its time limit." });
+  let callbacks;
   loadStandalone({ startCameraSession: () => ({ stop: vi.fn() }), scanPhotoInWorker: scan,
-    createLiveScanWorker: () => ({ busy: false, reset: vi.fn(), scan: vi.fn(), stop: vi.fn() }) });
+    createLiveScanWorker: options => {
+      callbacks = options;
+      return { busy: false, reset: vi.fn(), scan: vi.fn(), stop: vi.fn() };
+    } });
   const video = document.getElementById("cameraVideo");
   video.srcObject = { getVideoTracks: () => [{ kind: "video", readyState: "live" }] };
   Object.defineProperties(video, { videoWidth: { value: 20 }, videoHeight: { value: 30 } });
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage() {}, getImageData: () => pixels });
   fireEvent.click(document.getElementById("btnScan"));
   await waitFor(() => expect(document.getElementById("btnCapture").hidden).toBe(false));
-  fireEvent.click(document.getElementById("btnCapture"));
+  callbacks.onQuality({ state: mode === "manual" ? "soft" : "ready", message: "Safe guide.", progress: mode === "manual" ? 0 : 1 });
+  if (mode === "manual") fireEvent.click(document.getElementById("btnCapture"));
+  else callbacks.onCaptured({ captureOnly: true });
   await waitFor(() => expect(scan).toHaveBeenCalledTimes(1));
   expect(scan.mock.calls[0][0]).toBe(pixels);
   // Native acquisition uses its own canvas, never the preview canvas.
   expect(document.getElementById("scanCanvas").width).toBe(300);
   expect(document.getElementById("scanCanvas").height).toBe(150);
   await waitFor(() => expect(document.getElementById("pageGuideHint").textContent).toContain("Camera photo: 2000 × 3000"));
+  expect(document.getElementById("pageGuideHint").textContent)
+    .toContain(`${mode} capture, 20 × 30 preview, last guide: ${mode === "manual" ? "page edges soft" : "steady hold passed"}`);
 });
 
 function setupStandaloneCapture(overrides = {}) {

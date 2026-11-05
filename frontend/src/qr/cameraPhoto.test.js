@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { canCaptureCameraPhoto, captureCameraPhoto, cameraCaptureFeedback, cameraFrameDiagnostic, cameraPhotoFailure, readCameraPhotoFile, NATIVE_PHOTO_TIMEOUT_MS } from "./cameraPhoto.js";
+import { canCaptureCameraPhoto, captureCameraPhoto, cameraCaptureFeedback, cameraFrameDiagnostic, cameraPhotoFailure, readCameraPhotoFile, NATIVE_PHOTO_TIMEOUT_MS, cameraCaptureContext } from "./cameraPhoto.js";
 
 const track = { kind: "video", readyState: "live" };
 const video = { srcObject: { getVideoTracks: () => [track] } };
@@ -16,7 +16,7 @@ beforeEach(() => {
   vi.stubGlobal("ImageCapture", vi.fn(function() { return camera; }));
   vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it("uses still-photo detail with flash off and retains exactly the pixels sent to decoding", async () => {
   expect(canCaptureCameraPhoto(video)).toBe(true);
@@ -75,7 +75,7 @@ it.each(["missing", "unsupported"])("takes a native still when optional capabili
   const onDiagnostic = vi.fn();
   expect(await captureCameraPhoto(video, canvas, { onDiagnostic })).toBe(pixels);
   expect(camera.takePhoto).toHaveBeenCalledWith({ fillLightMode: "off" });
-  expect(onDiagnostic).toHaveBeenCalledWith({ source: "native-still", width: 4000, height: 3000, reason: "captured" });
+  expect(onDiagnostic).toHaveBeenCalledWith({ source: "native-still", width: 4000, height: 3000, sourceWidth: 4000, sourceHeight: 3000, preparationMs: expect.any(Number), reason: "captured" });
 });
 
 it.each(["NotSupportedError", "OverconstrainedError", "TypeError"])("retries rejected dimensions once after %s without enabling flash", async name => {
@@ -168,7 +168,7 @@ it("allows a genuine still to finish after the old 1.8-second preview fallback d
   expect(onDiagnostic).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(400);
   expect(await result).toBe(pixels);
-  expect(onDiagnostic).toHaveBeenCalledWith({ source: "native-still", width: 4000, height: 3000, reason: "captured" });
+  expect(onDiagnostic).toHaveBeenCalledWith({ source: "native-still", width: 4000, height: 3000, sourceWidth: 4000, sourceHeight: 3000, preparationMs: expect.any(Number), reason: "captured" });
   expect(NATIVE_PHOTO_TIMEOUT_MS).toBe(5000);
   expect(vi.getTimerCount()).toBe(0);
 });
@@ -210,7 +210,7 @@ it("opens an explicitly selected high-resolution photo locally and reports its a
   const onDiagnostic = vi.fn();
   expect(await readCameraPhotoFile(new Blob(), canvas, { onDiagnostic })).toBe(pixels);
   expect(context.drawImage).toHaveBeenCalledWith(photo, 0, 0, 4000, 3000);
-  expect(onDiagnostic).toHaveBeenCalledWith({ source: "selected-photo", width: 4000, height: 3000, reason: "captured" });
+  expect(onDiagnostic).toHaveBeenCalledWith({ source: "selected-photo", width: 4000, height: 3000, sourceWidth: 4000, sourceHeight: 3000, preparationMs: expect.any(Number), reason: "captured" });
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:selected");
   expect(photo.src).toBe("");
 });
@@ -261,5 +261,43 @@ it.each(["native", "selected"].flatMap(source => [
   expect(canvas).toMatchObject({ width: image.width, height: image.height });
   expect(context.getImageData).toHaveBeenCalledWith(0, 0, image.width, image.height);
   expect(onDiagnostic).toHaveBeenCalledWith({ source: source === "native" ? "native-still" : "selected-photo",
-    width: image.width, height: image.height, reason: "captured" });
+    width: image.width, height: image.height, sourceWidth: width, sourceHeight: height, preparationMs: expect.any(Number), reason: "captured" });
+});
+
+it("reports source and working dimensions separately and measures preparation before decoding", async () => {
+  let now = 100;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  bitmap.width = 6000; bitmap.height = 8000;
+  camera.takePhoto.mockImplementation(async () => { now = 850; return new Blob(); });
+  context.getImageData.mockImplementation((_x, _y, width, height) => {
+    now = 900;
+    return { width, height, data: new Uint8ClampedArray(4) };
+  });
+  const onDiagnostic = vi.fn();
+  await captureCameraPhoto(video, canvas, { onDiagnostic });
+  expect(onDiagnostic).toHaveBeenCalledWith({ source: "native-still", width: 3000, height: 4000,
+    sourceWidth: 6000, sourceHeight: 8000, preparationMs: 800, reason: "captured" });
+  const action = { status: "feedback", message: "No seal." };
+  expect(cameraCaptureFeedback(action, onDiagnostic.mock.calls[0][0]).message)
+    .toBe("No seal. Camera photo: 3000 × 4000 (from 6000 × 8000, prepared in 0.8 s).");
+});
+
+it("ignores malformed extra capture metadata and never renders arbitrary fields", () => {
+  const action = { status: "feedback", message: "No seal." };
+  expect(cameraCaptureFeedback(action, { source: "native-still", width: 3000, height: 4000,
+    sourceWidth: "private", sourceHeight: 8000, preparationMs: Infinity, deviceId: "private", text: "private" }).message)
+    .toBe("No seal. Camera photo: 3000 × 4000.");
+});
+
+it("snapshots only preview dimensions, trigger and an allowlisted guide state", () => {
+  const frame = { width: 640, height: 480, data: "private pixels" };
+  const quality = { state: "small", message: "private message", samples: [1, 2] };
+  const context = cameraCaptureContext(frame, false, quality);
+  expect(context).toEqual({ trigger: "manual", previewWidth: 640, previewHeight: 480, guideState: "small" });
+  frame.width = 3000; quality.state = "ready";
+  const action = { status: "feedback", message: "No seal." };
+  expect(cameraCaptureFeedback(action, { source: "native-still", width: 3000, height: 4000, ...context }).message)
+    .toBe("No seal. Camera photo: 3000 × 4000. Before photo: manual capture, 640 × 480 preview, last guide: page too small.");
+  expect(cameraCaptureContext({ width: 0, height: 1 }, true, { state: "private" }))
+    .toEqual({ trigger: "automatic" });
 });

@@ -4,6 +4,24 @@ export const NATIVE_PHOTO_TIMEOUT_MS = 5000;
 export const MIN_DOCUMENT_PHOTO_PIXELS = 4_000_000;
 export const MIN_DOCUMENT_PHOTO_LONG_SIDE = 2560;
 const pendingTracks = new WeakSet();
+const GUIDE_LABELS = Object.freeze({
+  framing: "page corners needed", small: "page too small", dark: "more light needed",
+  soft: "page edges soft", clear: "page clear", hold: "steady hold pending",
+  ready: "steady hold passed", captured: "page already captured",
+});
+
+// Snapshot only the last guidance state and actual preview dimensions before
+// a native photo replaces the canvas. The later live view is a different frame.
+export function cameraCaptureContext(frame, automatic, quality) {
+  return {
+    trigger: automatic ? "automatic" : "manual",
+    ...(Number.isInteger(frame?.width) && Number.isInteger(frame?.height)
+      && frame.width > 0 && frame.height > 0 && frame.width * frame.height <= 80_000_000
+      ? { previewWidth: frame.width, previewHeight: frame.height } : {}),
+    ...(typeof quality?.state === "string" && Object.hasOwn(GUIDE_LABELS, quality.state)
+      ? { guideState: quality.state } : {}),
+  };
+}
 
 export function canCaptureCameraPhoto(video) {
   const track = video?.srcObject?.getVideoTracks?.()[0];
@@ -31,7 +49,21 @@ export function cameraCaptureFeedback(action, capture) {
   const source = capture.source === "native-still" ? "Camera photo"
     : capture.source === "selected-photo" ? "Selected photo" : "Camera frame";
   const reason = capture.source === "video-frame" ? reasons[capture.reason] : null;
-  return { ...action, message: `${action.message} ${source}: ${capture.width} × ${capture.height}.${reason ? ` ${reason}` : ""}` };
+  const details = [];
+  if (Number.isInteger(capture.sourceWidth) && Number.isInteger(capture.sourceHeight)
+    && capture.sourceWidth > 0 && capture.sourceHeight > 0 && capture.sourceWidth * capture.sourceHeight <= 80_000_000
+    && (capture.sourceWidth !== capture.width || capture.sourceHeight !== capture.height))
+    details.push(`from ${capture.sourceWidth} × ${capture.sourceHeight}`);
+  if (Number.isFinite(capture.preparationMs) && capture.preparationMs >= 0 && capture.preparationMs <= 600_000)
+    details.push(`prepared in ${(capture.preparationMs / 1000).toFixed(1)} s`);
+  const context = [];
+  if (["manual", "automatic"].includes(capture.trigger)) context.push(`${capture.trigger} capture`);
+  if (Number.isInteger(capture.previewWidth) && Number.isInteger(capture.previewHeight)
+    && capture.previewWidth > 0 && capture.previewHeight > 0 && capture.previewWidth * capture.previewHeight <= 80_000_000)
+    context.push(`${capture.previewWidth} × ${capture.previewHeight} preview`);
+  if (typeof capture.guideState === "string" && Object.hasOwn(GUIDE_LABELS, capture.guideState))
+    context.push(`last guide: ${GUIDE_LABELS[capture.guideState]}`);
+  return { ...action, message: `${action.message} ${source}: ${capture.width} × ${capture.height}${details.length ? ` (${details.join(", ")})` : ""}.${context.length ? ` Before photo: ${context.join(", ")}.` : ""}${reason ? ` ${reason}` : ""}` };
 }
 
 const unsupportedOptions = error => ["NotSupportedError", "OverconstrainedError", "TypeError"].includes(error?.name);
@@ -39,6 +71,7 @@ const unsupportedOptions = error => ["NotSupportedError", "OverconstrainedError"
 export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NATIVE_PHOTO_TIMEOUT_MS, onDiagnostic,
   requireHighResolution = false } = {}) {
   signal?.throwIfAborted();
+  const started = performance.now();
   const fallback = reason => ({ image: null, diagnostic: cameraFrameDiagnostic(canvas, reason) });
   if (!canCaptureCameraPhoto(video)) {
     onDiagnostic?.(fallback("unsupported").diagnostic);
@@ -95,7 +128,9 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
       canvas.width = widthPixels; canvas.height = heightPixels;
       context.drawImage(bitmap, 0, 0, widthPixels, heightPixels);
       return { image: context.getImageData(0, 0, widthPixels, heightPixels),
-        diagnostic: { source: "native-still", width: widthPixels, height: heightPixels, reason: "captured" } };
+        diagnostic: { source: "native-still", width: widthPixels, height: heightPixels,
+          sourceWidth: bitmap.width, sourceHeight: bitmap.height,
+          preparationMs: Math.round(performance.now() - started), reason: "captured" } };
     } catch (error) {
       // Once replacing the retained canvas begins, a drawing failure must
       // surface instead of pairing old decoder pixels with a different photo.
@@ -149,6 +184,7 @@ export function cameraPhotoFailure(diagnostic) {
 // the phone's camera app automatically, persist the file or send it anywhere.
 export async function readCameraPhotoFile(file, canvas, { signal, onDiagnostic, requireHighResolution = true } = {}) {
   signal?.throwIfAborted();
+  const started = performance.now();
   const photo = new Image(), url = URL.createObjectURL(file);
   let abort;
   const failure = reason => {
@@ -179,7 +215,8 @@ export async function readCameraPhotoFile(file, canvas, { signal, onDiagnostic, 
     canvas.width = widthPixels; canvas.height = heightPixels;
     context.drawImage(photo, 0, 0, widthPixels, heightPixels);
     const image = context.getImageData(0, 0, widthPixels, heightPixels);
-    onDiagnostic?.({ source: "selected-photo", width: widthPixels, height: heightPixels, reason: "captured" });
+    onDiagnostic?.({ source: "selected-photo", width: widthPixels, height: heightPixels,
+      sourceWidth: width, sourceHeight: height, preparationMs: Math.round(performance.now() - started), reason: "captured" });
     return image;
   } finally {
     signal?.removeEventListener("abort", abort);

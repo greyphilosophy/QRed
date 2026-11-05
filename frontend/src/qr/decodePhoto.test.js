@@ -211,3 +211,48 @@ it.each(["footer", "alignment"])("checkpoints a chunk before the next %s attempt
   expect(() => decodePhoto(image, { returnPayload: true, onProgress })).toThrow("terminated");
   expect(onProgress).toHaveBeenCalledTimes(1);
 });
+
+it("reports only fixed stage names and relative elapsed times before actual attempts", () => {
+  let now = 1000;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  const stages = [];
+  const onStage = stage => stages.push(stage);
+  scanRectifiedSeal.mockImplementation(() => { now += 100; return null; });
+  scanWatermarkPreview.mockImplementation(() => { now += 20; return null; });
+  scanQrImage.mockImplementation(() => { now += 30; return null; });
+  scanFooterSeals.mockImplementation(() => { now += 40; return []; });
+  scanPageAlignedImage.mockImplementation(() => { now += 50; return []; });
+  decodePhoto(image, { returnPayload: true, onStage });
+  expect(stages).toEqual([
+    { stage: "rectified-fast", elapsedMs: 0 },
+    { stage: "watermark-preview", elapsedMs: 100 },
+    { stage: "ordinary-qr", elapsedMs: 120 },
+    { stage: "footer", elapsedMs: 150 },
+    { stage: "rectified-wide", elapsedMs: 190 },
+    { stage: "page-aligned", elapsedMs: 290 },
+    { stage: "general-qr", elapsedMs: 340 },
+  ]);
+});
+
+it("retains the last stage checkpoint when an attempt blocks and reports no skipped stages", () => {
+  let now = 500;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  const onStage = vi.fn();
+  scanRectifiedSeal.mockImplementation(() => {
+    expect(onStage).toHaveBeenLastCalledWith({ stage: "rectified-fast", elapsedMs: 0 });
+    now += 8001;
+    return null;
+  });
+  decodePhoto(image, { returnPayload: true, onStage });
+  expect(onStage).toHaveBeenCalledTimes(1);
+  expect(scanWatermarkPreview).not.toHaveBeenCalled();
+});
+
+it("reports the direct QR stage for non-payload callers without exposing recovered content", () => {
+  const onStage = vi.fn();
+  scanQrImage.mockReturnValue(code(single));
+  decodePhoto(image, { onStage });
+  expect(onStage).toHaveBeenCalledTimes(1);
+  expect(onStage).toHaveBeenCalledWith({ stage: "general-qr", elapsedMs: expect.any(Number) });
+  expect(Object.keys(onStage.mock.calls[0][0]).sort()).toEqual(["elapsedMs", "stage"]);
+});

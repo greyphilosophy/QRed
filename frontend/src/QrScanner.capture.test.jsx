@@ -41,6 +41,7 @@ it.each(["manual", "automatic"])("uses native still pixels after unavailable cap
     getPhotoCapabilities: () => Promise.reject(new DOMException("private device detail", "NotSupportedError")), takePhoto,
   }; }));
   vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
+  act(() => camera.live.onQuality({ state: mode === "manual" ? "small" : "ready", message: "Safe guide" }));
   if (mode === "manual") fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
   else act(() => camera.live.onCaptured({ captureOnly: true }));
   await waitFor(() => expect(camera.scan).toHaveBeenCalledTimes(1));
@@ -49,6 +50,7 @@ it.each(["manual", "automatic"])("uses native still pixels after unavailable cap
   expect(canvas.width).toBe(4000); expect(canvas.height).toBe(3000);
   expect(takePhoto).toHaveBeenCalledWith({ fillLightMode: "off" });
   expect(await screen.findByText(/Camera photo: 4000 × 3000/)).toBeTruthy();
+  expect(document.body.textContent).toContain(`${mode} capture, 1920 × 1080 preview, last guide: ${mode === "manual" ? "page too small" : "steady hold passed"}`);
   expect(document.body.textContent).not.toMatch(/private device detail|private camera|private ID/);
 });
 

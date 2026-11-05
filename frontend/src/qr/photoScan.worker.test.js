@@ -26,7 +26,7 @@ it("announces capture before any seal work and recovers from that same image", (
   });
   capture();
   expect(scan.frame).not.toHaveBeenCalled();
-  expect(scan.photo).toHaveBeenCalledWith(image, { returnPayload: true, onProgress: expect.any(Function) });
+  expect(scan.photo).toHaveBeenCalledWith(image, { returnPayload: true, onProgress: expect.any(Function), onStage: expect.any(Function) });
   expect(scope.postMessage).toHaveBeenLastCalledWith({ action: { status: "found", text: "recovered seal" }, quality: { ready: true, state: "ready" } });
 });
 
@@ -35,7 +35,7 @@ it("retains multipart recovery after an early capture acknowledgement", () => {
   scan.seal.mockReturnValue({ total_chunks: 2 });
   scan.photo.mockReturnValue({ status: "found-multiple", texts: ["first chunk", "second chunk"] });
   capture();
-  expect(scan.photo).toHaveBeenCalledWith(image, { returnPayload: true, onProgress: expect.any(Function) });
+  expect(scan.photo).toHaveBeenCalledWith(image, { returnPayload: true, onProgress: expect.any(Function), onStage: expect.any(Function) });
   expect(scope.postMessage.mock.calls.at(-1)[0].action.texts).toHaveLength(2);
 });
 
@@ -74,4 +74,15 @@ it("posts partial chunks separately before the final photo result", () => {
   capture();
   expect(scope.postMessage.mock.calls.map(([message]) => Object.keys(message)[0])).toEqual(["captured", "progress", "action"]);
   expect(scope.postMessage).toHaveBeenCalledWith({ progress });
+});
+
+it("posts only sanitized stage metadata before a synchronous decoder attempt", () => {
+  scan.photo.mockImplementation((_image, { onStage }) => {
+    onStage({ stage: "rectified-fast", elapsedMs: 12.7, text: "private text", pixels: image.data });
+    onStage({ stage: "private text", elapsedMs: 100 });
+    expect(scope.postMessage).toHaveBeenLastCalledWith({ scanStage: { stage: "rectified-fast", elapsedMs: 13 } });
+    return { status: "feedback", message: "No seal." };
+  });
+  capture();
+  expect(scope.postMessage.mock.calls.map(([message]) => Object.keys(message)[0])).toEqual(["captured", "scanStage", "action"]);
 });

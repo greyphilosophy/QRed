@@ -10,7 +10,7 @@ export { qrScanAction } from "./qr/decodePhoto.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
 import { photoProcessingMessage } from "./verifier/photoStatus.js";
-import { canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback, cameraPhotoFailure } from "./qr/cameraPhoto.js";
+import { canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback, cameraPhotoFailure, cameraCaptureContext } from "./qr/cameraPhoto.js";
 import "./qrScanner.css";
 
 /**
@@ -218,6 +218,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
     let captureReported = false;
     let processingCapture = false;
     let captureDiagnostic = null;
+    let lastQuality = null;
     let manualCaptureFailed = false;
     const capturedCanvas = canvasRef.current;
     let camera;
@@ -227,6 +228,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       returnPayload,
       requirePageQuality: autoCapture,
       onQuality: quality => {
+        lastQuality = { state: quality.state };
         setQuality(quality);
         if (!quality.ready && captureReported) { captureReported = false; setFeedback(null); }
       },
@@ -304,12 +306,13 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       photoScanRef.current = controller;
       onReadingPhoto(true);
       const nativePhoto = canCaptureCameraPhoto(videoRef.current);
+      const captureContext = cameraCaptureContext(image, preserveGate, lastQuality);
       captureDiagnostic = cameraFrameDiagnostic(image);
       setFeedback(nativePhoto ? "Hold steady — taking photo…" : photoProcessingMessage());
       const read = async () => {
         const still = nativePhoto ? await captureCameraPhoto(videoRef.current, canvasRef.current,
           { signal: controller.signal, requireHighResolution: autoCapture, onDiagnostic: diagnostic => {
-            if (photoScanRef.current === controller) captureDiagnostic = diagnostic;
+            if (photoScanRef.current === controller) captureDiagnostic = { ...diagnostic, ...captureContext };
           } }) : null;
         controller.signal.throwIfAborted();
         if (autoCapture && !still) return cameraPhotoFailure(captureDiagnostic);

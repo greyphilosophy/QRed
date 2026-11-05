@@ -1,5 +1,6 @@
 import workerUrl from "./photoScan.worker.js?worker&url";
 import { PHOTO_SCAN_BUDGET_MS, photoScanTimeoutAction } from "./photoScanBudget.js";
+import { scanStageDiagnostic } from "./photoScanDiagnostics.js";
 
 // Warm only public application code while the page is online. Wait for the
 // service worker to control this tab so later scans/cancellations work offline.
@@ -27,7 +28,7 @@ function runPhotoWorker(image, { signal, ...request }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(new DOMException("Scan cancelled", "AbortError")); return; }
     const worker = new Worker(workerUrl, { type: "module" });
-    let finished = false, timeout, partial = null;
+    let finished = false, timeout, partial = null, stage = null;
     const finish = (error, action) => {
       if (finished) return;
       finished = true;
@@ -41,6 +42,7 @@ function runPhotoWorker(image, { signal, ...request }) {
     signal?.addEventListener("abort", abort, { once: true });
     worker.onmessage = ({ data }) => {
       if (finished) return;
+      if (data.scanStage) { stage = scanStageDiagnostic(data.scanStage) || stage; return; }
       if (data.progress) { partial = data.progress; return; }
       finish(data.error ? new Error(data.error) : null, data.action);
     };
@@ -53,7 +55,7 @@ function runPhotoWorker(image, { signal, ...request }) {
     // Promise.race cannot interrupt jsQR while it is still using the CPU.
     // OCR pixel preparation is a separate operation with its own caller.
     if (!request.prepareReading) timeout = setTimeout(() =>
-      finish(null, photoScanTimeoutAction(partial)), PHOTO_SCAN_BUDGET_MS);
+      finish(null, photoScanTimeoutAction(partial, stage)), PHOTO_SCAN_BUDGET_MS);
     try {
       // Transfer ownership instead of cloning a 12–48 MP pixel buffer.
       worker.postMessage({ image: { data: image.data, width: image.width, height: image.height }, ...request },
@@ -74,8 +76,8 @@ export function preparePhotoReadingInWorker(image, { signal } = {}) {
 // runs, and check busy before drawing the next camera frame into that canvas.
 export function createLiveScanWorker({ onResult, onError, returnPayload = false, requirePageQuality = false, onQuality, onCaptured }) {
   let worker = null, busy = false, stopped = false, paused = false;
-  let timeout, partial = null;
-  const clearDeadline = () => { clearTimeout(timeout); timeout = undefined; partial = null; };
+  let timeout, partial = null, stage = null;
+  const clearDeadline = () => { clearTimeout(timeout); timeout = undefined; partial = null; stage = null; };
   function reset() {
     clearDeadline();
     paused = false;
@@ -105,6 +107,7 @@ export function createLiveScanWorker({ onResult, onError, returnPayload = false,
           current.onmessage = ({ data }) => {
             if (worker !== current || stopped || !busy) return;
             if (data.error) { fail(current, new Error(data.error)); return; }
+            if (data.scanStage) { stage = scanStageDiagnostic(data.scanStage) || stage; return; }
             if (data.progress) { partial = data.progress; return; }
             if (data.captured) {
               // This is an intermediate acknowledgement, not a decoder result.
@@ -113,7 +116,7 @@ export function createLiveScanWorker({ onResult, onError, returnPayload = false,
               if (data.captureOnly) busy = false;
               else if (timeout === undefined) timeout = setTimeout(() => {
                 if (worker !== current || stopped || !busy) return;
-                const action = photoScanTimeoutAction(partial);
+                const action = photoScanTimeoutAction(partial, stage);
                 reset();
                 // Termination also discards the page-movement gate. Do not
                 // recapture unchanged paper forever; Capture now/reset resumes.

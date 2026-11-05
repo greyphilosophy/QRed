@@ -90,8 +90,46 @@ existing image input for ordinary QR images. Close, Cancel, replacement and
 Finish & clear discard pending work and cannot publish late pixels/results.
 
 If seal reading fails after a photo is submitted, the interface shows the
-actual source and dimensions. Acquisition failures report a fixed reason and
-say no video frame was scanned. These details remain in the camera session;
-no device labels/IDs, exception text, document content or pixels are logged,
-stored or transmitted by the diagnostic. Physical-phone reliability remains
-separate from mocked browser/API tests and saved-photo replay.
+source and working dimensions. If the 12 MP cap resized the decoded source
+photo, its original dimensions are shown separately. The preparation time
+includes native acquisition or file decoding plus canvas preparation, before
+the seal-reading budget starts. Neither pixel count nor preparation time proves
+that the captured watermark is sharp or readable.
+
+Native capture failures during seal reading also retain whether the trigger was
+manual or automatic, the actual preview dimensions, and the last allowlisted
+guidance state before the photo. This records what the gate last reported; it
+does not infer a camera fault or claim the later live preview matches the
+captured photo. Explicitly selected files do not inherit camera guidance.
+
+On a seal-reader timeout, a fixed-name checkpoint identifies the last reported
+decoder step and when it began relative to decoding. These checkpoints do not
+extend the watchdog, settle a request, or replace partial recovered chunks.
+They do not establish why that step failed or show exactly where execution
+stopped. In particular, the watchdog includes worker startup; checkpoint time
+begins inside the decoder. If no checkpoint arrived, no stage is invented.
+
+Acquisition failures report a fixed reason and say no video frame was scanned.
+These details remain in the camera session; no device labels/IDs, exception
+text, document content or pixels are logged, stored or transmitted by the
+diagnostic. A screenshot after a failed manual capture may show a later live
+preview, not the pixels processed in that attempt. Physical-phone reliability
+remains separate from mocked browser/API tests and saved-photo replay.
+
+## Geometry preview work
+
+The page-edge detector uses a bounded working preview while watermark sampling
+retains the original pixels. Source-column indexes and row bounds are now
+calculated once instead of repeating them for every neighbor of every output
+pixel. The four-neighbor sample order and intermediate clamped rounding are
+unchanged. Exact-byte oracle tests compare the previous implementation with
+the optimized one for landscape, portrait, tinted and narrow images.
+
+In eight alternating local Node runs on one 12 MP photo, preview construction
+took 233–260 ms before and 135–242 ms after (medians 242 and 154 ms). Three
+whole-photo decode runs took 612–775 ms before and 532–697 ms after, recovering
+the identical transport. These workstation saved-photo measurements include
+normal runtime variation; they are not a browser camera or phone benchmark.
+The eight-second budget is unchanged. This optimization does not establish
+that a reported manual-capture timeout or automatic-acquisition failure is
+fixed; those require their own reproducible workflow evidence.
