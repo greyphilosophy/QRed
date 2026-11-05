@@ -13,19 +13,19 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from playwright.sync_api import expect
-from browser_helpers import OfflineNetworkGuard, wait_for_offline_resources
+from browser_helpers import OfflineNetworkGuard, wait_for_offline_resources, NATIVE_PHOTO_CAMERA_SCRIPT
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="
 TEXT = "Invoice 1042\nAccount 123456\nApproved total 123.45\nPayment due Friday"
 
 
-def page_image(text):
-    image = Image.new("RGB", (1200, 1600), "white")
+def page_image(text, *, scale=1):
+    image = Image.new("RGB", (1200 * scale, 1600 * scale), "white")
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("DejaVuSans.ttf", 40)
+    font = ImageFont.truetype("DejaVuSans.ttf", 40 * scale)
     for index, line in enumerate(text.splitlines()):
-        draw.text((100, 160 + index * 100), line, font=font, fill="black")
+        draw.text((100 * scale, (160 + index * 100) * scale), line, font=font, fill="black")
     output = io.BytesIO()
     image.save(output, format="PNG")
     return {"name": "synthetic-page.png", "mimeType": "image/png", "buffer": output.getvalue()}
@@ -156,17 +156,19 @@ def test_scaled_table_recovers_numeric_columns_and_keeps_swapped_amounts_visible
 
 
 def camera_paper(page, text, qr_bytes, *, border=True, blur=0):
-    paper = Image.open(io.BytesIO(page_image(text)["buffer"]))
+    # Render text and QR geometry directly at the native still dimensions.
+    # Downsampling this source produces the video preview, never the reverse.
+    paper = Image.open(io.BytesIO(page_image(text, scale=2)["buffer"]))
     if qr_bytes:
         qr = Image.open(io.BytesIO(base64.b64decode(qr_bytes))).convert("L")
-        qr = qr.point(lambda value: 224 if value < 128 else 255).resize((900, 900), Image.Resampling.NEAREST)
-        paper.paste(qr.convert("RGB"), (150, 620))
+        qr = qr.point(lambda value: 224 if value < 128 else 255).resize((1800, 1800), Image.Resampling.NEAREST)
+        paper.paste(qr.convert("RGB"), (300, 1240))
     if border:
-        frame = Image.new("RGB", (1440, 1920), (55, 55, 55))
-        frame.paste(paper, (120, 160))
+        frame = Image.new("RGB", (2880, 3840), (55, 55, 55))
+        frame.paste(paper, (240, 320))
         paper = frame
     if blur:
-        paper = paper.filter(ImageFilter.GaussianBlur(blur))
+        paper = paper.filter(ImageFilter.GaussianBlur(blur * 2))
     output = io.BytesIO(); paper.save(output, format="PNG")
     page.evaluate("""async url => {
         const image = new Image(); image.src = url; await image.decode();
@@ -182,14 +184,17 @@ def camera_paper(page, text, qr_bytes, *, border=True, blur=0):
             navigator.mediaDevices.enumerateDevices = async () => [];
             // A camera keeps producing frames even while the paper is still.
             setInterval(() => {
-                if (window.__syntheticPaper) frame.getContext('2d').drawImage(window.__syntheticPaper, 0, 0);
+                if (window.__syntheticPaper) frame.getContext('2d').drawImage(window.__syntheticPaper, 0, 0, frame.width, frame.height);
             }, 100);
         }
+        window.__syntheticNativePhoto = image;
         window.__syntheticPaper = image;
         const frame = window.__syntheticCameraFrame;
-        frame.width = image.naturalWidth; frame.height = image.naturalHeight;
-        frame.getContext('2d').drawImage(image, 0, 0);
+        frame.width = image.naturalWidth / 2; frame.height = image.naturalHeight / 2;
+        frame.getContext('2d').drawImage(image, 0, 0, frame.width, frame.height);
     }""", "data:image/png;base64," + base64.b64encode(output.getvalue()).decode())
+    page.evaluate(NATIVE_PHOTO_CAMERA_SCRIPT)
+    return {"name": "synthetic-native-photo.png", "mimeType": "image/png", "buffer": output.getvalue()}
 
 
 def persistent_state(page):

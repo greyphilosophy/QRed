@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, expect
-from browser_helpers import show_seal_details, show_file_inputs, stamp_and_save, BASE_URL
+from browser_helpers import show_seal_details, show_file_inputs, stamp_and_save, BASE_URL, NATIVE_PHOTO_CAMERA_SCRIPT
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas as rl_canvas
 from PIL import Image
@@ -695,9 +695,10 @@ class TestRenderedQrImageUploads:
 
 
 class TestCameraFrameScanning:
-    """Exercise the real video/canvas/decoder path with synthetic camera pixels.
+    """Exercise video framing and native-photo decoding with synthetic pixels.
 
     These cover framing and verification, not physical focus, glare, or moire.
+    Rendering synthetic QR geometry larger is not recovery of optical evidence.
     """
 
     @pytest.mark.parametrize("damaged", [False, True], ids=["clean", "damaged-byte-header"])
@@ -712,6 +713,7 @@ class TestCameraFrameScanning:
             "width": width, "height": height, "left": left, "top": top, "size": size, "manual": manual,
         }
         page.set_viewport_size({"width": 390, "height": 844} if width < height else {"width": 1280, "height": 800})
+        page.add_init_script("(" + NATIVE_PHOTO_CAMERA_SCRIPT + ")()")
         page.add_init_script("""
         (() => {
             const camera = CAMERA_FIXTURE;
@@ -728,17 +730,23 @@ class TestCameraFrameScanning:
                     canvas.width = camera.width;
                     canvas.height = camera.height;
                     const context = canvas.getContext('2d');
-                    context.fillStyle = 'white';
-                    context.fillRect(0, 0, canvas.width, canvas.height);
+                    const still = document.createElement('canvas');
+                    still.width = camera.width * 3; still.height = camera.height * 3;
+                    window.__syntheticNativePhoto = still;
+                    const full = still.getContext('2d'); full.scale(3, 3);
+                    full.fillStyle = 'white'; full.fillRect(0, 0, camera.width, camera.height);
+                    context.drawImage(still, 0, 0, canvas.width, canvas.height);
                     const stream = canvas.captureStream(10);
                     window.showCameraSeal = () => {
-                        context.fillStyle = '#373737';
-                        context.fillRect(0, 0, canvas.width, canvas.height);
-                        context.fillStyle = 'white';
-                        context.fillRect(canvas.width * .04, canvas.height * .04, canvas.width * .92, canvas.height * .92);
+                        full.fillStyle = '#373737';
+                        full.fillRect(0, 0, canvas.width, canvas.height);
+                        full.fillStyle = 'white';
+                        full.fillRect(canvas.width * .04, canvas.height * .04, canvas.width * .92, canvas.height * .92);
                         // Crop the existing PDF fixture with its quiet zone,
                         // then put its corners beyond the old center 50% ROI.
-                        context.drawImage(image, 75, 0, 825, 825, camera.left, camera.top, camera.size, camera.size);
+                        full.imageSmoothingEnabled = false;
+                        full.drawImage(image, 75, 0, 825, 825, camera.left, camera.top, camera.size, camera.size);
+                        context.drawImage(still, 0, 0, canvas.width, canvas.height);
                         stream.getVideoTracks()[0].requestFrame();
                     };
                     return stream;
@@ -768,9 +776,12 @@ class TestCameraFrameScanning:
             }""", arg={"left": left, "top": top, "size": size}, timeout=5000)
             page.get_by_role("button", name="Capture now", exact=True).click()
         show_seal_details(page)
-        # Manual capture runs the more thorough photo decoder. This checks
-        # recovery, not decoding speed on the host running the browser.
-        expect(page.get_by_role("heading", name="Pages captured", exact=True)).to_be_visible(timeout=30000 if manual else 10000)
+        # Both paths must decode a native still, never the preview frame.
+        expect(page.get_by_role("heading", name="Pages captured", exact=True)).to_be_visible(timeout=30000)
+        assert page.evaluate("__syntheticStillRequests.length") == 1
+        assert page.evaluate("__syntheticStillRequests[0]") == {
+            "fillLightMode": "off", "imageWidth": width * 3, "imageHeight": height * 3,
+        }
         _open_verification_key(page, TestRenderedQrImageUploads.PUBLIC_KEY)
         show_seal_details(page)
         expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_be_visible()
@@ -791,11 +802,12 @@ class TestContinuousSealScanning:
         frames = []
         for index, (page_number, column) in enumerate([(2, 0), (1, 1), (1, 0)]):
             target = tmp_path / f"continuous-{index}"
-            subprocess.run(["pdftoppm", "-f", str(page_number), "-singlefile", "-r", "200",
-                            "-x", str(round((18 + column * 208) * 200 / 72)), "-y", "2200",
-                            "-W", "550", "-H", "550", "-png", stamped, str(target)],
+            subprocess.run(["pdftoppm", "-f", str(page_number), "-singlefile", "-r", "1000",
+                            "-x", str(round((18 + column * 208) * 1000 / 72)), "-y", "11000",
+                            "-W", "2750", "-H", "2750", "-png", stamped, str(target)],
                            check=True, capture_output=True)
             frames.append("data:image/png;base64," + base64.b64encode(target.with_suffix(".png").read_bytes()).decode("ascii"))
+        page.add_init_script("(" + NATIVE_PHOTO_CAMERA_SCRIPT + ")()")
         page.add_init_script("""
         (() => {
             const frames = FRAMES;
@@ -817,8 +829,10 @@ class TestContinuousSealScanning:
                         await image.decode();
                         context.fillStyle = 'white';
                         context.fillRect(0, 0, 550, 550);
-                        // Preserve the saved-PDF pixels and their quiet zone.
-                        context.drawImage(image, 0, 0);
+                        // Native still pixels come from a fresh high-resolution
+                        // PDF render; only the camera preview is downsampled.
+                        window.__syntheticNativePhoto = image;
+                        context.drawImage(image, 0, 0, 550, 550);
                         const displayed = new Promise(resolve => document.querySelector('video').requestVideoFrameCallback(resolve));
                         stream.getVideoTracks()[0].requestFrame();
                         await displayed;
@@ -835,8 +849,8 @@ class TestContinuousSealScanning:
         page.locator("video").first.scroll_into_view_if_needed()
         progress = page.locator(".ar-collection-progress" if route == "/" else "#statusText")
         page.evaluate("window.showSealFrame(0)")
-        # These are intentional footer close-ups, not whole-page photographs.
-        # The manual override keeps multipart seal collection available.
+        # These are intentional high-resolution footer close-ups. The manual
+        # override skips framing guidance, but still requires a native photo.
         page.get_by_role("button", name="Capture now", exact=True).click()
         _open_verification_key(page, DEMO_PUBLIC_KEY)
         expect(progress).to_contain_text("1 of 2 pages collected", timeout=20000)
@@ -854,6 +868,7 @@ class TestContinuousSealScanning:
         expect(summary).to_have_text("All 2 pages collected.", timeout=20000)
         page.wait_for_function("window.cameraStream.getTracks().every(track => track.readyState === 'ended')")
         assert page.evaluate("window.cameraOpenCount") == 1
+        assert page.evaluate("__syntheticStillRequests.length") == 3
         results = page.locator(".verification-card .verification-result" if route == "/" else "#resultContent .verification-result")
         expect(results).to_have_count(2)
         expect(results.nth(0)).to_contain_text("Record 45:")

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageDraw, ImageFont
 from playwright.sync_api import expect
-from browser_helpers import show_seal_details, show_file_inputs, prepare_text_for_offline, BASE_URL, OfflineNetworkGuard, wait_for_offline_resources
+from browser_helpers import show_seal_details, show_file_inputs, prepare_text_for_offline, BASE_URL, OfflineNetworkGuard, wait_for_offline_resources, NATIVE_PHOTO_CAMERA_SCRIPT
 
 
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
@@ -167,7 +167,7 @@ def test_live_worker_has_no_backlog_and_capture_can_resume_the_same_camera_offli
         wait_for_offline_resources(page, photo=True)
         page.evaluate("""() => {
             window.liveTest = { requests: 0, responses: 0, pending: 0, maxPending: 0,
-                readsWhileBusy: 0, opens: 0, ticks: 0, terminated: 0 };
+                readsWhileBusy: 0, opens: 0, ticks: 0, terminated: 0, decodedVideo: 0, photos: [] };
             const NativeWorker = window.Worker;
             window.Worker = class extends NativeWorker {
                 pending = false;
@@ -181,9 +181,12 @@ def test_live_worker_has_no_backlog_and_capture_can_resume_the_same_camera_offli
                 }
                 postMessage(message, transfer) {
                     if (message.live) {
+                        if (!message.captureOnly) liveTest.decodedVideo++;
                         this.pending = true; liveTest.requests++; liveTest.pending++;
                         liveTest.maxPending = Math.max(liveTest.maxPending, liveTest.pending);
                     }
+                    if (message.image && !message.live && !message.prepareReading)
+                        liveTest.photos.push([message.image.width, message.image.height]);
                     super.postMessage(message, transfer);
                 }
                 terminate() {
@@ -197,24 +200,29 @@ def test_live_worker_has_no_backlog_and_capture_can_resume_the_same_camera_offli
                 if (this.canvas.matches('.ar-camera canvas, #scanCanvas') && liveTest.pending) liveTest.readsWhileBusy++;
                 return read.apply(this, args);
             };
-            const canvas = document.createElement('canvas'); canvas.width = 1080; canvas.height = 1920;
-            const ctx = canvas.getContext('2d');
+            const native = document.createElement('canvas'); native.width = 2160; native.height = 3840;
+            window.__syntheticNativePhoto = native;
+            const ctx = native.getContext('2d'); ctx.scale(2, 2);
             ctx.fillStyle = '#454545'; ctx.fillRect(0, 0, 1080, 1920);
             ctx.fillStyle = '#fafafa'; ctx.fillRect(100, 350, 880, 1160);
             ctx.fillStyle = '#333'; ctx.font = '24px sans-serif';
             for (let row = 0; row < 24; row++) ctx.fillText('Synthetic page with text but no QR seal.', 150, 440 + row * 36);
+            const canvas = document.createElement('canvas'); canvas.width = 1080; canvas.height = 1920;
+            canvas.getContext('2d').drawImage(native, 0, 0, canvas.width, canvas.height);
             const stream = canvas.captureStream(10);
             window.liveTestStream = stream;
             navigator.mediaDevices.getUserMedia = async () => { liveTest.opens++; return stream; };
             navigator.mediaDevices.enumerateDevices = async () => [];
             setInterval(() => liveTest.ticks++, 25);
         }""")
+        page.evaluate(NATIVE_PHOTO_CAMERA_SCRIPT)
         prepare_text_for_offline(page)
         guard.block()
         page.get_by_role("button", name="Check document", exact=True).click()
         page.wait_for_function("liveTest.responses >= 2", timeout=15000)
         page.get_by_role("button", name="Capture now", exact=True).click()
         expect(page.get_by_role("button", name="Cancel and resume camera", exact=True)).to_be_visible()
+        page.wait_for_function("liveTest.photos.length === 1", timeout=5000)
         assert page.evaluate("liveTest.pending") == 0
         ticks = page.evaluate("liveTest.ticks")
         page.wait_for_function("ticks => liveTest.ticks > ticks + 2", arg=ticks, timeout=2000)
@@ -227,6 +235,9 @@ def test_live_worker_has_no_backlog_and_capture_can_resume_the_same_camera_offli
         assert state["opens"] == 1
         assert state["maxPending"] == 1
         assert state["readsWhileBusy"] == 0
+        assert state["decodedVideo"] == 0
+        assert state["photos"] == [[2160, 3840]]
+        assert page.evaluate("__syntheticStillRequests.length") == 1
         page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
         assert page.evaluate("liveTestStream.getTracks().every(track => track.readyState === 'ended')")
         assert page.evaluate("liveTest.pending") == 0
