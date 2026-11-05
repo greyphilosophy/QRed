@@ -5,7 +5,7 @@ import { createQRedQrData } from "../qredQr.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { recoverSampledQrMatrix } from "./pageAlignedRecovery.js";
 import { collectModuleSamples, classifyModuleSamples, classifyLocalModuleSamples,
-  measureLocalModuleContrast } from "./rectifiedModuleSamples.js";
+  measureLocalModuleContrast, sharpenModuleLuminance } from "./rectifiedModuleSamples.js";
 
 it("reads geometry once while threshold retries retain their own ink and erasure decisions", () => {
   const version = 7, size = 45, side = size * 20;
@@ -165,3 +165,29 @@ it("recovers exact signed bytes under varying contrast and still rejects an unre
   await expect(verifyQRedSeals([recovered.seal], "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI"))
     .resolves.toMatchObject({ status: "INVALID" });
 }, 10000);
+
+it("emphasizes measured edges without changing uniform light, linear ramps, or the input", () => {
+  const flat = new Uint8Array(25).fill(210);
+  expect(sharpenModuleLuminance(flat, 5, 5)).toEqual(flat);
+  const ramp = Uint8Array.from({ length: 25 }, (_, i) => 80 + (i % 5) * 15 + Math.floor(i / 5) * 10);
+  expect(sharpenModuleLuminance(ramp, 5, 5)).toEqual(ramp);
+  const dark = new Uint8Array(9).fill(220); dark[4] = 20;
+  const light = new Uint8Array(9).fill(20); light[4] = 230;
+  const darkOriginal = dark.slice(), lightOriginal = light.slice();
+  const sharpenedDark = sharpenModuleLuminance(dark, 3, 3);
+  const sharpenedLight = sharpenModuleLuminance(light, 3, 3);
+  expect(sharpenedDark[4]).toBe(0);
+  expect(sharpenedLight[4]).toBe(255);
+  expect(sharpenedDark[0]).toBe(220);
+  expect(sharpenedLight[8]).toBe(20);
+  expect(dark).toEqual(darkOriginal);
+  expect(light).toEqual(lightOriginal);
+});
+
+it("abandons edge emphasis when its cooperative deadline expires", () => {
+  const gray = new Uint8Array(25).fill(210), original = gray.slice();
+  let calls = 0;
+  expect(sharpenModuleLuminance(gray, 5, 5, { shouldContinue: () => ++calls < 3 })).toBeNull();
+  expect(calls).toBe(3);
+  expect(gray).toEqual(original);
+});

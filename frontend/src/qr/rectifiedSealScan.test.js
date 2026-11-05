@@ -50,14 +50,79 @@ it.each([25, 29])("recovers a shadowed print with grain %i through real finder f
   const image = shadowedPrint(symbol, grain), original = image.data.slice();
   // Observe calls without replacing the pixel classifier or any geometry.
   const classify = vi.spyOn(moduleSamples, "classifyLocalModuleSamples");
+  const samples = vi.spyOn(moduleSamples, "collectModuleSamples");
   let result;
   try {
     result = scanRectifiedSeal(image, { searchRadius: 12 });
     if (grain === 29) expect(classify.mock.calls.some(([, options]) => options.thresholdFraction === 0.4)).toBe(true);
-  } finally { classify.mockRestore(); }
+    if (grain === 25) expect(samples.mock.calls.every(([, width, height]) => width === 900 && height === 900)).toBe(true);
+  } finally { classify.mockRestore(); samples.mockRestore(); }
   expect(result?.seal).toBe(seals[0]);
   expect(image.data.every((value, index) => value === original[index])).toBe(true);
   await expect(verifyQRedSeals([result.seal], publicKey)).resolves.toMatchObject({
     status: "VALID", signature_valid: true,
   });
+}, 20000);
+
+it.each([false, true])("recovers original pixels after rectified evidence is lost (edge retry %s)", async sharpOnly => {
+  const { seals } = await createQRedSeals({
+    privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey,
+    content: "Synthetic native-pixel retry. ".repeat(30), encodingStrategy: "plaintext",
+    timestamp: "2026-11-04T12:00:00Z",
+  });
+  const { payloadBytes } = createQRedQrData(seals[0]);
+  const symbol = QRCode.create([{ data: payloadBytes, mode: "byte" }], {
+    version: 31, errorCorrectionLevel: "L",
+  });
+  const image = shadowedPrint(symbol, 0), original = image.data.slice();
+  const collect = moduleSamples.collectModuleSamples;
+  let nativeCalls = 0;
+  const samples = vi.spyOn(moduleSamples, "collectModuleSamples").mockImplementation((gray, width, height, map, version) => {
+    const observations = collect(gray, width, height, map, version);
+    // Model evidence lost during rectification, without substituting any
+    // expected bits into the retry. The source photograph remains intact.
+    if (width === 900 || (sharpOnly && ++nativeCalls === 1)) observations.values.fill(0);
+    return observations;
+  });
+  let result;
+  try {
+    result = scanRectifiedSeal(image, { searchRadius: 12 });
+    expect(samples.mock.calls.map(([, width, height]) => [width, height]))
+      .toEqual([[900, 900], [image.width, image.height],
+        ...(sharpOnly ? [[image.width, image.height]] : [])]);
+  } finally { samples.mockRestore(); }
+  expect(result?.seal).toBe(seals[0]);
+  expect(image.data.every((value, index) => value === original[index])).toBe(true);
+  expect(result.code.location.bottomRightCorner.y).toBeGreaterThan(900);
+  await expect(verifyQRedSeals([result.seal], publicKey)).resolves.toMatchObject({
+    status: "VALID", signature_valid: true,
+  });
+  await expect(verifyQRedSeals([result.seal], "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI"))
+    .resolves.toMatchObject({ status: "INVALID" });
+}, 20000);
+
+it("does not start native sampling after the shared deadline expires", async () => {
+  const { seals } = await createQRedSeals({
+    privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey,
+    content: "Synthetic native-pixel deadline. ".repeat(30), encodingStrategy: "plaintext",
+    timestamp: "2026-11-04T12:00:00Z",
+  });
+  const { payloadBytes } = createQRedQrData(seals[0]);
+  const symbol = QRCode.create([{ data: payloadBytes, mode: "byte" }], {
+    version: 31, errorCorrectionLevel: "L",
+  });
+  let running = true;
+  const collect = moduleSamples.collectModuleSamples;
+  const samples = vi.spyOn(moduleSamples, "collectModuleSamples").mockImplementation((...args) => {
+    const observations = collect(...args);
+    running = false;
+    return observations;
+  });
+  try {
+    expect(scanRectifiedSeal(shadowedPrint(symbol, 0), {
+      searchRadius: 12, shouldContinue: () => running,
+    })).toBeNull();
+    expect(samples).toHaveBeenCalledTimes(1);
+    expect(samples.mock.calls[0].slice(1, 3)).toEqual([900, 900]);
+  } finally { samples.mockRestore(); }
 }, 20000);
