@@ -15,7 +15,7 @@ self.onmessage = ({ data: { image, returnPayload, live = false, requirePageQuali
       return;
     }
     scanQrFrame ??= createQrFrameScanner({ preferWatermark: requirePageQuality });
-    const quality = requirePageQuality ? captureGate.update(image, frameTime) : null;
+    const quality = requirePageQuality ? captureGate.update(image, frameTime, { captureOnly }) : null;
     // Hand capture to the camera without decoding its lower-detail preview.
     // Keep this worker's gate so unchanged paper cannot trigger another shot.
     if (quality?.ready && captureOnly) {
