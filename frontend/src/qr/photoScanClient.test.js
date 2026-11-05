@@ -10,6 +10,40 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 const image = () => ({ data: new Uint8ClampedArray(24), width: 2, height: 3 });
 
+it("reports sanitized photo stages without transferring the callback or accepting stale stages", async () => {
+  const onStage = vi.fn(), controller = new AbortController();
+  const pending = scanPhotoInWorker(image(), { signal: controller.signal, onStage });
+  expect(worker.postMessage.mock.calls[0][0]).not.toHaveProperty("onStage");
+  const receive = worker.onmessage;
+  receive({ data: { scanStage: { stage: "footer", elapsedMs: 50.6, text: "private" } } });
+  receive({ data: { scanStage: { stage: "private", elapsedMs: 80 } } });
+  expect(onStage).toHaveBeenCalledWith({ stage: "footer", elapsedMs: 51 });
+  controller.abort();
+  receive({ data: { scanStage: { stage: "page-aligned", elapsedMs: 100 } } });
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  expect(onStage).toHaveBeenCalledTimes(1);
+});
+
+it("reports live stages only while their request is current and leaves the deadline intact", () => {
+  vi.useFakeTimers();
+  try {
+    const onStage = vi.fn(), onResult = vi.fn();
+    const live = createLiveScanWorker({ onStage, onResult, onError: vi.fn(), requirePageQuality: true });
+    live.scan(image());
+    const receive = worker.onmessage;
+    receive({ data: { captured: true } });
+    vi.advanceTimersByTime(5000);
+    receive({ data: { scanStage: { stage: "page-aligned", elapsedMs: 4900, text: "private" } } });
+    expect(onStage).toHaveBeenCalledWith({ stage: "page-aligned", elapsedMs: 4900 });
+    vi.advanceTimersByTime(3000);
+    expect(onResult).toHaveBeenCalledWith(expect.objectContaining({ timedOut: true }));
+    receive({ data: { scanStage: { stage: "footer", elapsedMs: 8001 } } });
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    live.stop();
+  } finally { vi.useRealTimers(); }
+});
+
 it("cancels background OCR preparation and ignores its late result", async () => {
   const controller = new AbortController(), pixels = image();
   const pending = preparePhotoReadingInWorker(pixels, { signal: controller.signal });

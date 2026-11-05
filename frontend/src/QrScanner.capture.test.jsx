@@ -121,3 +121,78 @@ it("offers explicit photo selection and cancels a pending native capture before 
   expect(camera.scan).not.toHaveBeenCalled();
   expect(createImageBitmap).not.toHaveBeenCalled();
 });
+
+it.each(["manual", "automatic"])("shows live decoder steps for %s camera photos and clears them after cancellation", async mode => {
+  const { bitmap } = open();
+  vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: () => Promise.resolve(new Blob()) }; }));
+  vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
+  let finish;
+  camera.scan.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  if (mode === "manual") fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
+  else act(() => camera.live.onCaptured({ captureOnly: true }));
+  await waitFor(() => expect(camera.scan).toHaveBeenCalledTimes(1));
+  const { onStage } = camera.scan.mock.calls[0][1];
+  expect(screen.getByRole("progressbar").hasAttribute("value")).toBe(false);
+  act(() => onStage({ stage: "ordinary-qr", elapsedMs: 500 }));
+  expect(screen.getByText(/reading conventional QR codes/i)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel and resume camera" }));
+  expect(screen.queryByRole("progressbar")).toBeNull();
+  act(() => onStage({ stage: "footer", elapsedMs: 900 }));
+  await act(async () => finish({ status: "feedback", message: "Stale result" }));
+  expect(screen.queryByText(/checking footer seals/i)).toBeNull();
+  expect(screen.queryByText("Stale result")).toBeNull();
+});
+
+it("keeps the new camera attempt's progress when an aborted decoder finishes late", async () => {
+  const { bitmap } = open();
+  vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: () => Promise.resolve(new Blob()) }; }));
+  vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
+  const finishes = [];
+  camera.scan.mockImplementation(() => new Promise(resolve => finishes.push(resolve)));
+  fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
+  await waitFor(() => expect(camera.scan).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole("button", { name: "Cancel and resume camera" }));
+  fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
+  await waitFor(() => expect(camera.scan).toHaveBeenCalledTimes(2));
+  const oldStage = camera.scan.mock.calls[0][1].onStage, newStage = camera.scan.mock.calls[1][1].onStage;
+  act(() => newStage({ stage: "page-aligned", elapsedMs: 100 }));
+  await act(async () => { oldStage({ stage: "footer", elapsedMs: 900 }); finishes[0]({ status: "feedback", message: "Old photo" }); });
+  expect(screen.getByText(/checking page layouts/i)).toBeTruthy();
+  expect(screen.queryByText(/checking footer seals/i)).toBeNull();
+  await act(async () => finishes[1]({ status: "feedback", message: "New photo" }));
+  expect(screen.queryByRole("progressbar")).toBeNull();
+  expect(screen.getByText(/New photo/)).toBeTruthy();
+});
+
+it("reports live-frame decoder stages and clears them on a result", () => {
+  open({ collectSeals: false });
+  act(() => camera.live.onCaptured());
+  act(() => camera.live.onStage({ stage: "watermark-preview", elapsedMs: 200 }));
+  expect(screen.getByText(/checking the watermark/i)).toBeTruthy();
+  act(() => camera.live.onResult({ status: "feedback", message: "Try again" }));
+  expect(screen.queryByRole("progressbar")).toBeNull();
+  act(() => camera.live.onStage({ stage: "footer", elapsedMs: 500 }));
+  expect(screen.queryByText(/checking footer seals/i)).toBeNull();
+});
+
+it.each(["drawImage", "getImageData"])("clears progress after a synchronous %s failure and allows a retry", async method => {
+  const { bitmap } = open();
+  vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: () => Promise.resolve(new Blob()) }; }));
+  vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
+  const intervals = vi.spyOn(globalThis, "setInterval"), clear = vi.spyOn(globalThis, "clearInterval");
+  HTMLCanvasElement.prototype.getContext.mockImplementationOnce(() => ({
+    drawImage: () => { if (method === "drawImage") throw new Error("private readback failure"); },
+    getImageData: () => { throw new Error("private readback failure"); },
+  }));
+  fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
+  expect(screen.getByText(/camera frame could not be read/)).toBeTruthy();
+  expect(document.body.textContent).not.toContain("private readback failure");
+  expect(screen.queryByRole("progressbar")).toBeNull();
+  expect(clear).toHaveBeenCalledWith(intervals.mock.results.at(-1).value);
+  expect(camera.scan).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Capture now" }).disabled).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
+  await waitFor(() => expect(camera.scan).toHaveBeenCalledTimes(1));
+  expect(await screen.findByText(/Try another capture/)).toBeTruthy();
+  expect(screen.queryByRole("progressbar")).toBeNull();
+});

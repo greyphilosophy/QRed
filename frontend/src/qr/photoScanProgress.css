@@ -1,0 +1,9 @@
+.photo-scan-progress { margin: .65rem 0; min-width: 0; }
+.photo-scan-progress[hidden] { display: none; }
+.photo-scan-progress p { margin: .2rem 0; overflow-wrap: anywhere; }
+.photo-scan-progress .photo-scan-step { font-weight: 600; }
+.photo-scan-progress .photo-scan-timing { font-size: .85rem; font-variant-numeric: tabular-nums; }
+.photo-scan-progress progress { display: block; width: 100%; max-width: 24rem; height: .4rem; margin-top: .45rem; }
+@media (prefers-reduced-motion: reduce) {
+  .photo-scan-progress progress { visibility: hidden; }
+}

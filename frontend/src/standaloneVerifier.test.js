@@ -11,6 +11,7 @@ import { observePageScanGuide } from "./qr/pageScanGuide.js";
 import { captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext } from "./qr/cameraPhoto.js";
 import { createQrFrameScanner } from "./qr/scanQrImage.js";
 import { createLiveScanWorker, scanPhotoInWorker } from "./qr/photoScanClient.js";
+import { mountPhotoScanProgress } from "./qr/mountPhotoScanProgress.js";
 import { qrFrameAction } from "./qr/decodePhoto.js";
 import * as verifier from "./qredVerifier.js";
 import { createQRedSeals } from "./qredSealer.js";
@@ -18,7 +19,6 @@ import { createQRedQrData, createQRedQrSymbol } from "./qredQr.js";
 import { readSigningKeyFile } from "./signingKeys.js";
 import { createVerificationSession } from "./verifier/verificationSession.js";
 import { createScanPhotoCollection } from "./verifier/scanPhotos.js";
-import { photoProcessingMessage } from "./verifier/photoStatus.js";
 import { signAsync } from "@noble/ed25519";
 import { AUTH_PROVIDERS, authProvider } from "./authProviders.js";
 import { attestationMessage, pageCommitment } from "./attestation.js";
@@ -41,6 +41,7 @@ function raster(symbol) {
   return { data, width, height: width };
 }
 
+const progressMounts = [];
 function loadStandalone(overrides = {}) {
   document.documentElement.innerHTML = readFileSync("verifier.html", "utf8");
   const source = document.querySelector('script[type="module"]').textContent.replace(/^\s*import .+;$/gm, "");
@@ -60,10 +61,15 @@ function loadStandalone(overrides = {}) {
   });
   const bindings = {
     getPreferredCameraStream, applyCameraQualityControls, authProvider, startCameraSession, observePageScanGuide, createLiveScanWorker, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
-    preparePhotoScanner: vi.fn(), scanPhotoInWorker, photoProcessingMessage, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext,
+    preparePhotoScanner: vi.fn(), scanPhotoInWorker, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext,
     createScanPhotoCollection: callback => createScanPhotoCollection(callback, async () => new Blob(["frame"], { type: "image/png" })),
     mountPhotoTextVerification: () => ({ update: vi.fn(), prepare: vi.fn().mockResolvedValue(), clear: vi.fn() }),
     mountPdfSealInput: () => ({ update: vi.fn() }),
+    mountPhotoScanProgress: element => {
+      const progress = mountPhotoScanProgress(element);
+      progressMounts.push(progress);
+      return progress;
+    },
     ...overrides,
   };
   // Execute the shipped module with real QR/signature code. Camera tests
@@ -72,6 +78,7 @@ function loadStandalone(overrides = {}) {
 }
 
 afterEach(() => {
+  progressMounts.splice(0).forEach(progress => progress.dispose());
   vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = "";
   delete navigator.mediaDevices;
 });
@@ -632,4 +639,135 @@ it("replaces a pending standalone photo selection without changing the latest re
   expect(setup.context.drawImage).toHaveBeenCalledTimes(1);
   expect(setup.context.drawImage.mock.calls[0][0]).not.toBe(oldImage);
   expect(document.getElementById("pageGuideHint").textContent).toContain("Selected photo: 2000 × 3000");
+});
+
+it.each(["manual", "automatic"])("shows live stages through %s native acquisition and clears them on completion", async mode => {
+  let finishCapture, finishScan;
+  const setup = setupStandaloneCapture({
+    captureCameraPhoto: () => new Promise(resolve => { finishCapture = resolve; }),
+  });
+  setup.scan.mockImplementation(() => new Promise(resolve => { finishScan = resolve; }));
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(setup.camera).toBeDefined());
+  if (mode === "manual") fireEvent.click(document.getElementById("btnCapture"));
+  else setup.callbacks.onCaptured({ captureOnly: true });
+  const progress = progressMounts.at(-1);
+  const target = document.getElementById("photoScanProgress");
+  expect(progress.getSnapshot().label).toMatch(/photo/i);
+  expect(target.hidden).toBe(false);
+  const hint = document.getElementById("pageGuideHint");
+  expect(hint.hidden).toBe(true);
+  const priorHint = hint.textContent;
+  setup.callbacks.onQuality({ state: "hold", message: "Busy guidance must not replace the stage.", progress: .5 });
+  expect(hint.textContent).toBe(priorHint);
+  finishCapture(setup.pixels);
+  await waitFor(() => expect(setup.scan).toHaveBeenCalledTimes(1));
+  const onStage = setup.scan.mock.calls[0][1].onStage;
+  onStage({ stage: "footer", elapsedMs: 750 });
+  expect(progress.getSnapshot().label).toMatch(/footer/i);
+  expect(target.textContent).toMatch(/footer/i);
+  expect(hint.hidden).toBe(true);
+  expect(hint.textContent).not.toMatch(/processing|taking photo|opening photo/i);
+  expect(target.querySelector('[role="progressbar"], progress')).not.toBeNull();
+  finishScan({ status: "feedback", message: "No seal found." });
+  await waitFor(() => expect(progress.getSnapshot()).toBeNull());
+  expect(target.hidden).toBe(true);
+  expect(hint.hidden).toBe(false);
+  expect(hint.textContent).toBe("No seal found.");
+  onStage({ stage: "general-qr", elapsedMs: 900 });
+  expect(progress.getSnapshot()).toBeNull();
+});
+
+it("shows selected-photo opening and ignores late stages and completion after replacement or clear", async () => {
+  const openings = [], scans = [];
+  const setup = setupStandaloneCapture({
+    readCameraPhotoFile: () => new Promise(resolve => openings.push(resolve)),
+    scanPhotoInWorker: (pixels, options) => new Promise(resolve => scans.push({ options, resolve })),
+  });
+  const input = document.getElementById("pagePhotoInput");
+  const choose = name => fireEvent.change(input, { target: { files: [new File(["photo"], name)] } });
+  choose("first.jpg");
+  const progress = progressMounts.at(-1);
+  const openingLabel = progress.getSnapshot().label;
+  expect(openingLabel).toMatch(/open/i);
+  openings[0](setup.pixels);
+  await waitFor(() => expect(scans).toHaveLength(1));
+  scans[0].options.onStage({ stage: "footer", elapsedMs: 100 });
+  expect(progress.getSnapshot().label).toMatch(/footer/i);
+  choose("second.jpg");
+  expect(scans[0].options.signal.aborted).toBe(true);
+  expect(progress.getSnapshot().label).toBe(openingLabel);
+  scans[0].options.onStage({ stage: "general-qr", elapsedMs: 200 });
+  scans[0].resolve({ status: "feedback", message: "Old result" });
+  await Promise.resolve(); await Promise.resolve();
+  expect(progress.getSnapshot().label).toBe(openingLabel);
+  openings[1](setup.pixels);
+  await waitFor(() => expect(scans).toHaveLength(2));
+  scans[1].options.onStage({ stage: "page-aligned", elapsedMs: 300 });
+  expect(progress.getSnapshot().label).toMatch(/layout/i);
+  fireEvent.click(document.getElementById("btnNewScan"));
+  expect(progress.getSnapshot()).toBeNull();
+  scans[1].options.onStage({ stage: "general-qr", elapsedMs: 400 });
+  scans[1].resolve({ status: "feedback", message: "Cleared result" });
+  await Promise.resolve(); await Promise.resolve();
+  expect(progress.getSnapshot()).toBeNull();
+  expect(document.getElementById("photoScanProgress").hidden).toBe(true);
+});
+
+it.each(["cancel", "stop", "error", "capture failure", "scan failure", "timeout"])(
+  "clears standalone photo progress on %s", async ending => {
+    let finishCapture, finishScan, rejectScan;
+    const setup = setupStandaloneCapture({
+      captureCameraPhoto: () => new Promise(resolve => { finishCapture = resolve; }),
+    });
+    setup.scan.mockImplementation(() => new Promise((resolve, reject) => { finishScan = resolve; rejectScan = reject; }));
+    fireEvent.click(document.getElementById("btnScan"));
+    await waitFor(() => expect(setup.camera).toBeDefined());
+    fireEvent.click(document.getElementById("btnCapture"));
+    const progress = progressMounts.at(-1);
+    expect(progress.getSnapshot()).not.toBeNull();
+    if (ending === "capture failure") finishCapture(null);
+    else {
+      finishCapture(setup.pixels);
+      await waitFor(() => expect(setup.scan).toHaveBeenCalledTimes(1));
+      setup.scan.mock.calls[0][1].onStage({ stage: "footer", elapsedMs: 100 });
+      if (ending === "cancel") fireEvent.click(document.getElementById("btnCapture"));
+      if (ending === "stop") {
+        document.getElementById("photoTextComparison").scrollIntoView = vi.fn();
+        fireEvent.click(document.getElementById("btnScan"));
+      }
+      if (ending === "error") setup.callbacks.onError(new Error("Camera unavailable"));
+      if (ending === "scan failure") rejectScan(new Error("Scan unavailable"));
+      if (ending === "timeout") finishScan({ status: "feedback", timedOut: true, message: "Retry this photo." });
+    }
+    await waitFor(() => expect(progress.getSnapshot()).toBeNull());
+    expect(document.getElementById("photoScanProgress").hidden).toBe(true);
+    const hint = document.getElementById("pageGuideHint");
+    expect(hint.hidden).toBe(["stop", "error"].includes(ending));
+    if (ending === "scan failure") expect(hint.textContent).toBe("Scan unavailable");
+    if (ending === "timeout") expect(hint.textContent).toBe("Retry this photo.");
+    if (ending === "capture failure") expect(hint.textContent).toContain("No video frame was scanned");
+    if (finishScan && !["scan failure", "timeout"].includes(ending)) {
+      setup.scan.mock.calls[0][1].onStage({ stage: "general-qr", elapsedMs: 500 });
+      finishScan({ status: "feedback", message: "Late result" });
+      await Promise.resolve(); await Promise.resolve();
+      expect(progress.getSnapshot()).toBeNull();
+    }
+  },
+);
+
+it("reports live-worker stages only for its active capture", async () => {
+  const setup = setupStandaloneCapture();
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(setup.camera).toBeDefined());
+  const progress = progressMounts.at(-1);
+  setup.callbacks.onStage({ stage: "footer", elapsedMs: 10 });
+  expect(progress.getSnapshot()).toBeNull();
+  setup.callbacks.onCaptured();
+  setup.callbacks.onStage({ stage: "footer", elapsedMs: 20 });
+  expect(progress.getSnapshot().label).toMatch(/footer/i);
+  setup.callbacks.onResult({ status: "feedback", message: "Try another page." });
+  expect(progress.getSnapshot()).toBeNull();
+  setup.callbacks.onStage({ stage: "general-qr", elapsedMs: 30 });
+  expect(progress.getSnapshot()).toBeNull();
 });

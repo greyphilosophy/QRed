@@ -262,6 +262,12 @@ handwriting, and face substitutions may be lost in the reference. Retakes use th
 same temporary browser-camera flow. Existing PDF and image inputs remain available
 as secondary entry points.
 
+Photo scans show the current local processing step, elapsed time, and time in
+that step, including camera captures, chosen photos, and retakes. The indicator
+is indeterminate: decoder steps are attempts, not a percentage complete. Timing
+continues while a worker is busy; cancellation or a new photo clears the old
+attempt. These fixed step names and timings stay in the current browser session.
+
 **Finish & clear** ends the check, stops the camera and OCR worker, revokes image
 URLs, and releases captured images, recognized words, signed contents, and results.
 Late asynchronous results cannot restore a cleared check. Navigating away also

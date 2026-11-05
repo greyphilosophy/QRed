@@ -210,17 +210,24 @@ it.each(["cancel", "clear", "replace"])("discards a pending photo result after %
   choose();
   await waitFor(() => expect(pending).toHaveLength(1));
   expect(screen.getByText(/Reading photo…/)).toBeTruthy();
+  act(() => pending[0].onStage({ stage: "page-aligned", elapsedMs: 2600 }));
+  expect(screen.getByText("Checking page layouts…")).toBeTruthy();
+  expect(screen.getByRole("progressbar", { name: "Photo seal scan" }).hasAttribute("value")).toBe(false);
   if (reason === "cancel") fireEvent.click(screen.getByRole("button", { name: "Cancel photo scan" }));
   if (reason === "clear") fireEvent.click(screen.getByRole("button", { name: "Finish & clear" }));
   choose();
   await waitFor(() => expect(pending).toHaveLength(2));
   expect(pending[0].signal.aborted).toBe(true);
+  act(() => pending[0].onStage({ stage: "general-qr", elapsedMs: 7000 }));
+  expect(screen.queryByText("Trying other QR reads…")).toBeNull();
+  expect(screen.getByText(/Reading photo…/)).toBeTruthy();
   await act(async () => pending[0].resolve({ status: "found", text: "stale content" }));
   expect(screen.queryByText(/stale content/)).toBeNull();
   expect(screen.getByRole("button", { name: "Cancel photo scan" })).toBeTruthy();
   await act(async () => pending[1].resolve({ status: "found", text: "new photo" }));
   expect(screen.getByText("Unverified QR content: new photo")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Cancel photo scan" })).toBeNull();
+  expect(screen.queryByRole("progressbar", { name: "Photo seal scan" })).toBeNull();
   expect(revoke).toHaveBeenCalledTimes(2);
 });
 

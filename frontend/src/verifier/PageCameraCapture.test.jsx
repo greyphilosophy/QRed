@@ -334,3 +334,54 @@ it("resumes the pending camera after picker dismissal without opening another ca
   expect(camera.liveScan.mock.calls[0][1]).toEqual({ captureOnly: true });
   expect(camera.scan).not.toHaveBeenCalled(); expect(ImageCapture).not.toHaveBeenCalled();
 });
+
+it("shows opening, live steps and elapsed time for a selected retake, then ignores cancelled updates", async () => {
+  vi.useFakeTimers();
+  const now = vi.spyOn(performance, "now").mockReturnValue(0);
+  canvasPixels();
+  let opened, finish;
+  selectedPhoto({ decode: () => new Promise(resolve => { opened = resolve; }) });
+  camera.scan.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  render(<PageCameraCapture pageLabel="Page 2" seals={signed.seals} onCapture={vi.fn()} onClose={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText("Choose a high-resolution page photo"), { target: { files: [new File(["synthetic"], "page.jpg")] } });
+  expect(screen.getByText(/opening.*photo/i)).toBeTruthy();
+  expect(screen.getByRole("progressbar").hasAttribute("value")).toBe(false);
+  const before = document.body.textContent;
+  now.mockReturnValue(1000);
+  await act(async () => vi.advanceTimersByTimeAsync(1000));
+  expect(document.body.textContent).not.toBe(before);
+  await act(async () => opened());
+  const { onStage } = camera.scan.mock.calls[0][1];
+  act(() => onStage({ stage: "rectified-fast", elapsedMs: 100 }));
+  expect(screen.getByText(/finding the page grid/i)).toBeTruthy();
+  act(() => onStage({ stage: "footer", elapsedMs: 300 }));
+  expect(screen.getByText(/checking footer seals/i)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel retake" }));
+  expect(screen.queryByRole("progressbar")).toBeNull();
+  act(() => onStage({ stage: "page-aligned", elapsedMs: 500 }));
+  await act(async () => finish({ status: "feedback", message: "Stale result" }));
+  expect(screen.queryByText(/checking page layouts/i)).toBeNull();
+  expect(screen.queryByRole("progressbar")).toBeNull();
+});
+
+it("keeps replacement retake progress after stale decoder completion", async () => {
+  canvasPixels(); selectedPhoto();
+  const finishes = [];
+  camera.scan.mockImplementation(() => new Promise(resolve => finishes.push(resolve)));
+  render(<PageCameraCapture pageLabel="Page 2" seals={signed.seals} onCapture={vi.fn()} onClose={vi.fn()} />);
+  const input = screen.getByLabelText("Choose a high-resolution page photo");
+  fireEvent.change(input, { target: { files: [new File(["old"], "old.jpg")] } });
+  await waitFor(() => expect(camera.scan).toHaveBeenCalledTimes(1));
+  fireEvent.change(input, { target: { files: [new File(["new"], "new.jpg")] } });
+  await waitFor(() => expect(camera.scan).toHaveBeenCalledTimes(2));
+  act(() => camera.scan.mock.calls[1][1].onStage({ stage: "ordinary-qr", elapsedMs: 100 }));
+  await act(async () => {
+    camera.scan.mock.calls[0][1].onStage({ stage: "footer", elapsedMs: 500 });
+    finishes[0]({ status: "feedback", message: "Old photo" });
+  });
+  expect(screen.getByText(/reading conventional QR codes/i)).toBeTruthy();
+  expect(screen.queryByText(/checking footer seals/i)).toBeNull();
+  await act(async () => finishes[1]({ status: "feedback", message: "New photo" }));
+  expect(screen.queryByRole("progressbar")).toBeNull();
+  expect(screen.getByRole("alert").textContent).toContain("New photo");
+});
