@@ -143,6 +143,18 @@ deadline between rows, does not change the photo, and retains QR parity,
 payload validation, and normal cryptographic verification. Its regression
 uses generated signed data, not private photographs or document contents.
 
+If rectified observations still fail, the single-seal path reuses that measured
+geometry to sample the original photograph directly. This avoids a second
+interpolation blur obscuring pale modules beside dark text. It retains the
+rectified fast path and prepares native luminance only on a miss, at up to
+12 megapixels. One further native-pixel retry applies a fixed four-neighbor
+edge-emphasis filter to measured luminance for softened camera frames. The
+ordinary and edge-emphasized buffers are reused across candidate grids, never
+written into the retained photo, and remain subject to the same local-contrast,
+erasure, parity and signature checks. Both retries share the existing photo
+scan deadline; they do not extend it. Heavy JPEG compression, glare and severe
+blur can still remove too much evidence for recovery.
+
 Still-photo refinement reserves up to 16 attempts for single-code layouts
 and 36 for quadrant layouts across all orientation, size and scale candidates.
 Finder/timing evidence ranks these candidates before local alignment fitting;

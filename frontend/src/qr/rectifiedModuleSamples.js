@@ -132,3 +132,20 @@ export function classifyLocalModuleSamples(samples, {
   }
   return { bits, unknown, confidence, size };
 }
+
+// One bounded edge-emphasis retry for camera/resize interpolation. Work only
+// from measured luminance: no expected QR bits or source document are used.
+// The retained photo and the ordinary native observations remain unchanged.
+export function sharpenModuleLuminance(gray, width, height, { shouldContinue = () => true } = {}) {
+  if (!shouldContinue()) return null;
+  const sharpened = gray.slice();
+  for (let y = 1; y < height - 1; y++) {
+    if (!shouldContinue()) return null;
+    for (let x = 1; x < width - 1; x++) {
+      const i = y * width + x;
+      const neighbors = (gray[i - 1] + gray[i + 1] + gray[i - width] + gray[i + width]) / 4;
+      sharpened[i] = Math.max(0, Math.min(255, Math.round(2 * gray[i] - neighbors)));
+    }
+  }
+  return sharpened;
+}
