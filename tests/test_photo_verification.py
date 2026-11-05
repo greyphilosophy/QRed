@@ -71,9 +71,10 @@ def prepare_reader(page):
     expect(page.get_by_role("button", name="Offline text checking ready", exact=True)).to_be_visible(timeout=60000)
 
 
-def test_scaled_table_recovers_numeric_columns_and_keeps_swapped_amounts_visible(browser):
+@pytest.mark.parametrize("shadowed", [False, True], ids=["clear", "warm-watermark"])
+def test_scaled_table_recovers_numeric_columns_and_keeps_swapped_amounts_visible(browser, shadowed):
     """Real OCR of a print-scaled table, with authenticated line locations."""
-    draw = """async ({swapped = false, qr = null}) => {
+    draw = """async ({swapped = false, qr = null, shadowed = false}) => {
       const canvas = document.createElement('canvas'); canvas.width = 1400; canvas.height = 1800;
       const ctx = canvas.getContext('2d'); ctx.fillStyle = '#333'; ctx.fillRect(0,0,1400,1800);
       ctx.fillStyle = 'white'; ctx.fillRect(100,100,1200,1600);
@@ -97,7 +98,20 @@ def test_scaled_table_recovers_numeric_columns_and_keeps_swapped_amounts_visible
       if (qr) {
         const image = new Image(); image.src = 'data:image/png;base64,' + qr; await image.decode();
         ctx.save(); ctx.translate(136,140); ctx.scale(.94,.94);
+        if (shadowed) {
+          ctx.globalCompositeOperation = 'multiply'; ctx.globalAlpha = .22;
+          ctx.imageSmoothingEnabled = false; ctx.drawImage(image,70,70,1060,1460);
+          ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+        }
         ctx.imageSmoothingEnabled = false; ctx.drawImage(image,750,1000,400,400); ctx.restore();
+      }
+      if (shadowed) {
+        const pixels = ctx.getImageData(0,0,1400,1800);
+        for (let y=0;y<1800;y++) for (let x=0;x<1400;x++) {
+          const offset=(y*1400+x)*4, light=.9-.3*y/1800;
+          for (let c=0;c<3;c++) pixels.data[offset+c] *= light * [1,.95,.85][c];
+        }
+        ctx.putImageData(pixels,0,0);
       }
       return {evidence:{text:content.join('\\n'),width:1200,height:1600,layout:{mode:3,lines:boxes}},
         png:canvas.toDataURL('image/png').split(',')[1]};
@@ -136,7 +150,7 @@ def test_scaled_table_recovers_numeric_columns_and_keeps_swapped_amounts_visible
                             cwd=ROOT / "frontend", text=True, capture_output=True, check=True).stdout.strip()
         for swapped in [False, True]:
             page.goto(base, wait_until="networkidle")
-            photo = page.evaluate(draw, {"swapped": swapped, "qr": qr})
+            photo = page.evaluate(draw, {"swapped": swapped, "qr": qr, "shadowed": shadowed})
             page.get_by_text("Open an existing PDF or image", exact=True).click()
             page.locator("#qr-image").set_input_files({"name": "table.png", "mimeType": "image/png",
                                                        "buffer": base64.b64decode(photo["png"])})
@@ -148,7 +162,8 @@ def test_scaled_table_recovers_numeric_columns_and_keeps_swapped_amounts_visible
                 expect(review.locator(".photo-differences")).to_contain_text("111.50")
                 expect(review.locator(".photo-summary")).to_contain_text("Differences found")
             else:
-                assert review.locator(".photo-differences").inner_text() == ""
+                differences = review.locator(".photo-differences").inner_text()
+                assert differences == "", differences + "\n" + review.locator(".photo-legend").inner_text()
                 expect(review.locator(".photo-summary")).to_have_text(
                     re.compile("Recognized text matches the signed text|Some readings need review"))
     finally:

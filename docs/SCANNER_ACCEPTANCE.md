@@ -90,6 +90,40 @@ unless their publication was explicitly authorized.
 
 ## Failure triage and release language
 
+### Replay every reported original before closing a photo bug
+
+Keep the original JPEG unchanged, including EXIF orientation and ICC profile.
+Browser color conversion and resizing are part of the product path; decoded
+Node pixels, crops and PNG conversions are diagnostic experiments, not a pass
+for the original file. Record the first failing stage before changing code.
+
+After building the candidate, run the private replay locally:
+
+```sh
+python tools/replay_photo_files.py /private/page1.jpg /private/page2.jpg \
+  --output /private/candidate-results.json
+```
+
+It exercises both production screens offline after preparing local assets,
+retains the standard decoder budget, and records input hashes, build/browser,
+stage timings, authenticated page counts, OCR differences, first-reading review
+counts, and clearing. It saves no pixels, payloads or document wording. Exit 1
+also covers readable seals with unresolved text: never report that as a complete
+verification pass. Compare the same files and stage metrics before and after.
+
+For each root cause, add a non-private regression that failed before the fix.
+Keep changed amounts, missing words and faint additions as negative controls.
+A stronger OCR threshold may improve reading, but its first reading must remain
+reviewable and its result must not become an unqualified match. Do not select an
+OCR reading because it resembles the signed text.
+
+The Galaxy Z Flip6 is a physical acceptance target. Mobile viewport/touch replay
+tests layout, and CPU throttling can expose budget failures; neither reproduces
+its camera, autofocus, image processing, memory pressure or thermal behavior.
+Continue to record actual phone/browser trials separately.
+
+### Release wording
+
 Find the first failed stage: camera start, framing/focus hold, native acquisition,
 seal decoding, authentication, OCR, or lifecycle/retry. Preserve a synthetic
 regression at that stage and rerun the entire camera workflow after the fix.

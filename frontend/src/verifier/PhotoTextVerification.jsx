@@ -126,6 +126,15 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
             </li>)}</ol>
           </details>}
           {comparison.contrastAssisted && <p className="photo-note reading-caution">A contrast-assisted reading was needed. Inspect pale text and marks in the original photo; this reading can miss them.</p>}
+          {comparison.originalComparison && <details className="photo-original-reading">
+            <summary>First reading to review ({comparison.originalComparison.differences.length})</summary>
+            <p className="photo-note">The first reading was less clear. Its differences are kept here so a faint addition cannot disappear from review.</p>
+            <ol>{comparison.originalComparison.differences.map((difference, index) => <li key={index}>
+              <div><strong>Signed text:</strong> {difference.expected || "(no text here)"}</div>
+              <div><strong>First reading:</strong> {difference.observed || "(not read — inspect for missing text)"}</div>
+              <DifferenceCrop page={{ ...page, comparison: comparison.originalComparison }} difference={difference} />
+            </li>)}</ol>
+          </details>}
           {comparison.markings?.length > 0 && <div className="photo-markings"><h3>QRed markings to inspect</h3>
             <p className="photo-note">These readings sit beside a QRed code. Check them on the paper; they are not authenticated document text.</p>
             {comparison.markings.map((marking, index) => <div key={index}><p>{marking.observed}</p>

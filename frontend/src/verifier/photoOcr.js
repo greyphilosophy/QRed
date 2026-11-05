@@ -2,6 +2,7 @@ import { createWorker } from "tesseract.js";
 import { captionLineCandidates, comparePageReading, isPrintedCaption, preparePhotoReading } from "./photoReading.js";
 import { signedPhotoLines } from "./photoTextLayout.js";
 import { applyTextRetries, planTextRetries, TEXT_RETRY_MS, TEXT_RETRY_PIXELS } from "./photoOcrRetry.js";
+import { needsPageReread, pageReadingCanvas, preferPageReread } from "./photoOcrFallback.js";
 
 // These versioned resources are copied from locked dependencies at build time.
 // Never use Tesseract's default CDN paths: all resources belong to this origin.
@@ -78,10 +79,24 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
         });
         let [words] = await Promise.all([recognize(canvas), preparation]);
         if (controller.signal.aborted) throw new DOMException("Reading cancelled", "AbortError");
-        // Preserve every reading from the original. Only use the contrast copy
-        // when segmentation found no text at all, and label its limitations.
-        const contrastAssisted = words.length === 0;
+        // The filtered copy is a last resort for empty segmentation. A noisy
+        // original can also get one independent, stronger-threshold reading;
+        // preserve its first reading and label the second pass's limitations.
+        let contrastAssisted = words.length === 0, originalReading;
         if (contrastAssisted) words = await recognize(prepared.canvas);
+        else if (needsPageReread(words)) {
+          const page = pageReadingCanvas(canvas, prepared.corners);
+          if (page) try {
+            await current.setParameters({ thresholding_kfactor: "0.34" });
+            const reread = await recognize(page);
+            if (preferPageReread(words, reread)) {
+              originalReading = words; words = reread; contrastAssisted = true;
+            }
+          } finally {
+            page.width = page.height = 0;
+            if (worker === current) await current.setParameters({ thresholding_kfactor: "0.2" });
+          }
+        }
         const candidates = captionLineCandidates(words, prepared.codes);
         if (candidates.length) {
           const removed = new Set(), replacements = new Map();
@@ -119,7 +134,7 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
           words = words.flatMap((word, index) => replacements.get(index) || (removed.has(index) ? [] : [word]));
         }
         let retryReviews = [];
-        if (reference.text?.trim() && !contrastAssisted) {
+        if (reference.text?.trim() && (!contrastAssisted || originalReading)) {
           const reading = { words, codes: prepared.codes, corners: prepared.corners };
           const comparison = comparePageReading(reference.text, reading, canvas, reference.evidence, { pageNumber: reference.pageNumber });
           const lines = signedPhotoLines(reference.text, reference.evidence, prepared.corners, canvas, words);
@@ -127,7 +142,10 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
           if (candidates.length) {
             const replacements = [], deadline = performance.now() + TEXT_RETRY_MS;
             let source = null, pixels = 0;
-            await current.setParameters({ tessedit_pageseg_mode: "7" });
+            // A line crop needs its own threshold: retaining every watermark
+            // edge can hide an entire numeric column. Changed first readings
+            // remain in retryReviews, including any faint words this misses.
+            await current.setParameters({ tessedit_pageseg_mode: "7", thresholding_kfactor: "0.34" });
             try {
               // Decode the retained file lazily for crops at its original
               // resolution, independently of the bounded whole-page canvas.
@@ -159,12 +177,12 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
               }
             } finally {
               source?.release();
-              if (worker === current) await current.setParameters({ tessedit_pageseg_mode: "3" });
+              if (worker === current) await current.setParameters({ tessedit_pageseg_mode: "3", thresholding_kfactor: "0.2" });
             }
             ({ words, retryReviews } = applyTextRetries(words, replacements));
           }
         }
-        return { words, codes: prepared.codes, corners: prepared.corners, contrastAssisted, retryReviews };
+        return { words, codes: prepared.codes, corners: prepared.corners, contrastAssisted, retryReviews, originalReading };
       } finally {
         controller.abort();
         if (preprocessing === controller) preprocessing = null;

@@ -112,7 +112,7 @@ export function possiblePrintedMarkings(words, codes, { pageNumber } = {}) {
 }
 
 export function comparePageReading(expected, reading, dimensions, evidence, options = {}) {
-  const { words, codes = [], contrastAssisted = false, corners, retryReviews = [] } = Array.isArray(reading) ? { words: reading } : reading;
+  const { words, codes = [], contrastAssisted = false, corners, retryReviews = [], originalReading } = Array.isArray(reading) ? { words: reading } : reading;
   const lines = signedPhotoLines(expected, evidence, corners, dimensions, words);
   const compare = input => compareLocatedPhotoText(expected, input, dimensions, lines);
   let comparison = compare(words);
@@ -129,6 +129,8 @@ export function comparePageReading(expected, reading, dimensions, evidence, opti
   }
   const markings = groups.map(indices => ({ observed: indices.map(index => words[index].text).join(" "),
     boxes: indices.map(index => words[index].bbox) }));
-  if (comparison.status === "matches" && (contrastAssisted || markings.length || retryReviews.length)) comparison.status = "uncertain";
-  return { ...comparison, contrastAssisted, markings, retryReviews };
+  if (comparison.status === "matches" && (contrastAssisted || originalReading || markings.length || retryReviews.length)) comparison.status = "uncertain";
+  const originalComparison = originalReading ? comparePageReading(expected,
+    { words: originalReading, codes, corners }, dimensions, evidence, options) : null;
+  return { ...comparison, contrastAssisted, markings, retryReviews, originalComparison };
 }

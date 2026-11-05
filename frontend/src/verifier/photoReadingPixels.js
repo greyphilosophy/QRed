@@ -3,6 +3,7 @@ import { maskQrCode } from "../qr/maskQrCode.js";
 import { isQRedEntryLink, qredPayloadFromScanResult } from "../qr/qrPayload.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { locatePaper } from "../qr/pageAlignedScan.js";
+import { estimatePaperColor } from "../qr/paperColor.js";
 
 // Runs in the photo worker on a transferred working copy, never the retained
 // photograph. The contrast copy can lose pale writing; its reading is always
@@ -10,7 +11,8 @@ import { locatePaper } from "../qr/pageAlignedScan.js";
 export function preparePhotoReadingPixels({ data, width, height }) {
   // Measure geometry before the contrast copy removes pale ink and colour.
   // This is a bounded edge search, not another seal-recovery attempt.
-  const corners = locatePaper({ data, width, height });
+  const source = { data, width, height };
+  const corners = locatePaper({ ...source, paperColor: estimatePaperColor(source) });
   for (let i = 0; i < data.length; i += 4) {
     if (Math.min(data[i], data[i + 1], data[i + 2]) > 150)
       data[i] = data[i + 1] = data[i + 2] = 255;
