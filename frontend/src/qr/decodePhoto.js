@@ -71,10 +71,14 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
     // verification session after either decoding path returns its payload.
     if (decodeSeal(payload)?.total_chunks === 1) return { status: "found", text: payload };
     keepPartial(payload);
-    // An ordinary footer code should not pay for exhaustive page alignment.
-    // Allow one original-scale attempt plus a masked navigation-code retry.
+    // This is a quick ordinary-code preflight, not a full-photo exhaustive
+    // search. An indivisible 12 MP jsQR miss can otherwise consume the entire
+    // watchdog before footer isolation or wider watermark recovery can run.
+    // Keep dense-code evidence in the original photo for those later passes.
+    const ordinaryDeadline = Math.min(deadline, performance.now() + maxDurationMs / 4);
     const ordinary = shouldContinue() ? attempt("ordinary-qr", () => scanQrImage(data, width, height,
-      { tryRescaling: false, tryWatermark: false, maxAttempts: 2, shouldContinue })) : null;
+      { tryRescaling: false, tryWatermark: false, maxAttempts: 2, maxScanPixels: 1_500_000, fastResize: true,
+        shouldContinue: () => performance.now() < ordinaryDeadline })) : null;
     const ordinaryPayload = ordinary && qredPayloadFromPhotoScanResult(data, width, height, ordinary);
     if (decodeSeal(ordinaryPayload)?.total_chunks === 1) return { status: "found", text: ordinaryPayload };
     keepPartial(ordinaryPayload);

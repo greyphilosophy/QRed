@@ -50,15 +50,33 @@ function resizeRgba(data, width, height, targetWidth, targetHeight) {
   return pixels;
 }
 
-function scanSizes(width, height, tryRescaling = true) {
-  const baseScale = Math.min(1, Math.sqrt(MAX_SCAN_PIXELS / (width * height)));
+// A cheap first look for conventional codes. This point-sampled preview may
+// miss dense/awkwardly sampled symbols; it is never the retained evidence and
+// must not replace the default filtered/full-detail recovery paths.
+function resizePreviewRgba(data, width, height, targetWidth, targetHeight) {
+  const pixels = new Uint8ClampedArray(targetWidth * targetHeight * 4);
+  const columns = Int32Array.from({ length: targetWidth }, (_, x) =>
+    Math.min(width - 1, Math.max(0, Math.round((x + .5) * width / targetWidth - .5))) * 4);
+  for (let y = 0; y < targetHeight; y++) {
+    const row = Math.min(height - 1, Math.max(0, Math.round((y + .5) * height / targetHeight - .5))) * width * 4;
+    for (let x = 0; x < targetWidth; x++) {
+      const source = row + columns[x], target = (y * targetWidth + x) * 4;
+      pixels[target] = data[source]; pixels[target + 1] = data[source + 1];
+      pixels[target + 2] = data[source + 2]; pixels[target + 3] = data[source + 3];
+    }
+  }
+  return pixels;
+}
+
+function scanSizes(width, height, tryRescaling = true, maxPixels = MAX_SCAN_PIXELS) {
+  const baseScale = Math.min(1, Math.sqrt(maxPixels / (width * height)));
   const scales = tryRescaling ? [1, ...RETRY_SCALES] : [1];
   const attemptedSizes = new Set();
   const sizes = [];
   for (const factor of scales) {
     const targetWidth = Math.max(1, Math.floor(width * baseScale * factor));
     const targetHeight = Math.max(1, Math.floor(height * baseScale * factor));
-    if (targetWidth * targetHeight > MAX_SCAN_PIXELS) continue;
+    if (targetWidth * targetHeight > maxPixels) continue;
     const size = `${targetWidth}x${targetHeight}`;
     if (attemptedSizes.has(size)) continue;
     attemptedSizes.add(size);
@@ -78,8 +96,9 @@ function watermarkScanSize(width, height, maxPixels = MAX_WATERMARK_PIXELS) {
   return [w, h, Math.max(1, Math.min(4, Math.round(Math.max(w, h) / 550)))];
 }
 
-function scanAttempts(width, height, tryRescaling = true, tryWatermark = true, includeModuleAware = false) {
-  const attempts = scanSizes(width, height, tryRescaling);
+function scanAttempts(width, height, tryRescaling = true, tryWatermark = true, includeModuleAware = false,
+  maxScanPixels = MAX_SCAN_PIXELS) {
+  const attempts = scanSizes(width, height, tryRescaling, maxScanPixels);
   if (tryWatermark) {
     const [w, h, radius] = watermarkScanSize(width, height);
     attempts.push([w, h, radius]);
@@ -108,9 +127,10 @@ function usableResult(code) {
 
 // Prepare a resolution only once. The module-aware retry consumes the exact
 // same normalized ink and filtered pixels as ordinary watermark decoding.
-function prepareAtSize(data, width, height, [targetWidth, targetHeight, radius], entryToSkip = null) {
+function prepareAtSize(data, width, height, [targetWidth, targetHeight, radius], entryToSkip = null, fastResize = false) {
   const originalSize = targetWidth === width && targetHeight === height;
-  let observed = originalSize ? data : resizeRgba(data, width, height, targetWidth, targetHeight);
+  let observed = originalSize ? data
+    : (fastResize && !radius ? resizePreviewRgba : resizeRgba)(data, width, height, targetWidth, targetHeight);
   if (entryToSkip) {
     // Navigation is not evidence. Erase it only in this bounded working copy;
     // recovery, overlays and verification still use the original photograph.
@@ -127,11 +147,12 @@ function prepareAtSize(data, width, height, [targetWidth, targetHeight, radius],
   return { observed, pixels, normalized, targetWidth, targetHeight, originalSize, radius };
 }
 
-function decodePrepared(prepared, width, height, moduleAware = false) {
+function decodePrepared(prepared, width, height, moduleAware = false, shouldContinue) {
   const { observed, pixels, normalized, targetWidth, targetHeight, originalSize, radius } = prepared;
   const code = moduleAware && radius
     ? scanModuleAwareQr(observed, pixels, targetWidth, targetHeight, normalized)
-    : jsQR(pixels, targetWidth, targetHeight, { inversionAttempts: "attemptBoth" });
+    : jsQR(pixels, targetWidth, targetHeight, { inversionAttempts: "attemptBoth",
+      ...(shouldContinue ? { shouldContinue } : {}) });
   if (code && radius) code.watermark = true;
   if (!code || originalSize || !code.location) return code;
   return {
@@ -156,10 +177,16 @@ export function scanWatermarkPreview(data, width, height) {
 
 /** Return QR geometry in the original image's coordinates, even after a retry.
  * QR recovery and camera overlays must use the same coordinate frame.
+ * maxScanPixels bounds ordinary QR attempts only; watermark passes retain their
+ * separate cap. Full-detail/default scans keep their established 12 MP limit.
+ * fastResize is only for a preliminary ordinary-code pass with later original-
+ * pixel recovery. It never changes the filtered watermark preparation.
  */
 export function scanQrImage(data, width, height, { tryRescaling = true, tryWatermark = true,
-  maxAttempts = Infinity, shouldContinue = () => true } = {}) {
+  maxAttempts = Infinity, maxScanPixels = MAX_SCAN_PIXELS, fastResize = false, shouldContinue = () => true } = {}) {
   if (!isValidImage(data, width, height)) return null;
+  if (!Number.isInteger(maxScanPixels) || maxScanPixels < 1) throw new Error("Invalid QR scan pixel budget.");
+  maxScanPixels = Math.min(MAX_SCAN_PIXELS, maxScanPixels);
   let entryLink = null;
   let entryToSkip = null;
   let preparedWatermark = null;
@@ -168,20 +195,24 @@ export function scanQrImage(data, width, height, { tryRescaling = true, tryWater
   // rather than exhausting its budget on similar pixel-filter radii.
   const regularBudget = tryWatermark && Number.isFinite(maxAttempts) && maxAttempts >= 3
     ? maxAttempts - 1 : maxAttempts;
-  const sizes = scanAttempts(width, height, tryRescaling, tryWatermark);
+  const sizes = scanAttempts(width, height, tryRescaling, tryWatermark, false, maxScanPixels);
   for (let index = 0; index < sizes.length; index++) {
     const size = sizes[index];
     if (attempts >= regularBudget || !shouldContinue()) break;
-    const prepared = prepareAtSize(data, width, height, size, entryToSkip);
+    const prepared = prepareAtSize(data, width, height, size, entryToSkip, fastResize);
+    // Resizing/filtering can itself use the remaining allowance. Do not start
+    // a QR search after preparation crossed the deadline.
+    if (!shouldContinue()) break;
     if (prepared.radius && !preparedWatermark) preparedWatermark = prepared;
-    const code = decodePrepared(prepared, width, height);
+    const code = decodePrepared(prepared, width, height, false, shouldContinue);
     attempts++;
     if (usableResult(code)) return code;
     if (code?.data) entryLink ??= code;
     if (!entryToSkip && locatedEntry(code)) {
+      if (!shouldContinue()) break;
       entryToSkip = code;
       preparedWatermark = prepared.radius && Number.isFinite(maxAttempts)
-        ? prepareAtSize(data, width, height, size, entryToSkip) : null;
+        ? prepareAtSize(data, width, height, size, entryToSkip, fastResize) : null;
       // Retry this scale once for ordinary footer seals. A bounded watermark
       // preflight keeps its filtered/module-aware slots, with the link masked.
       if (!tryWatermark || !Number.isFinite(maxAttempts)) sizes.splice(index + 1, 0, size);

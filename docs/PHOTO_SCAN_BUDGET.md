@@ -1,10 +1,11 @@
 # Photo scan time budget
 
 A captured or selected photo has an eight-second seal-decoding budget. The
-synchronous decoder checks its deadline between attempts. A separate watchdog in
-the caller terminates the worker if an individual synchronous attempt (including
-jsQR) overruns that budget. A timer inside the decoder worker would not interrupt
-such work.
+synchronous decoder checks its deadline between attempts; conventional jsQR calls
+also receive cooperative checkpoints inside expensive loops. A separate watchdog
+in the caller terminates the worker if synchronous work overruns the overall
+budget. Preparation and some recovery routines remain indivisible. A timer inside
+the decoder worker would not interrupt such work.
 
 The watchdog starts when a selected/native still is submitted, including worker
 startup. For a photo decoded in the persistent live worker, it starts on the
@@ -196,3 +197,61 @@ that stage began, not 7.7 seconds spent refining. It can mean almost all the bud
 was consumed by preceding attempts. The existing four-second narrow-pass cutoff
 and expensive fallbacks can still produce timeouts under heavier CPU pressure;
 this change does not replace physical-phone acceptance or justify a longer wait.
+
+## Conventional-code preflight
+
+The early conventional-QR pass is a preliminary look, not a pair of exhaustive
+12 MP reads. It uses at most 1.5 MP, a cheap pixel-center preview, and at most two
+attempts (the second only masks a detected navigation QR). Its cooperative
+allowance is one quarter of the photo budget, capped by the overall deadline:
+two seconds with the unchanged eight-second default. Preparation is checked
+before entering the decoder, and navigation masking cannot start fresh work
+after the allowance expires.
+
+The existing jsQR patch now accepts an optional deadline callback, checked inside
+binarization, image location and candidate loops as well as around bounded QR
+extraction/decoding. A cancelled attempt returns no partially decoded result.
+Unrelated errors still propagate. Without that callback, the established math,
+recovery criteria and output remain unchanged. The independent worker watchdog
+is still required: these checkpoints are cooperative, not a hard real-time
+promise, and other image preparation/recovery work also consumes the budget.
+
+Point sampling can miss a dense footer that the original photograph can read.
+It is therefore limited to this early conventional pass. The original photo is
+unchanged and remains available to footer isolation, wider watermark recovery,
+page alignment and the final general-code fallback. Default/full-detail QR
+scans and filtered watermark preparation keep their existing resampling.
+Tests explicitly preserve a full-page dense invoice whose quick preview misses
+the seal, checking original-pixel footer recovery, valid signature and rejection
+of a wrong authority. Browser upload and camera workflow gates remain required.
+
+A timeout checkpoint saying conventional-code reading began at 1.3 seconds does
+not measure its duration or prove the selected photograph is optically readable.
+It does identify a stage where a full-resolution synchronous miss previously
+could use the remaining budget before wider watermark recovery. Reserving that
+stage's time fixes the scheduling mechanism; successful recovery of any specific
+unprovided phone capture still requires a physical test.
+
+Local diagnostic evidence for this scheduling change used public synthetic
+invoice pixels and the actual built worker/library, not a phone emulator:
+
+- With a deliberately short 500 ms inner allowance, the previous jsQR ignored
+  the callback and finished after 722, 1579 and 2672 ms at normal, 50% and 25%
+  decoder-process duty respectively. The patched implementation cancelled after
+  500, 509 and 523 ms. Only the decoder process was paused; elapsed wall time
+  continued normally. These one-shot component probes establish cancellation,
+  not successful seal recovery or phone latency.
+- Two interleaved production-worker runs per variant used the original 10.7 MP
+  public invoice and a 3000 by 4000 framed version. At normal speed both variants
+  completed all four reads; observed decoder times were 2.91–4.34 seconds before
+  and 1.75–3.42 seconds after. At 50% process duty both completed three of four;
+  at 25% neither completed any of four. Every failure is retained. Earlier
+  watermark processing and other stages can still exhaust the overall budget.
+- A deterministic clock test runs real jsQR inside `decodePhoto`, expires the
+  conventional allowance during internal processing, and proves later recovery
+  is invoked. This is a scheduling regression, explicitly not optical evidence
+  or a performance measurement.
+
+Do not convert these workstation/process-pressure results into a claimed phone
+success rate. Keep the eight-second real-worker browser tests and physical-phone
+acceptance separate from the longer algorithm-compatibility regression.

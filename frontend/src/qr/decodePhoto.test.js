@@ -80,7 +80,8 @@ it("recovers a complete ordinary footer seal before exhaustive alignment", async
   expect(scanPageAlignedImage).not.toHaveBeenCalled();
   expect(scanQrImage).toHaveBeenCalledTimes(1);
   expect(scanQrImage).toHaveBeenCalledWith(image.data, image.width, image.height,
-    { tryRescaling: false, tryWatermark: false, maxAttempts: 2, shouldContinue: expect.any(Function) });
+    { tryRescaling: false, tryWatermark: false, maxAttempts: 2, maxScanPixels: 1_500_000, fastResize: true,
+      shouldContinue: expect.any(Function) });
   expect((await verifyQRedSeals([action.text], publicKey)).status).toBe("VALID");
 });
 
@@ -266,4 +267,44 @@ it("reports the direct QR stage for non-payload callers without exposing recover
   expect(onStage).toHaveBeenCalledTimes(1);
   expect(onStage).toHaveBeenCalledWith({ stage: "general-qr", elapsedMs: expect.any(Number) });
   expect(Object.keys(onStage.mock.calls[0][0]).sort()).toEqual(["elapsedMs", "stage"]);
+});
+
+it.each([[8000, 1300, 3300], [4000, 500, 1500]])(
+  "leaves wider recovery reachable after the ordinary preflight allowance (%s ms overall)",
+  (maxDurationMs, ordinaryStart, ordinaryEnd) => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    scanWatermarkPreview.mockImplementation(() => { now = ordinaryStart; return null; });
+    scanQrImage.mockImplementation((_data, _width, _height, options) => {
+      expect(options.maxScanPixels).toBe(1_500_000);
+      expect(options.shouldContinue()).toBe(true);
+      now = ordinaryEnd - 1;
+      expect(options.shouldContinue()).toBe(true);
+      now = ordinaryEnd;
+      expect(options.shouldContinue()).toBe(false);
+      return null;
+    });
+    scanFooterSeals.mockImplementation((_image, { shouldContinue }) => {
+      expect(shouldContinue()).toBe(true); return [];
+    });
+    scanRectifiedSeal.mockReturnValueOnce(null).mockImplementationOnce((_image, { shouldContinue }) => {
+      expect(shouldContinue()).toBe(true); return { seal: single };
+    });
+    expect(decodePhoto(image, { returnPayload: true, maxDurationMs })).toEqual({ status: "found", text: single });
+    expect(scanRectifiedSeal).toHaveBeenCalledTimes(2);
+    expect(scanQrImage).toHaveBeenCalledTimes(1);
+  });
+
+it("does not let the ordinary allowance extend the overall photo deadline", () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  scanWatermarkPreview.mockImplementation(() => { now = 7000; return null; });
+  scanQrImage.mockImplementation((_data, _width, _height, { shouldContinue }) => {
+    now = 7999; expect(shouldContinue()).toBe(true);
+    now = 8000; expect(shouldContinue()).toBe(false);
+    return null;
+  });
+  expect(decodePhoto(image, { returnPayload: true }).status).toBe("feedback");
+  expect(scanFooterSeals).not.toHaveBeenCalled();
+  expect(scanRectifiedSeal).toHaveBeenCalledTimes(1);
 });

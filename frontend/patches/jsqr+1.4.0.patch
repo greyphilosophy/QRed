@@ -1,13 +1,14 @@
 diff --git a/node_modules/jsqr/dist/jsQR.js b/node_modules/jsqr/dist/jsQR.js
 --- a/node_modules/jsqr/dist/jsQR.js
 +++ b/node_modules/jsqr/dist/jsQR.js
-@@ -328,14 +328,31 @@
+@@ -328,14 +328,34 @@
  var decoder_1 = __webpack_require__(5);
  var extractor_1 = __webpack_require__(11);
  var locator_1 = __webpack_require__(12);
 -function scan(matrix) {
-+function scan(matrix, moduleSampler) {
-     var locations = locator_1.locate(matrix);
+-    var locations = locator_1.locate(matrix);
++function scan(matrix, moduleSampler, checkpoint) {
++    var locations = locator_1.locate(matrix, checkpoint);
      if (!locations) {
          return null;
      }
@@ -25,28 +26,84 @@ diff --git a/node_modules/jsqr/dist/jsQR.js b/node_modules/jsqr/dist/jsQR.js
 +    });
 +    locations = locations.concat(nearbyLocations);
      for (var _i = 0, locations_1 = locations; _i < locations_1.length; _i++) {
++        if (checkpoint) checkpoint();
          var location_1 = locations_1[_i];
          var extracted = extractor_1.extract(matrix, location_1);
++        if (checkpoint) checkpoint();
 +        if (moduleSampler) {
 +            var sampled = moduleSampler(extracted.matrix, extracted.mappingFunction, location_1.dimension);
 +            if (sampled) extracted.matrix = sampled;
 +        }
++        if (checkpoint) checkpoint();
          var decoded = decoder_1.decode(extracted.matrix);
          if (decoded) {
              return {
-@@ -370,9 +387,9 @@
+@@ -369,12 +389,27 @@
+     });
      var shouldInvert = options.inversionAttempts === "attemptBoth" || options.inversionAttempts === "invertFirst";
      var tryInvertedFirst = options.inversionAttempts === "onlyInvert" || options.inversionAttempts === "invertFirst";
-     var _a = binarizer_1.binarize(data, width, height, shouldInvert), binarized = _a.binarized, inverted = _a.inverted;
+-    var _a = binarizer_1.binarize(data, width, height, shouldInvert), binarized = _a.binarized, inverted = _a.inverted;
 -    var result = scan(tryInvertedFirst ? inverted : binarized);
-+    var result = scan(tryInvertedFirst ? inverted : binarized, providedOptions.moduleSampler);
-     if (!result && (options.inversionAttempts === "attemptBoth" || options.inversionAttempts === "invertFirst")) {
+-    if (!result && (options.inversionAttempts === "attemptBoth" || options.inversionAttempts === "invertFirst")) {
 -        result = scan(tryInvertedFirst ? binarized : inverted);
-+        result = scan(tryInvertedFirst ? binarized : inverted, providedOptions.moduleSampler);
++    // Optional cooperative cancellation for still-photo workers. The sentinel
++    // belongs to this invocation only; caller/decoder errors must still escape.
++    var cancelled = {};
++    var shouldContinue = providedOptions.shouldContinue;
++    var checkpoint = typeof shouldContinue === "function" ? function () {
++        if (!shouldContinue()) throw cancelled;
++    } : null;
++    try {
++        if (checkpoint) checkpoint();
++        var _a = binarizer_1.binarize(data, width, height, shouldInvert, checkpoint), binarized = _a.binarized, inverted = _a.inverted;
++        var result = scan(tryInvertedFirst ? inverted : binarized, providedOptions.moduleSampler, checkpoint);
++        if (!result && (options.inversionAttempts === "attemptBoth" || options.inversionAttempts === "invertFirst")) {
++            if (checkpoint) checkpoint();
++            result = scan(tryInvertedFirst ? binarized : inverted, providedOptions.moduleSampler, checkpoint);
++        }
++        return result;
      }
-     return result;
+-    return result;
++    catch (error) {
++        if (error === cancelled) return null;
++        throw error;
++    }
  }
-@@ -8961,7 +8978,7 @@
+ jsQR.default = jsQR;
+ exports.default = jsQR;
+@@ -407,13 +442,14 @@
+     };
+     return Matrix;
+ }());
+-function binarize(data, width, height, returnInverted) {
++function binarize(data, width, height, returnInverted, checkpoint) {
+     if (data.length !== width * height * 4) {
+         throw new Error("Malformed data passed to binarizer.");
+     }
+     // Convert image to greyscale
+     var greyscalePixels = new Matrix(width, height);
+     for (var x = 0; x < width; x++) {
++        if (checkpoint) checkpoint();
+         for (var y = 0; y < height; y++) {
+             var r = data[((y * width + x) * 4) + 0];
+             var g = data[((y * width + x) * 4) + 1];
+@@ -425,6 +461,7 @@
+     var verticalRegionCount = Math.ceil(height / REGION_SIZE);
+     var blackPoints = new Matrix(horizontalRegionCount, verticalRegionCount);
+     for (var verticalRegion = 0; verticalRegion < verticalRegionCount; verticalRegion++) {
++        if (checkpoint) checkpoint();
+         for (var hortizontalRegion = 0; hortizontalRegion < horizontalRegionCount; hortizontalRegion++) {
+             var sum = 0;
+             var min = Infinity;
+@@ -469,6 +506,7 @@
+         inverted = BitMatrix_1.BitMatrix.createEmpty(width, height);
+     }
+     for (var verticalRegion = 0; verticalRegion < verticalRegionCount; verticalRegion++) {
++        if (checkpoint) checkpoint();
+         for (var hortizontalRegion = 0; hortizontalRegion < horizontalRegionCount; hortizontalRegion++) {
+             var left = numBetween(hortizontalRegion, 2, horizontalRegionCount - 3);
+             var top_1 = numBetween(verticalRegion, 2, verticalRegionCount - 3);
+@@ -8961,7 +8999,7 @@
      {
          infoBits: 0x177EC,
          versionNumber: 23,
@@ -55,3 +112,134 @@ diff --git a/node_modules/jsqr/dist/jsQR.js b/node_modules/jsqr/dist/jsQR.js
          errorCorrectionLevels: [
              {
                  ecCodewordsPerBlock: 30,
+@@ -9894,16 +9932,23 @@
+     var y = (topY + bottomY) / 2;
+     return { x: x, y: y };
+ }
+-function locate(matrix) {
++function locate(matrix, checkpoint) {
++    var comparisons = 0;
++    var compareByScore = function (a, b) {
++        if (checkpoint && (comparisons++ & 127) === 0) checkpoint();
++        return a.score - b.score;
++    };
+     var finderPatternQuads = [];
+     var activeFinderPatternQuads = [];
+     var alignmentPatternQuads = [];
+     var activeAlignmentPatternQuads = [];
+     var _loop_1 = function (y) {
++        if (checkpoint) checkpoint();
+         var length_1 = 0;
+         var lastBit = false;
+         var scans = [0, 0, 0, 0, 0];
+         var _loop_2 = function (x) {
++            if (checkpoint && (x & 127) === 0) checkpoint();
+             var v = matrix.get(x, y);
+             if (v === lastBit) {
+                 length_1++;
+@@ -9933,7 +9978,8 @@
+                     var line = { startX: startX_1, endX: endX_1, y: y };
+                     // Is there a quad directly above the current spot? If so, extend it with the new line. Otherwise, create a new quad with
+                     // that line as the starting point.
+-                    var matchingQuads = activeFinderPatternQuads.filter(function (q) {
++                    var matchingQuads = activeFinderPatternQuads.filter(function (q, index) {
++                        if (checkpoint && (index & 127) === 0) checkpoint();
+                         return (startX_1 >= q.bottom.startX && startX_1 <= q.bottom.endX) ||
+                             (endX_1 >= q.bottom.startX && startX_1 <= q.bottom.endX) ||
+                             (startX_1 <= q.bottom.startX && endX_1 >= q.bottom.endX && ((scans[2] / (q.bottom.endX - q.bottom.startX)) < MAX_QUAD_RATIO &&
+@@ -9953,7 +9999,8 @@
+                     var line = { startX: startX_2, y: y, endX: endX_2 };
+                     // Is there a quad directly above the current spot? If so, extend it with the new line. Otherwise, create a new quad with
+                     // that line as the starting point.
+-                    var matchingQuads = activeAlignmentPatternQuads.filter(function (q) {
++                    var matchingQuads = activeAlignmentPatternQuads.filter(function (q, index) {
++                        if (checkpoint && (index & 127) === 0) checkpoint();
+                         return (startX_2 >= q.bottom.startX && startX_2 <= q.bottom.endX) ||
+                             (endX_2 >= q.bottom.startX && startX_2 <= q.bottom.endX) ||
+                             (startX_2 <= q.bottom.startX && endX_2 >= q.bottom.endX && ((scans[2] / (q.bottom.endX - q.bottom.startX)) < MAX_QUAD_RATIO &&
+@@ -9984,6 +10031,7 @@
+     var finderPatternGroups = finderPatternQuads
+         .filter(function (q) { return q.bottom.y - q.top.y >= 2; }) // All quads must be at least 2px tall since the center square is larger than a block
+         .map(function (q) {
++        if (checkpoint) checkpoint();
+         var x = (q.top.startX + q.top.endX + q.bottom.startX + q.bottom.endX) / 4;
+         var y = (q.top.y + q.bottom.y + 1) / 2;
+         if (!matrix.get(Math.round(x), Math.round(y))) {
+@@ -9995,16 +10043,17 @@
+         return { score: score, x: x, y: y, size: size };
+     })
+         .filter(function (q) { return !!q; }) // Filter out any rejected quads from above
+-        .sort(function (a, b) { return a.score - b.score; })
++        .sort(compareByScore)
+         // Now take the top finder pattern options and try to find 2 other options with a similar size.
+         .map(function (point, i, finderPatterns) {
++        if (checkpoint) checkpoint();
+         if (i > MAX_FINDERPATTERNS_TO_SEARCH) {
+             return null;
+         }
+         var otherPoints = finderPatterns
+             .filter(function (p, ii) { return i !== ii; })
+-            .map(function (p) { return ({ x: p.x, y: p.y, score: p.score + (Math.pow((p.size - point.size), 2)) / point.size, size: p.size }); })
+-            .sort(function (a, b) { return a.score - b.score; });
++            .map(function (p, index) { if (checkpoint && (index & 127) === 0) checkpoint(); return ({ x: p.x, y: p.y, score: p.score + (Math.pow((p.size - point.size), 2)) / point.size, size: p.size }); })
++            .sort(compareByScore);
+         if (otherPoints.length < 2) {
+             return null;
+         }
+@@ -10012,12 +10061,12 @@
+         return { points: [point].concat(otherPoints.slice(0, 2)), score: score };
+     })
+         .filter(function (q) { return !!q; }) // Filter out any rejected finder patterns from above
+-        .sort(function (a, b) { return a.score - b.score; });
++        .sort(compareByScore);
+     if (finderPatternGroups.length === 0) {
+         return null;
+     }
+     var _a = reorderFinderPatterns(finderPatternGroups[0].points[0], finderPatternGroups[0].points[1], finderPatternGroups[0].points[2]), topRight = _a.topRight, topLeft = _a.topLeft, bottomLeft = _a.bottomLeft;
+-    var alignment = findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, bottomLeft);
++    var alignment = findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, bottomLeft, checkpoint);
+     var result = [];
+     if (alignment) {
+         result.push({
+@@ -10036,7 +10085,7 @@
+     var midTopRight = recenterLocation(matrix, topRight);
+     var midTopLeft = recenterLocation(matrix, topLeft);
+     var midBottomLeft = recenterLocation(matrix, bottomLeft);
+-    var centeredAlignment = findAlignmentPattern(matrix, alignmentPatternQuads, midTopRight, midTopLeft, midBottomLeft);
++    var centeredAlignment = findAlignmentPattern(matrix, alignmentPatternQuads, midTopRight, midTopLeft, midBottomLeft, checkpoint);
+     if (centeredAlignment) {
+         result.push({
+             alignmentPattern: { x: centeredAlignment.alignmentPattern.x, y: centeredAlignment.alignmentPattern.y },
+@@ -10052,7 +10101,8 @@
+     return result;
+ }
+ exports.locate = locate;
+-function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, bottomLeft) {
++function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, bottomLeft, checkpoint) {
++    if (checkpoint) checkpoint();
+     var _a;
+     // Now that we've found the three finder patterns we can determine the blockSize and the size of the QR code.
+     // We'll use these to help find the alignment pattern but also later when we do the extraction.
+@@ -10075,8 +10125,10 @@
+         x: topLeft.x + correctionToTopLeft * (bottomRightFinderPattern.x - topLeft.x),
+         y: topLeft.y + correctionToTopLeft * (bottomRightFinderPattern.y - topLeft.y),
+     };
++    var comparisons = 0;
+     var alignmentPatterns = alignmentPatternQuads
+         .map(function (q) {
++        if (checkpoint) checkpoint();
+         var x = (q.top.startX + q.top.endX + q.bottom.startX + q.bottom.endX) / 4;
+         var y = (q.top.y + q.bottom.y + 1) / 2;
+         if (!matrix.get(Math.floor(x), Math.floor(y))) {
+@@ -10089,7 +10141,10 @@
+         return { x: x, y: y, score: score };
+     })
+         .filter(function (v) { return !!v; })
+-        .sort(function (a, b) { return a.score - b.score; });
++        .sort(function (a, b) {
++        if (checkpoint && (comparisons++ & 127) === 0) checkpoint();
++        return a.score - b.score;
++    });
+     // If there are less than 15 modules between finder patterns it's a version 1 QR code and as such has no alignmemnt pattern
+     // so we can only use our best guess.
+     var alignmentPattern = modulesBetweenFinderPatterns >= 15 && alignmentPatterns.length ? alignmentPatterns[0] : expectedAlignmentPattern;
