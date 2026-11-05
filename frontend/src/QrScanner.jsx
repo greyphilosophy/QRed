@@ -10,7 +10,7 @@ export { qrScanAction } from "./qr/decodePhoto.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
 import { photoProcessingMessage } from "./verifier/photoStatus.js";
-import { canCaptureCameraPhoto, captureCameraPhoto } from "./qr/cameraPhoto.js";
+import { canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback, cameraPhotoFailure } from "./qr/cameraPhoto.js";
 import "./qrScanner.css";
 
 /**
@@ -23,7 +23,7 @@ import "./qrScanner.css";
  * 3. Result — shows collection progress and can resume scanning
  */
 export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSealDetected, returnPayload = false, resultPanel,
-  collectSeals = false, collectionProgress, beforeScan, onScanningChange, completionNotice = "" }) {
+  collectSeals = false, collectionProgress, beforeScan, onScanningChange, onChoosePhoto, completionNotice = "" }) {
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
   const [captureRequest, setCaptureRequest] = useState(0);
@@ -78,6 +78,9 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
         setMode("scanning");
       },
     }, scanButtonLabel),
+    mode === "scanning" && onChoosePhoto ? React.createElement("button", {
+      className: "ar-button ar-button-secondary", onClick: () => { setMode("idle"); onChoosePhoto(); },
+    }, "Choose photo") : null,
     mode === "scanning" && collectSeals && collectionProgress?.pagesCollected > 0 ? React.createElement("button", {
       className: "ar-button ar-button-secondary", onClick: () => {
         setMode("result");
@@ -214,6 +217,8 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
     const seen = new Set();
     let captureReported = false;
     let processingCapture = false;
+    let captureDiagnostic = null;
+    let manualCaptureFailed = false;
     const capturedCanvas = canvasRef.current;
     let camera;
     const stopGuide = observePageScanGuide(videoRef.current, guideAreaRef.current, guideRef.current);
@@ -228,6 +233,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       onCaptured: ({ captureOnly } = {}) => {
         if (captureOnly) { capturePhoto(true); return; }
         processingCapture = true;
+        captureDiagnostic = cameraFrameDiagnostic(canvasRef.current);
         setFeedback(photoProcessingMessage());
         onReadingPhoto(true);
       },
@@ -239,6 +245,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
     });
 
     handleScanActionRef.current = (scanAction) => {
+      scanAction = cameraCaptureFeedback(scanAction, captureDiagnostic);
       if (scanAction.status === "found-multiple") {
         captureReported = true;
         let shouldStop = false, added = false;
@@ -283,6 +290,8 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       if (photoScanRef.current) return;
       // A queued live result must never be attached to the new still photo.
       if (!preserveGate) liveScan.reset();
+      captureDiagnostic = null;
+      manualCaptureFailed = false;
       const image = captureCameraFrame(videoRef.current, canvasRef.current);
       if (!image) {
         handleScanActionRef.current({ status: "pending", message: "Camera is preparing the photo. Hold steady…" });
@@ -295,20 +304,28 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       photoScanRef.current = controller;
       onReadingPhoto(true);
       const nativePhoto = canCaptureCameraPhoto(videoRef.current);
+      captureDiagnostic = cameraFrameDiagnostic(image);
       setFeedback(nativePhoto ? "Hold steady — taking photo…" : photoProcessingMessage());
       const read = async () => {
         const still = nativePhoto ? await captureCameraPhoto(videoRef.current, canvasRef.current,
-          { signal: controller.signal }) : null;
+          { signal: controller.signal, requireHighResolution: autoCapture, onDiagnostic: diagnostic => {
+            if (photoScanRef.current === controller) captureDiagnostic = diagnostic;
+          } }) : null;
         controller.signal.throwIfAborted();
+        if (autoCapture && !still) return cameraPhotoFailure(captureDiagnostic);
         setFeedback(photoProcessingMessage());
         return scanPhotoInWorker(still || image, { returnPayload, signal: controller.signal });
       };
       read().then(action => {
         if (photoScanRef.current !== controller) return;
+        manualCaptureFailed = autoCapture && !preserveGate && Boolean(action.captureFailed);
         setFeedback(null);
         handleScanActionRef.current(action);
       }).catch(error => {
-        if (photoScanRef.current === controller && error.name !== "AbortError") setFeedback(error.message);
+        if (photoScanRef.current === controller && error.name !== "AbortError") {
+          manualCaptureFailed = autoCapture && !preserveGate;
+          setFeedback(error.message);
+        }
       }).finally(() => {
         if (photoScanRef.current !== controller) return;
         photoScanRef.current = null;
@@ -331,7 +348,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
 
     function scanFrame() {
       // Preserve the photographed canvas until its worker result is collected.
-      if (photoScanRef.current) return;
+      if (photoScanRef.current || manualCaptureFailed) return;
       const video = videoRef.current, canvas = canvasRef.current;
       const frameReady = isCameraFrameReady(video, canvas);
       if (frameReady) markCameraReady(true);
@@ -345,7 +362,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       if (timeout) { handleScanActionRef.current(timeout); return; }
       if (!frameReady || liveScan.busy) return;
       const image = captureCameraFrame(video, canvas);
-      if (image) liveScan.scan(image, { captureOnly: canCaptureCameraPhoto(video) });
+      if (image) liveScan.scan(image, { captureOnly: autoCapture || canCaptureCameraPhoto(video) });
     }
 
     camera = startCameraSession({

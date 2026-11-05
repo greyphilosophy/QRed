@@ -120,3 +120,54 @@ def prepare_text_for_offline(page):
         page.get_by_role("button", name="Prepare offline checking", exact=True).click()
         expect(page.get_by_role("button", name="Offline text checking ready", include_hidden=True)).to_have_count(1, timeout=60000)
     page.wait_for_load_state("networkidle")
+
+
+# The still source is rendered independently at its native size. The preview may
+# be smaller; these mocks test browser wiring, not physical camera resolution.
+NATIVE_PHOTO_CAMERA_SCRIPT = """() => {
+    window.__syntheticStillRequests ??= [];
+    window.ImageCapture = class {
+        async getPhotoCapabilities() {
+            const source = window.__syntheticNativePhoto;
+            return {
+                imageWidth: {min: 1, max: source.naturalWidth || source.width},
+                imageHeight: {min: 1, max: source.naturalHeight || source.height},
+            };
+        }
+        async takePhoto(settings) {
+            window.__syntheticStillRequests.push(settings);
+            const source = window.__syntheticNativePhoto;
+            const still = document.createElement('canvas');
+            still.width = source.naturalWidth || source.width;
+            still.height = source.naturalHeight || source.height;
+            still.getContext('2d').drawImage(source, 0, 0);
+            return new Promise(resolve => still.toBlob(resolve, 'image/png'));
+        }
+    };
+}"""
+
+
+def observe_document_scan_requests(page):
+    """Observe metadata only, without replacing the real quality/decoder worker."""
+    page.evaluate("""() => {
+        window.__documentScanRequests = [];
+        const NativeWorker = window.Worker;
+        window.Worker = class extends NativeWorker {
+            postMessage(message, transfer) {
+                if (message.image) __documentScanRequests.push({
+                    width: message.image.width, height: message.image.height,
+                    live: !!message.live, captureOnly: !!message.captureOnly,
+                    prepareReading: !!message.prepareReading,
+                });
+                super.postMessage(message, transfer);
+            }
+        };
+    }""")
+
+
+def assert_document_preview_not_decoded(page):
+    requests = page.evaluate("window.__documentScanRequests")
+    previews = [request for request in requests if request["live"]]
+    assert previews, "Expected real video quality/framing work"
+    assert all(request["captureOnly"] for request in previews), requests
+    return [request for request in requests if not request["live"] and not request["prepareReading"]]
