@@ -80,9 +80,16 @@ export function SealVerification({ verification }) {
   const [openingKey, setOpeningKey] = useState(false);
   const [keyFileStatus, setKeyFileStatus] = useState("");
   const [readingImage, setReadingImage] = useState(false);
+  const [imageAttempt, setImageAttempt] = useState(0);
   const imageRead = useRef(0);
   const imageScan = useRef(null);
+  const photoProgressRegion = useRef(null);
   const photoProgress = usePhotoScanProgress();
+  useEffect(() => {
+    // The real file picker scrolls to the input inside the lower disclosure.
+    // Bring its status and Cancel back into view once, not on clock ticks.
+    if (readingImage) photoProgressRegion.current?.scrollIntoView?.({ block: "nearest" });
+  }, [readingImage, imageAttempt]);
   useEffect(() => { preparePhotoScanner(); }, []);
   useEffect(() => {
     imageRead.current += 1;
@@ -119,6 +126,7 @@ export function SealVerification({ verification }) {
     const controller = new AbortController();
     imageScan.current = controller;
     const request = ++imageRead.current;
+    setImageAttempt(request);
     const progress = photoProgress.begin("opening");
     let canvas;
     setReadingImage(true);
@@ -168,7 +176,7 @@ export function SealVerification({ verification }) {
 
   return <section className="verification-card" aria-label="Seal verification" id="document-check">
     <div className="verification-actions"><button type="button" onClick={verification.clear}>Finish &amp; clear</button></div>
-    {readingImage && <div>
+    {readingImage && <div ref={photoProgressRegion}>
       <PhotoScanProgress progress={photoProgress} />
       <button type="button" onClick={cancelImageScan}>Cancel photo scan</button>
     </div>}
