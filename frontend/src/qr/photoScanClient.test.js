@@ -313,3 +313,61 @@ it("does not start a captured-photo deadline for native still handoff", () => {
     live.stop();
   } finally { vi.useRealTimers(); }
 });
+
+it("retains the last safe stage without settling, extending the deadline, or losing chunks", async () => {
+  vi.useFakeTimers();
+  try {
+    const settled = vi.fn();
+    const pending = scanPhotoInWorker(image()).then(settled);
+    const receive = worker.onmessage;
+    receive({ data: { scanStage: { stage: "rectified-fast", elapsedMs: 0 } } });
+    vi.advanceTimersByTime(7000);
+    receive({ data: { scanStage: { stage: "ordinary-qr", elapsedMs: 6900, secret: "private" } } });
+    receive({ data: { scanStage: { stage: "private", elapsedMs: 7000 } } });
+    receive({ data: { progress: { status: "found-multiple", texts: ["partial"] } } });
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1000);
+    await pending;
+    expect(settled).toHaveBeenCalledWith(expect.objectContaining({ timedOut: true, texts: ["partial"],
+      scanDiagnostic: { stage: "ordinary-qr", elapsedMs: 6900 } }));
+    expect(settled.mock.calls[0][0].message).not.toContain("private");
+    receive({ data: { scanStage: { stage: "footer", elapsedMs: 9000 } } });
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+  } finally { vi.useRealTimers(); }
+});
+
+it("keeps stage diagnostics local to each photo request", async () => {
+  vi.useFakeTimers();
+  try {
+    const first = worker, second = { postMessage: vi.fn(), terminate: vi.fn() };
+    Worker.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const one = scanPhotoInWorker(image()), two = scanPhotoInWorker(image());
+    first.onmessage({ data: { scanStage: { stage: "footer", elapsedMs: 100 } } });
+    vi.advanceTimersByTime(8000);
+    await expect(one).resolves.toMatchObject({ scanDiagnostic: { stage: "footer", elapsedMs: 100 } });
+    expect(await two).not.toHaveProperty("scanDiagnostic");
+  } finally { vi.useRealTimers(); }
+});
+
+it("clears a live scan's stage metadata on reset", () => {
+  vi.useFakeTimers();
+  try {
+    const onResult = vi.fn();
+    const live = createLiveScanWorker({ onResult, onError: vi.fn() });
+    live.scan(image());
+    worker.onmessage({ data: { captured: true } });
+    worker.onmessage({ data: { scanStage: { stage: "footer", elapsedMs: 500 } } });
+    vi.advanceTimersByTime(8000);
+    expect(onResult.mock.calls[0][0].scanDiagnostic).toEqual({ stage: "footer", elapsedMs: 500 });
+    live.reset();
+    worker = { postMessage: vi.fn(), terminate: vi.fn() };
+    Worker.mockReturnValueOnce(worker);
+    live.scan(image());
+    worker.onmessage({ data: { captured: true } });
+    vi.advanceTimersByTime(8000);
+    expect(onResult.mock.calls[1][0]).not.toHaveProperty("scanDiagnostic");
+    live.stop();
+  } finally { vi.useRealTimers(); }
+});

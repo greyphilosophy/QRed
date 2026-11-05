@@ -1,10 +1,15 @@
+import { scanStageDiagnostic, scanStageFeedback } from "./photoScanDiagnostics.js";
+
 // Cooperative decoding and the UI worker watchdog share one photo budget.
 export const PHOTO_SCAN_BUDGET_MS = 8000;
 
-export function photoScanTimeoutAction(partial = null) {
+export function photoScanTimeoutAction(partial = null, stage = null) {
+  const scanDiagnostic = scanStageDiagnostic(stage);
   return {
     ...(partial || { status: "feedback" }),
+    ...(scanDiagnostic ? { scanDiagnostic } : {}),
     timedOut: true,
-    message: "The photo scan reached its time limit. Use Capture now to try again, or choose a clearer photo. Include all four page corners and avoid glare.",
+    message: "The photo scan reached its time limit. Use Capture now to try again, or choose a clearer photo. Include all four page corners and avoid glare."
+      + scanStageFeedback(scanDiagnostic),
   };
 }

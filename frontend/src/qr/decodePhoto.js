@@ -27,7 +27,8 @@ export function qrFrameAction(image, code, options = {}) {
 
 // The same decoder serves a chosen photo and a manually captured camera frame.
 // Browser callers run this synchronous work in photoScan.worker.js.
-export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOTO_SCAN_BUDGET_MS, onProgress } = {}) {
+export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOTO_SCAN_BUDGET_MS,
+  onProgress, onStage } = {}) {
   const { data, width, height } = image;
   if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0
     || width * height > 80_000_000 || data?.length !== width * height * 4) {
@@ -37,6 +38,13 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
   // guidance instead of spending a minute exhausting layout guesses.
   const started = performance.now(), deadline = started + maxDurationMs;
   const shouldContinue = () => performance.now() < deadline;
+  // Report only fixed stage names and elapsed time, never document pixels,
+  // decoded text or seal bytes. The caller can retain the last checkpoint
+  // even if its watchdog has to terminate synchronous decoding mid-attempt.
+  const attempt = (stage, run) => {
+    onStage?.({ stage, elapsedMs: Math.max(0, Math.round(performance.now() - started)) });
+    return run();
+  };
   const partials = new Set();
   const keepPartial = seal => {
     if (!decodeSeal(seal) || partials.has(seal)) return;
@@ -49,12 +57,12 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
     // Try the measured whole-page grid before general-purpose QR location.
     // Reserve half the cooperative budget for other layouts if this misses.
     const fastDeadline = started + maxDurationMs / 2;
-    const fast = scanRectifiedSeal(image, {
+    const fast = attempt("rectified-fast", () => scanRectifiedSeal(image, {
       searchRadius: 12, shouldContinue: () => performance.now() < fastDeadline,
-    });
+    }));
     if (decodeSeal(fast?.seal)?.total_chunks === 1) return { status: "found", text: fast.seal };
     keepPartial(fast?.seal);
-    const preview = shouldContinue() ? scanWatermarkPreview(data, width, height) : null;
+    const preview = shouldContinue() ? attempt("watermark-preview", () => scanWatermarkPreview(data, width, height)) : null;
     const payload = preview && qredPayloadFromPhotoScanResult(data, width, height, preview);
     // A complete single-code seal can skip the expensive alignment search.
     // Navigation/ordinary QRs must not hide a watermark, and one chunk must
@@ -64,14 +72,14 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
     keepPartial(payload);
     // An ordinary footer code should not pay for exhaustive page alignment.
     // Allow one original-scale attempt plus a masked navigation-code retry.
-    const ordinary = shouldContinue() ? scanQrImage(data, width, height,
-      { tryRescaling: false, tryWatermark: false, maxAttempts: 2, shouldContinue }) : null;
+    const ordinary = shouldContinue() ? attempt("ordinary-qr", () => scanQrImage(data, width, height,
+      { tryRescaling: false, tryWatermark: false, maxAttempts: 2, shouldContinue })) : null;
     const ordinaryPayload = ordinary && qredPayloadFromPhotoScanResult(data, width, height, ordinary);
     if (decodeSeal(ordinaryPayload)?.total_chunks === 1) return { status: "found", text: ordinaryPayload };
     keepPartial(ordinaryPayload);
     // Isolate adjacent dark footer symbols before the expensive watermark
     // fallback. Whole-frame finder triples can span two different symbols.
-    const footer = shouldContinue() ? scanFooterSeals(image, { shouldContinue, onSeal: keepPartial }) : [];
+    const footer = shouldContinue() ? attempt("footer", () => scanFooterSeals(image, { shouldContinue, onSeal: keepPartial })) : [];
     const footerTexts = footer.map(qredPayloadFromScanResult).filter(text => decodeSeal(text));
     for (const text of footerTexts) keepPartial(text);
     const chunks = [...partials].map(decodeSeal);
@@ -84,14 +92,15 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
       return indexes.size === chunk.total_chunks;
     })) return { status: "found-multiple", texts: [...partials] };
     // Retain the original wider alignment search for larger print distortions.
-    const rectified = shouldContinue() ? scanRectifiedSeal(image, { shouldContinue }) : null;
+    const rectified = shouldContinue() ? attempt("rectified-wide", () => scanRectifiedSeal(image, { shouldContinue })) : null;
     if (decodeSeal(rectified?.seal)?.total_chunks === 1) return { status: "found", text: rectified.seal };
     keepPartial(rectified?.seal);
-    const aligned = shouldContinue() ? scanPageAlignedImage(image, { deep: true, shouldContinue, onSeal: keepPartial }) : [];
+    const aligned = shouldContinue() ? attempt("page-aligned", () => scanPageAlignedImage(image,
+      { deep: true, shouldContinue, onSeal: keepPartial })) : [];
     const texts = [...new Set([...aligned.map(result => result.seal), ...partials])];
     if (texts.length) return { status: "found-multiple", texts };
   }
-  const code = shouldContinue() ? scanQrImage(data, width, height, { shouldContinue }) : null;
+  const code = shouldContinue() ? attempt("general-qr", () => scanQrImage(data, width, height, { shouldContinue })) : null;
   if (code?.codes) return qrFrameAction(image, code, { returnPayload });
   if (!code) return { status: "feedback", message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For footer seals, try framing the individual QR instead." };
   const text = qredTextFromScanResult(code);

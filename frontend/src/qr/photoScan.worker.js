@@ -2,6 +2,7 @@ import { decodePhoto, qrFrameAction } from "./decodePhoto.js";
 import { createQrFrameScanner } from "./scanQrImage.js";
 import { createPageCaptureGate } from "./pageCaptureQuality.js";
 import { preparePhotoReadingPixels } from "../verifier/photoReadingPixels.js";
+import { scanStageDiagnostic } from "./photoScanDiagnostics.js";
 
 // A camera session submits one frame at a time. Quality-approved captures
 // finish all recovery on that photo; ordinary live scanning stays bounded.
@@ -28,7 +29,11 @@ self.onmessage = ({ data: { image, returnPayload, live = false, requirePageQuali
     // Captured pages enter the bounded photo pipeline once. Repeating a live
     // preview first adds latency and can spend the whole attempt on a miss.
     let action = quality && !quality.ready ? { status: "continue" } : quality?.ready || !live
-      ? decodePhoto(image, { returnPayload, onProgress: action => self.postMessage({ progress: action }) })
+      ? decodePhoto(image, { returnPayload, onProgress: action => self.postMessage({ progress: action }),
+        onStage: value => {
+          const scanStage = scanStageDiagnostic(value);
+          if (scanStage) self.postMessage({ scanStage });
+        } })
       : qrFrameAction(image, scanQrFrame(image.data, image.width, image.height), { returnPayload });
     if (quality?.ready && action.status === "continue") action = {
       status: "feedback", message: "The page seal could not be read. Frame the page again, or use Capture now.",

@@ -7,6 +7,7 @@ import { createQRedSeals } from "../qredSealer.js";
 import { qrPayloadBytes, sealString } from "../sealFormat.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { PageCameraCapture, confirmsPageSeal } from "./PageCameraCapture.jsx";
+import { photoScanTimeoutAction } from "../qr/photoScanBudget.js";
 
 const camera = vi.hoisted(() => ({ stop: vi.fn(), options: null, snapshot: vi.fn(), scan: vi.fn(), reset: vi.fn(), liveOptions: null, liveScan: vi.fn() }));
 vi.mock("../qr/cameraSession.js", () => ({ startCameraSession: options => { camera.options = options; return { stop: camera.stop }; } }));
@@ -120,7 +121,7 @@ it("sends native still pixels to retake decoding and preserves their dimensions 
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context);
   vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: () => Promise.resolve(new Blob()) }; }));
   vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
-  camera.scan.mockResolvedValue({ status: "feedback", timedOut: true, message: "The scan reached its time limit." });
+  camera.scan.mockResolvedValue(photoScanTimeoutAction(null, { stage: "ordinary-qr", elapsedMs: 4100 }));
   const capture = vi.fn();
   render(<PageCameraCapture pageLabel="Page 2" seals={signed.seals} onCapture={capture} onClose={vi.fn()} />);
   camera.options.video.srcObject = { getVideoTracks: () => [{ kind: "video", readyState: "live" }] };
@@ -129,6 +130,7 @@ it("sends native still pixels to retake decoding and preserves their dimensions 
   expect(camera.scan.mock.calls[0][0]).toBe(pixels);
   expect(context.drawImage).toHaveBeenCalledWith(bitmap, 0, 0, 2000, 3000);
   expect((await screen.findByRole("alert")).textContent).toContain("Camera photo: 2000 × 3000");
+  expect(screen.getByRole("alert").textContent).toContain("Last reported step: reading conventional QR codes (4.1 s into decoding).");
   expect(capture).not.toHaveBeenCalled();
   expect(camera.reset).toHaveBeenCalledTimes(1);
 });
