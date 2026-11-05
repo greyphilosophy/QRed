@@ -128,6 +128,17 @@ passing a reconstructed square matrix to patched jsQR. Successful scanning
 requires recovering the complete QRed transport, and normal digest/signature
 verification still makes the trust decision.
 
+Before refining a rectified single-seal grid, the public BCH-protected QR
+version fields must be readable. The established single-pixel, fixed-threshold
+read runs first. On a miss, one bounded retry measures ink/paper contrast from
+the adjacent public finder at each corner and uses nine within-module samples.
+This accommodates local shadow and small color-conversion changes without
+searching arbitrary thresholds or guessing a version from the document.
+Both reads retain the same plausible-size check and maximum three BCH bit
+errors; unavailable or low-contrast finders cannot calibrate the retry.
+This only identifies the grid: full transport recovery and the normal
+cryptographic verification remain required.
+
 The rectified single-seal path first retains its fixed ink/foreground
 thresholds. If those fail, it makes bounded local-contrast retries on the same
 measured grid and cached 25-pixel module observations. A 17-by-17-module
