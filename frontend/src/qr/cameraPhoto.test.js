@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { canCaptureCameraPhoto, captureCameraPhoto, cameraCaptureFeedback, cameraFrameDiagnostic } from "./cameraPhoto.js";
+import { canCaptureCameraPhoto, captureCameraPhoto, cameraCaptureFeedback, cameraFrameDiagnostic, cameraPhotoFailure, readCameraPhotoFile, NATIVE_PHOTO_TIMEOUT_MS } from "./cameraPhoto.js";
 
 const track = { kind: "video", readyState: "live" };
 const video = { srcObject: { getVideoTracks: () => [track] } };
@@ -41,7 +41,7 @@ it("times out a slow still capture and never overwrites the fallback with its la
   vi.useFakeTimers();
   let finish;
   camera.takePhoto.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
-  const result = captureCameraPhoto(video, canvas);
+  const result = captureCameraPhoto(video, canvas, { timeoutMs: 1800 });
   await flush();
   await vi.advanceTimersByTimeAsync(1800);
   expect(await result).toBeNull();
@@ -107,7 +107,7 @@ it("shares one deadline across capability discovery, sizing retry and bitmap dec
   camera.getPhotoCapabilities.mockImplementation(() => new Promise(resolve => { capabilities = resolve; }));
   camera.takePhoto.mockImplementationOnce(() => new Promise((_, reject) => { rejectSized = reject; }))
     .mockImplementationOnce(() => new Promise(resolve => { finishRetry = resolve; }));
-  const onDiagnostic = vi.fn(), result = captureCameraPhoto(video, canvas, { onDiagnostic });
+  const onDiagnostic = vi.fn(), result = captureCameraPhoto(video, canvas, { onDiagnostic, timeoutMs: 1800 });
   await vi.advanceTimersByTimeAsync(800);
   capabilities({ imageWidth: { max: 4000 }, imageHeight: { max: 3000 } }); await flush();
   await vi.advanceTimersByTimeAsync(700);
@@ -128,7 +128,7 @@ it("does not start a sizing retry after cancellation or capability timeout", asy
   vi.useFakeTimers();
   let finish;
   camera.getPhotoCapabilities.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
-  const onDiagnostic = vi.fn(), result = captureCameraPhoto(video, canvas, { onDiagnostic });
+  const onDiagnostic = vi.fn(), result = captureCameraPhoto(video, canvas, { onDiagnostic, timeoutMs: 1800 });
   await vi.advanceTimersByTimeAsync(1800);
   expect(await result).toBeNull();
   finish({ imageWidth: { max: 4000 }, imageHeight: { max: 3000 } }); await flush();
@@ -158,4 +158,81 @@ it("adds only whitelisted capture metadata to failures, retaining recovered part
   expect(cameraCaptureFeedback({ status: "feedback", message: "No seal." }, { source: "native-still", width: 4000, height: 3000 }))
     .toMatchObject({ message: "No seal. Camera photo: 4000 × 3000." });
   expect(cameraCaptureFeedback(action, { width: 0, height: 0 })).toBe(action);
+});
+
+it("allows a genuine still to finish after the old 1.8-second preview fallback deadline", async () => {
+  vi.useFakeTimers();
+  camera.takePhoto.mockImplementation(() => new Promise(resolve => setTimeout(() => resolve(new Blob()), 2200)));
+  const onDiagnostic = vi.fn(), result = captureCameraPhoto(video, canvas, { onDiagnostic, requireHighResolution: true });
+  await vi.advanceTimersByTimeAsync(1800);
+  expect(onDiagnostic).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(400);
+  expect(await result).toBe(pixels);
+  expect(onDiagnostic).toHaveBeenCalledWith({ source: "native-still", width: 4000, height: 3000, reason: "captured" });
+  expect(NATIVE_PHOTO_TIMEOUT_MS).toBe(5000);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each([[1920, 1080, false], [2560, 1440, false], [2560, 1920, true], [3000, 4000, true]])(
+  "checks actual native photo dimensions %i×%i, not the requested or preview size", async (width, height, usable) => {
+    bitmap.width = width; bitmap.height = height;
+    const onDiagnostic = vi.fn();
+    const image = await captureCameraPhoto(video, canvas, { requireHighResolution: true, onDiagnostic });
+    expect(image).toBe(usable ? pixels : null);
+    expect(context.drawImage).toHaveBeenCalledTimes(usable ? 1 : 0);
+    if (!usable) {
+      expect(onDiagnostic).toHaveBeenCalledWith({ source: "native-still", width, height, reason: "low-resolution" });
+      expect(cameraPhotoFailure(onDiagnostic.mock.calls[0][0])).toMatchObject({ captureFailed: true, message: expect.stringContaining("No video frame was scanned") });
+      expect(canvas).toMatchObject({ width: 640, height: 480 });
+    }
+  });
+
+it("does not overlap uncancellable native requests after a timeout", async () => {
+  vi.useFakeTimers();
+  let finish;
+  camera.takePhoto.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const first = captureCameraPhoto(video, canvas, { timeoutMs: 100 });
+  await vi.advanceTimersByTimeAsync(100); expect(await first).toBeNull();
+  const onDiagnostic = vi.fn();
+  expect(await captureCameraPhoto(video, canvas, { onDiagnostic })).toBeNull();
+  expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ reason: "camera-busy" }));
+  expect(camera.takePhoto).toHaveBeenCalledTimes(1);
+  finish(new Blob()); await flush();
+  expect(context.drawImage).not.toHaveBeenCalled();
+  expect(await captureCameraPhoto(video, canvas)).toBe(pixels);
+  expect(camera.takePhoto).toHaveBeenCalledTimes(2);
+});
+
+it("opens an explicitly selected high-resolution photo locally and reports its actual dimensions", async () => {
+  const photo = { naturalWidth: 4000, naturalHeight: 3000, decode: vi.fn().mockResolvedValue(), src: "" };
+  vi.stubGlobal("Image", vi.fn(function () { return photo; }));
+  vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:selected"), revokeObjectURL: vi.fn() });
+  const onDiagnostic = vi.fn();
+  expect(await readCameraPhotoFile(new Blob(), canvas, { onDiagnostic })).toBe(pixels);
+  expect(context.drawImage).toHaveBeenCalledWith(photo, 0, 0, 4000, 3000);
+  expect(onDiagnostic).toHaveBeenCalledWith({ source: "selected-photo", width: 4000, height: 3000, reason: "captured" });
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:selected");
+  expect(photo.src).toBe("");
+});
+
+it("rejects an undersized selected photo before replacing the preview", async () => {
+  vi.stubGlobal("Image", vi.fn(function () { return { naturalWidth: 1920, naturalHeight: 1080, decode: () => Promise.resolve(), src: "" }; }));
+  vi.stubGlobal("URL", { createObjectURL: () => "blob:small", revokeObjectURL: vi.fn() });
+  const onDiagnostic = vi.fn();
+  expect(await readCameraPhotoFile(new Blob(), canvas, { onDiagnostic })).toBeNull();
+  expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ source: "selected-photo", reason: "low-resolution" }));
+  expect(context.drawImage).not.toHaveBeenCalled();
+});
+
+it("cancels a pending selected photo without replacing pixels or publishing stale metadata", async () => {
+  let finish;
+  const photo = { naturalWidth: 4000, naturalHeight: 3000, decode: () => new Promise(resolve => { finish = resolve; }), src: "" };
+  vi.stubGlobal("Image", vi.fn(function () { return photo; }));
+  vi.stubGlobal("URL", { createObjectURL: () => "blob:cancel", revokeObjectURL: vi.fn() });
+  const controller = new AbortController(), onDiagnostic = vi.fn();
+  const result = readCameraPhotoFile(new Blob(), canvas, { signal: controller.signal, onDiagnostic });
+  controller.abort(); await expect(result).rejects.toMatchObject({ name: "AbortError" });
+  finish(); await flush();
+  expect(context.drawImage).not.toHaveBeenCalled(); expect(onDiagnostic).not.toHaveBeenCalled();
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:cancel");
 });

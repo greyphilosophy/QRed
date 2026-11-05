@@ -10,7 +10,7 @@ import subprocess
 import pytest
 from PIL import Image, ImageDraw
 from playwright.sync_api import expect
-from browser_helpers import show_seal_details, show_file_inputs, prepare_text_for_offline, OfflineNetworkGuard, stamp_and_save, wait_for_offline_resources
+from browser_helpers import show_seal_details, show_file_inputs, prepare_text_for_offline, OfflineNetworkGuard, stamp_and_save, wait_for_offline_resources, NATIVE_PHOTO_CAMERA_SCRIPT
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
@@ -207,16 +207,23 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
             page.locator("#publicKeyFileInput").set_input_files({
                 "name": "public-key.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode(),
             })
-            camera_image = "data:image/png;base64," + base64.b64encode((tmp_path / "seal.png").read_bytes()).decode()
+            subprocess.run(["pdftoppm", "-png", "-r", "400", "-singlefile", str(stamped),
+                            str(tmp_path / "native-footer-source")], check=True, capture_output=True)
+            with Image.open(tmp_path / "native-footer-source.png") as native_page:
+                native_footer = native_page.crop((0, 4400, 3400, 5600))
+                native_footer.save(tmp_path / "native-footer.png")
+            camera_image = "data:image/png;base64," + base64.b64encode((tmp_path / "native-footer.png").read_bytes()).decode()
             page.evaluate("""async url => {
                 const image = new Image(); image.src = url; await image.decode();
-                const frame = document.createElement('canvas'); frame.width = image.width; frame.height = image.height;
-                frame.getContext('2d').drawImage(image, 0, 0);
+                window.__syntheticNativePhoto = image;
+                const frame = document.createElement('canvas'); frame.width = 1224; frame.height = 432;
+                frame.getContext('2d').drawImage(image, 0, 0, frame.width, frame.height);
                 const stream = frame.captureStream(15);
                 navigator.mediaDevices.getUserMedia = async () => stream;
                 navigator.mediaDevices.enumerateDevices = async () => [];
                 window.__syntheticCameraFrame = frame;
             }""", camera_image)
+            page.evaluate(NATIVE_PHOTO_CAMERA_SCRIPT)
             page.get_by_role("button", name="Check document", exact=True).click()
             # A footer-only view has no paper boundary. Its intentional manual
             # capture must still recover the signed visual reference offline.
@@ -233,25 +240,31 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
             expect(thumbnail).to_be_visible()
             values = thumbnail.evaluate("el => Array.from(el.getContext('2d').getImageData(0,0,el.width,el.height).data)")
             assert min(values[::4]) == 0 and max(values[::4]) == 255
-        full_page = "data:image/png;base64," + base64.b64encode((tmp_path / "printed.png").read_bytes()).decode()
+        # Render the native photo directly from the synthetic PDF. A larger
+        # video frame or enlarged low-resolution export is not photo evidence.
+        subprocess.run(["pdftoppm", "-png", "-r", "240", "-singlefile", str(stamped),
+                        str(tmp_path / "native-page")], check=True, capture_output=True)
+        full_page = "data:image/png;base64," + base64.b64encode((tmp_path / "native-page.png").read_bytes()).decode()
         page.evaluate("""async url => {
             const image = new Image(); image.src = url; await image.decode();
-            const frame = document.createElement('canvas'); frame.width = image.width; frame.height = image.height;
-            frame.getContext('2d').drawImage(image, 0, 0);
+            window.__syntheticNativePhoto = image;
+            const frame = document.createElement('canvas'); frame.width = 1224; frame.height = 2016;
+            frame.getContext('2d').drawImage(image, 0, 0, frame.width, frame.height);
             navigator.mediaDevices.getUserMedia = async () => frame.captureStream(15);
             navigator.mediaDevices.enumerateDevices = async () => [];
-            setInterval(() => frame.getContext('2d').drawImage(image, 0, 0), 100);
+            setInterval(() => frame.getContext('2d').drawImage(image, 0, 0, frame.width, frame.height), 100);
         }""", full_page)
+        page.evaluate(NATIVE_PHOTO_CAMERA_SCRIPT)
         reference.get_by_role("button", name="Retake this page for visual review", exact=True).click()
         page.get_by_role("dialog").get_by_role("button", name="Capture now").click()
         photo = reference.get_by_role("img", name="Page photo beside the signed visual reference")
-        # The earlier QR-only scan is 432 px tall; wait for the user's full-page
-        # replacement to finish decoding rather than observing the first image.
+        # The earlier scan contains only the footer; wait for the user's
+        # full-page replacement rather than observing the first image.
         # Under CI load PNG decoding/re-encoding can exceed Playwright's
         # default five-second assertion timeout. The exact full-page pixels
         # still have to be present; accepting the QR crop is not sufficient.
-        expect(photo).to_have_js_property("naturalWidth", 1224, timeout=30000)
-        expect(photo).to_have_js_property("naturalHeight", 2016, timeout=30000)
+        expect(photo).to_have_js_property("naturalWidth", 2040, timeout=30000)
+        expect(photo).to_have_js_property("naturalHeight", 3360, timeout=30000)
         guard.assert_quiet()
         if not blank and path == "/":
             page.screenshot(path=str(tmp_path / "visual-reference-mobile.png"), full_page=True)

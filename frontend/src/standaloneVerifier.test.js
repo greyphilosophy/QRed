@@ -8,7 +8,7 @@ import { PNG } from "pngjs";
 import { getPreferredCameraStream, applyCameraQualityControls } from "./qr/cameraControls.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
-import { canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback } from "./qr/cameraPhoto.js";
+import { captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback } from "./qr/cameraPhoto.js";
 import { createQrFrameScanner } from "./qr/scanQrImage.js";
 import { createLiveScanWorker, scanPhotoInWorker } from "./qr/photoScanClient.js";
 import { qrFrameAction } from "./qr/decodePhoto.js";
@@ -46,6 +46,9 @@ function loadStandalone(overrides = {}) {
   const source = document.querySelector('script[type="module"]').textContent.replace(/^\s*import .+;$/gm, "");
   // jsdom has no real Worker. Keep the real client and QR decoder, delivering
   // results asynchronously; the built-browser tests exercise the actual worker.
+  // This legacy QR harness deliberately returns decoded preview results. Native
+  // acquisition tests below use explicit captureOnly callbacks and assert that
+  // the shipped UI never submits preview pixels to the photo decoder.
   vi.stubGlobal("Worker", class {
     scan = (overrides.createQrFrameScanner || createQrFrameScanner)();
     stopped = false;
@@ -57,7 +60,7 @@ function loadStandalone(overrides = {}) {
   });
   const bindings = {
     getPreferredCameraStream, applyCameraQualityControls, authProvider, startCameraSession, observePageScanGuide, createLiveScanWorker, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
-    preparePhotoScanner: vi.fn(), scanPhotoInWorker, photoProcessingMessage, canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback,
+    preparePhotoScanner: vi.fn(), scanPhotoInWorker, photoProcessingMessage, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback,
     createScanPhotoCollection: callback => createScanPhotoCollection(callback, async () => new Blob(["frame"], { type: "image/png" })),
     mountPhotoTextVerification: () => ({ update: vi.fn(), prepare: vi.fn().mockResolvedValue(), clear: vi.fn() }),
     mountPdfSealInput: () => ({ update: vi.fn() }),
@@ -69,7 +72,7 @@ function loadStandalone(overrides = {}) {
 }
 
 afterEach(() => {
-  vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = "";
+  vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = "";
   delete navigator.mediaDevices;
 });
 
@@ -294,7 +297,11 @@ it("keeps timeout retry guidance after collecting new or duplicate partial camer
     },
     startCameraSession: () => ({ stop: vi.fn() }),
     scanPhotoInWorker: retry,
-    canCaptureCameraPhoto: () => false,
+    captureCameraPhoto: async (video, canvas, options) => {
+      canvas.width = 2000; canvas.height = 3000;
+      options.onDiagnostic({ source: "native-still", width: 2000, height: 3000, reason: "captured" });
+      return { width: 2000, height: 3000, data: new Uint8ClampedArray(4) };
+    },
   });
   const video = document.getElementById("cameraVideo");
   Object.defineProperties(video, { videoWidth: { value: 20 }, videoHeight: { value: 30 } });
@@ -354,8 +361,8 @@ it("shows a mixed-document warning instead of an all-authenticated summary for a
 });
 
 it("uses native still pixels and shows their dimensions after a standalone camera timeout", async () => {
-  const pixels = { width: 40, height: 60, data: new Uint8ClampedArray(40 * 60 * 4) };
-  const bitmap = { width: 40, height: 60, close: vi.fn() };
+  const pixels = { width: 2000, height: 3000, data: new Uint8ClampedArray(4) };
+  const bitmap = { width: 2000, height: 3000, close: vi.fn() };
   vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: () => Promise.resolve(new Blob()) }; }));
   vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
   const scan = vi.fn().mockResolvedValue({ status: "feedback", timedOut: true, message: "The scan reached its time limit." });
@@ -370,7 +377,146 @@ it("uses native still pixels and shows their dimensions after a standalone camer
   fireEvent.click(document.getElementById("btnCapture"));
   await waitFor(() => expect(scan).toHaveBeenCalledTimes(1));
   expect(scan.mock.calls[0][0]).toBe(pixels);
-  expect(document.getElementById("scanCanvas").width).toBe(40);
-  expect(document.getElementById("scanCanvas").height).toBe(60);
-  await waitFor(() => expect(document.getElementById("pageGuideHint").textContent).toContain("Camera photo: 40 × 60"));
+  // Native acquisition uses its own canvas, never the preview canvas.
+  expect(document.getElementById("scanCanvas").width).toBe(300);
+  expect(document.getElementById("scanCanvas").height).toBe(150);
+  await waitFor(() => expect(document.getElementById("pageGuideHint").textContent).toContain("Camera photo: 2000 × 3000"));
+});
+
+function setupStandaloneCapture(overrides = {}) {
+  const live = { busy: false, reset: vi.fn(), scan: vi.fn(), stop: vi.fn() };
+  const scan = vi.fn().mockResolvedValue({ status: "feedback", message: "No seal in this photo." });
+  let callbacks, camera;
+  loadStandalone({
+    createLiveScanWorker: options => { callbacks = options; return live; },
+    startCameraSession: options => { camera = options; return { stop: vi.fn() }; },
+    scanPhotoInWorker: scan,
+    ...overrides,
+  });
+  const video = document.getElementById("cameraVideo");
+  const track = { kind: "video", readyState: "live" };
+  video.srcObject = { getVideoTracks: () => [track] };
+  Object.defineProperties(video, { videoWidth: { value: 800 }, videoHeight: { value: 1000 } });
+  const pixels = { width: 2000, height: 3000, data: new Uint8ClampedArray(4) };
+  const context = { drawImage: vi.fn(), getImageData: vi.fn(() => pixels) };
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context);
+  return { live, scan, pixels, context, get callbacks() { return callbacks; }, get camera() { return camera; } };
+}
+function selectedStandalonePhoto({ width = 2000, height = 3000, decode = () => Promise.resolve() } = {}) {
+  const image = { naturalWidth: width, naturalHeight: height, decode, src: "" };
+  vi.stubGlobal("Image", vi.fn(function () { return image; }));
+  URL.createObjectURL = vi.fn(() => "blob:synthetic-page");
+  URL.revokeObjectURL = vi.fn();
+  return image;
+}
+it.each(["unsupported", "too small", "rejected"])("never decodes standalone preview pixels when native capture is %s", async failure => {
+  if (failure !== "unsupported") {
+    vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: () => failure === "rejected"
+      ? Promise.reject(new Error("camera failed")) : Promise.resolve(new Blob()) }; }));
+    vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue({ width: 1200, height: 1600, close: vi.fn() }));
+  }
+  const setup = setupStandaloneCapture();
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(setup.camera).toBeDefined());
+  setup.camera.onFrame();
+  expect(setup.live.scan.mock.calls[0][1]).toEqual({ captureOnly: true });
+  setup.callbacks.onCaptured({ captureOnly: true });
+  await waitFor(() => expect(document.getElementById("pageGuideHint").textContent).toContain("No video frame was scanned"));
+  expect(setup.scan).not.toHaveBeenCalled();
+  expect(setup.context.drawImage).toHaveBeenCalledTimes(1);
+  expect(setup.live.reset).not.toHaveBeenCalled();
+  setup.callbacks.onQuality({ state: "captured", message: "Move the page.", progress: 0 });
+  expect(document.getElementById("pageGuideHint").textContent).toContain("No video frame was scanned");
+  expect(document.getElementById("btnChoosePhoto").hidden).toBe(false);
+});
+it("bounds a standalone native timeout and ignores its eventual photo", async () => {
+  let finish;
+  vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: () => new Promise(resolve => { finish = resolve; }) }; }));
+  vi.stubGlobal("createImageBitmap", vi.fn());
+  const setup = setupStandaloneCapture();
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(setup.camera).toBeDefined());
+  vi.useFakeTimers();
+  fireEvent.click(document.getElementById("btnCapture"));
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(document.getElementById("pageGuideHint").textContent).toContain("did not finish taking its photo in time");
+  expect(setup.scan).not.toHaveBeenCalled();
+  finish(new Blob()); await Promise.resolve(); await Promise.resolve();
+  expect(setup.context.drawImage).not.toHaveBeenCalled();
+  expect(createImageBitmap).not.toHaveBeenCalled();
+});
+it("verifies and retains a selected high-resolution photo without requiring camera access", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const sealed = await createQRedSeals({ content: "Selected document", privateKey, publicKey });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ public_key: publicKey, key_id: sealed.key_id }) }));
+  const snapshot = vi.fn(async () => new Blob(["photo"]));
+  const setup = setupStandaloneCapture({ createScanPhotoCollection: callback => createScanPhotoCollection(callback, snapshot) });
+  setup.scan.mockResolvedValue({ status: "found", text: sealed.seals[0] });
+  const image = selectedStandalonePhoto();
+  fireEvent.change(document.getElementById("pagePhotoInput"), { target: { files: [new File(["synthetic"], "page.jpg", { type: "image/jpeg" })] } });
+  await waitFor(() => expect(document.getElementById("resultStatus").textContent).toBe("Seal authenticated"));
+  expect(document.getElementById("resultContent").textContent).toBe("Selected document");
+  expect(setup.scan.mock.calls[0][0]).toBe(setup.pixels);
+  expect(setup.camera).toBeUndefined();
+  expect(snapshot).toHaveBeenCalledTimes(1);
+  expect(setup.context.drawImage).toHaveBeenCalledWith(image, 0, 0, 2000, 3000);
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:synthetic-page");
+});
+it("retries a native failure with an explicitly selected photo and preserves selected dimensions", async () => {
+  const setup = setupStandaloneCapture(); selectedStandalonePhoto();
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(setup.camera).toBeDefined());
+  fireEvent.click(document.getElementById("btnCapture"));
+  await waitFor(() => expect(document.getElementById("pageGuideHint").textContent).toContain("No video frame was scanned"));
+  fireEvent.change(document.getElementById("pagePhotoInput"), { target: { files: [new File(["synthetic"], "page.jpg")] } });
+  await waitFor(() => expect(setup.scan).toHaveBeenCalledTimes(1));
+  expect(document.getElementById("pageGuideHint").textContent).toContain("Selected photo: 2000 × 3000");
+});
+it("clears a pending selected photo without letting its late pixels revive the session", async () => {
+  let finish;
+  const setup = setupStandaloneCapture();
+  selectedStandalonePhoto({ decode: () => new Promise(resolve => { finish = resolve; }) });
+  fireEvent.change(document.getElementById("pagePhotoInput"), { target: { files: [new File(["synthetic"], "page.jpg")] } });
+  fireEvent.click(document.getElementById("btnNewScan"));
+  finish(); await Promise.resolve(); await Promise.resolve();
+  expect(setup.scan).not.toHaveBeenCalled(); expect(setup.context.drawImage).not.toHaveBeenCalled();
+  expect(document.getElementById("scanCanvas").width).toBe(0);
+  expect(document.getElementById("clearNotice").textContent).toBe("Check cleared. Camera off.");
+});
+it("cancels native capture and accepts a replacement file without publishing the old shot", async () => {
+  let finish;
+  vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: () => new Promise(resolve => { finish = resolve; }) }; }));
+  vi.stubGlobal("createImageBitmap", vi.fn());
+  const setup = setupStandaloneCapture(); selectedStandalonePhoto();
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(setup.camera).toBeDefined());
+  fireEvent.click(document.getElementById("btnCapture"));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  fireEvent.change(document.getElementById("pagePhotoInput"), { target: { files: [new File(["synthetic"], "page.jpg")] } });
+  await waitFor(() => expect(setup.scan).toHaveBeenCalledTimes(1));
+  finish(new Blob()); await Promise.resolve(); await Promise.resolve();
+  expect(setup.scan).toHaveBeenCalledTimes(1); expect(createImageBitmap).not.toHaveBeenCalled();
+  expect(document.getElementById("pageGuideHint").textContent).toContain("Selected photo: 2000 × 3000");
+});
+
+it("rejects a too-small selected standalone photo before decoding it", async () => {
+  const setup = setupStandaloneCapture(); selectedStandalonePhoto({ width: 1200, height: 1600 });
+  fireEvent.change(document.getElementById("pagePhotoInput"), { target: { files: [new File(["synthetic"], "small.jpg")] } });
+  await waitFor(() => expect(document.getElementById("pageGuideHint").textContent).toContain("at least 4 MP and 2560 pixels"));
+  expect(setup.scan).not.toHaveBeenCalled(); expect(setup.context.drawImage).not.toHaveBeenCalled();
+});
+it("replaces a pending standalone photo selection without changing the latest result", async () => {
+  let finish;
+  const setup = setupStandaloneCapture(); selectedStandalonePhoto();
+  const oldImage = { naturalWidth: 2000, naturalHeight: 3000, decode: () => new Promise(resolve => { finish = resolve; }), src: "" };
+  Image.mockImplementationOnce(function () { return oldImage; });
+  const input = document.getElementById("pagePhotoInput");
+  fireEvent.change(input, { target: { files: [new File(["old"], "old.jpg")] } });
+  fireEvent.change(input, { target: { files: [new File(["new"], "new.jpg")] } });
+  await waitFor(() => expect(setup.scan).toHaveBeenCalledTimes(1));
+  finish(); await Promise.resolve(); await Promise.resolve();
+  expect(setup.scan).toHaveBeenCalledTimes(1);
+  expect(setup.context.drawImage).toHaveBeenCalledTimes(1);
+  expect(setup.context.drawImage.mock.calls[0][0]).not.toBe(oldImage);
+  expect(document.getElementById("pageGuideHint").textContent).toContain("Selected photo: 2000 × 3000");
 });

@@ -48,20 +48,48 @@ This guard makes an unsuccessful scan stop sooner. It does not repair optical
 recovery and must not be used as evidence that a previously unreadable seal now
 reads successfully.
 
-## Camera input and failure details
+## Camera photographs, not preview frames
 
-Native still acquisition retains its separate 1.8-second total deadline. Missing
-or explicitly unsupported optional capability discovery can fall back to still
-capture without resolution preferences. If advertised dimensions are rejected
-with a settings-related error, capture retries once without those dimensions,
-within the same deadline. Both attempts explicitly keep flash off. Permission,
-security and camera-operation failures are not retried. Late results cannot
-replace the frozen frame or update its diagnostic.
+In document-capture mode, video frames only drive framing and steadiness. A
+ready page hands off to the browser's `ImageCapture.takePhoto()` API. Unsupported,
+failed, timed-out or undersized photo acquisition stops before seal decoding;
+it never silently substitutes a preview frame and spends another eight seconds
+trying to read it. Generic non-document QR preview scanning is unchanged.
 
-If seal reading fails, camera interfaces show whether the submitted pixels came
-from a native camera photo or a video frame, their actual width and height, and a
-fixed fallback reason when available. These details stay in that camera session;
+Native photo acquisition has a separate cancellable five-second total allowance,
+not a five-second delay. Successful photos continue immediately. The previous
+1.8-second cutoff was an application policy, not a browser limit, and could
+abandon a photo that would finish shortly afterwards. Capability lookup, one
+optional-settings retry and bitmap decoding all share the same allowance.
+The browser API cannot cancel a pending hardware request; late results are
+ignored, and only one native request per track may remain outstanding. If the
+camera never settles, reopening it creates a fresh track.
+
+The target remains a photo up to 12 MP. Automatic full-page capture requires at
+least 4 MP and 2560 pixels on the long side in the actual returned image, not
+merely in requested settings. This operational floor is motivated by the
+smallest successful measured full-page replay before the later low-resolution
+recovery improvements. It is not a readability guarantee or an authenticity
+check. Camera processing, focus, lighting and page occupancy still matter.
+
+Missing or explicitly unsupported optional capability discovery can fall back
+to `takePhoto` without resolution preferences. Rejected advertised dimensions
+can retry once without sizing, keeping flash off. Permission, security and
+camera-operation failures are not retried. Separate advertised width/height
+ranges do not enumerate supported resolution pairs. Browser/device support and
+photo processing vary; using the photo API does not promise a particular sensor
+mode. See [Chrome's photo API overview](https://developer.chrome.com/blog/imagecapture)
+and the [W3C capture algorithm](https://www.w3.org/TR/image-capture/#dom-imagecapture-takephoto).
+
+Camera interfaces offer explicit local photo selection if native acquisition
+is unavailable. This does not automatically open a phone camera app, save to the
+photo library or upload images. The main page also retains its general-purpose
+existing image input for ordinary QR images. Close, Cancel, replacement and
+Finish & clear discard pending work and cannot publish late pixels/results.
+
+If seal reading fails after a photo is submitted, the interface shows the
+actual source and dimensions. Acquisition failures report a fixed reason and
+say no video frame was scanned. These details remain in the camera session;
 no device labels/IDs, exception text, document content or pixels are logged,
-stored or transmitted by the diagnostic. It reports the frozen decoder input,
-not the size of the current on-screen video. This compatibility change does not
-establish successful recovery of any previously unreadable physical page.
+stored or transmitted by the diagnostic. Physical-phone reliability remains
+separate from mocked browser/API tests and saved-photo replay.

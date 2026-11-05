@@ -308,7 +308,7 @@
   <header>
     <h1>QRed Verifier</h1>
     <p>Frame each whole page and hold steady. QRed captures automatically, then checks the seal and printed text.</p>
-    <p>PDFs, camera frames, and seal text are processed in this browser and are not sent to a server.</p>
+    <p>PDFs, photos, and seal text are processed in this browser and are not sent to a server.</p>
     <details>
       <summary>Optional: use airplane mode</summary>
       <p>Load QRed, then enable airplane mode and turn Wi-Fi and Bluetooth off in your device settings to limit network access while you work. Keep this tab open.</p>
@@ -336,6 +336,8 @@
       <div class="controls">
         <button class="btn btn-primary" id="btnScan">Check document</button>
         <button class="btn btn-primary" id="btnCapture" hidden>Capture now</button>
+        <button class="btn btn-secondary" id="btnChoosePhoto">Choose photo</button>
+        <input id="pagePhotoInput" type="file" accept="image/*" aria-label="Choose a high-resolution page photo" hidden>
       </div>
       <p class="page-scan-hint">Camera images stay in this session. QRed does not save them to your photo library or upload them.</p>
       <p id="clearNotice" role="status"></p>
@@ -392,7 +394,7 @@
     import { startCameraSession } from "./src/qr/cameraSession.js";
     import { observePageScanGuide } from "./src/qr/pageScanGuide.js";
     import { getPreferredCameraStream, applyCameraQualityControls } from "./src/qr/cameraControls.js";
-    import { canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback } from "./src/qr/cameraPhoto.js";
+    import { captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback } from "./src/qr/cameraPhoto.js";
     import { createLiveScanWorker, preparePhotoScanner, scanPhotoInWorker } from "./src/qr/photoScanClient.js";
     import { decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
     import { mountPhotoTextVerification } from "./src/verifier/mountPhotoTextVerification.jsx";
@@ -456,6 +458,8 @@
     var btnScan = document.getElementById("btnScan");
     var btnCapture = document.getElementById("btnCapture");
     var btnNewScan = document.getElementById("btnNewScan");
+    var btnChoosePhoto = document.getElementById("btnChoosePhoto");
+    var pagePhotoInput = document.getElementById("pagePhotoInput");
     var statusBar = document.getElementById("statusBar");
     var statusText = document.getElementById("statusText");
     var sealList = document.getElementById("sealList");
@@ -486,6 +490,21 @@
         startScanning();
         btnScan.textContent = "Stop camera";
       }
+    };
+
+    btnChoosePhoto.onclick = function() {
+      state.cancelPhoto?.();
+      pagePhotoInput.click();
+    };
+    pagePhotoInput.onchange = function(event) {
+      var file = event.target.files?.[0]; event.target.value = "";
+      if (!file) return;
+      if (!state.isScanning) {
+        state.startGeneration++;
+        startScanning({ openCamera: false });
+        btnScan.disabled = false; btnScan.textContent = "Stop check";
+      }
+      state.readPhoto(file);
     };
 
     btnNewScan.onclick = function() {
@@ -576,7 +595,7 @@
       refreshCollectionProgress();
     });
 
-    function startScanning() {
+    function startScanning({ openCamera = true } = {}) {
       var video = document.getElementById("cameraVideo");
       var canvas = document.getElementById("scanCanvas");
       var placeholder = document.getElementById("placeholder");
@@ -586,21 +605,25 @@
       var seen = new Set();
       var processingCapture = false;
       var captureDiagnostic = null;
-      btnCapture.hidden = false; btnCapture.textContent = "Capture now";
+      var acquisitionFailed = false, manualFailure = false;
+      var generation = state.startGeneration;
+      function active() { return state.isScanning && state.startGeneration === generation && state.liveScan === liveScan; }
+      btnCapture.hidden = !openCamera; btnCapture.textContent = "Capture now";
 
-      placeholder.style.display = "none";
-      video.style.display = "block";
-      guideArea.hidden = false;
+      placeholder.style.display = openCamera ? "none" : "flex";
+      video.style.display = openCamera ? "block" : "none";
+      guideArea.hidden = !openCamera;
       document.getElementById("pageGuideHint").hidden = false;
-      state.stopPageGuide = observePageScanGuide(video, guideArea, document.getElementById("pageGuide"));
+      if (openCamera) state.stopPageGuide = observePageScanGuide(video, guideArea, document.getElementById("pageGuide"));
 
-      function collectFrame(action) {
+      function collectFrame(action, photoCanvas = canvas) {
+        if (!active()) return;
         action = cameraCaptureFeedback(action, captureDiagnostic);
         var added = false;
         (action.texts || [action.text]).filter(Boolean).forEach(function(text) {
           if (seen.has(text)) return;
           seen.add(text); added = true;
-          processScannedSeal(text, canvas);
+          processScannedSeal(text, photoCanvas);
         });
         if (added) {
           hint.textContent = "Page captured. Show the next page.";
@@ -613,6 +636,7 @@
       }
 
       function cameraError(err) {
+        if (!active()) return;
         stopScanning();
         btnScan.textContent = "Check document";
         statusText.textContent = "Camera error: " + err.message;
@@ -623,10 +647,12 @@
         returnPayload: true,
         requirePageQuality: true,
         onQuality: function(quality) {
+          if (!active() || state.photoScan || processingCapture || (acquisitionFailed && quality.state === "captured")) return;
           hint.textContent = quality.message;
           readiness.hidden = quality.state !== "hold"; readiness.value = quality.progress;
         },
         onCaptured: function({ captureOnly } = {}) {
+          if (!active() || state.photoScan || manualFailure) return;
           if (captureOnly) { btnCapture.onclick({ preserveGate: true }); return; }
           processingCapture = true;
           captureDiagnostic = cameraFrameDiagnostic(canvas);
@@ -635,6 +661,7 @@
           btnCapture.textContent = "Cancel and resume camera";
         },
         onResult: function(action) {
+          if (!active() || state.photoScan) return;
           if (processingCapture) { processingCapture = false; btnCapture.textContent = "Capture now"; }
           collectFrame(action);
         },
@@ -643,59 +670,70 @@
       state.liveScan = liveScan;
       state.isScanning = true;
       updatePhotoComparison();
-      btnCapture.onclick = async function({ preserveGate = false } = {}) {
-        if (processingCapture) {
-          processingCapture = false; liveScan.reset();
-          btnCapture.textContent = "Capture now";
-          hint.textContent = "Show all four page corners and hold steady for automatic capture.";
-          return;
+      function cancelPhoto() {
+        state.photoScan?.abort(); state.photoScan = null;
+        processingCapture = false;
+        manualFailure = true;
+        btnCapture.textContent = "Capture now";
+        hint.textContent = "Capture cancelled. Use Capture now or Choose photo to try again.";
+      }
+      state.cancelPhoto = cancelPhoto;
+      async function acquirePhoto({ preserveGate = false, file } = {}) {
+        if (!active()) return;
+        if (state.photoScan || processingCapture) {
+          cancelPhoto();
+          if (!file) return;
         }
-        if (state.photoScan) {
-          state.photoScan.abort(); state.photoScan = null;
-          btnCapture.textContent = "Capture now"; return;
-        }
-        if (!video.videoWidth || !video.videoHeight) { hint.textContent = "Camera is preparing. Try Capture now in a moment."; return; }
+        if (!file && (!video.videoWidth || !video.videoHeight)) { hint.textContent = "Camera is preparing. Try Capture now in a moment, or choose a photo."; return; }
         if (!preserveGate) liveScan.reset();
+        acquisitionFailed = false; manualFailure = false;
         var controller = new AbortController(); state.photoScan = controller;
+        var photoCanvas = document.createElement("canvas");
+        function current() { return active() && state.photoScan === controller && !controller.signal.aborted; }
         btnCapture.textContent = "Cancel and resume camera";
-        hint.textContent = photoProcessingMessage();
+        hint.textContent = file ? "Opening photo on this device…" : "Hold steady — taking photo…";
         readiness.hidden = true;
-        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        captureDiagnostic = null;
         try {
-          var ctx = canvas.getContext("2d", { willReadFrequently: true }); ctx.drawImage(video, 0, 0);
-          var frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          var nativePhoto = canCaptureCameraPhoto(video);
-          captureDiagnostic = cameraFrameDiagnostic(canvas);
-          if (nativePhoto) hint.textContent = "Hold steady — taking photo…";
-          var still = nativePhoto ? await captureCameraPhoto(video, canvas, { signal: controller.signal, onDiagnostic: function(diagnostic) {
-            if (state.photoScan === controller) captureDiagnostic = diagnostic;
-          } }) : null;
-          controller.signal.throwIfAborted();
+          var options = { signal: controller.signal, requireHighResolution: true, onDiagnostic: function(diagnostic) {
+            if (current()) captureDiagnostic = diagnostic;
+          } };
+          var still = file ? await readCameraPhotoFile(file, photoCanvas, options)
+            : await captureCameraPhoto(video, photoCanvas, options);
+          if (!current()) return;
+          if (!still) {
+            acquisitionFailed = true; manualFailure = !preserveGate;
+            collectFrame(cameraPhotoFailure(captureDiagnostic));
+            return;
+          }
           hint.textContent = photoProcessingMessage();
-          var action = await scanPhotoInWorker(still || frame,
-            { returnPayload: true, signal: controller.signal });
-          if (state.photoScan === controller && state.isScanning) collectFrame(action);
+          var action = await scanPhotoInWorker(still, { returnPayload: true, signal: controller.signal });
+          if (current()) collectFrame(action, photoCanvas);
         } catch (error) {
-          if (state.photoScan === controller && error.name !== "AbortError") hint.textContent = error.message;
+          if (current() && error.name !== "AbortError") hint.textContent = error.message;
         } finally {
+          photoCanvas.width = photoCanvas.height = 0;
           if (state.photoScan === controller) { state.photoScan = null; btnCapture.textContent = "Capture now"; }
         }
-      };
+      }
+      btnCapture.onclick = acquirePhoto;
+      state.readPhoto = function(file) { return acquirePhoto({ file: file }); };
+      if (!openCamera) return;
       state.camera = startCameraSession({
         video: video,
         waitForMetadata: true,
         requestStream: getPreferredCameraStream,
         prepareStream: applyCameraQualityControls,
         onFrame: function() {
-          if (!video.videoWidth || !video.videoHeight) return;
+          if (!active() || !video.videoWidth || !video.videoHeight) return;
           statusBar.classList.add("visible");
-          if (liveScan.busy || state.photoScan) return;
+          if (liveScan.busy || state.photoScan || manualFailure) return;
           if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
           if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
           var ctx = canvas.getContext("2d", { willReadFrequently: true });
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          liveScan.scan(imageData, { captureOnly: canCaptureCameraPhoto(video) });
+          liveScan.scan(imageData, { captureOnly: true });
         },
         onError: cameraError,
       });
@@ -708,6 +746,8 @@
       state.liveScan?.stop();
       state.liveScan = null;
       state.photoScan?.abort(); state.photoScan = null;
+      state.cancelPhoto = null; state.readPhoto = null;
+      pagePhotoInput.value = "";
       btnCapture.hidden = true; btnCapture.onclick = null;
       document.getElementById("captureReadiness").hidden = true;
       state.stopPageGuide?.();
