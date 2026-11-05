@@ -236,3 +236,30 @@ it("cancels a pending selected photo without replacing pixels or publishing stal
   expect(context.drawImage).not.toHaveBeenCalled(); expect(onDiagnostic).not.toHaveBeenCalled();
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:cancel");
 });
+
+
+it.each(["native", "selected"].flatMap(source => [
+  [source, 5312, 2988], [source, 7680, 4320], [source, 2988, 5312], [source, 4032, 3024],
+]))("keeps a %s %i×%i photo inside the native decoder's exact pixel cap", async (source, width, height) => {
+  const onDiagnostic = vi.fn();
+  context.getImageData.mockImplementation((_x, _y, w, h) => ({ ...pixels, width: w, height: h }));
+  let image;
+  if (source === "native") {
+    bitmap.width = width; bitmap.height = height;
+    image = await captureCameraPhoto(video, canvas, { requireHighResolution: true, onDiagnostic });
+  } else {
+    const photo = { naturalWidth: width, naturalHeight: height, decode: () => Promise.resolve(), src: "" };
+    vi.stubGlobal("Image", vi.fn(function () { return photo; }));
+    vi.stubGlobal("URL", { createObjectURL: () => "blob:large", revokeObjectURL: vi.fn() });
+    image = await readCameraPhotoFile(new Blob(), canvas, { onDiagnostic });
+  }
+  const scale = Math.sqrt(12_000_000 / (width * height));
+  const expectedWidth = Math.floor(width * scale), expectedHeight = Math.floor(height * scale);
+  expect(image).toMatchObject({ width: expectedWidth, height: expectedHeight });
+  expect(image.width * image.height).toBeLessThanOrEqual(12_000_000);
+  expect(image.width * image.height).toBeGreaterThan(11_990_000);
+  expect(canvas).toMatchObject({ width: image.width, height: image.height });
+  expect(context.getImageData).toHaveBeenCalledWith(0, 0, image.width, image.height);
+  expect(onDiagnostic).toHaveBeenCalledWith({ source: source === "native" ? "native-still" : "selected-photo",
+    width: image.width, height: image.height, reason: "captured" });
+});
