@@ -68,6 +68,8 @@ it("shows only essential pre-sign-in disclosures and keeps technical explanation
   expect(screen.getByRole("button", { name: "Sign in with Microsoft" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Login with Amazon" })).toBeTruthy();
   expect(screen.queryByText(/QRed prepares authentication securely/)).toBeNull();
+  expect(screen.getByText(/Keeps readable watermarks on the originals and appends the remaining seals/)).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Page layout"), { target: { value: "automatic" } });
   expect(screen.getByText(/Uses a watermark when readable, otherwise a footer/)).toBeTruthy();
   expect(screen.queryByText(/sign-in provider directly/)).toBeNull();
 });
@@ -143,7 +145,7 @@ it("allows leaving offline signing before selecting a PDF, without any auth requ
 it("prepares provider authorization URLs after the PDF and layout, without opening tabs", async () => {
   const open = vi.spyOn(window, "open");
   const { container } = render(<PdfSealForm />);
-  expect(screen.getByLabelText("Page layout").value).toBe("automatic");
+  expect(screen.getByLabelText("Page layout").value).toBe("watermark-sheets");
   expect(screen.queryByLabelText("Private Key")).toBeNull();
   const choices = container.querySelectorAll(".sealing-method-grid button");
   expect(choices).toHaveLength(4);
@@ -163,6 +165,7 @@ it("prepares provider authorization URLs after the PDF and layout, without openi
     }));
   }
   expect(prepareAccountPdfSeal).toHaveBeenCalledOnce();
+  expect(prepareAccountPdfSeal).toHaveBeenCalledWith(expect.objectContaining({ pageScalingStrategy: "watermark-sheets" }));
   expect(sealPdfInBrowser).not.toHaveBeenCalled();
   expect(open).not.toHaveBeenCalled();
 });

@@ -57,16 +57,15 @@ it("preserves original pages, forms and annotations and reads a whole sheet befo
   expect(summary).toMatchObject({ originalPages: [1, 2], missingPages: [], failedPages: [], sealCount: 2 });
 }, 120_000);
 
-it("adds sheets only for overflow and keeps successfully watermarked originals", async () => {
+it("watermarks by default and adds sheets only for overflow", async () => {
   const pdf = await PDFDocument.create();
   pdf.addPage(PageSizes.Letter).drawText("Pay on Friday", { x: 60, y: 705, size: 14 });
-  const options = { ...keys, pageScalingStrategy: "watermark-sheets" };
-  const allFit = await sealPdfInBrowser({ ...options, file: await asFile(pdf) });
+  const allFit = await sealPdfInBrowser({ ...keys, file: await asFile(pdf) });
   expect(allFit.sheetCount).toBe(0);
   expect((await PDFDocument.load(await allFit.blob.arrayBuffer())).getPageCount()).toBe(1);
   pdf.addPage(PageSizes.Letter).drawCircle({ x: 80, y: 80, size: 40 });
   const file = await asFile(pdf);
-  const mixed = await sealPdfInBrowser({ ...options, file });
+  const mixed = await sealPdfInBrowser({ ...keys, file });
   expect(mixed.sheetPages).toEqual([2]);
   expect(mixed.watermarkLayout.map(Boolean)).toEqual([true, false]);
   expect(samePixels(await imageOf(file, 2), await imageOf(mixed.blob, 2))).toBe(true);

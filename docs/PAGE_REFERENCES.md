@@ -65,9 +65,11 @@ The uncompressed body shares the existing 8 MiB bound.
 
 ## Placement and verification
 
-The default Automatic layout tries watermarks on each text page first, with a
-per-page footer fallback. Explicit watermark mode uses the same behavior;
-explicit footer modes skip watermark placement.
+**Watermark with appended overflow** is the default layout. Readable watermark
+pieces stay on each original text page. Any remaining pieces, including all
+seals for image-only and blank pages, go on appended sheets. **Automatic** and
+**Pale watermark (experimental)** use a per-page footer fallback. Explicit
+footer modes skip watermark placement.
 Text pages with embedded logos or pictures can use watermarks if the rendered
 seals are recoverable. The original visible crop is rendered once for placement
 analysis. A bounded obstruction map distinguishes broad dark regions and gray

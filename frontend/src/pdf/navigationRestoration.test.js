@@ -177,7 +177,7 @@ it("retains verification text and the full-page watermark when its navigation QR
 it("keeps the verification instruction and navigation QR in a footer when neither overlay is readable", async () => {
   preflight.forceSquare = false;
   preflight.failEntryText = true;
-  const result = await sealPdfInBrowser({ file: await makeInvoice(), privateKey, publicKey });
+  const result = await sealPdfInBrowser({ file: await makeInvoice(), privateKey, publicKey, pageScalingStrategy: "automatic" });
   expect(preflight.failFirstEntry).toBe(false);
   expect(result.watermarkLayout[0]).toBeNull();
   expect(result.footerPages).toEqual([1]);

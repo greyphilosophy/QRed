@@ -160,7 +160,7 @@ def multi_page_pdf_path(pdf_dir):
 # Helper to upload a file via Playwright and wait for the download
 # ---------------------------------------------------------------------------
 
-def _upload_and_seal(page: Page, file_path: str, private_key: str = "", layout: str = "automatic"):
+def _upload_and_seal(page: Page, file_path: str, private_key: str = "", layout: str | None = None):
     """Open the real stamping UI and return its downloaded PDF and result."""
     page.goto(BASE_URL, wait_until="networkidle", timeout=30000)
     page.get_by_role("button", name="Open PDF stamping tool", exact=True).click()
@@ -168,7 +168,8 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", layout: 
     expect(page.get_by_role("button", name="Generate key pair", exact=True)).to_be_enabled()
     page.get_by_label("Private Key", exact=True).fill(private_key or DEMO_PRIVATE_KEY)
     expect(page.get_by_label("Encoding Strategy")).to_have_count(0)
-    page.get_by_label("Page layout", exact=True).select_option(layout)
+    if layout is not None:
+        page.get_by_label("Page layout", exact=True).select_option(layout)
     saved_path, _ = stamp_and_save(page, file_path)
     return str(saved_path), _extract_seal_result(page)
 
@@ -410,6 +411,7 @@ class TestImageOnlyPdfs:
     def test_seals_image_only_pdf_with_a_visual_reference(self, page: Page, image_only_pdf_path: str):
         sealed, result = _upload_and_seal(page, image_only_pdf_path, private_key=DEMO_PRIVATE_KEY)
         assert os.path.exists(sealed)
+        expect(page.locator("#stamp-result")).to_contain_text("Appended 1 seal sheet for original page(s) 1.")
         assert result["full_result"]["evidence"]["visual"]
         assert not result["full_result"]["evidence"]["blank"]
         assert _verify_seal_with_seal_strings(page, result, result["document_id"], DEMO_PUBLIC_KEY)
@@ -450,7 +452,7 @@ class TestPdfExtractionIntegrity:
         pdf.acroForm.textfield(name="amount", value="12345.67 dollars", x=180, y=690, width=200, height=25)
         pdf.showPage()
         pdf.save()
-        sealed, seal_result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY)
+        sealed, seal_result = _upload_and_seal(page, str(source), private_key=DEMO_PRIVATE_KEY, layout="automatic")
         assert os.path.exists(sealed)
         expect(page.locator("#stamp-result")).to_contain_text("Flattened 1 form field(s). Check the values in your sealed copy.")
         content = json.loads(seal_result["full_result"]["payload_json"])["content"]
