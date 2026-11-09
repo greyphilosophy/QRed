@@ -28,7 +28,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - name: Test frontend and rendered PDF seals
         working-directory: frontend
-        run: npm test -- --exclude '**/{pdfWatermark,pdfClientSeal,pdfInputIntegrity,pdfVisualEvidence,scanQrImage,scanPdf,highResScan,watermarkReadability.acceptance}.test.js'
+        run: npm test -- --exclude '**/{pdfWatermark,pdfClientSeal,pdfInputIntegrity,pdfVisualEvidence,sealSheets,scanQrImage,scanPdf,highResScan,watermarkReadability.acceptance}.test.js'
       - name: Build frontend
         working-directory: frontend
         run: npm run build:pages
@@ -98,6 +98,8 @@ jobs:
             test_args: "src/pdfClientSeal.test.js src/pdfInputIntegrity.test.js src/pdfVisualEvidence.test.js src/qr/scanQrImage.test.js src/verifier/scanPdf.test.js"
           - shard: high-res-photo
             test_args: "src/verifier/highResScan.test.js"
+          - shard: seal-sheets
+            test_args: "src/pdf/sealSheets.test.js"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Node

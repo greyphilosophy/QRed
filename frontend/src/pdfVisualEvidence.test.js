@@ -95,11 +95,11 @@ describe("PDF visual references", () => {
     expect(results[2].evidence.visual).toBeTruthy();
     expect(results[3].evidence.blank).toBe(true);
   }, 30000);
-  it("attests the same mixed pages with private binary commitments and verifies them offline", async () => {
+  it.each(["automatic", "seal-sheets"])("attests the same mixed pages with private binary commitments and verifies them offline using %s", async pageScalingStrategy => {
     const key_id = await computeKeyId(publicKey), seen = [];
     const metadata = { key_id, timestamp: "2026-10-23T12:00:00.000Z", identity: {
       provider: "google", name_source: "google", email: "person@example.com", name: "Example Person", subject: "test" } };
-    const { pageSealStrings } = await sealPdfInBrowser({ file: await mixedDocument(), attestPages: async pages => {
+    const { blob, pageSealStrings, sheetCount } = await sealPdfInBrowser({ file: await mixedDocument(), pageScalingStrategy, attestPages: async pages => {
       return Promise.all(pages.map(async page => {
         const salt = crypto.getRandomValues(new Uint8Array(32));
         const commitment = await pageCommitment(page.metadata, page.content, salt);
@@ -114,7 +114,15 @@ describe("PDF visual references", () => {
     expect(results.every(result => result.status === "VALID" && result.identity_authenticated)).toBe(true);
     expect(results[1].evidence.visual).toBeTruthy();
     expect(results[3].evidence.blank).toBe(true);
-  });
+    if (pageScalingStrategy === "seal-sheets") {
+      expect(sheetCount).toBe(1);
+      const { scanPdfPage } = await import("./verifier/scanPdf.js");
+      const { seals } = await withPdfDocument(blob, async pdf => scanPdfPage(await renderPdfPage(pdf, 5), { pageAligned: false }));
+      expect(seals).toHaveLength(4);
+      for (const seal of seals) expect(await verifyQRedSeals([seal], "", { [key_id]: publicKey }))
+        .toMatchObject({ status: "VALID", identity_authenticated: true, seal_sheet: true, page_count: 4 });
+    }
+  }, 60_000);
   it.each([0, 90, 180, 270])("preserves visible image pixels through a footer with rotation %s and a crop", async rotation => {
     const pdf = await PDFDocument.create();
     const page = pdf.addPage([500, 600]);

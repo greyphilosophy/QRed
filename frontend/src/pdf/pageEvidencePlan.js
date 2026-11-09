@@ -8,15 +8,15 @@ export async function encodedBodyLength(bytes, strategy = "automatic") {
   return selectBodyEncoding(await encodedBodyCandidates(bytes, strategy), strategy).payload_bytes;
 }
 
-export async function planPageEvidence(page, { attested = false, multiple = false, encodingStrategy = "automatic" } = {}) {
+export async function planPageEvidence(page, { attested = false, multiple = false, encodingStrategy = "automatic", maxPageSeals = MAX_PDF_SEALS } = {}) {
   const { text, width, height, lines, image, blank } = page;
   const baseBytes = utf8.encode(text);
   const baseLength = await encodedBodyLength(baseBytes, encodingStrategy);
   const minimumHeader = sealEnvelopeOverhead({ attested, multiple });
-  if (baseLength + minimumHeader > recordCapacity(MAX_PDF_SEALS, attested)) {
-    throw new Error(`PDF page ${page.pageNumber || 1} exceeds the ${MAX_PDF_SEALS}-QR limit. Shorten the page or split its content across pages.`);
+  if (baseLength + minimumHeader > recordCapacity(maxPageSeals, attested)) {
+    throw new Error(`PDF page ${page.pageNumber || 1} exceeds the ${maxPageSeals}-QR limit. Choose seal sheets or split this page's content.`);
   }
-  const budget = evidenceBodyBudget(baseLength, { attested, multiple });
+  const budget = evidenceBodyBudget(baseLength, { attested, multiple, maxPageSeals });
   if (text && !budget) return { ...page, image: undefined, body: baseBytes, pageEvidence: null };
   const record = { text, width, height, blank };
   const fits = async evidence => {

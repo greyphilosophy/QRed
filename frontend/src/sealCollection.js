@@ -73,8 +73,12 @@ export function sealCollectionProgress(seals, results = []) {
     const complete = pages.size === result.page_count;
     let nextPage = 1;
     while (pages.has(nextPage)) nextPage++;
-    const message = complete ? `All ${result.page_count} pages collected${mixedDocuments ? " for this document" : ""}.`
+    let message = complete ? `All ${result.page_count} pages collected${mixedDocuments ? " for this document" : ""}.`
       : `Page ${result.page_number} captured. Show page ${nextPage}. ${pages.size} of ${result.page_count} pages collected.`;
+    if (members.some(page => page.seal_sheet)) {
+      message = complete ? `Seals collected for all ${result.page_count} original pages.`
+        : `Seals collected for ${pages.size} of ${result.page_count} original pages. Scan the seals for page ${nextPage}.`;
+    }
     return { ...progress, pagesCollected: pages.size, pagesTotal: result.page_count,
       complete, finished: complete,
       message: messageWithWarning(message + (members.some(item => !item.metadata_authenticated) ? " Page counts are unverified." : "")) };

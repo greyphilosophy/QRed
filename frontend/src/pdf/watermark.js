@@ -215,7 +215,7 @@ function crop(image, box) {
 // print/photo degradation and full-page discovery. Any failure uses a footer.
 // Physical printer/camera tests remain necessary; simulations cannot promise
 // compatibility with every device.
-export async function checkWatermarks(bytes, layouts, pageSealResults, { onFailure = null } = {}) {
+export async function checkWatermarks(bytes, layouts, pageSealResults, { onFailure = null, onPartial = null } = {}) {
   const failed = new Set();
   const fail = (index, reason) => {
     if (failed.has(index)) return;
@@ -244,6 +244,9 @@ export async function checkWatermarks(bytes, layouts, pageSealResults, { onFailu
         const softened = scanPageAlignedImage(degraded).map(result => result.seal);
         if (!expected.every(value => observed.includes(value)) ||
             !expected.every(value => softened.includes(value))) {
+          const parts = expected.map((seal, part) => observed.includes(seal) && softened.includes(seal) ? part : -1)
+            .filter(part => part >= 0);
+          if (parts.length) onPartial?.(index, parts, layouts[index]);
           fail(index, "The page-aligned watermark could not be recovered from the complete rendered page.");
         }
         continue;

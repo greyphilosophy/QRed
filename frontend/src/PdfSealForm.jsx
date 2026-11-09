@@ -9,6 +9,21 @@ import { ProviderMark } from "./ProviderMark.jsx";
 import { ACCOUNT_SESSION_SECONDS } from "./accountAuthLimits.js";
 
 const BOOTSTRAP_URL = "https://qred.org/";
+const layoutHelp = {
+  automatic: "Uses a watermark when readable, otherwise a footer.",
+  watermark: "Uses a pale watermark, or a footer if necessary.",
+  "seal-sheets": "Keeps every original page intact. Scan the appended seals, then photograph the originals.",
+  "watermark-sheets": "Keeps readable watermarks on the originals and appends the remaining seals.",
+  "legal-footer": "Adds a footer without shrinking letter-size content.",
+  "shrink-footer": "Shrinks page content to fit a footer on the original sheet.",
+};
+
+function placementMessages({ footerPages = [], footerReasons = {}, sheetCount = 0, sheetPages = [] }) {
+  if (sheetCount) return [`Appended ${sheetCount} seal sheet${sheetCount === 1 ? "" : "s"} for original page(s) ${sheetPages.join(", ")}.`];
+  if (!footerPages.length) return [];
+  return [`Clear footer added to page(s) ${footerPages.join(", ")} to keep seals readable.`,
+    ...footerPages.filter(page => footerReasons[page]).map(page => `Page ${page}: ${footerReasons[page]}`)];
+}
 
 function saveText(text, filename) {
   const url = URL.createObjectURL(new Blob([text + "\n"], { type: "text/plain;charset=utf-8" }));
@@ -280,8 +295,8 @@ export function PdfSealForm({ onUsePublicKey }) {
           onIdentity: setSigningIdentity, onStatus: setMessage,
         });
         if (request.controller.signal.aborted) return;
-        const { blob, sealResult, flattenedFieldCount, footerPages = [], footerReasons = {} } =
-          await prepared.prepared.finish(receipts);
+        const result = await prepared.prepared.finish(receipts);
+        const { blob, sealResult, flattenedFieldCount } = result;
         if (request.controller.signal.aborted) return;
         const url = URL.createObjectURL(blob);
         const outputName = file.name.replace(/\.pdf$/i, "") + ".qred-sealed.pdf";
@@ -297,8 +312,7 @@ export function PdfSealForm({ onUsePublicKey }) {
         setMessage([
           "Sealed " + file.name + " in this browser.",
           "Download started: " + outputName,
-          ...(footerPages.length ? ["Clear footer added to page(s) " + footerPages.join(", ") + " to keep seals readable.",
-            ...footerPages.filter(page => footerReasons[page]).map(page => "Page " + page + ": " + footerReasons[page])] : []),
+          ...placementMessages(result),
           ...(flattenedFieldCount ? ["Flattened " + flattenedFieldCount + " form field(s). Check the values in your sealed copy."] : []),
         ].join("\n"));
       } catch (error) {
@@ -339,10 +353,11 @@ export function PdfSealForm({ onUsePublicKey }) {
       const matchingPublicKey = selectedMethod === "private-key" ? await deriveSigningPublicKey(privateKey) : null;
       if (matchingPublicKey) await validateSigningKeyPair({ privateKey, publicKey: matchingPublicKey });
       setMessage(accountMode ? "Preparing your PDF locally before opening " + selectedProvider.label + "…" : "Sealing in this browser…");
-      const { blob, sealResult, flattenedFieldCount, footerPages = [], footerReasons = {} } = await sealPdfInBrowser({
+      const result = await sealPdfInBrowser({
         file, privateKey, publicKey: matchingPublicKey, bootstrapUrl: BOOTSTRAP_URL,
         encodingStrategy: "automatic", pageScalingStrategy,
       });
+      const { blob, sealResult, flattenedFieldCount } = result;
       if (controller.signal.aborted) return;
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -362,8 +377,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       setMessage([
         `Sealed ${file.name} in this browser.`,
         `Download started: ${outputName}`,
-        ...(footerPages.length ? [`Clear footer added to page(s) ${footerPages.join(", ")} to keep seals readable.`,
-          ...footerPages.filter(page => footerReasons[page]).map(page => `Page ${page}: ${footerReasons[page]}`)] : []),
+        ...placementMessages(result),
         ...(flattenedFieldCount ? [`Flattened ${flattenedFieldCount} form field(s). Check the values in your sealed copy.`] : []),
       ].join("\n"));
     } catch (error) {
@@ -397,17 +411,13 @@ export function PdfSealForm({ onUsePublicKey }) {
           >
             <option value="automatic">Automatic (watermark first, footer fallback)</option>
             <option value="watermark">Pale watermark (experimental, footer fallback)</option>
+            <option value="seal-sheets">Append seal sheets</option>
+            <option value="watermark-sheets">Watermark with appended overflow</option>
             <option value="legal-footer">Expand letter pages to legal size (bottom 3-inch footer)</option>
             <option value="shrink-footer">Shrink the document to create a footer</option>
           </select>
           <small style={{ color: "#64748b", display: "block", marginTop: "0.5rem" }}>
-            {pageScalingStrategy === "automatic"
-              ? "Uses a watermark when readable, otherwise a footer."
-              : pageScalingStrategy === "watermark"
-                ? "Uses a pale watermark, or a footer if necessary."
-                : pageScalingStrategy === "legal-footer"
-                  ? "Adds a footer without shrinking letter-size content."
-                  : "Shrinks page content to fit a footer on the original sheet."}
+            {layoutHelp[pageScalingStrategy]}
           </small>
         </div>
       </div>
@@ -464,7 +474,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       </div>
       <details className="stamp-method-details">
         <summary>About seals, privacy and page layouts</summary>
-        <p>QRed signs the page's text and, where space allows, approximate text positions and a small visual reference. It uses a watermark when possible, otherwise a footer. Image-only and blank pages use special references; form fields are flattened.</p>
+        <p>QRed signs the page's text and, where space allows, approximate text positions and a small visual reference. Image-only and blank pages use special references. Seal-sheet layouts preserve supported form fields and seal their values at signing time. Other layouts flatten those fields.</p>
         <p>Review the saved PDF before sharing. Fine visual details, including digits or faces, may not be preserved in the reference. A valid seal does not guarantee every visible detail is unchanged.</p>
         <p>For account sealing, QRed receives SHA-256 page commitments and account details, but not your original PDF, extracted text, or private key. These commitments are unsalted: QRed's server could recognize repeated pages or test guesses about their contents. Your chosen provider receives the login request, not your document fingerprints.</p>
         <p>Account seals include the provider's name, profile name, email, account identifier and signing time, all readable by anyone with the seal. A profile name does not establish legal identity or signing authority. QRed does not independently verify Microsoft or Amazon email ownership. Finished seals can be checked offline.</p>

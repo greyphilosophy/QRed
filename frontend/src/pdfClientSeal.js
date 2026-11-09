@@ -1,9 +1,12 @@
 import { createQRedSeals, DEFAULT_BOOTSTRAP_URL } from "./qredSealer.js";
+import { MAX_CHUNKS } from "./sealFormat.js";
+import { MAX_PDF_SEALS } from "./sealBudget.js";
 import { LEGAL_FOOTER_HEIGHT, LEGAL_PAGE_HEIGHT } from "./pdf/pageScaling.js";
 import { QR_SIZE, planQrStampLayout, planQrStampLayoutForFooterBand } from "./pdf/qrLayout.js";
 import { planPageEvidence } from "./pdf/pageEvidencePlan.js";
 import { flattenPdfForSealing } from "./pdf/flattenPdf.js";
 import { renderSealedPdf } from "./pdf/renderSealedPdf.js";
+import { usesSealSheets, usesWatermarks } from "./pdf/sealSheets.js";
 export { qrPngBytes } from "./pdf/renderSealedPdf.js";
 
 export { QR_SIZE, LEGAL_PAGE_HEIGHT, LEGAL_FOOTER_HEIGHT };
@@ -44,8 +47,9 @@ async function documentMerkleRoot(pageTexts) {
 
 async function preparePageSealing({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attested, pageScalingStrategy = "automatic" }) {
   const { readPdfPagesWithEvidence } = await import("./pdf/readPdfText.js");
+  const maxPageSeals = usesSealSheets(pageScalingStrategy) ? MAX_CHUNKS : MAX_PDF_SEALS;
   const plans = await readPdfPagesWithEvidence(file, page => planPageEvidence(page, {
-    attested, multiple: page.pageCount > 1, encodingStrategy,
+    attested, multiple: page.pageCount > 1, encodingStrategy, maxPageSeals,
   }));
   const merkleRoot = await documentMerkleRoot(plans.map(page => page.body));
   const timestamp = new Date().toISOString();
@@ -70,8 +74,8 @@ async function preparePageSealing({ file, privateKey, publicKey, bootstrapUrl, e
         // Image-only and blank pages always use an ordinary footer, so do
         // not force them into four pieces merely because the user selected
         // Automatic. The 1-or-4 policy applies to watermark-eligible text.
-        preferFourQrPage: Boolean(page.text) &&
-          (pageScalingStrategy === "automatic" || pageScalingStrategy === "watermark"),
+        preferFourQrPage: Boolean(page.text) && usesWatermarks(pageScalingStrategy),
+        maxPageSeals,
         attestation: attestations?.[index],
       })));
       return { results, plans };
@@ -88,15 +92,18 @@ async function createPageSealResults({ file, privateKey, publicKey, bootstrapUrl
 }
 
 async function finishPdfSeal({ file, prepared, pageSealResults, plans, pageScalingStrategy }) {
-  const { blob, watermarkLayout, footerPages, footerReasons } = await renderSealedPdf({
-    file, pageSealResults, pagesWithText: plans.map(page => Boolean(page.text)), pageScalingStrategy,
+  // For seal sheets, sign the validated snapshot of form appearances but keep
+  // the original pages and their live fields in the delivered document.
+  const originalPages = usesSealSheets(pageScalingStrategy);
+  const placement = await renderSealedPdf({
+    file: originalPages ? file : prepared.file, pageSealResults, pagesWithText: plans.map(page => Boolean(page.text)), pageScalingStrategy,
   });
-  const pageSealStrings = pageSealResults.map(result => result.seals);
-  const firstResult = pageSealResults[0] ?? null;
+  const pageSealStrings = placement.pageSealStrings ?? pageSealResults.map(result => result.seals);
+  const printedResults = pageSealResults.map((result, index) => ({ ...result, seals: pageSealStrings[index] }));
+  const firstResult = printedResults[0] ?? null;
   return {
-    blob, sealResult: firstResult, stampedQrValues: firstResult?.seals ?? [],
-    pageSealResults, pageSealStrings, flattenedFieldCount: prepared.flattenedFieldCount,
-    watermarkLayout, footerPages, footerReasons,
+    ...placement, sealResult: firstResult, stampedQrValues: firstResult?.seals ?? [],
+    pageSealResults: printedResults, pageSealStrings, flattenedFieldCount: originalPages ? 0 : prepared.flattenedFieldCount,
   };
 }
 
@@ -114,7 +121,7 @@ export async function prepareAccountPdfSeal({ file, bootstrapUrl = DEFAULT_BOOTS
     async finish(attestations) {
       const { results, plans } = await plan.complete(attestations);
       return finishPdfSeal({
-        file: prepared.file, prepared, pageSealResults: results, plans, pageScalingStrategy,
+        file, prepared, pageSealResults: results, plans, pageScalingStrategy,
       });
     },
   };
@@ -122,8 +129,7 @@ export async function prepareAccountPdfSeal({ file, bootstrapUrl = DEFAULT_BOOTS
 
 export async function sealPdfInBrowser({ file, privateKey, publicKey, attestPages, bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic", pageScalingStrategy = "automatic" }) {
   const prepared = await flattenPdfForSealing(file);
-  file = prepared.file;
-  const { results: pageSealResults, plans } = await createPageSealResults({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages, pageScalingStrategy });
+  const { results: pageSealResults, plans } = await createPageSealResults({ file: prepared.file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages, pageScalingStrategy });
   return finishPdfSeal({
     file, prepared, pageSealResults, plans, pageScalingStrategy,
   });

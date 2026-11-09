@@ -129,6 +129,11 @@ function hasMagic(bytes, magic) {
   return magic.every((byte, index) => bytes[index] === byte);
 }
 
+function isSheetCarrier(bytes) {
+  return bytes[0] === 113 && bytes[1] === 82 && (bytes[2] === 83 || bytes[2] === 67) &&
+    (bytes[3] === 51 || bytes[3] === 52);
+}
+
 export function decodeEnvelope(bytes) {
   const attested = hasMagic(bytes, ATTESTED_MAGIC);
   if ((!attested && !hasMagic(bytes, RECORD_MAGIC)) || bytes.length <= sealEnvelopeOverhead() || bytes.length > MAX_ENVELOPE_BYTES) throw new Error("Invalid or truncated seal record");
@@ -180,6 +185,11 @@ export function encodeChunk(digest, index, count, data, version = "3") {
 
 export function decodeTransport(bytes) {
   if (bytes.length > MAX_QR_PAYLOAD_BYTES) throw new Error("Seal exceeds QR capacity");
+  if (isSheetCarrier(bytes)) { // qRS3/4 or qRC3/4 printed on a seal sheet
+    const original = bytes.slice();
+    original[0] = 81;
+    return { ...decodeTransport(original), seal_sheet: true };
+  }
   if (hasMagic(bytes, RECORD_MAGIC) || hasMagic(bytes, ATTESTED_MAGIC)) {
     const envelope = decodeEnvelope(bytes);
     return { ...envelope, format_id: `QRED${envelope.version}`, document_id: `S-${encodeBase64Url(envelope.signature)}`,
@@ -197,8 +207,17 @@ export function decodeTransport(bytes) {
 }
 
 export function sealString(bytes, bootstrapUrl = DEFAULT_BOOTSTRAP_URL) {
-  const version = hasMagic(bytes, ATTESTED_MAGIC) || hasMagic(bytes, ATTESTED_CHUNK_MAGIC) ? "4" : "3";
+  const version = bytes[3] === 52 ? "4" : "3";
   return `${(bootstrapUrl || DEFAULT_BOOTSTRAP_URL).split("#")[0]}#QRED${version}:${encodeBase64Url(bytes)}`;
+}
+
+// A placement hint of equal length keeps even a full V40 symbol printable.
+// Only canonical QRS/QRC bytes participate in identity, digest and signature checks.
+export function sealSheetString(seal) {
+  const bytes = qrPayloadBytes(seal);
+  decodeTransport(bytes);
+  bytes[0] = 113;
+  return sealString(bytes);
 }
 
 export function qrPayloadBytes(value) {
@@ -213,7 +232,8 @@ export function qrPayloadBytes(value) {
 }
 
 export function qrPayloadText(bytes) {
-  if (hasMagic(bytes, RECORD_MAGIC) || hasMagic(bytes, CHUNK_MAGIC) || hasMagic(bytes, ATTESTED_MAGIC) || hasMagic(bytes, ATTESTED_CHUNK_MAGIC)) {
+  if (isSheetCarrier(bytes) ||
+      hasMagic(bytes, RECORD_MAGIC) || hasMagic(bytes, CHUNK_MAGIC) || hasMagic(bytes, ATTESTED_MAGIC) || hasMagic(bytes, ATTESTED_CHUNK_MAGIC)) {
     decodeTransport(bytes);
     return sealString(bytes);
   }

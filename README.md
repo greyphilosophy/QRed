@@ -2,7 +2,7 @@
 
 QRed is a publicly documented experimental format and reference implementation for tamper-evident document sealing and verification. It is not a standards-body certification.
 
-QRed encodes the signed contents of a document into one or more QR code seals printed alongside the document. Seal QR codes carry the signed binary record in an ordinary QR byte segment. A separate navigation QR opens qred.org from the first page: it is required in footer layouts and included on watermark pages when it fits; the printed “Verify at QRED.ORG” instruction remains available on every sealed page.
+QRed encodes the signed contents of a document into one or more QR code seals printed alongside the document. Seal QR codes carry the signed binary record in an ordinary QR byte segment. A separate navigation QR opens qred.org from the first footer, a readable first-page watermark, or an appended seal sheet.
 
 No app installation is required.
 
@@ -74,7 +74,9 @@ caption sits beside the codes where space permits, otherwise above them.
 **Automatic**, the default **Page layout**, tries pale watermarks first on each
 text page and falls back to a clear footer only on pages where they cannot be
 placed or recovered. The explicit **Pale watermark (experimental)** option uses
-the same behavior; footer layouts can also be selected directly.
+the same behavior. Footer layouts can also be selected directly.
+
+**Append seal sheets** preserves the original pages, including supported form fields, and prints the seals on additional pages. **Watermark with appended overflow** keeps readable pieces on each original and appends the rest. Up to four labeled codes share each seal sheet. For printed copies, scan the seals, select the numbered original, and photograph it for text or visual comparison. Opening the combined PDF pairs the signed references with the corresponding original pages.
 Watermarks preserve the original paper
 dimensions, text size, rotation, and crop on pages where watermarks are readable. An optional half-inch conventional QR opens
 `https://qred.org/` from a clear area on the first page; pale QR watermarks carry
@@ -431,7 +433,7 @@ curl -I https://www.qred.org/verify.htm
 
 ## Bootstrap URL and verifier route
 
-QRed payload QR codes encode only the binary seal record in a standard byte segment, with ordinary terminator and padding bytes. They do not contain a bootstrap URL or data hidden after the terminator. A separate navigation QR opens `https://qred.org/` from the first page, in its footer when using footer seals or on its watermark when space and recovery permit; every sealed page retains the printed “Verify at QRED.ORG” instruction. The `/verify.htm` path remains a human-facing verifier route. Retired padding-format QR images must be re-sealed; deploy the stamper and all verifier routes together and refresh saved offline copies.
+QRed payload QR codes encode only the binary seal record in a standard byte segment, with ordinary terminator and padding bytes. They do not contain a bootstrap URL or data hidden after the terminator. The navigation QR opens `https://qred.org/` from the first footer, a readable watermark, or an appended seal sheet. The `/verify.htm` path remains a human-facing verifier route. Retired padding-format QR images must be re-sealed; deploy the stamper and all verifier routes together and refresh saved offline copies.
 
 # Motivation
 
@@ -450,7 +452,7 @@ has legal identity or organizational authority.
 2. A local Ed25519 key signs the evidence and metadata, or an online account attestation binds a page commitment to provider identity and server time.
 3. Automatic encoding compares plaintext with zlib, choosing fewer QR codes and then fewer payload bytes; gzip is a fallback. Compression is reversible, not encryption.
 4. The binary record is placed in ordinary QR byte segments, split into numbered chunks when needed. Printed seals contain no document URL or hidden padding data.
-5. A separate first-page navigation QR is required in footer layouts and optional on watermarks. Every page retains the printed verifier address.
+5. A separate first-page navigation QR is required in footer layouts and optional on watermarks. Seal sheets also carry the verifier address and navigation QR.
 6. The recipient opens qred.org and reads the seals with its camera, photo or PDF scanner.
 7. The verifier reconstructs the record, decompresses it when needed and checks the signature against a trusted key.
 8. The recipient compares recovered signed text and visual evidence with the document. OCR assists this comparison but does not authenticate every visible detail.

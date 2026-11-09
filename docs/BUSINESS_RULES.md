@@ -29,17 +29,19 @@ for protocol details.
 2. Version 40-L holds at most 2,953 message bytes, including any QRed chunk header. Chunk indices and a record digest support reconstruction; duplicate identical scans are harmless, but conflicting chunks are rejected.
 3. Automatic encoding compares plaintext and zlib by QR count, then payload bytes, preferring plaintext on a tie. It tries gzip if zlib compression is unavailable. Explicit compression remains an API option; the UI uses automatic selection.
 4. Copyable v3/v4 seal strings remain supported. QR images using the retired post-terminator padding layout are not supported and must be re-sealed. Deploy the stamper and both verifier routes together and refresh offline copies.
-5. A separate navigation QR opens qred.org from the first page. It is required in first-page footer layouts and optional over a watermark. Every sealed page retains the printed verification instruction.
+5. A separate navigation QR opens qred.org from the first stamped page or an appended seal sheet. It is required in first-page footer layouts and optional over a watermark. Every sealed page retains the printed verification instruction.
 6. Rectangular watermark cells and reconstructed quiet zones are experimental geometry for QRed's scanner. Standard message encoding is not a claim of full JIS/ISO symbol conformance or generic-camera readability. See [licensing and compatibility](LICENSING_AND_COMPATIBILITY.md).
 
 ## PDF layout
 
-1. The stamper permits at most four payload QR codes per page. A watermark uses one full-page symbol or exactly four balanced pieces. Explicit footer layouts may use one through four codes.
+1. A physical sheet carries up to four payload QR codes. A watermark uses one full-page symbol or exactly four balanced pieces. Explicit footer layouts may use one through four codes.
 2. Automatic mode first tries rectangular watermarks on text pages, then verified square fallbacks and a footer when needed. Image-only and blank pages use footers.
 3. Full-page watermarks share one physical margin across the document: 54 points by default, reduced to 36 points when any original rendered page has at least four square points of visible ink within half an inch of an edge. Navigation panels and square fallbacks retain 54-point clearance.
 4. A navigation overlay must avoid original page marks and keep its own quiet zone. Both the navigation code and all signed chunks must pass clean and softened/shaded recovery checks. If it fails, try the text-only instruction before a footer.
 5. Watermarks preserve original page dimensions. Footer fallback extends Letter to Legal or shrinks other page contents to reserve space; the UI reports affected pages.
-6. Never omit a chunk or silently create overflow pages. Reject pages exceeding the four-code limit or layouts whose modules are too small. Preflight demonstrates recovery under tested conditions, not guaranteed printer/camera reliability.
+6. Never omit a chunk or silently create overflow pages. Footer and watermark-only layouts enforce the four-code limit per original. Preflight demonstrates recovery under tested conditions, not guaranteed printer/camera reliability.
+
+7. An explicit seal-sheet layout carries all seals, or only watermark overflow, on appended sheets. Each appended piece is labeled with the original page and part number. Only originals count toward signed page totals and account receipts. The signable form snapshot is validated while the output retains the original fields. In hybrid mode a readable watermark stays on the original even if its optional navigation instruction cannot fit. Every appendix sheet has the verifier address and navigation QR.
 
 ## Verification and trust
 

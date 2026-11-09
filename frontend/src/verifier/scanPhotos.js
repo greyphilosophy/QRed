@@ -34,10 +34,19 @@ export function createScanPhotoCollection(onChange, snapshot = snapshotScanPhoto
   const pending = new Map();
   const publish = () => onChange({ photos, notice });
   return {
-    async capture(seal, source, { replace = false } = {}) {
+    async capture(seal, source, { replace = false, originalPage = false } = {}) {
       const decoded = decodeSeal(seal);
-      if (!decoded || !source?.width || !source?.height) return;
+      if (!decoded) return;
       const key = decoded.document_id; // One full-page capture per page, including multipart seals.
+      if (decoded.seal_sheet && !originalPage) {
+        if (replace) {
+          pending.delete(key);
+          photos = photos.filter(photo => photo.key !== key);
+          publish();
+        }
+        return;
+      }
+      if (!source?.width || !source?.height) return;
       if (!replace && (pending.has(key) || photos.some(photo => photo.key === key))) return;
       if (!pending.has(key) && pending.size >= MAX_PENDING_PHOTOS) {
         notice = "Some scan images could not be kept. Retake any unchecked page below.";

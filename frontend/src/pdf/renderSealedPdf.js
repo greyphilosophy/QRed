@@ -1,9 +1,58 @@
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import { MAX_PDF_SEALS } from "../sealBudget.js";
+import { sealSheetString } from "../sealFormat.js";
 import { createQRedQrSymbol, qredQrPngDataUrl } from "../qredQr.js";
 import { resolvePageScalingStrategy, applyPageScaling, visiblePageGeometry } from "./pageScaling.js";
 import { planFooterLayout } from "./qrLayout.js";
 import { createEntryQrSymbol } from "./navigationQr.js";
 import { drawQrSymbol } from "./qrDrawing.js";
+import { appendSealSheets, usesSealSheets, usesWatermarks } from "./sealSheets.js";
+
+// Recheck each smaller placement on a fresh original. Never leave failed QR
+// ink behind or append a duplicate of a piece that passed on the original.
+async function partialWatermark(file, records, index, recovered) {
+  const { planPdfWatermarks, stampWatermarks, checkWatermarks } = await import("./watermark.js");
+  const seals = records[index].seals;
+  async function tryParts(parts, knownLayout) {
+    const trial = records.slice();
+    trial[index] = { seals: parts.map(part => seals[part]) };
+    let layouts;
+    if (knownLayout) {
+      layouts = new Array(records.length).fill(null);
+      layouts[index] = { ...knownLayout, boxes: parts.map(part => knownLayout.boxes[part]) };
+    } else {
+      layouts = await planPdfWatermarks(file, trial, [index], { omitEntry: true });
+    }
+    if (!layouts[index]) return null;
+    const pdf = await PDFDocument.load(await file.arrayBuffer(), { updateMetadata: false });
+    await stampWatermarks(pdf, layouts, trial);
+    const bytes = await pdf.save({ updateFieldAppearances: false });
+    const failed = await checkWatermarks(bytes, layouts, trial);
+    return failed.length ? null : { parts, layout: layouts[index], record: trial[index] };
+  }
+  for (let count = seals.length - 1; count > 0; count--) {
+    if (recovered?.parts.length === count) {
+      const retained = await tryParts(recovered.parts, recovered.layout);
+      if (retained) return retained;
+    }
+    const placed = await tryParts(Array.from({ length: count }, (_, part) => part));
+    if (placed) return placed;
+  }
+  return null;
+}
+
+async function finishWithSheets(bytes, records, onPageParts, watermarkLayout) {
+  const entries = [];
+  const pageSealStrings = records.map(({ seals }, index) => seals.map((original, part) => {
+    if (onPageParts[index].includes(part)) return original;
+    const seal = sealSheetString(original);
+    entries.push({ pageNumber: index + 1, part, total: seals.length, seal });
+    return seal;
+  }));
+  const { bytes: output, sheetCount } = await appendSealSheets(bytes, entries, records.length);
+  return { blob: new Blob([output], { type: "application/pdf" }), watermarkLayout, pageSealStrings,
+    sheetCount, sheetPages: [...new Set(entries.map(entry => entry.pageNumber))], footerPages: [], footerReasons: {} };
+}
 
 export async function qrPngBytes(value) {
   const dataUrl = await qredQrPngDataUrl(value, { margin: 4, width: 360 });
@@ -14,43 +63,49 @@ export async function qrPngBytes(value) {
 
 // Placement only: no keys, signing callbacks, or mutable evidence plans.
 export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pageScalingStrategy = "automatic" }) {
-  const tryWatermarks = pageScalingStrategy === "automatic" || pageScalingStrategy === "watermark";
+  const sheets = usesSealSheets(pageScalingStrategy);
+  if (pageScalingStrategy === "seal-sheets") {
+    return finishWithSheets(await file.arrayBuffer(), pageSealResults, pageSealResults.map(() => []), null);
+  }
+  const tryWatermarks = usesWatermarks(pageScalingStrategy);
+  const watermarkRecords = sheets ? pageSealResults.map(({ seals }) => ({ seals: seals.slice(0, MAX_PDF_SEALS) })) : pageSealResults;
+  const recovered = new Map();
   // A logo or embedded graphic does not make a text page unsuitable for a
   // watermark. Let placement and the rendered recovery check decide whether
   // that page needs a footer; image-only and blank pages still use one.
-  const footerPages = tryWatermarks
+  const fallbackPages = tryWatermarks
     ? pagesWithText.flatMap((hasText, index) => !hasText ? [index + 1] : []) : [];
   // Only short reason labels are retained; never collect PDF text or scan data.
-  const footerReasons = {};
+  const fallbackReasons = {};
   for (let index = 0; index < pagesWithText.length; index++) {
-    if (!pagesWithText[index] && tryWatermarks) footerReasons[index + 1] = "This page has no extractable text.";
+    if (!pagesWithText[index] && tryWatermarks) fallbackReasons[index + 1] = "This page has no extractable text.";
   }
   let plannedWatermarkLayout = null;
   if (tryWatermarks) {
-    const watermarkPages = pagesWithText.map((_, index) => index).filter(index => !footerPages.includes(index + 1));
+    const watermarkPages = pagesWithText.map((_, index) => index).filter(index => !fallbackPages.includes(index + 1));
     if (watermarkPages.length) {
       const { planPdfWatermarks } = await import("./watermark.js");
-      plannedWatermarkLayout = await planPdfWatermarks(file, pageSealResults, watermarkPages);
+      plannedWatermarkLayout = await planPdfWatermarks(file, watermarkRecords, watermarkPages);
       for (const index of watermarkPages) if (!plannedWatermarkLayout[index]) {
-        footerPages.push(index + 1);
-        footerReasons[index + 1] = "No safe watermark position was found.";
+        fallbackPages.push(index + 1);
+        fallbackReasons[index + 1] = "No safe watermark position was found.";
       }
     }
   }
   async function renderAttempt() {
-    const pdf = await PDFDocument.load(await file.arrayBuffer());
-    const font = await pdf.embedFont(StandardFonts.Helvetica);
+    const pdf = await PDFDocument.load(await file.arrayBuffer(), { updateMetadata: false });
+    const font = sheets ? null : await pdf.embedFont(StandardFonts.Helvetica);
     const pages = pdf.getPages();
     if (pages.length !== pageSealResults.length) throw new Error("PDF page count changed while sealing");
 
     const PANEL_PADDING = 10;
-    const watermarkLayout = plannedWatermarkLayout?.map((layout, index) => footerPages.includes(index + 1) ? null : layout) ?? null;
+    const watermarkLayout = plannedWatermarkLayout?.map((layout, index) => fallbackPages.includes(index + 1) ? null : layout) ?? null;
     if (watermarkLayout?.some(Boolean)) {
       const { stampWatermarks } = await import("./watermark.js");
-      await stampWatermarks(pdf, watermarkLayout, pageSealResults);
+      await stampWatermarks(pdf, watermarkLayout, watermarkRecords);
     }
     for (let pageIndex = pageSealResults.length - 1; pageIndex >= 0; pageIndex -= 1) {
-      if (watermarkLayout?.[pageIndex]) continue;
+      if (sheets || watermarkLayout?.[pageIndex]) continue;
       let page = pdf.getPage(pageIndex);
       const qrValues = pageSealResults[pageIndex].seals;
       const qrImages = await Promise.all(qrValues.map(async (value) => pdf.embedPng(await qrPngBytes(value))));
@@ -83,13 +138,17 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
       });
     }
 
-    const sealedBytes = await pdf.save();
+    const sealedBytes = await pdf.save({ updateFieldAppearances: false });
     let failed = [];
     const failureReasons = {};
     if (watermarkLayout?.some(Boolean)) {
       const { checkWatermarks } = await import("./watermark.js");
-      failed = await checkWatermarks(sealedBytes, watermarkLayout, pageSealResults,
-        { onFailure: (index, reason) => { failureReasons[index + 1] = reason; } });
+      failed = await checkWatermarks(sealedBytes, watermarkLayout, watermarkRecords, {
+        onFailure: (index, reason) => { failureReasons[index + 1] = reason; },
+        onPartial: sheets ? (index, parts, layout) => {
+          if (parts.length > (recovered.get(index)?.parts.length || 0)) recovered.set(index, { parts, layout });
+        } : null,
+      });
     }
     return { sealedBytes, watermarkLayout, failed, failureReasons };
   }
@@ -108,7 +167,7 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
     if (dropEntry) {
       triedWithoutEntry = true;
       const { planPdfWatermarks } = await import("./watermark.js");
-      entryless = await planPdfWatermarks(file, pageSealResults, [0], { omitEntry: true });
+      entryless = await planPdfWatermarks(file, watermarkRecords, [0], { omitEntry: true });
     }
     const needAlternative = rendered.failed.filter(index =>
       !entryless?.[index] && !triedAlternative.has(index));
@@ -116,7 +175,7 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
     let alternatives = null;
     if (needAlternative.length) {
       const { planPdfWatermarks } = await import("./watermark.js");
-      alternatives = await planPdfWatermarks(file, pageSealResults, needAlternative, {
+      alternatives = await planPdfWatermarks(file, watermarkRecords, needAlternative, {
         excludedLayouts: plannedWatermarkLayout,
         omitEntry: needAlternative.includes(0) && !plannedWatermarkLayout[0]?.entry,
       });
@@ -126,9 +185,9 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
         plannedWatermarkLayout[index] = entryless[index];
       } else if (alternatives?.[index]) {
         plannedWatermarkLayout[index] = alternatives[index];
-      } else if (!footerPages.includes(index + 1)) {
-        footerPages.push(index + 1);
-        footerReasons[index + 1] = rendered.failureReasons[index + 1] ?? "The watermark did not pass verification.";
+      } else if (!fallbackPages.includes(index + 1)) {
+        fallbackPages.push(index + 1);
+        fallbackReasons[index + 1] = rendered.failureReasons[index + 1] ?? "The watermark did not pass verification.";
       }
     }
   } while (rendered.failed.length);
@@ -156,16 +215,37 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
       }
       plannedWatermarkLayout[0] = prior;
     }
-    if (!rendered.watermarkLayout[0].entry && !rendered.watermarkLayout[0].entryText) {
+    if (!sheets && !rendered.watermarkLayout[0].entry && !rendered.watermarkLayout[0].entryText) {
       // The instruction is mandatory. If even text cannot fit safely, use
       // the standard footer, which reserves space for the same caption.
-      footerPages.push(1);
-      footerReasons[1] = "No readable position was available for the verification instruction.";
+      fallbackPages.push(1);
+      fallbackReasons[1] = "No readable position was available for the verification instruction.";
       rendered = await renderAttempt();
       if (rendered.failed.length) throw new Error("The sealed PDF could not retain readable verification instructions and watermarks.");
     }
   }
+  if (sheets) {
+    const onPageParts = watermarkRecords.map(({ seals }, index) =>
+      rendered.watermarkLayout?.[index] ? seals.map((_, part) => part) : []);
+    let restored = false;
+    for (const number of [...fallbackPages]) {
+      const index = number - 1;
+      if (!pagesWithText[index] || pageSealResults[index].seals.length < 2) continue;
+      const partial = await partialWatermark(file, watermarkRecords, index, recovered.get(index));
+      if (!partial) continue;
+      onPageParts[index] = partial.parts;
+      watermarkRecords[index] = partial.record;
+      plannedWatermarkLayout[index] = partial.layout;
+      fallbackPages.splice(fallbackPages.indexOf(number), 1);
+      restored = true;
+    }
+    if (restored) {
+      rendered = await renderAttempt();
+      if (rendered.failed.length) throw new Error("The final partial watermarks could not be verified.");
+    }
+    return finishWithSheets(rendered.sealedBytes, pageSealResults, onPageParts, rendered.watermarkLayout);
+  }
   const { sealedBytes, watermarkLayout } = rendered;
-  footerPages.sort((a, b) => a - b);
-  return { blob: new Blob([sealedBytes], { type: "application/pdf" }), watermarkLayout, footerPages, footerReasons };
+  fallbackPages.sort((a, b) => a - b);
+  return { blob: new Blob([sealedBytes], { type: "application/pdf" }), watermarkLayout, footerPages: fallbackPages, footerReasons: fallbackReasons };
 }

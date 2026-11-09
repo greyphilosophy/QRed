@@ -24,21 +24,25 @@ export function PdfSealInput({ onSeal, session = 0 }) {
     active.current = controller;
     setBusy(true);
     setStatus("Opening PDF on this device…");
+    async function submitPage(seal, image, options) {
+      controller.signal.throwIfAborted();
+      const context = { replaceImage: true, session, ...options };
+      if (!image) return onSeal(seal, null, context);
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width; canvas.height = image.height;
+      try {
+        canvas.getContext("2d").putImageData(new ImageData(image.data, image.width, image.height), 0, 0);
+        await onSeal(seal, canvas, context);
+      } finally { canvas.width = canvas.height = 0; }
+    }
     try {
       const result = await scanPdfSeals(file, {
         signal: controller.signal,
         onProgress: ({ pageNumber, pageCount }) => {
           if (!controller.signal.aborted) setStatus(`Reading seals on PDF page ${pageNumber} of ${pageCount}…`);
         },
-        onSeal: async (seal, image) => {
-          controller.signal.throwIfAborted();
-          const canvas = document.createElement("canvas");
-          canvas.width = image.width; canvas.height = image.height;
-          try {
-            canvas.getContext("2d").putImageData(new ImageData(image.data, image.width, image.height), 0, 0);
-            await onSeal(seal, canvas, { replaceImage: true, session });
-          } finally { canvas.width = canvas.height = 0; }
-        },
+        onSeal: submitPage,
+        onOriginalPage: (seal, image) => submitPage(seal, image, { originalPage: true }),
       });
       if (!controller.signal.aborted) setStatus(pdfScanSummary(result));
     } catch (error) {
