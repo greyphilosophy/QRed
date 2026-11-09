@@ -203,6 +203,17 @@ it("rejects a selected photo of a different authenticated page without replacing
   expect((await screen.findByRole("alert")).textContent).toContain("does not match Page 2");
   expect(capture).not.toHaveBeenCalled(); expect(camera.snapshot).not.toHaveBeenCalled();
 });
+
+it("accepts an unmarked original for a selected seal-sheet reference without searching it for a QR", async () => {
+  canvasPixels(); selectedPhoto();
+  const file = new Blob(["original page"]), capture = vi.fn();
+  camera.snapshot.mockResolvedValue(file);
+  render(<PageCameraCapture pageLabel="Page 2 of 2" separateOriginal seals={signed.seals} onCapture={capture} onClose={vi.fn()} />);
+  expect(screen.getByRole("dialog").getAttribute("aria-label")).toBe("Photograph original page 2 of 2");
+  fireEvent.change(screen.getByLabelText("Choose a high-resolution page photo"), { target: { files: [new File(["scan"], "original.jpg")] } });
+  await waitFor(() => expect(capture).toHaveBeenCalledWith(file));
+  expect(camera.scan).not.toHaveBeenCalled();
+});
 it("cancels a pending selected photo immediately, even before its dialog unmounts", async () => {
   const { context } = canvasPixels();
   let finish;

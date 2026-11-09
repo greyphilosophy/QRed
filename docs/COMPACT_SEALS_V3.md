@@ -58,11 +58,24 @@ boundaries may change without changing the signature. The timestamp, key ID,
 PDF context, page position/count, document root, and recovered text cannot.
 The signature and hashes are stored as bytes, without Base64/hex expansion.
 
+## Appended seal sheets
+
+On a seal sheet the first byte of the ordinary QR message is lowercase ASCII
+`q`. The four carrier tags are `qRS3`, `qRC3`, `qRS4`, and `qRC4`. Restore
+uppercase `Q` before interpreting the original record or comparing duplicate
+chunks. The placement hint occupies no additional bytes and conveys no trust.
+All digest, signature, and page membership checks use the ordinary records.
+Earlier readers need an update to recognize these carriers.
+
+The sheet photo supplies seals only. For a physical copy, the recipient selects
+the authenticated page number and photographs that original. In a combined
+PDF the reader uses the original page index to obtain the comparison image.
+
 ## Multiple QRs for one page
 
-The PDF stamper permits at most four QR codes per page. Optional evidence uses
-spare capacity within the count needed for text. The decoder still accepts older
-records with more chunks.
+A footer or watermark carries up to four codes on an original page. Explicit
+seal-sheet layouts can paginate additional chunks within the transport limits.
+Optional evidence uses spare capacity within the count needed for text.
 
 First construct the complete record above. If it exceeds the maximum
 QR byte payload (2,953 bytes at version 40-L), split that record into raw byte chunks.

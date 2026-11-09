@@ -46,6 +46,10 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
     return run();
   };
   const partials = new Set();
+  const singleOriginal = seal => {
+    const decoded = decodeSeal(seal);
+    return decoded?.total_chunks === 1 && !decoded.seal_sheet;
+  };
   const keepPartial = seal => {
     if (!decodeSeal(seal) || partials.has(seal)) return;
     partials.add(seal);
@@ -61,7 +65,7 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
     const fast = attempt("rectified-fast", () => scanRectified({
       searchRadius: 12, shouldContinue: () => performance.now() < fastDeadline,
     }));
-    if (decodeSeal(fast?.seal)?.total_chunks === 1) return { status: "found", text: fast.seal };
+    if (singleOriginal(fast?.seal)) return { status: "found", text: fast.seal };
     keepPartial(fast?.seal);
     const preview = shouldContinue() ? attempt("watermark-preview", () => scanWatermarkPreview(data, width, height)) : null;
     const payload = preview && qredPayloadFromPhotoScanResult(data, width, height, preview);
@@ -69,7 +73,7 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
     // Navigation/ordinary QRs must not hide a watermark, and one chunk must
     // not stop recovery of a four-code page. Trust is checked by the normal
     // verification session after either decoding path returns its payload.
-    if (decodeSeal(payload)?.total_chunks === 1) return { status: "found", text: payload };
+    if (singleOriginal(payload)) return { status: "found", text: payload };
     keepPartial(payload);
     // This is a quick ordinary-code preflight, not a full-photo exhaustive
     // search. An indivisible 12 MP jsQR miss can otherwise consume the entire
@@ -80,7 +84,7 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
       { tryRescaling: false, tryWatermark: false, maxAttempts: 2, maxScanPixels: 1_500_000, fastResize: true,
         shouldContinue: () => performance.now() < ordinaryDeadline })) : null;
     const ordinaryPayload = ordinary && qredPayloadFromPhotoScanResult(data, width, height, ordinary);
-    if (decodeSeal(ordinaryPayload)?.total_chunks === 1) return { status: "found", text: ordinaryPayload };
+    if (singleOriginal(ordinaryPayload)) return { status: "found", text: ordinaryPayload };
     keepPartial(ordinaryPayload);
     // Isolate adjacent dark footer symbols before the expensive watermark
     // fallback. Whole-frame finder triples can span two different symbols.
@@ -88,6 +92,9 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
     const footerTexts = footer.map(qredPayloadFromScanResult).filter(text => decodeSeal(text));
     for (const text of footerTexts) keepPartial(text);
     const chunks = [...partials].map(decodeSeal);
+    // One sheet may carry several independent signed pages. Collect all
+    // conventional symbols we can see before returning the first record.
+    if (chunks.some(chunk => chunk.seal_sheet)) return { status: "found-multiple", texts: [...partials] };
     // This is a collection shortcut, not authentication. The verification
     // session still checks assembled bytes and every signature normally.
     if (footerTexts.length && chunks.every(chunk => {
@@ -98,7 +105,7 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
     })) return { status: "found-multiple", texts: [...partials] };
     // Retain the original wider alignment search for larger print distortions.
     const rectified = shouldContinue() ? attempt("rectified-wide", () => scanRectified({ shouldContinue })) : null;
-    if (decodeSeal(rectified?.seal)?.total_chunks === 1) return { status: "found", text: rectified.seal };
+    if (singleOriginal(rectified?.seal)) return { status: "found", text: rectified.seal };
     keepPartial(rectified?.seal);
     const aligned = shouldContinue() ? attempt("page-aligned", () => scanPageAlignedImage(image,
       { deep: true, shouldContinue, onSeal: keepPartial })) : [];

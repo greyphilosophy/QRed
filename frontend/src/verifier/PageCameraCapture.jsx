@@ -19,7 +19,8 @@ export function confirmsPageSeal(action, seals) {
 }
 
 // Native stills and explicitly selected photos stay in this browser session.
-export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose }) {
+export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = false, onCapture, onClose }) {
+  const title = separateOriginal ? `Photograph original ${pageLabel.toLowerCase()}` : `Retake ${pageLabel}`;
   const video = useRef(null), camera = useRef(null), generation = useRef(0);
   const scan = useRef(null), captureDiagnostic = useRef(null), photoInput = useRef(null);
   const lastQuality = useRef(null);
@@ -90,7 +91,7 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
     if (action.captureFailed) { setError(action.message); return; }
     busyRef.current = true; setBusy(true);
     try {
-      if (!confirmsPageSeal(action, seals)) {
+      if (!separateOriginal && !confirmsPageSeal(action, seals)) {
         throw new Error(action.text || action.texts?.length
           ? `This seal does not match ${pageLabel}. Show that page, including its seal. Your previous check is unchanged.`
           : action.message || `The page seal could not be read. Include the whole page and its seal, then try again. Your previous check is unchanged.`);
@@ -169,6 +170,12 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
         setError(cameraPhotoFailure(captureDiagnostic.current).message);
         return;
       }
+      if (separateOriginal) {
+        // The recipient explicitly selected an authenticated page reference.
+        // Its original may carry no QR. Only the later comparison evaluates it.
+        await acceptFrame({}, canvas, epoch, controller);
+        return;
+      }
       attemptProgress.phase("decoding");
       const action = await scanPhotoInWorker(still, { returnPayload: true, signal: controller.signal, onStage: attemptProgress.stage });
       attemptProgress.stop();
@@ -182,7 +189,7 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
     }
   }
   return <div className="page-camera-backdrop"><section className="page-camera" role="dialog" aria-modal="true"
-    aria-label={`Retake ${pageLabel}`} tabIndex={-1} ref={dialog} onKeyDown={event => {
+    aria-label={title} tabIndex={-1} ref={dialog} onKeyDown={event => {
       if (event.key === "Escape") close();
       if (event.key === "Tab") {
         const buttons = [...dialog.current.querySelectorAll("button:not(:disabled)")];
@@ -191,7 +198,9 @@ export function PageCameraCapture({ pageLabel, seals = [], onCapture, onClose })
         } else if (!event.shiftKey && document.activeElement === buttons.at(-1)) { event.preventDefault(); buttons[0]?.focus(); }
       }
     }}>
-    <h3>Retake {pageLabel}</h3><p>Include all four page corners and hold steady for automatic capture. You can also use Capture now or choose a high-resolution photo.</p>
+    <h3>{title}</h3><p>{separateOriginal
+      ? "Include all four corners of this original page. Its photo will be compared with the signed reference you selected."
+      : "Include all four page corners and hold steady for automatic capture. You can also use Capture now or choose a high-resolution photo."}</p>
     <div style={{ position: "relative" }}><video ref={video} playsInline autoPlay muted />
       <div className="page-scan-guide-area" ref={guideArea} aria-hidden="true"><div className="page-scan-guide" ref={guide} hidden>
         <span /><span /><span /><span />

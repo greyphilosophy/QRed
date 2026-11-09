@@ -1,7 +1,9 @@
 import { maskQrCode } from "../qr/maskQrCode.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
-import { decodeSeal, qredPayloadFromPhotoScanResult } from "../qredVerifier.js";
+import { decodeSeal, qredPayloadFromPhotoScanResult, verifyQRedSeals } from "../qredVerifier.js";
 import { scanPageAlignedImage } from "../qr/pageAlignedScan.js";
+import { scanFooterSeals } from "../qr/footerSealScan.js";
+import { qredPayloadFromScanResult } from "../qr/qrPayload.js";
 
 const MAX_CODES_PER_PAGE = 64;
 // An original 48 MP photo may remain in memory for trustworthy module
@@ -78,9 +80,23 @@ export async function scanPdfPage(image, { onSeal = () => {}, signal, pageAligne
     }
     // A complete one- or four-symbol page has nothing more to discover.
     // Incomplete page scans still try the historical region-based locator.
-    if (aligned.length === 4 || aligned.length === 1 && decodeSeal(aligned[0].seal)?.total_chunks === 1) {
+    if (!aligned.some(item => decodeSeal(item.seal)?.seal_sheet) &&
+        (aligned.length === 4 || aligned.length === 1 && decodeSeal(aligned[0].seal)?.total_chunks === 1)) {
       return { seals: [...seals], limited: false };
     }
+  }
+  // A whole-sheet locator can cross two dense adjacent symbols. Isolate dark
+  // QR regions before masking any of the original pixels in the legacy pass.
+  if (image.bounds || !pageAligned) {
+    const candidates = scanFooterSeals(image, { shouldContinue: () => !signal?.aborted });
+    for (const code of candidates) {
+      const seal = qredPayloadFromScanResult(code);
+      if (!decodeSeal(seal)?.seal_sheet || seals.has(seal)) continue;
+      seals.add(seal);
+      await onSeal(seal, image);
+      signal?.throwIfAborted();
+    }
+    if (seals.size === 4 && [...seals].every(seal => decodeSeal(seal).seal_sheet)) return { seals: [...seals], limited: false };
   }
   // Never clone and subdivide the full 12–48 MP original merely because the
   // page-aligned scan was incomplete. The legacy fallback operates on its own
@@ -117,29 +133,42 @@ export async function scanPdfPage(image, { onSeal = () => {}, signal, pageAligne
   return { seals: [...seals], limited: false };
 }
 
-export async function scanPdfSeals(file, { onSeal = () => {}, onProgress = () => {}, signal } = {}) {
+export async function scanPdfSeals(file, { onSeal = () => {}, onOriginalPage, onProgress = () => {}, signal } = {}) {
   signal?.throwIfAborted();
   const { withPdfDocument, renderPdfPage } = await import("../pdf/readPdfText.js");
   signal?.throwIfAborted();
   try {
     return await withPdfDocument(file, async pdf => {
       const seen = new Set();
+      const sheetRecords = new Map();
+      let firstSheet = Infinity;
       const summary = { pageCount: pdf.numPages, pagesWithSeals: 0, sealCount: 0, missingPages: [], failedPages: [] };
+      async function pageImage(number) {
+        const page = await pdf.getPage(number);
+        const viewport = page.getViewport({ scale: 1 });
+        const scale = Math.min(2, 8192 / Math.max(viewport.width, viewport.height),
+          Math.sqrt(11_900_000 / (viewport.width * viewport.height)));
+        return renderPdfPage(pdf, number, scale, { reference: true });
+      }
       for (let number = 1; number <= pdf.numPages; number++) {
         signal?.throwIfAborted();
         onProgress({ pageNumber: number, pageCount: pdf.numPages });
         await yieldToBrowser();
         try {
-          const page = await pdf.getPage(number);
-          const viewport = page.getViewport({ scale: 1 });
-          const scale = Math.min(2, 8192 / Math.max(viewport.width, viewport.height),
-            Math.sqrt(11_900_000 / (viewport.width * viewport.height)));
-          const image = await renderPdfPage(pdf, number, scale, { reference: true });
+          const image = await pageImage(number);
           signal?.throwIfAborted();
           const result = await scanPdfPage(image, { signal, onSeal: async (seal, frame) => {
             if (seen.has(seal)) return;
             seen.add(seal);
-            await onSeal(seal, frame);
+            const decoded = decodeSeal(seal);
+            if (decoded.seal_sheet) {
+              firstSheet = Math.min(firstSheet, number);
+              const firstForRecord = !sheetRecords.has(decoded.document_id);
+              sheetRecords.set(decoded.document_id, seal);
+              await onSeal(seal, null, { replaceImage: firstForRecord });
+            } else {
+              await onSeal(seal, frame);
+            }
           } });
           if (result.seals.length) summary.pagesWithSeals++;
           else summary.missingPages.push(number);
@@ -148,6 +177,36 @@ export async function scanPdfSeals(file, { onSeal = () => {}, onProgress = () =>
           signal?.throwIfAborted();
           summary.failedPages.push({ pageNumber: number, message: error.message });
         }
+      }
+      if (sheetRecords.size) {
+        const groups = new Map();
+        for (const seal of seen) {
+          const id = decodeSeal(seal).document_id;
+          if (!sheetRecords.has(id)) continue;
+          if (!groups.has(id)) groups.set(id, []);
+          groups.get(id).push(seal);
+        }
+        const originalPages = new Set();
+        for (const [id, seals] of groups) {
+          signal?.throwIfAborted();
+          // Page numbers route the raster; the UI verifies with the recipient's
+          // trusted key before allowing any text or visual comparison.
+          const page = await verifyQRedSeals(seals);
+          if (!["VALID", "UNVERIFIED"].includes(page.status) || !page.pdf || page.page_count >= firstSheet) continue;
+          try {
+            if (onOriginalPage) {
+              const image = await pageImage(page.page_number);
+              signal?.throwIfAborted();
+              await onOriginalPage(sheetRecords.get(id), image);
+            }
+            originalPages.add(page.page_number);
+          } catch (error) {
+            signal?.throwIfAborted();
+            summary.failedPages.push({ pageNumber: page.page_number, message: error.message });
+          }
+        }
+        summary.originalPages = [...originalPages].sort((a, b) => a - b);
+        summary.missingPages = summary.missingPages.filter(number => !originalPages.has(number));
       }
       summary.sealCount = seen.size;
       return summary;
@@ -161,6 +220,7 @@ export async function scanPdfSeals(file, { onSeal = () => {}, onProgress = () =>
 
 export function pdfScanSummary(result) {
   let text = `Found ${result.sealCount} QRed seal${result.sealCount === 1 ? "" : "s"} across ${result.pagesWithSeals} of ${result.pageCount} PDF pages.`;
+  if (result.originalPages?.length) text += ` Seal sheets refer to original page(s): ${result.originalPages.join(", ")}.`;
   if (result.missingPages.length) text += ` No readable seal on PDF page(s): ${result.missingPages.join(", ")}.`;
   if (result.failedPages.length) text += ` Could not finish PDF page(s): ${result.failedPages.map(page => page.pageNumber).join(", ")}.`;
   return text;

@@ -48,7 +48,7 @@ export function useSealVerification() {
     return () => { cancelled = true; controller.abort(); clearTimeout(timer); };
   }, []);
 
-  const addSeal = useCallback((text, frame, { replaceImage = false } = {}) => {
+  const addSeal = useCallback((text, frame, { replaceImage = false, originalPage = false } = {}) => {
     if (collection.getSnapshot().session !== snapshot.session) return;
     if (isQRedEntryLink(text)) {
       setNotice("That code opens qred.org. Scan the pale watermark to read the document seal.");
@@ -59,7 +59,7 @@ export function useSealVerification() {
       return;
     }
     setNotice("");
-    const captured = photoCollection.capture(text, frame, { replace: replaceImage });
+    const captured = photoCollection.capture(text, frame, { replace: replaceImage, originalPage });
     collection.add(text);
     return captured;
   }, [photoCollection, collection, snapshot.session]);

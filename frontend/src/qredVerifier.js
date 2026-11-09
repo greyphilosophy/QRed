@@ -74,11 +74,12 @@ export function decodeSeal(sealString) {
 export async function verifyQRedSeals(seals, publicKey, authorities = trustedAuthorities) {
   if (!Array.isArray(seals) || !seals.length) return { status: "ERROR", error_message: "No valid chunks found" };
   const chunks = new Map();
-  let first, length = 0;
+  let first, length = 0, sealSheet = false;
   for (const seal of seals) {
     const decoded = decodeSeal(seal);
     if (!decoded) return { status: "ERROR", error_message: "Malformed or unsupported seal. Re-seal older documents with the current format." };
     first ??= decoded;
+    if (decoded.seal_sheet) sealSheet = true;
     if (decoded.version !== first.version || decoded.document_id !== first.document_id || decoded.total_chunks !== first.total_chunks || decoded.multipart !== first.multipart) {
       return { status: "INVALID", document_id: first.document_id, error_message: "Mixed seal sets or inconsistent chunk counts" };
     }
@@ -107,6 +108,7 @@ export async function verifyQRedSeals(seals, publicKey, authorities = trustedAut
   } catch (error) { return { status: "ERROR", error_message: `Seal decoding failed: ${error.message}` }; }
   const pageHash = metadata.pdf ? bytesToHex(await sha256(body)) : null;
   const result = {
+    ...(sealSheet && metadata.pdf ? { seal_sheet: true } : {}),
     ...(evidence ? { evidence } : {}),
     document_id: first.document_id, timestamp: metadata.timestamp, content, encoding: metadata.encoding,
     key_id: metadata.key_id, version: metadata.version, pdf: metadata.pdf,

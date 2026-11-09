@@ -807,7 +807,7 @@
         showResult("QR_CONTENT", { content: sealStr });
         return;
       }
-      var captured = scanPhotos.capture(sealStr, frame, { replace: options.replaceImage });
+      var captured = scanPhotos.capture(sealStr, frame, { replace: options.replaceImage, originalPage: options.originalPage });
       if (!collection.add(sealStr)) return captured;
       return Promise.all([captured, collection.verify(state.publicKey, verifyWithDefaultKey)]);
     }

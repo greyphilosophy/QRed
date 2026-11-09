@@ -142,7 +142,8 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
           </div>}
         </>}
         <div className="photo-actions">
-          {onReplacePhoto && <button type="button" onClick={() => setRetake(page.page)}>Retake this page</button>}
+          {onReplacePhoto && <button type="button" onClick={() => setRetake(page.page)}>{page.page.seal_sheet
+            ? `Photograph original page ${page.page.page_number}` : "Retake this page"}</button>}
           {["error", "unreadable"].includes(page.state) && <button onClick={() => checks.retry(page.id)}>Read page again</button>}
         </div>
         {comparison && <>
@@ -183,7 +184,7 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
       <summary>Compare the signed visual reference</summary>
       <PageEvidenceVerification results={results} scanPhotos={scanPhotos} session={session} onRetake={onReplacePhoto ? setRetake : undefined} />
     </details>}
-    {retake && <PageCameraCapture pageLabel={pageName(retake)} onClose={() => setRetake(null)}
+    {retake && <PageCameraCapture pageLabel={pageName(retake)} separateOriginal={Boolean(retake.seal_sheet)} onClose={() => setRetake(null)}
       seals={seals.filter(seal => decodeSeal(seal)?.document_id === retake.document_id)}
       onCapture={file => { onReplacePhoto?.(retake.document_id, file); selectedByUser.current = true; setSelected(retake.document_id); }} />}
     <details><summary>Prepare for offline checking</summary>

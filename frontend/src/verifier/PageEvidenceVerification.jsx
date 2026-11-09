@@ -70,7 +70,8 @@ function EvidencePage({ page, captures, onRetake }) {
       </figure>
       <figure><figcaption>Page photo for comparison</figcaption>
         {photo ? <img className="evidence-photo" src={photo} alt="Page photo beside the signed visual reference" />
-          : <p>Scan images appear here when available. Use Retake this page to capture the entire page.</p>}
+          : <p>{page.seal_sheet ? "Photograph the numbered original page to compare it with this reference."
+            : "Scan images appear here when available. Use Retake this page to capture the entire page."}</p>}
       </figure>
     </div>
     <p className="photo-note">A successful QR scan may show only part of the page. Use a clear photo of the entire printed page for comparison.</p>
@@ -83,7 +84,8 @@ function EvidencePage({ page, captures, onRetake }) {
       {line >= 0 && <p className="photo-selected">{lines[line]}</p>}
       <p className="photo-note">{evidence.layout.mode === 1 ? "Locations use a coarse 16 × 16 grid." : evidence.layout.mode === 2 ? "Locations mark approximate line starts." : "Boxes mark the extracted text lines."} Positions refer to the original page, before the seal footer was added.</p>
     </>}
-    {onRetake && <button type="button" onClick={() => onRetake(page)}>Retake this page for visual review</button>}
+    {onRetake && <button type="button" onClick={() => onRetake(page)}>{page.seal_sheet
+      ? `Photograph original page ${page.page_number} for visual review` : "Retake this page for visual review"}</button>}
     <p className="photo-note">Compare these views yourself; QRed does not give an automatic image-match verdict. Photos stay on this device. No text-recognition download is needed for this view.</p>
     {error && <p role="alert">{error}</p>}
   </>;

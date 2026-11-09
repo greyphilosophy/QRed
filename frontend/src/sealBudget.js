@@ -13,7 +13,7 @@ export function recordQrCount(length, version = "3") {
 
 // The account identity is unknown when the page commitment is bound. Reserve
 // its maximum size and omit optional evidence when the QR count is uncertain.
-export function evidenceBodyBudget(baseLength, { attested = false, multiple = false } = {}) {
+export function evidenceBodyBudget(baseLength, { attested = false, multiple = false, maxPageSeals = MAX_PDF_SEALS } = {}) {
   const minimum = sealEnvelopeOverhead({ attested, multiple });
   const maximum = sealEnvelopeOverhead({ attested, multiple, identityBytes: MAX_ENCODED_IDENTITY_BYTES });
   if (baseLength + maximum <= recordCapacity(1)) return recordCapacity(1) - maximum;
@@ -24,7 +24,7 @@ export function evidenceBodyBudget(baseLength, { attested = false, multiple = fa
   // provider's unknown identity could increase that count, omit optional
   // evidence instead of spending a speculative extra QR.
   const needed = recordQrCount(baseLength + minimum, attested ? "4" : "3");
-  if (needed > MAX_PDF_SEALS) return 0;
+  if (needed > maxPageSeals) return 0;
   const limit = recordCapacity(needed, attested) - maximum;
   return baseLength <= limit ? limit : 0;
 }

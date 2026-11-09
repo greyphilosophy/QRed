@@ -43,6 +43,64 @@ def seal(page, pdf_bytes, destination):
 
 
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
+def test_scan_seal_sheet_then_compare_unmarked_originals(browser, tmp_path, path):
+    """A whole sheet collects two references. An edited second original must differ."""
+    def invoice(amount):
+        stream = io.BytesIO()
+        doc = canvas.Canvas(stream, pagesize=(612, 792))
+        for title, line in [("Invoice", "Invoice number 4832"), ("Payment", "Approved total " + amount)]:
+            doc.setFont("Helvetica", 24)
+            doc.drawString(60, 700, title)
+            doc.drawString(60, 630, line)
+            doc.showPage()
+        doc.save()
+        return stream.getvalue()
+
+    def photo(pdf, number, name):
+        prefix = tmp_path / name
+        subprocess.run(["pdftoppm", "-f", str(number), "-l", str(number), "-r", "240",
+                        "-png", "-singlefile", str(pdf), str(prefix)], check=True)
+        return prefix.with_suffix(".png")
+
+    context = browser.new_context(service_workers="allow", viewport={"width": 390, "height": 844})
+    try:
+        guard = OfflineNetworkGuard(context)
+        page = context.new_page()
+        base = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
+        page.goto(base, wait_until="networkidle")
+        page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Private key (offline)", exact=True).click()
+        page.get_by_label("Private Key", exact=True).fill(PRIVATE_KEY)
+        page.get_by_label("Page layout", exact=True).select_option("seal-sheets")
+        output = tmp_path / "sealed.pdf"
+        seal(page, invoice("123.45"), output)
+        expect(page.locator("#stamp-result")).to_contain_text("Appended 1 seal sheet")
+        changed = tmp_path / "changed.pdf"
+        changed.write_bytes(invoice("923.45"))
+        page.goto(base + path, wait_until="networkidle")
+        wait_for_offline_resources(page, photo=True)
+        prepare_text_for_offline(page)
+        guard.block()
+        show_file_inputs(page)
+        picker = page.locator("#qr-image" if path == "/" else "#pagePhotoInput")
+        picker.set_input_files(photo(output, 3, "sheet"))
+        page.get_by_label("Open issuer public key file", exact=True).set_input_files({
+            "name": "public-key.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode()})
+        checks = page.get_by_role("navigation", name="Page checks")
+        expect(checks.get_by_role("button")).to_have_count(2, timeout=30000)
+        expect(checks.get_by_text("Printed text not checked", exact=False)).to_have_count(2)
+        for number, source, expected in [(2, changed, "Differences found"), (1, output, "Recognized text matches")]:
+            checks.get_by_role("button", name=f"Page {number} of 2", exact=False).click()
+            page.get_by_role("button", name=f"Photograph original page {number}", exact=True).click()
+            page.get_by_role("dialog").get_by_label("Choose a high-resolution page photo").set_input_files(
+                photo(source, number, f"original-{number}"))
+            expect(checks.get_by_role("button", name=f"Page {number} of 2", exact=False)).to_contain_text(expected, timeout=60000)
+        guard.assert_quiet()
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("path", ["/", "/verify.htm"])
 def test_load_pdf_seals_on_both_verifiers_offline(browser, tmp_path, path):
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=(612, 792))

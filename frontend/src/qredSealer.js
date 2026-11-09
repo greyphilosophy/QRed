@@ -19,7 +19,8 @@ async function splitRecord(record, version, { preferFourQrPage = false } = {}) {
   // A page-filling watermark uses exactly one QR or four quadrants. Four
   // balanced pieces make substantially larger physical modules than two
   // or three dense symbols squeezed into portions of the same sheet.
-  const count = preferFourQrPage ? 4 : recordQrCount(record.length, version);
+  const required = recordQrCount(record.length, version);
+  const count = preferFourQrPage ? Math.max(4, required) : required;
   if (count > MAX_CHUNKS) throw new Error("Document exceeds the 4096-seal limit");
   const balancedBody = Math.ceil(record.length / count);
   // Keep the minimum code count. Balance only if every grid can be smaller
@@ -57,7 +58,7 @@ export function canonicalizeText(text) {
 export async function createQRedSeals({
   content, privateKey, publicKey, pageContext = null, pageEvidence = null, attestation = null,
   timestamp = new Date().toISOString(), bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic",
-  preferFourQrPage = false,
+  preferFourQrPage = false, maxPageSeals = MAX_PDF_SEALS,
 }) {
   const canonical = canonicalizeText(content);
   const evidence = pageEvidence ? decodePageEvidence(pageEvidence) : null;
@@ -94,7 +95,7 @@ export async function createQRedSeals({
     return { chunks, qr_count: chunks.length, payload_bytes: chunks.reduce((sum, chunk) => sum + chunk.length, 0) };
   });
   const selected = selectBodyEncoding({ candidates, failures }, encodingStrategy);
-  if (pageContext && selected.qr_count > MAX_PDF_SEALS) throw new Error(`PDF page ${pageContext.pageNumber} exceeds the ${MAX_PDF_SEALS}-QR limit. Shorten the page or split its content across pages.`);
+  if (pageContext && selected.qr_count > maxPageSeals) throw new Error(`PDF page ${pageContext.pageNumber} exceeds the ${maxPageSeals}-QR limit. Choose seal sheets or split this page's content.`);
   const plaintext = candidates.find(item => item.encoding === "plaintext");
   return {
     ...metadata, ...(evidence ? { evidence } : {}), bootstrap_url: (bootstrapUrl || DEFAULT_BOOTSTRAP_URL).split("#")[0],
