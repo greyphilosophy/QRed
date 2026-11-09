@@ -1,7 +1,7 @@
 import { createQRedSeals, DEFAULT_BOOTSTRAP_URL } from "./qredSealer.js";
 import { MAX_CHUNKS } from "./sealFormat.js";
 import { MAX_PDF_SEALS } from "./sealBudget.js";
-import { LEGAL_FOOTER_HEIGHT, LEGAL_PAGE_HEIGHT } from "./pdf/pageScaling.js";
+import { DEFAULT_PAGE_LAYOUT, LEGAL_FOOTER_HEIGHT, LEGAL_PAGE_HEIGHT } from "./pdf/pageScaling.js";
 import { QR_SIZE, planQrStampLayout, planQrStampLayoutForFooterBand } from "./pdf/qrLayout.js";
 import { planPageEvidence } from "./pdf/pageEvidencePlan.js";
 import { flattenPdfForSealing } from "./pdf/flattenPdf.js";
@@ -45,7 +45,7 @@ async function documentMerkleRoot(pageTexts) {
   return level[0];
 }
 
-async function preparePageSealing({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attested, pageScalingStrategy = "automatic" }) {
+async function preparePageSealing({ file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attested, pageScalingStrategy }) {
   const { readPdfPagesWithEvidence } = await import("./pdf/readPdfText.js");
   const maxPageSeals = usesSealSheets(pageScalingStrategy) ? MAX_CHUNKS : MAX_PDF_SEALS;
   const plans = await readPdfPagesWithEvidence(file, page => planPageEvidence(page, {
@@ -71,9 +71,7 @@ async function preparePageSealing({ file, privateKey, publicKey, bootstrapUrl, e
       const results = await Promise.all(plans.map(async (page, index) => createQRedSeals({
         content: page.text, pageEvidence: page.pageEvidence, privateKey, publicKey,
         bootstrapUrl, encodingStrategy, timestamp, pageContext: contexts[index],
-        // Image-only and blank pages always use an ordinary footer, so do
-        // not force them into four pieces merely because the user selected
-        // Automatic. The 1-or-4 policy applies to watermark-eligible text.
+        // Only watermark-eligible text pages need the one-or-four split.
         preferFourQrPage: Boolean(page.text) && usesWatermarks(pageScalingStrategy),
         maxPageSeals,
         attestation: attestations?.[index],
@@ -111,7 +109,7 @@ async function finishPdfSeal({ file, prepared, pageSealResults, plans, pageScali
 // No PDF, page text or keys are persisted or passed to any provider; these
 // values live only in this browsing context's memory.
 export async function prepareAccountPdfSeal({ file, bootstrapUrl = DEFAULT_BOOTSTRAP_URL,
-  encodingStrategy = "automatic", pageScalingStrategy = "automatic" }) {
+  encodingStrategy = "automatic", pageScalingStrategy = DEFAULT_PAGE_LAYOUT }) {
   const prepared = await flattenPdfForSealing(file);
   const plan = await preparePageSealing({
     file: prepared.file, bootstrapUrl, encodingStrategy, attested: true, pageScalingStrategy,
@@ -127,7 +125,7 @@ export async function prepareAccountPdfSeal({ file, bootstrapUrl = DEFAULT_BOOTS
   };
 }
 
-export async function sealPdfInBrowser({ file, privateKey, publicKey, attestPages, bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic", pageScalingStrategy = "automatic" }) {
+export async function sealPdfInBrowser({ file, privateKey, publicKey, attestPages, bootstrapUrl = DEFAULT_BOOTSTRAP_URL, encodingStrategy = "automatic", pageScalingStrategy = DEFAULT_PAGE_LAYOUT }) {
   const prepared = await flattenPdfForSealing(file);
   const { results: pageSealResults, plans } = await createPageSealResults({ file: prepared.file, privateKey, publicKey, bootstrapUrl, encodingStrategy, attestPages, pageScalingStrategy });
   return finishPdfSeal({

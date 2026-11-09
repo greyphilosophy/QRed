@@ -2,7 +2,7 @@ import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { MAX_PDF_SEALS } from "../sealBudget.js";
 import { sealSheetString } from "../sealFormat.js";
 import { createQRedQrSymbol, qredQrPngDataUrl } from "../qredQr.js";
-import { resolvePageScalingStrategy, applyPageScaling, visiblePageGeometry } from "./pageScaling.js";
+import { DEFAULT_PAGE_LAYOUT, resolvePageScalingStrategy, applyPageScaling, visiblePageGeometry } from "./pageScaling.js";
 import { planFooterLayout } from "./qrLayout.js";
 import { createEntryQrSymbol } from "./navigationQr.js";
 import { drawQrSymbol } from "./qrDrawing.js";
@@ -62,7 +62,7 @@ export async function qrPngBytes(value) {
 }
 
 // Placement only: no keys, signing callbacks, or mutable evidence plans.
-export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pageScalingStrategy = "automatic" }) {
+export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pageScalingStrategy = DEFAULT_PAGE_LAYOUT }) {
   const sheets = usesSealSheets(pageScalingStrategy);
   if (pageScalingStrategy === "seal-sheets") {
     return finishWithSheets(await file.arrayBuffer(), pageSealResults, pageSealResults.map(() => []), null);
@@ -71,8 +71,8 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
   const watermarkRecords = sheets ? pageSealResults.map(({ seals }) => ({ seals: seals.slice(0, MAX_PDF_SEALS) })) : pageSealResults;
   const recovered = new Map();
   // A logo or embedded graphic does not make a text page unsuitable for a
-  // watermark. Let placement and the rendered recovery check decide whether
-  // that page needs a footer; image-only and blank pages still use one.
+  // watermark. Placement and rendered recovery determine which seals fit.
+  // Image-only and blank pages go straight to the selected fallback.
   const fallbackPages = tryWatermarks
     ? pagesWithText.flatMap((hasText, index) => !hasText ? [index + 1] : []) : [];
   // Only short reason labels are retained; never collect PDF text or scan data.

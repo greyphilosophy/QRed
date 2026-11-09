@@ -71,12 +71,17 @@ and enforcing the existing minimum seal-module size. Later footer pages retain
 the **Verify at qred.org** caption without repeating the navigation QR. The
 caption sits beside the codes where space permits, otherwise above them.
 
-**Automatic**, the default **Page layout**, tries pale watermarks first on each
-text page and falls back to a clear footer only on pages where they cannot be
-placed or recovered. The explicit **Pale watermark (experimental)** option uses
-the same behavior. Footer layouts can also be selected directly.
+**Watermark with appended overflow** is the default page layout. QRed keeps
+readable watermarks on each original page and appends sheets only for the
+remaining seals. **Append seal sheets** places every seal on additional pages.
+Both layouts preserve the original page sizes and supported form fields.
+Up to four labeled codes share a seal sheet. For printed copies, scan the seals,
+select the numbered original, and photograph it for text or visual comparison.
+Opening the combined PDF pairs the signed references with the corresponding original pages.
 
-**Append seal sheets** preserves the original pages, including supported form fields, and prints the seals on additional pages. **Watermark with appended overflow** keeps readable pieces on each original and appends the rest. Up to four labeled codes share each seal sheet. For printed copies, scan the seals, select the numbered original, and photograph it for text or visual comparison. Opening the combined PDF pairs the signed references with the corresponding original pages.
+**Automatic** and **Pale watermark (experimental)** use a clear footer when a
+watermark cannot be placed or recovered. Footer layouts can also be selected directly.
+
 Watermarks preserve the original paper
 dimensions, text size, rotation, and crop on pages where watermarks are readable. An optional half-inch conventional QR opens
 `https://qred.org/` from a clear area on the first page; pale QR watermarks carry
@@ -94,8 +99,9 @@ select a smaller square fallback, which must also pass recovery checks.
 The navigation panel may cover watermark modules, but must avoid original page
 marks and preserve its own quiet zone. Both the link and every signed chunk
 must remain readable. If the link cannot fit, QRed tries a text-only
-**Verify at qred.org** instruction before falling back to a footer.
-Image-only and blank pages automatically use a clear footer. A page also falls back
+**Verify at qred.org** instruction. In the default layout, image-only and blank
+pages have their seals on appended sheets. In layouts with a footer fallback,
+these pages use a clear footer. A page also falls back
 to a footer if neither navigation nor its text instruction can fit safely, its watermark is too dense, or
 QRed cannot recover it from the rendered output. Other pages retain their watermark
 layout. Footer fallback expands letter pages to legal size and shrinks other page

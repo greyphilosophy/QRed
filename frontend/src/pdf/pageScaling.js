@@ -2,6 +2,7 @@ import { degrees, PDFName } from "pdf-lib";
 
 const LETTER_PAGE_WIDTH = 612;
 const LETTER_PAGE_HEIGHT = 792;
+export const DEFAULT_PAGE_LAYOUT = "watermark-sheets";
 export const LEGAL_PAGE_HEIGHT = 1008;
 export const LEGAL_FOOTER_HEIGHT = 216;
 

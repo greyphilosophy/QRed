@@ -121,7 +121,7 @@ def test_load_pdf_seals_on_both_verifiers_offline(browser, tmp_path, path):
         page.get_by_role("button", name="Open PDF stamping tool").click()
         page.get_by_role("button", name="Private key (offline)", exact=True).click()
         page.get_by_label("Private Key", exact=True).fill(PRIVATE_KEY)
-        expect(page.get_by_label("Page layout", exact=True)).to_have_value("automatic")
+        expect(page.get_by_label("Page layout", exact=True)).to_have_value("watermark-sheets")
         stamped = tmp_path / "pdf-input-sealed.pdf"
         seal(page, buffer.getvalue(), stamped)
         expect(page.locator("#stamp-result")).not_to_contain_text("Clear footer added")
@@ -184,7 +184,7 @@ def test_text_invoice_with_raster_logos_keeps_watermarks(page, tmp_path, logo_lo
     page.get_by_role("button", name="Open PDF stamping tool").click()
     page.get_by_role("button", name="Private key (offline)", exact=True).click()
     page.get_by_label("Private Key", exact=True).fill(PRIVATE_KEY)
-    expect(page.get_by_label("Page layout", exact=True)).to_have_value("automatic")
+    expect(page.get_by_label("Page layout", exact=True)).to_have_value("watermark-sheets")
     stamped = tmp_path / "invoice-sealed.pdf"
     result = seal(page, buffer.getvalue(), stamped)
     assert result["total_seals"] == 1
@@ -229,7 +229,7 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
         page.get_by_role("button", name="Open PDF stamping tool").click()
         page.get_by_role("button", name="Private key (offline)", exact=True).click()
         page.get_by_label("Private Key", exact=True).fill(PRIVATE_KEY)
-        expect(page.get_by_label("Page layout", exact=True)).to_have_value("automatic")
+        page.get_by_label("Page layout", exact=True).select_option("automatic")
         stamped = tmp_path / "sealed.pdf"
         result = seal(page, synthetic_page(blank), stamped)
         assert result["total_seals"] == 1

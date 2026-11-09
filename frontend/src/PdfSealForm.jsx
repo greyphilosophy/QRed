@@ -1,6 +1,7 @@
 /* eslint-disable no-unused-vars */
 import React, { useEffect, useRef, useState } from "react";
 import { sealPdfInBrowser, prepareAccountPdfSeal } from "./pdfClientSeal.js";
+import { DEFAULT_PAGE_LAYOUT } from "./pdf/pageScaling.js";
 import { decodeSigningKey, deriveSigningPublicKey, generateSigningKeyPair, readSigningKeyFile, validateSigningKeyPair } from "./signingKeys.js";
 import { encodeBase64Url } from "./sealSignature.js";
 import { beginAccountSignIn, finishAccountSignIn, checkAccountSignInStatus, attestPagesWithAccount, accountSealingAvailable } from "./accountSealing.js";
@@ -45,7 +46,7 @@ export function PdfSealForm({ onUsePublicKey }) {
   const [keyStatus, setKeyStatus] = useState("");
   const [keyError, setKeyError] = useState(false);
   const [loadingKeys, setLoadingKeys] = useState(false);
-  const [pageScalingStrategy, setPageScalingStrategy] = useState("automatic");
+  const [pageScalingStrategy, setPageScalingStrategy] = useState(DEFAULT_PAGE_LAYOUT);
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [method, setMethod] = useState(null);
@@ -409,10 +410,10 @@ export function PdfSealForm({ onUsePublicKey }) {
             onChange={(e) => setPageScalingStrategy(e.target.value)}
             title="Choose where to place the document seals."
           >
+            <option value="watermark-sheets">Watermark with appended overflow</option>
             <option value="automatic">Automatic (watermark first, footer fallback)</option>
             <option value="watermark">Pale watermark (experimental, footer fallback)</option>
             <option value="seal-sheets">Append seal sheets</option>
-            <option value="watermark-sheets">Watermark with appended overflow</option>
             <option value="legal-footer">Expand letter pages to legal size (bottom 3-inch footer)</option>
             <option value="shrink-footer">Shrink the document to create a footer</option>
           </select>

@@ -62,7 +62,7 @@ def test_stamp_tool_asks_for_pdf_and_layout_before_signing_method(page):
     choices = page.locator(".sealing-method-grid button")
     expect(pdf).to_be_visible()
     expect(layout).to_be_visible()
-    expect(layout).to_have_value("automatic")
+    expect(layout).to_have_value("watermark-sheets")
     expect(choices).to_have_count(4)
     assert choices.all_text_contents() == [
         "Sign in with Google",
