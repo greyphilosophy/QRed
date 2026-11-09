@@ -1,5 +1,4 @@
 import { PageSizes, PDFDocument, StandardFonts } from "pdf-lib";
-import { sealSheetString } from "../sealFormat.js";
 import { createQRedQrSymbol } from "../qredQr.js";
 import { createEntryQrSymbol } from "./navigationQr.js";
 import { visiblePageGeometry } from "./pageScaling.js";
@@ -33,7 +32,7 @@ export async function appendSealSheets(bytes, entries, originalCount) {
       const y = height - 143 - Math.floor(slot / 2) * (qrSize + 40);
       page.drawText(`Original page ${pageNumber} of ${originalCount}`, { x, y, size: 12, font: bold });
       if (total > 1) page.drawText(`Seal ${part + 1} of ${total}`, { x, y: y - 14, size: 10, font });
-      const symbol = createQRedQrSymbol(sealSheetString(seal));
+      const symbol = createQRedQrSymbol(seal);
       drawQrSymbol(page, symbol, { x, y: y - 18 - qrSize, width: qrSize, height: qrSize }, 0);
     });
   }

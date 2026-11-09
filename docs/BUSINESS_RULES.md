@@ -41,7 +41,7 @@ for protocol details.
 5. Watermarks preserve original page dimensions. Footer fallback extends Letter to Legal or shrinks other page contents to reserve space; the UI reports affected pages.
 6. Never omit a chunk or silently create overflow pages. Footer and watermark-only layouts enforce the four-code limit per original. Preflight demonstrates recovery under tested conditions, not guaranteed printer/camera reliability.
 
-7. An explicit seal-sheet layout carries all seals, or only watermark overflow, on appended sheets. Each piece appears once, labeled with the original page and part number. Only originals count toward signed page totals and account receipts. The signable form snapshot is validated while the output retains the original fields.
+7. An explicit seal-sheet layout carries all seals, or only watermark overflow, on appended sheets. Each appended piece is labeled with the original page and part number. Only originals count toward signed page totals and account receipts. The signable form snapshot is validated while the output retains the original fields. In hybrid mode a readable watermark stays on the original even if its optional navigation instruction cannot fit. Every appendix sheet has the verifier address and navigation QR.
 
 ## Verification and trust
 

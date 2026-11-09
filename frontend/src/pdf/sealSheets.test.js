@@ -1,4 +1,5 @@
 import { degrees, PageSizes, PDFDocument, rgb } from "pdf-lib";
+import { Buffer } from "node:buffer";
 import { expect, it } from "vitest";
 import { sealPdfInBrowser } from "../pdfClientSeal.js";
 import { decodeSeal, verifyQRedSeals } from "../qredVerifier.js";
@@ -104,6 +105,6 @@ it("paginates a dense original across multiple sheets and keeps its original pag
     const decoded = await scanPdfPage(await imageOf(result.blob, number), { pageAligned: false });
     scans.push(...decoded.seals);
   }
-  expect(scans).toHaveLength(result.pageSealStrings[0].length);
+  expect(scans.sort()).toEqual([...result.pageSealStrings[0]].sort());
   expect(await verifyQRedSeals(scans, keys.publicKey)).toMatchObject({ status: "VALID", page_number: 1, page_count: 1 });
 }, 120_000);

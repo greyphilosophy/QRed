@@ -474,7 +474,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       </div>
       <details className="stamp-method-details">
         <summary>About seals, privacy and page layouts</summary>
-        <p>QRed signs the page's text and, where space allows, approximate text positions and a small visual reference. Image-only and blank pages use special references. Seal-sheet layouts preserve supported form fields and seal their values at signing time.</p>
+        <p>QRed signs the page's text and, where space allows, approximate text positions and a small visual reference. Image-only and blank pages use special references. Seal-sheet layouts preserve supported form fields and seal their values at signing time. Other layouts flatten those fields.</p>
         <p>Review the saved PDF before sharing. Fine visual details, including digits or faces, may not be preserved in the reference. A valid seal does not guarantee every visible detail is unchanged.</p>
         <p>For account sealing, QRed receives SHA-256 page commitments and account details, but not your original PDF, extracted text, or private key. These commitments are unsalted: QRed's server could recognize repeated pages or test guesses about their contents. Your chosen provider receives the login request, not your document fingerprints.</p>
         <p>Account seals include the provider's name, profile name, email, account identifier and signing time, all readable by anyone with the seal. A profile name does not establish legal identity or signing authority. QRed does not independently verify Microsoft or Amazon email ownership. Finished seals can be checked offline.</p>

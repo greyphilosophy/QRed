@@ -5,6 +5,7 @@ import jpeg from "jpeg-js";
 import jsQR from "jsqr";
 import { describe, expect, it } from "vitest";
 import { createQRedSeals } from "./qredSealer.js";
+import { qrPayloadBytes, sealSheetString, sealString } from "./sealFormat.js";
 import { compareDocumentText, compareWordSequences, decodeSeal, qredTextFromPhotoScanResult, qredTextFromScanResult, verifyQRedSeals } from "./qredVerifier.js";
 
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
@@ -31,6 +32,17 @@ async function createTestSeals() {
 }
 
 describe("qredVerifier", () => {
+  it("treats the sheet carrier as placement only and rejects changed bytes, missing chunks and wrong keys", async () => {
+    const { seals } = await createQRedSeals({ content: "sample ".repeat(570), encodingStrategy: "plaintext", privateKey, publicKey,
+      pageContext: { pageNumber: 1, pageCount: 1 } });
+    const sheet = seals.map(sealSheetString);
+    expect(await verifyQRedSeals([seals[0], ...sheet], publicKey)).toMatchObject({ status: "VALID", seal_sheet: true });
+    expect((await verifyQRedSeals(sheet.slice(1), publicKey)).status).toBe("INCOMPLETE");
+    expect((await verifyQRedSeals(sheet, wrongPublicKey)).status).toBe("INVALID");
+    const changed = qrPayloadBytes(sheet[0]);
+    changed[changed.length - 1] ^= 1;
+    expect((await verifyQRedSeals([sealString(changed), ...sheet.slice(1)], publicKey)).status).toBe("INVALID");
+  });
   it("does not recover retired padding payloads from a committed blurred JPEG", () => {
     const image = decodeJpegFixture(noisyFixturePath);
     const code = jsQR(image.data, image.width, image.height, { inversionAttempts: "attemptBoth" });

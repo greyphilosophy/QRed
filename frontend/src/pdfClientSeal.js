@@ -98,11 +98,12 @@ async function finishPdfSeal({ file, prepared, pageSealResults, plans, pageScali
   const placement = await renderSealedPdf({
     file: originalPages ? file : prepared.file, pageSealResults, pagesWithText: plans.map(page => Boolean(page.text)), pageScalingStrategy,
   });
-  const pageSealStrings = pageSealResults.map(result => result.seals);
-  const firstResult = pageSealResults[0] ?? null;
+  const pageSealStrings = placement.pageSealStrings ?? pageSealResults.map(result => result.seals);
+  const printedResults = pageSealResults.map((result, index) => ({ ...result, seals: pageSealStrings[index] }));
+  const firstResult = printedResults[0] ?? null;
   return {
     ...placement, sealResult: firstResult, stampedQrValues: firstResult?.seals ?? [],
-    pageSealResults, pageSealStrings, flattenedFieldCount: originalPages ? 0 : prepared.flattenedFieldCount,
+    pageSealResults: printedResults, pageSealStrings, flattenedFieldCount: originalPages ? 0 : prepared.flattenedFieldCount,
   };
 }
 

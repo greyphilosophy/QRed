@@ -129,6 +129,11 @@ function hasMagic(bytes, magic) {
   return magic.every((byte, index) => bytes[index] === byte);
 }
 
+function isSheetCarrier(bytes) {
+  return bytes[0] === 113 && bytes[1] === 82 && (bytes[2] === 83 || bytes[2] === 67) &&
+    (bytes[3] === 51 || bytes[3] === 52);
+}
+
 export function decodeEnvelope(bytes) {
   const attested = hasMagic(bytes, ATTESTED_MAGIC);
   if ((!attested && !hasMagic(bytes, RECORD_MAGIC)) || bytes.length <= sealEnvelopeOverhead() || bytes.length > MAX_ENVELOPE_BYTES) throw new Error("Invalid or truncated seal record");
@@ -180,7 +185,7 @@ export function encodeChunk(digest, index, count, data, version = "3") {
 
 export function decodeTransport(bytes) {
   if (bytes.length > MAX_QR_PAYLOAD_BYTES) throw new Error("Seal exceeds QR capacity");
-  if (bytes[0] === 113) { // qRS3/4 or qRC3/4: a printed seal-sheet carrier
+  if (isSheetCarrier(bytes)) { // qRS3/4 or qRC3/4 printed on a seal sheet
     const original = bytes.slice();
     original[0] = 81;
     return { ...decodeTransport(original), seal_sheet: true };
@@ -227,7 +232,7 @@ export function qrPayloadBytes(value) {
 }
 
 export function qrPayloadText(bytes) {
-  if (bytes[0] === 113 && bytes[1] === 82 && (bytes[2] === 83 || bytes[2] === 67) ||
+  if (isSheetCarrier(bytes) ||
       hasMagic(bytes, RECORD_MAGIC) || hasMagic(bytes, CHUNK_MAGIC) || hasMagic(bytes, ATTESTED_MAGIC) || hasMagic(bytes, ATTESTED_CHUNK_MAGIC)) {
     decodeTransport(bytes);
     return sealString(bytes);

@@ -1,5 +1,6 @@
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { MAX_PDF_SEALS } from "../sealBudget.js";
+import { sealSheetString } from "../sealFormat.js";
 import { createQRedQrSymbol, qredQrPngDataUrl } from "../qredQr.js";
 import { resolvePageScalingStrategy, applyPageScaling, visiblePageGeometry } from "./pageScaling.js";
 import { planFooterLayout } from "./qrLayout.js";
@@ -41,10 +42,15 @@ async function partialWatermark(file, records, index, recovered) {
 }
 
 async function finishWithSheets(bytes, records, onPageParts, watermarkLayout) {
-  const entries = records.flatMap(({ seals }, index) => seals.flatMap((seal, part) =>
-    onPageParts[index].includes(part) ? [] : [{ pageNumber: index + 1, part, total: seals.length, seal }]));
+  const entries = [];
+  const pageSealStrings = records.map(({ seals }, index) => seals.map((original, part) => {
+    if (onPageParts[index].includes(part)) return original;
+    const seal = sealSheetString(original);
+    entries.push({ pageNumber: index + 1, part, total: seals.length, seal });
+    return seal;
+  }));
   const { bytes: output, sheetCount } = await appendSealSheets(bytes, entries, records.length);
-  return { blob: new Blob([output], { type: "application/pdf" }), watermarkLayout,
+  return { blob: new Blob([output], { type: "application/pdf" }), watermarkLayout, pageSealStrings,
     sheetCount, sheetPages: [...new Set(entries.map(entry => entry.pageNumber))], footerPages: [], footerReasons: {} };
 }
 
@@ -88,7 +94,7 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
   }
   async function renderAttempt() {
     const pdf = await PDFDocument.load(await file.arrayBuffer(), { updateMetadata: false });
-    const font = await pdf.embedFont(StandardFonts.Helvetica);
+    const font = sheets ? null : await pdf.embedFont(StandardFonts.Helvetica);
     const pages = pdf.getPages();
     if (pages.length !== pageSealResults.length) throw new Error("PDF page count changed while sealing");
 
@@ -209,7 +215,7 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
       }
       plannedWatermarkLayout[0] = prior;
     }
-    if (!rendered.watermarkLayout[0].entry && !rendered.watermarkLayout[0].entryText && !(sheets && fallbackPages.length)) {
+    if (!sheets && !rendered.watermarkLayout[0].entry && !rendered.watermarkLayout[0].entryText) {
       // The instruction is mandatory. If even text cannot fit safely, use
       // the standard footer, which reserves space for the same caption.
       fallbackPages.push(1);
