@@ -219,6 +219,16 @@ same scale and measures the paper tint before rejecting colored pixels.
 The progress display identifies which fallback is running, including full-detail
 QR reading, resized QR reading, watermark filtering, and individual module votes.
 
+A partly covered finder can qualify when the other two are strong, all three
+agree with the measured module spacing, and the printed version field decodes.
+Given a closely matching alignment grid, the reader samples 25 native pixels
+per module and compares the brighter samples to nearby paper and watermark
+ink. Dark text and areas with little visible watermark texture lower the
+confidence of a reading. Each QR parity block can then reconstruct its least
+reliable bits while reserving parity checks to reject inconsistent solutions.
+The scanner skips this retry on a layout where it has already run to completion and missed.
+Recovered seals still pass through the usual payload and signature checks.
+
 When the fast preview finds a sheet but rates its edges as soft, the native
 camera guide can measure focus along the curved outline. When mixed lighting
 makes the first outline look too small, the guide checks for consistent

@@ -4,6 +4,7 @@ import { locatePaper, pageHomography, pageWatermarkRegions } from "./pageAligned
 import { curvedPaperMapping } from "./curvedPaper.js";
 import { estimatePaperColor } from "./paperColor.js";
 import { normalizeWatermarkLuminance } from "./watermarkFilter.js";
+import { classifyExposedModules } from "./exposedModuleSamples.js";
 import { readRectifiedQrVersion } from "./rectifiedQrVersion.js";
 import { refineQrModuleGrid } from "./qrAlignmentRefinement.js";
 import { recoverSampledQrMatrix } from "./pageAlignedRecovery.js";
@@ -127,7 +128,8 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
     const region = pageWatermarkRegions(1, undefined, profile)[0];
     const working = rectifiedImage(image, mapping, region);
     const gray = normalizeWatermarkLuminance(working.data, SIDE, SIDE), corners = findCorners(gray);
-    if (corners.some(p => p.score < 0.8)) { prepared.set(profile, null); return null; }
+    const strong = corners.filter(p => p.score >= .8).length;
+    if (strong < 2 || corners.some(p => p.score < .70)) { prepared.set(profile, null); return null; }
     const version = readRectifiedQrVersion(gray, SIDE, corners);
     if (!version) { prepared.set(profile, null); return null; }
     const size = 17 + 4 * version, [tl, tr, bl] = corners;
@@ -135,8 +137,13 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
       x: tl.x + (u * size - 3.5) * (tr.x - tl.x) / (size - 7) + (v * size - 3.5) * (bl.x - tl.x) / (size - 7),
       y: tl.y + (u * size - 3.5) * (tr.y - tl.y) / (size - 7) + (v * size - 3.5) * (bl.y - tl.y) / (size - 7),
     });
+    // A partly covered third finder still needs consistent module spacing
+    // and a BCH-readable version before it can propose a grid.
+    if (strong < 3 && corners.some(p => Math.abs(p.pitch * size / (SIDE * INTERIOR) - 1) > .15)) {
+      prepared.set(profile, null); return null;
+    }
     const thresholds = [...new Set([230, measuredThreshold(gray, corners)])];
-    const candidate = { working, gray, version, gridMap, thresholds };
+    const candidate = { working, gray, version, gridMap, thresholds, weakFinder: strong < 3, triedExposed: false };
     prepared.set(profile, candidate);
     return candidate;
   }
@@ -168,11 +175,29 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
         const maps = grid.finderModuleMap ? [grid.finderModuleMap, grid.moduleMap] : [grid.moduleMap];
         for (const moduleMap of maps) {
           if (!shouldContinue()) return null;
-          const observations = collectModuleSamples(gray, SIDE, SIDE, moduleMap, version);
           const photoMap = (col, row) => {
             const p = moduleMap(col, row);
             return working.toPhoto(p.x, p.y);
           };
+          const tryExposed = () => {
+            if (candidate.triedExposed || !foregroundRobust || grid.quality < .8 || !shouldContinue()) return null;
+            const raw = collectModuleSamples(image.data, image.width, image.height, photoMap, version);
+            const exposed = classifyExposedModules(raw, shouldContinue);
+            if (!exposed || !shouldContinue()) return null;
+            const recovered = recoverSampledQrMatrix(exposed, photoMap, version,
+              { bitReliability: exposed.reliability, shouldContinue });
+            // A later pass can finish an attempt interrupted by the narrow deadline.
+            if (!recovered && shouldContinue()) candidate.triedExposed = true;
+            return recovered;
+          };
+          // A partly covered finder can still define the grid when separate
+          // alignment patterns agree. Try the exposed native pixels first.
+          if (candidate.weakFinder) {
+            const result = tryExposed();
+            if (result) return result;
+          }
+          if (!shouldContinue()) return null;
+          const observations = collectModuleSamples(gray, SIDE, SIDE, moduleMap, version);
           const recovered = recoverObservations(observations, photoMap, version, thresholds, shouldContinue);
           if (recovered) return recovered;
           if (!shouldContinue()) return null;
@@ -195,6 +220,10 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
           const sharp = collectModuleSamples(sharpenedGray, image.width, image.height, photoMap, version);
           const sharpRecovered = recoverObservations(sharp, photoMap, version, thresholds, shouldContinue);
           if (sharpRecovered) return sharpRecovered;
+          if (!candidate.weakFinder) {
+            const result = tryExposed();
+            if (result) return result;
+          }
         }
       }
     }
