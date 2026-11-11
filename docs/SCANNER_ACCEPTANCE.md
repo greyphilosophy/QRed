@@ -21,6 +21,12 @@ never the framing decision, recovered seal, authenticated result, or OCR text.
   including its navigation caption, their separate caution must stay visible;
   it is not a document mismatch. Both `/` and `/verify.htm` run
   a clear case and a fixed 97%-print-scale, dimmed, JPEG-compressed case.
+  A 1536 × 1920 video stream supplies 1024 × 1280 guidance frames while
+  the seal decoder receives the 2400 × 3000 native still. A separate
+  frame-sequence test moves a visible page corner across the 2.5% starting
+  margin during the hold. The same page can finish the hold within the
+  existing movement tolerance. Clipping, a new scene or a long frame gap
+  requires the page to qualify again.
 - `tests/test_auto_capture.py`: keep the existing changed-text, mismatched-page
   retake, capture acknowledgement, separate low-resolution preview/native still,
   unavailable/rejected/undersized native-photo, and explicit recovery checks.

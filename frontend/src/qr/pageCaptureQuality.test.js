@@ -51,6 +51,28 @@ describe("automatic whole-page capture", () => {
     for (const time of [10200, 10400, 10600]) expect(gate.update(next, time).ready).toBe(false);
     expect(gate.update(next, 10800).ready).toBe(true);
   });
+  it("completes a steady hold when a visible corner sways across the starting margin", () => {
+    const centered = paper({ x: 100, width: 676 }), near = paper({ x: 106, width: 676 });
+    const gate = createPageCaptureGate(), options = { captureOnly: true };
+    expect(gate.update(near, 0, options)).toMatchObject({ state: "framing", ready: false });
+    expect(gate.update(centered, 200, options).state).toBe("hold");
+    expect(gate.update(near, 400, options).progress).toBeGreaterThan(0);
+    expect(gate.update(centered, 600, options).ready).toBe(false);
+    expect(gate.update(near, 800, options).ready).toBe(true);
+    expect(gate.update(near, 1000, options).state).toBe("captured");
+  });
+  it("requires a fresh border after clipping, a scene change, or a gap in preview frames", () => {
+    const centered = paper({ x: 100, width: 676 }), near = paper({ x: 106, width: 676 });
+    const options = { captureOnly: true };
+    for (const [next, when] of [[paper({ x: 128, width: 676 }), 400],
+      [paper({ x: 106, width: 676, ink: true }), 400], [near, 2000]]) {
+      const gate = createPageCaptureGate();
+      gate.update(centered, 0, options);
+      gate.update(near, 200, options);
+      expect(gate.update(next, when, options)).toMatchObject({ state: "framing", ready: false });
+      expect(gate.update(near, when + 200, options).state).toBe("framing");
+    }
+  });
   it("recognizes a pale content change on a new page held in exactly the same position", () => {
     const gate = createPageCaptureGate(), first = paper(), second = paper();
     for (let y = 300; y < 600; y++) for (let x = 200; x < 600; x++) {

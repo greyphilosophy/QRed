@@ -6,7 +6,18 @@ import { estimatePaperColor } from "./paperColor.js";
 // paper boundary and movement; retain the original frame without stacking it.
 export const STEADY_CAPTURE_MS = 600;
 const MAX_PREVIEW_SIDE = 480;
+const FRAME_MARGIN = .025;
+const MAX_CORNER_MOTION = .012;
+const MAX_FRAME_GAP_MS = 1500;
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+function insideFrame(corners, margin) {
+  return corners.every(p => p.x >= margin && p.y >= margin && p.x <= 1 - margin && p.y <= 1 - margin);
+}
+
+function moveBack(corners) {
+  return { state: "framing", message: "Move back slightly to include all four page corners.", corners };
+}
 
 function preview(image) {
   const scale = Math.min(1, MAX_PREVIEW_SIDE / Math.max(image.width, image.height));
@@ -32,8 +43,8 @@ function percentile(values, fraction) {
   return values.sort((a, b) => a - b)[Math.floor((values.length - 1) * fraction)] || 0;
 }
 
-// Edge spread is measured in the original pixels, not a softened thumbnail.
-// Using the paper edge also allows blank pages and poorly printed text through.
+// Measure edge spread on the guidance frame. Corner detection uses a smaller
+// thumbnail. The paper boundary supplies a focus signal even on a blank sheet.
 function boundarySharpness(image, corners) {
   const step = Math.max(1, Math.min(image.width, image.height) / 720);
   const sides = [];
@@ -67,7 +78,7 @@ function samplePage(image, corners) {
   return values;
 }
 
-export function inspectPageFrame(image, { captureOnly = false } = {}) {
+export function inspectPageFrame(image, { captureOnly = false } = {}, margin = FRAME_MARGIN) {
   if (!image?.data || image.data.length !== image.width * image.height * 4 || image.width < 40 || image.height < 40)
     return { state: "framing", message: "Waiting for camera frames…", corners: null };
   // Use the same illumination calibration as seal recovery. Otherwise warm
@@ -77,8 +88,7 @@ export function inspectPageFrame(image, { captureOnly = false } = {}) {
   const found = locatePaper({ ...small, paperColor: estimatePaperColor(small) });
   if (!found) return { state: "framing", message: "Show all four page corners. Try a contrasting background, or use Capture now.", corners: null };
   const corners = found.map(p => ({ x: p.x / small.width, y: p.y / small.height }));
-  if (corners.some(p => p.x < .025 || p.y < .025 || p.x > .975 || p.y > .975))
-    return { state: "framing", message: "Move back slightly to include all four page corners.", corners };
+  if (!insideFrame(corners, margin)) return moveBack(corners);
   const pixels = corners.map(p => ({ x: p.x * image.width, y: p.y * image.height }));
   const width = (distance(pixels[0], pixels[1]) + distance(pixels[2], pixels[3])) / 2;
   const height = (distance(pixels[0], pixels[3]) + distance(pixels[1], pixels[2])) / 2;
@@ -102,19 +112,26 @@ export function createPageCaptureGate() {
   let anchor = null, lastAt = null, startedAt = null, frames = 0, captured = false;
   return {
     update(image, now, options) {
-      const measured = inspectPageFrame(image, options);
-      const { samples, ...quality } = measured;
-      if (measured.state !== "clear") {
+      const continuous = anchor && now >= lastAt && now - lastAt <= MAX_FRAME_GAP_MS;
+      // Start a hold with the full border. Let the same tracked page use its
+      // existing movement allowance without resetting on a few pixels of sway.
+      const margin = continuous ? FRAME_MARGIN - MAX_CORNER_MOTION : FRAME_MARGIN;
+      const measured = inspectPageFrame(image, options, margin);
+      let { samples, ...quality } = measured;
+      // After capture, a small change in the printing can identify a new page.
+      const moved = quality.state === "clear" && (!anchor
+        || quality.corners.some((p, i) => distance(p, anchor.corners[i]) > MAX_CORNER_MOTION)
+        || samples.reduce((sum, value, i) => sum + Math.abs(value - anchor.samples[i]), 0)
+          / samples.length > (captured ? 2 : 9));
+      // A changed scene needs to qualify on its own before another hold starts.
+      if (moved && !insideFrame(quality.corners, FRAME_MARGIN)) quality = moveBack(quality.corners);
+      if (quality.state !== "clear") {
         anchor = null; startedAt = null; frames = 0; lastAt = now; captured = false;
         return { ...quality, ready: false, progress: 0 };
       }
-      // After a capture, even a pale changed seal can identify the next page
-      // in the same position. Keep the larger tolerance during the steady hold.
-      const moved = !anchor || measured.corners.some((p, i) => distance(p, anchor.corners[i]) > .012)
-        || samples.reduce((sum, value, i) => sum + Math.abs(value - anchor.samples[i]), 0) / samples.length > (captured ? 2 : 9);
       if (captured && !moved) return { ...quality, ready: false, progress: 0, state: "captured",
         message: "Move the page to capture again, or use Capture now." };
-      if (moved || lastAt === null || now < lastAt || now - lastAt > 1500) {
+      if (moved || !continuous) {
         anchor = measured; startedAt = now; frames = 0; captured = false;
       }
       lastAt = now; frames++;

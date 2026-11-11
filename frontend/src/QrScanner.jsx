@@ -10,7 +10,7 @@ export { qrScanAction } from "./qr/decodePhoto.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
 import { PhotoScanProgress, usePhotoScanProgress } from "./qr/PhotoScanProgress.jsx";
-import { canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback, cameraPhotoFailure, cameraCaptureContext } from "./qr/cameraPhoto.js";
+import { readCameraFrame, canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback, cameraPhotoFailure, cameraCaptureContext } from "./qr/cameraPhoto.js";
 import "./qrScanner.css";
 
 /**
@@ -165,16 +165,10 @@ export function manualCapturePendingAction(startedAt, now = performance.now()) {
   };
 }
 
-export function captureCameraFrame(video, canvas) {
+export function captureCameraFrame(video, canvas, options) {
   if (!isCameraFrameReady(video, canvas)) return null;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  if (!ctx) return null;
-  const width = video.videoWidth, height = video.videoHeight;
-  if (canvas.width !== width) canvas.width = width;
-  if (canvas.height !== height) canvas.height = height;
-  ctx.drawImage(video, 0, 0, width, height);
-  const pixels = ctx.getImageData(0, 0, width, height);
-  return { data: pixels.data, width, height };
+  const pixels = readCameraFrame(video, canvas, options);
+  return pixels && { data: pixels.data, width: canvas.width, height: canvas.height };
 }
 
 export function decodeCanvasFrame(video, canvas, options = {}) {
@@ -386,7 +380,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       }
       if (timeout) { handleScanActionRef.current(timeout); return; }
       if (!frameReady || liveScan.busy) return;
-      const image = captureCameraFrame(video, canvas);
+      const image = captureCameraFrame(video, canvas, { forGuidance: autoCapture });
       if (image) liveScan.scan(image, { captureOnly: autoCapture || canCaptureCameraPhoto(video) });
     }
 
