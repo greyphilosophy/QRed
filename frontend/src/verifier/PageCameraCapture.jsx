@@ -7,7 +7,7 @@ import { createLiveScanWorker, scanPhotoInWorker } from "../qr/photoScanClient.j
 import { observePageScanGuide } from "../qr/pageScanGuide.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { bytesEqual, qrPayloadBytes } from "../sealFormat.js";
-import { PhotoScanProgress, usePhotoScanProgress } from "../qr/PhotoScanProgress.jsx";
+import { CameraCaptureNotice, PhotoScanProgress, usePhotoScanProgress } from "../qr/PhotoScanProgress.jsx";
 import { readCameraFrame, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext, downloadCameraPhoto } from "../qr/cameraPhoto.js";
 
 // Match bytes from the already authenticated collection, not an untrusted page
@@ -48,17 +48,19 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
       onCaptured: ({ captureOnly } = {}) => {
         if (epoch !== generation.current || busyRef.current || autoPaused.current) return;
         if (captureOnly) { capture({ preserveGate: true }); return; }
-        liveProgress.current = progress.begin("decoding");
+        liveProgress.current = progress.begin("captured");
         captureDiagnostic.current = cameraFrameDiagnostic(canvas);
         busyRef.current = true; setBusy(true); setError("");
       },
       onStage: stage => liveProgress.current?.stage(stage),
       onResult: action => {
         if (epoch !== generation.current || scan.current) return;
-        liveProgress.current?.stop();
+        const attempt = liveProgress.current;
         action = cameraCaptureFeedback(action, captureDiagnostic.current);
-        if (action.text || action.texts?.length) acceptFrame(action, canvas, epoch);
-        else {
+        if (action.text || action.texts?.length) {
+          acceptFrame(action, canvas, epoch).finally(() => attempt?.stop());
+        } else {
+          attempt?.stop();
           if (action.status === "feedback" && !action.timedOut && !action.captureFailed) live.current.reset();
           busyRef.current = false; setBusy(false);
           if (action.message) setError(action.message);
@@ -170,15 +172,14 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
         setError(cameraPhotoFailure(captureDiagnostic.current).message);
         return;
       }
+      attemptProgress.phase(file ? "decoding" : "captured");
       if (separateOriginal) {
         // The recipient explicitly selected an authenticated page reference.
         // Its original may carry no QR. Only the later comparison evaluates it.
         await acceptFrame({}, canvas, epoch, controller);
         return;
       }
-      attemptProgress.phase("decoding");
       const action = await scanPhotoInWorker(still, { returnPayload: true, signal: controller.signal, onStage: attemptProgress.stage });
-      attemptProgress.stop();
       if (!current()) return;
       if (action.timedOut) autoPaused.current = true;
       if (nativeBlob && (action.timedOut || action.status === "feedback")) setFailedPhoto(nativeBlob);
@@ -207,8 +208,9 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
     }}>
     <h3>{title}</h3><p>{separateOriginal
       ? "Include all four corners of this original page. Its photo will be compared with the signed reference you selected."
-      : "Include all four page corners and hold steady for automatic capture. You can also use Capture now or choose a high-resolution photo."}</p>
+      : "Frame all four corners and hold steady until QRed confirms the photo. You can also use Capture now or choose a high-resolution photo."}</p>
     <div style={{ position: "relative" }}><video ref={video} playsInline autoPlay muted />
+      <CameraCaptureNotice progress={progress} />
       <div className="page-scan-guide-area" ref={guideArea} aria-hidden="true"><div className="page-scan-guide" ref={guide} hidden>
         <span /><span /><span /><span />
       </div></div></div>

@@ -65,8 +65,8 @@ function loadStandalone(overrides = {}) {
     createScanPhotoCollection: callback => createScanPhotoCollection(callback, async () => new Blob(["frame"], { type: "image/png" })),
     mountPhotoTextVerification: () => ({ update: vi.fn(), prepare: vi.fn().mockResolvedValue(), clear: vi.fn() }),
     mountPdfSealInput: () => ({ update: vi.fn() }),
-    mountPhotoScanProgress: element => {
-      const progress = mountPhotoScanProgress(element);
+    mountPhotoScanProgress: (element, notice) => {
+      const progress = mountPhotoScanProgress(element, notice);
       progressMounts.push(progress);
       return progress;
     },
@@ -468,10 +468,13 @@ it.each(["native capture", "photo decoding"])("resumes quality guidance and auto
   fireEvent.click(document.getElementById("btnCapture"));
   await waitFor(() => expect(finish).toBeTypeOf("function"));
   const signal = capture.mock.calls[0][2].signal;
+  const notice = document.getElementById("cameraCaptureNotice");
+  expect(notice.textContent).toBe(stage === "native capture" ? "" : "Photo captured. You can move your phone.");
   const scansBeforeCancel = setup.scan.mock.calls.length;
   const resetsBeforeCancel = setup.live.reset.mock.calls.length;
   fireEvent.click(document.getElementById("btnCapture"));
   expect(signal.aborted).toBe(true);
+  expect(notice.textContent).toBe("");
   expect(document.getElementById("btnCapture").textContent).toBe("Capture now");
   expect(setup.live.reset).toHaveBeenCalledTimes(resetsBeforeCancel + 1);
   setup.camera.onFrame();

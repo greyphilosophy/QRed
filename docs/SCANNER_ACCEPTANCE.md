@@ -78,7 +78,11 @@ For the exact candidate build on each supported phone/browser:
    a dense text/table page and the actual production layout (single watermark,
    multipart watermark, or footer). Count every initial attempt, including
    waiting indefinitely or timing out before a photo is obtained.
-3. Confirm the capture acknowledgement occurs after a real photo is acquired.
+3. Hold still until “Photo captured. You can move your phone.” appears over the
+   preview. Move the camera immediately and verify QRed finishes reading the
+   captured page. The framing corners should disappear while processing and
+   return when framing resumes. The movement cue should persist across decoder
+   stages for a camera photo. A failed shutter or a selected file should never show it.
    Record its reported source and pixel dimensions, then separately record seal
    authentication and printed-text result. Alter a harmless word/amount on a
    synthetic print and confirm a difference is surfaced, not called a match.

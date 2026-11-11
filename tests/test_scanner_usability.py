@@ -244,6 +244,9 @@ def test_live_worker_has_no_backlog_and_capture_can_resume_the_same_camera_offli
         expect(page.get_by_role("button", name="Cancel and resume camera", exact=True)).to_be_visible()
         page.wait_for_function("liveTest.photos.length === 1", timeout=5000)
         page.wait_for_function("liveTest.stages.length > 0", timeout=5000)
+        notice = page.get_by_text("Photo captured. You can move your phone.", exact=True)
+        expect(notice).to_be_in_viewport()
+        expect(page.locator(".page-scan-guide-area")).to_be_hidden()
         expect(page.get_by_role("progressbar", name="Photo seal scan")).to_be_visible()
         assert page.get_by_role("progressbar", name="Photo seal scan").get_attribute("value") is None
         initial_time = page.locator(".photo-scan-timing").inner_text()
@@ -260,6 +263,8 @@ def test_live_worker_has_no_backlog_and_capture_can_resume_the_same_camera_offli
         page.wait_for_function("ticks => liveTest.ticks > ticks + 2", arg=ticks, timeout=2000)
         before = page.evaluate("liveTest.requests")
         page.get_by_role("button", name="Cancel and resume camera", exact=True).click()
+        expect(notice).to_have_count(0)
+        expect(page.locator(".page-scan-guide-area")).to_be_visible()
         expect(page.get_by_role("button", name="Capture now", exact=True)).to_be_visible()
         expect(page.get_by_role("progressbar", name="Photo seal scan")).not_to_be_visible()
         page.wait_for_function("before => liveTest.requests > before", arg=before, timeout=3000)

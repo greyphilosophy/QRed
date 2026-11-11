@@ -308,7 +308,7 @@
 <body>
   <header>
     <h1>QRed Verifier</h1>
-    <p>Frame each whole page and hold steady. QRed captures automatically, then checks the seal and printed text.</p>
+    <p>Frame the whole page and hold steady. QRed captures automatically and tells you when you can move.</p>
     <p>PDFs, photos, and seal text are processed in this browser and are not sent to a server.</p>
     <details>
       <summary>Optional: use airplane mode</summary>
@@ -322,6 +322,7 @@
     <div id="scanMode">
       <div class="viewfinder" id="viewfinder">
         <video id="cameraVideo" playsinline autoplay></video>
+        <p class="camera-capture-notice" id="cameraCaptureNotice" role="status" aria-atomic="true"></p>
         <canvas id="scanCanvas" hidden></canvas>
         <div class="page-scan-guide-area" id="pageGuideArea" aria-hidden="true" hidden>
           <div class="page-scan-guide" id="pageGuide" hidden><span></span><span></span><span></span><span></span></div>
@@ -436,7 +437,7 @@
       photoPickerGeneration: 0,
     };
 
-    var photoScanProgress = mountPhotoScanProgress(document.getElementById("photoScanProgress"));
+    var photoScanProgress = mountPhotoScanProgress(document.getElementById("photoScanProgress"), document.getElementById("cameraCaptureNotice"));
     photoScanProgress.subscribe(function() {
       // During acquisition/decoding, the stage status replaces camera guidance.
       // Restore the latest quality/result feedback when that capture settles.
@@ -683,7 +684,7 @@
           if (!active() || state.photoScan || autoPaused) return;
           if (captureOnly) { btnCapture.onclick({ preserveGate: true }); return; }
           processingCapture = true;
-          liveProgress = photoScanProgress.begin("decoding");
+          liveProgress = photoScanProgress.begin("captured");
           captureDiagnostic = cameraFrameDiagnostic(canvas);
           readiness.hidden = true;
           btnCapture.textContent = "Cancel and resume camera";
@@ -752,7 +753,7 @@
             collectFrame(cameraPhotoFailure(captureDiagnostic));
             return;
           }
-          progress.phase("decoding");
+          progress.phase(file ? "decoding" : "captured");
           var action = await scanPhotoInWorker(still, { returnPayload: true, signal: controller.signal, onStage: progress.stage });
           if (current()) {
             if (action.timedOut) autoPaused = true;

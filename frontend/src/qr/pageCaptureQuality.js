@@ -172,7 +172,7 @@ export function createPageCaptureGate() {
       const progress = Math.min(1, (now - startedAt) / STEADY_CAPTURE_MS, frames / 4);
       if (progress === 1) captured = true;
       return { ...quality, ready: progress === 1, progress, state: progress === 1 ? "ready" : "hold",
-        message: progress === 1 ? "Page steady. Reading its seal…" : "Hold steady — capturing automatically…" };
+        message: progress === 1 ? "Page steady. Hold still for the photo…" : "Hold steady — capturing automatically…" };
     },
   };
 }

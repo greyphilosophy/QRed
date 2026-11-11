@@ -6,6 +6,8 @@ from browser_helpers import (NATIVE_PHOTO_CAMERA_SCRIPT, observe_document_scan_r
                              assert_document_preview_not_decoded)
 from test_photo_verification import sealed_text, camera_paper, TEXT, PUBLIC_KEY, persistent_state, prepare_reader
 
+CAPTURED_NOTICE = "Photo captured. You can move your phone."
+
 
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
 def test_native_still_capture_keeps_more_detail_and_acknowledges_only_after_capture(browser, sealed_text, path):
@@ -47,7 +49,7 @@ def test_native_still_capture_keeps_more_detail_and_acknowledges_only_after_capt
         page.get_by_role("button", name="Check document", exact=True).click()
         page.wait_for_function("stillRequests.length === 1")
         expect(page.get_by_text("Hold steady — taking photo…", exact=True)).to_be_visible()
-        expect(page.get_by_text("Photo captured — processing…", exact=True)).to_have_count(0)
+        expect(page.get_by_text(CAPTURED_NOTICE, exact=True)).to_have_count(0)
         page.evaluate("finishStillCapture()")
         expect(page.locator(".page-check-list button")).to_have_count(1, timeout=15000)
         assert page.evaluate("stillRequests[0]") == {"fillLightMode": "off", "imageWidth": 2880, "imageHeight": 3840}
@@ -142,13 +144,13 @@ def test_capture_notice_keeps_the_photo_when_the_camera_moves(browser, sealed_te
             page.locator("#publicKeyFileInput").set_input_files({"name": "key.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode()})
         prepare_reader(page)
         camera_paper(page, TEXT.replace("Friday", "Monday"), sealed_text[1]["qr"])
-        page.evaluate("""() => {
+        page.evaluate("""message => {
             window.__moveOnCapture = true;
             window.__captureNotices = 0;
             new MutationObserver(() => {
                 if (!window.__moveOnCapture) return;
-                const statuses = document.querySelectorAll('.photo-scan-progress [role="status"]');
-                if (![...statuses].some(node => node.textContent === 'Reading photo…')) return;
+                const statuses = document.querySelectorAll('.camera-capture-notice[role="status"]');
+                if (![...statuses].some(node => node.textContent === message)) return;
                 window.__moveOnCapture = false;
                 if (!window.__captureNotices) window.__noticeBeforeSeal = !document.querySelector('.page-check-list button');
                 window.__captureNotices++;
@@ -162,7 +164,7 @@ def test_capture_notice_keeps_the_photo_when_the_camera_moves(browser, sealed_te
                 window.__syntheticPaper = blank;
                 frame.getContext('2d').drawImage(blank, 0, 0);
             }).observe(document.body, {subtree: true, childList: true, characterData: true});
-        }""")
+        }""", CAPTURED_NOTICE)
         page.get_by_role("button", name="Check document", exact=True).click()
         page.wait_for_function("window.__captureNotices === 1")
         assert page.evaluate("window.__noticeBeforeSeal")
