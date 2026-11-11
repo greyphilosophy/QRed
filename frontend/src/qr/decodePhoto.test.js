@@ -3,6 +3,7 @@ import { createQRedSeals } from "../qredSealer.js";
 import { createQRedQrData } from "../qredQr.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { decodePhoto } from "./decodePhoto.js";
+import { PHOTO_SCAN_BUDGET_MS } from "./photoScanBudget.js";
 import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
 import { scanFooterSeals } from "./footerSealScan.js";
@@ -91,8 +92,13 @@ it("does not let a single footer chunk skip collection of the remaining chunks",
   expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found-multiple", texts: multiple });
 });
 
-it("uses measured QR corners before the full-resolution and layout retries", async () => {
-  scanRectifiedSeal.mockReturnValue({ seal: single });
+it("recovers a seal from measured QR corners even when the read takes nine seconds", async () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  scanRectifiedSeal.mockImplementation((_image, { shouldContinue }) => {
+    now = 9000;
+    return shouldContinue() ? { seal: single } : null;
+  });
   const action = decodePhoto(image, { returnPayload: true });
   expect(action).toEqual({ status: "found", text: single });
   expect(scanQrImage).not.toHaveBeenCalled();
@@ -110,7 +116,7 @@ it("reserves time for a footer seal after the local alignment deadline", () => {
   vi.spyOn(performance, "now").mockImplementation(() => now);
   scanRectifiedSeal.mockImplementation((_image, { shouldContinue }) => {
     expect(shouldContinue()).toBe(true);
-    now = 4001;
+    now = PHOTO_SCAN_BUDGET_MS / 2 + 1;
     expect(shouldContinue()).toBe(false);
     return null;
   });
@@ -142,7 +148,7 @@ it("never shares rectified preparation between separate photo requests", () => {
 it.each(["local", "preview", "wide", "footer"])("stops at the shared deadline and retains a chunk from %s", stage => {
   let now = 0;
   vi.spyOn(performance, "now").mockImplementation(() => now);
-  const expired = value => { now = 8001; return value; };
+  const expired = value => { now = PHOTO_SCAN_BUDGET_MS + 1; return value; };
   if (stage === "local") scanRectifiedSeal.mockImplementation(() => expired({ seal: multiple[1] }));
   if (stage === "preview") scanWatermarkPreview.mockImplementation(() => expired(code(multiple[1])));
   if (stage === "footer") scanFooterSeals.mockImplementation(() => expired([code(multiple[1])]));
@@ -157,7 +163,7 @@ it.each(["local", "preview", "wide", "footer"])("stops at the shared deadline an
 it("returns retake guidance when the deadline expires without a payload", () => {
   let now = 0;
   vi.spyOn(performance, "now").mockImplementation(() => now);
-  scanRectifiedSeal.mockImplementation(() => { now = 8001; return null; });
+  scanRectifiedSeal.mockImplementation(() => { now = PHOTO_SCAN_BUDGET_MS + 1; return null; });
   expect(decodePhoto(image, { returnPayload: true })).toMatchObject({ status: "feedback" });
   expect(scanWatermarkPreview).not.toHaveBeenCalled();
   expect(scanQrImage).not.toHaveBeenCalled();
@@ -252,7 +258,7 @@ it("retains the last stage checkpoint when an attempt blocks and reports no skip
   const onStage = vi.fn();
   scanRectifiedSeal.mockImplementation(() => {
     expect(onStage).toHaveBeenLastCalledWith({ stage: "rectified-fast", elapsedMs: 0 });
-    now += 8001;
+    now += PHOTO_SCAN_BUDGET_MS + 1;
     return null;
   });
   decodePhoto(image, { returnPayload: true, onStage });
@@ -298,10 +304,10 @@ it.each([[8000, 1300, 3300], [4000, 500, 1500]])(
 it("does not let the ordinary allowance extend the overall photo deadline", () => {
   let now = 0;
   vi.spyOn(performance, "now").mockImplementation(() => now);
-  scanWatermarkPreview.mockImplementation(() => { now = 7000; return null; });
+  scanWatermarkPreview.mockImplementation(() => { now = PHOTO_SCAN_BUDGET_MS - 1000; return null; });
   scanQrImage.mockImplementation((_data, _width, _height, { shouldContinue }) => {
-    now = 7999; expect(shouldContinue()).toBe(true);
-    now = 8000; expect(shouldContinue()).toBe(false);
+    now = PHOTO_SCAN_BUDGET_MS - 1; expect(shouldContinue()).toBe(true);
+    now = PHOTO_SCAN_BUDGET_MS; expect(shouldContinue()).toBe(false);
     return null;
   });
   expect(decodePhoto(image, { returnPayload: true }).status).toBe("feedback");

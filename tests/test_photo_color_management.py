@@ -132,7 +132,7 @@ def test_selected_jpeg_matches_color_managed_browser_pixels(browser, tagged, ori
 
 
 def test_signed_p3_jpeg_is_recovered_and_authenticated_offline(browser):
-    """A public synthetic blue-ink footer uses the real UI and unchanged watchdog.
+    """Keep the eight-second performance target for this readable footer.
 
     This sanity gate is deliberately readable. It does not assert that a
     marginal private photograph or a particular phone will also recover.

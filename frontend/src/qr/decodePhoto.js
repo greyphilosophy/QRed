@@ -34,8 +34,7 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
     || width * height > 80_000_000 || data?.length !== width * height * 4) {
     throw new Error("This photo cannot be scanned at its current size. Choose a smaller photo.");
   }
-  // Cooperatively stop between bounded attempts. A miss must return retake
-  // guidance instead of spending a minute exhausting layout guesses.
+  // Stop between attempts when this photo's time allowance runs out.
   const started = performance.now(), deadline = started + maxDurationMs;
   const shouldContinue = () => performance.now() < deadline;
   // Report only fixed stage names and elapsed time, never document pixels,

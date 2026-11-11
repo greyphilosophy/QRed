@@ -207,9 +207,9 @@ Seal recovery first tries a small preview, then a perspective-corrected working
 copy calibrated to the QR's printed corner and alignment patterns. Dark text is
 missing QR evidence, resolved only by QR parity; the recovered payload still
 requires signature verification. The original photograph supplies text comparison.
-Photo decoding shares an eight-second retry budget, checked between bounded
-attempts; a device can take longer to finish its current attempt. Unreadable
-photos return retake guidance instead of exhausting every layout guess.
+QRed gives each captured or selected photo up to 60 seconds to recover its seals.
+The scanner reports the current step, returns as soon as recovery finishes, and
+can be cancelled. Printed-text recognition runs separately after recovery.
 
 Use **Capture now** on either verifier if the edges cannot be detected or
 automatic capture will not settle. This overrides the automatic capture

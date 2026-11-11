@@ -100,7 +100,7 @@ def main():
                         started = time.monotonic()
                         page.locator("#qr-image" if route == "/" else "#pagePhotoInput").set_input_files(photo)
                         page.wait_for_function("scan => photoEvents.some(e => e.scan > scan && ['result','terminated'].includes(e.kind))",
-                            arg=scan, timeout=20000)
+                            arg=scan, timeout=75000)  # Allow for opening the file and a 60-second seal read.
                         result["files"].append({"milliseconds": round((time.monotonic() - started) * 1000),
                             "events": page.evaluate("start => photoEvents.slice(start)", before)})
                     if route != "/":

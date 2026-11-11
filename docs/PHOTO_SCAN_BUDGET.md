@@ -1,6 +1,7 @@
 # Photo scan time budget
 
-A captured or selected photo has an eight-second seal-decoding budget. The
+A captured or selected photo has a 60-second seal-decoding budget. A successful
+read can finish immediately. The user can cancel during any recovery step. The
 synchronous decoder checks its deadline between attempts; conventional jsQR calls
 also receive cooperative checkpoints inside expensive loops. A separate watchdog
 in the caller terminates the worker if synchronous work overruns the overall
@@ -54,8 +55,8 @@ reads successfully.
 In document-capture mode, video frames only drive framing and steadiness. A
 ready page hands off to the browser's `ImageCapture.takePhoto()` API. Unsupported,
 failed, timed-out or undersized photo acquisition stops before seal decoding;
-it never silently substitutes a preview frame and spends another eight seconds
-trying to read it. Generic non-document QR preview scanning is unchanged.
+it prompts the user to retry or choose a photo. Generic QR preview scans use
+their own frame loop.
 
 Native photo acquisition has a separate cancellable five-second total allowance,
 not a five-second delay. Successful photos continue immediately. The previous
@@ -103,7 +104,7 @@ the seal-reading budget starts. Neither pixel count nor preparation time proves
 that the captured watermark is sharp or readable.
 
 The selected-photo cap reduces canvas/readback memory and avoids resizing a
-larger upload repeatedly inside the eight-second seal-reading budget. It also
+larger upload repeatedly inside the seal-reading budget. It also
 keeps selected working pixels eligible for the decoder's bounded native-sampling
 fallback. This does not raise the time limit or prove that an unreadable photo
 will decode. File opening and canvas preparation still occur before that budget;
@@ -144,7 +145,7 @@ took 233–260 ms before and 135–242 ms after (medians 242 and 154 ms). Three
 whole-photo decode runs took 612–775 ms before and 532–697 ms after, recovering
 the identical transport. These workstation saved-photo measurements include
 normal runtime variation; they are not a browser camera or phone benchmark.
-The eight-second budget is unchanged. This optimization does not establish
+These measurements used the previous eight-second budget. This optimization does not establish
 that a reported manual-capture timeout or automatic-acquisition failure is
 fixed; those require their own reproducible workflow evidence.
 
@@ -194,17 +195,17 @@ so these results do not establish that that failure is fixed.
 
 A checkpoint such as “refining the page grid (7.7 s into decoding)” reports when
 that stage began, not 7.7 seconds spent refining. It can mean almost all the budget
-was consumed by preceding attempts. The existing four-second narrow-pass cutoff
-and expensive fallbacks can still produce timeouts under heavier CPU pressure;
-this change does not replace physical-phone acceptance or justify a longer wait.
+was consumed by preceding attempts. These measurements used a four-second
+narrow-pass cutoff. The narrow pass gets half of the current budget, up to 30
+seconds. The remaining recovery steps share the time left on the same clock.
 
 ## Conventional-code preflight
 
 The early conventional-QR pass is a preliminary look, not a pair of exhaustive
 12 MP reads. It uses at most 1.5 MP, a cheap pixel-center preview, and at most two
 attempts (the second only masks a detected navigation QR). Its cooperative
-allowance is one quarter of the photo budget, capped by the overall deadline:
-two seconds with the unchanged eight-second default. Preparation is checked
+allowance is one quarter of the photo budget, up to 15 seconds with the current
+default, and ends earlier if the overall deadline expires. Preparation is checked
 before entering the decoder, and navigation masking cannot start fresh work
 after the allowance expires.
 
@@ -253,5 +254,5 @@ invoice pixels and the actual built worker/library, not a phone emulator:
   or a performance measurement.
 
 Do not convert these workstation/process-pressure results into a claimed phone
-success rate. Keep the eight-second real-worker browser tests and physical-phone
-acceptance separate from the longer algorithm-compatibility regression.
+success rate. The readable synthetic footer still has an eight-second browser
+performance check. Record physical-phone capture and seal-reading times separately.

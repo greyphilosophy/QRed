@@ -1,7 +1,7 @@
 import { scanStageDiagnostic, scanStageFeedback } from "./photoScanDiagnostics.js";
 
 // Cooperative decoding and the UI worker watchdog share one photo budget.
-export const PHOTO_SCAN_BUDGET_MS = 8000;
+export const PHOTO_SCAN_BUDGET_MS = 60_000;
 
 export function photoScanTimeoutAction(partial = null, stage = null) {
   const scanDiagnostic = scanStageDiagnostic(stage);

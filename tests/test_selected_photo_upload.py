@@ -42,8 +42,8 @@ def test_homepage_large_selected_photo_is_bounded_before_real_worker(browser):
         assert page.evaluate("window.__photoSubmissions") == [
             {"width": 3000, "height": 4000, "bytes": 48_000_000}]
         # Blank paper is not a recovery fixture. Either an early miss or the
-        # unchanged watchdog can finish it; both must retain size diagnostics.
-        expect(page.get_by_text("Selected photo: 3000 × 4000", exact=False)).to_be_visible(timeout=20000)
+        # 60-second watchdog can finish it. Both must retain size diagnostics.
+        expect(page.get_by_text("Selected photo: 3000 × 4000", exact=False)).to_be_visible(timeout=75000)
         expect(page.get_by_text("from 6000 × 8000, prepared in", exact=False)).to_be_visible()
         expect(page.get_by_role("button", name="Cancel photo scan")).to_have_count(0)
         guard.assert_quiet()
