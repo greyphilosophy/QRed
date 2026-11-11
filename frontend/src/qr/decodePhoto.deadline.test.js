@@ -7,7 +7,7 @@ import { verifyQRedSeals } from "../qredVerifier.js";
 vi.mock("./scanQrImage.js", async importOriginal => ({
   ...await importOriginal(), scanWatermarkPreview: vi.fn(() => null),
 }));
-vi.mock("./rectifiedSealScan.js", () => ({ createRectifiedSealScanner: vi.fn(), scanCurvedPageSeal: vi.fn(() => null) }));
+vi.mock("./rectifiedSealScan.js", () => ({ createRectifiedSealScanner: vi.fn(), prepareCurvedPageScan: vi.fn(() => ({ preferred: false, scan: () => null })) }));
 vi.mock("./footerSealScan.js", () => ({ scanFooterSeals: vi.fn(() => []) }));
 vi.mock("./pageAlignedScan.js", () => ({ scanPageAlignedImage: vi.fn(() => []) }));
 afterEach(() => vi.restoreAllMocks());

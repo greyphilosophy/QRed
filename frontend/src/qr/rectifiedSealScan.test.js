@@ -4,7 +4,7 @@ import { createQRedSeals } from "../qredSealer.js";
 import { createQRedQrData } from "../qredQr.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { pageWatermarkRegions } from "./pageAlignedScan.js";
-import { scanRectifiedSeal, createRectifiedSealScanner, scanCurvedPageSeal } from "./rectifiedSealScan.js";
+import { scanRectifiedSeal, createRectifiedSealScanner, prepareCurvedPageScan } from "./rectifiedSealScan.js";
 import * as moduleSamples from "./rectifiedModuleSamples.js";
 import * as pageGeometry from "./pageAlignedScan.js";
 import * as watermarkFilter from "./watermarkFilter.js";
@@ -53,7 +53,9 @@ it("authenticates a bowed warm-lit print against a ridged background from pixels
   const { payloadBytes } = createQRedQrData(seals[0]);
   const symbol = QRCode.create([{ data: payloadBytes, mode: "byte" }], { version: 31, errorCorrectionLevel: "L" });
   const image = shadowedPrint(symbol, 8, { bow: .018 });
-  const result = scanCurvedPageSeal(image, { searchRadius: 12 });
+  const alternative = prepareCurvedPageScan(image, null, () => true);
+  expect(alternative?.preferred).toBe(true);
+  const result = alternative.scan({ searchRadius: 12 });
   expect(result?.seal).toBe(seals[0]);
   await expect(verifyQRedSeals([result.seal], publicKey)).resolves.toMatchObject({
     status: "VALID", signature_valid: true,

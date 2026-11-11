@@ -2,7 +2,7 @@ import { PHOTO_SCAN_BUDGET_MS } from "./photoScanBudget.js";
 import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
 import { scanFooterSeals } from "./footerSealScan.js";
-import { createRectifiedSealScanner, scanCurvedPageSeal } from "./rectifiedSealScan.js";
+import { createRectifiedSealScanner, prepareCurvedPageScan } from "./rectifiedSealScan.js";
 import { isQRedEntryLink, qredPayloadFromScanResult } from "./qrPayload.js";
 import { decodeSeal, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult,
   qredTextFromScanResult } from "../qredVerifier.js";
@@ -60,13 +60,28 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
   if (returnPayload) {
     // Try the measured whole-page grid before general-purpose QR location.
     // Reserve half the cooperative budget for other layouts if this misses.
-    const scanRectified = createRectifiedSealScanner(image);
+    let straightMapping;
+    const scanRectified = createRectifiedSealScanner(image, { onMapping: measured => { straightMapping = measured; } });
     const fastDeadline = started + maxDurationMs / 2;
     const fast = attempt("rectified-fast", () => scanRectified({
       searchRadius: 12, shouldContinue: () => performance.now() < fastDeadline,
     }));
     if (singleOriginal(fast?.seal)) return { status: "found", text: fast.seal };
     keepPartial(fast?.seal);
+    const curved = shouldContinue() ? prepareCurvedPageScan(image, straightMapping, shouldContinue) : null;
+    const tryCurved = fraction => {
+      const end = Math.min(deadline, performance.now() + maxDurationMs * fraction);
+      const result = attempt("curved-page", () => curved.scan({
+        searchRadius: 12, shouldContinue: () => performance.now() < end,
+      }));
+      if (singleOriginal(result?.seal)) return { status: "found", text: result.seal };
+      keepPartial(result?.seal);
+      return null;
+    };
+    if (curved?.preferred && shouldContinue()) {
+      const action = tryCurved(.5);
+      if (action) return action;
+    }
     const preview = shouldContinue() ? attempt("watermark-preview", () => scanWatermarkPreview(data, width, height)) : null;
     const payload = preview && qredPayloadFromPhotoScanResult(data, width, height, preview);
     // A complete single-code seal can skip the expensive alignment search.
@@ -103,15 +118,10 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
         && other.multipart === chunk.multipart).map(other => other.chunk_number));
       return indexes.size === chunk.total_chunks;
     })) return { status: "found-multiple", texts: [...partials] };
-    // A bowed sheet or highlights in the surrounding cloth can defeat a
-    // straight edge fit. Give the measured curved outline one narrow grid
-    // attempt, keeping time for other layouts and the general QR fallback.
-    const curvedDeadline = Math.min(deadline, performance.now() + maxDurationMs / 3);
-    const curved = shouldContinue() ? attempt("curved-page", () => scanCurvedPageSeal(image, {
-      searchRadius: 12, shouldContinue: () => performance.now() < curvedDeadline,
-    })) : null;
-    if (singleOriginal(curved?.seal)) return { status: "found", text: curved.seal };
-    keepPartial(curved?.seal);
+    if (curved && !curved.preferred && shouldContinue()) {
+      const action = tryCurved(1 / 3);
+      if (action) return action;
+    }
     // Retain the original wider alignment search for larger print distortions.
     const rectified = shouldContinue() ? attempt("rectified-wide", () => scanRectified({ shouldContinue })) : null;
     if (singleOriginal(rectified?.seal)) return { status: "found", text: rectified.seal };

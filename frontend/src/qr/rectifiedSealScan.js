@@ -116,8 +116,8 @@ function recoverObservations(observations, photoMap, version, thresholds, should
 // retry must not rebuild the same page warp, normalized pixels and finder
 // observations after the earlier narrow search has already paid for them.
 // This closure is never retained across photographs or camera frames.
-export function createRectifiedSealScanner(source, { curved = false } = {}) {
-  let image = null, mapping = null;
+export function createRectifiedSealScanner(source, { pageMapping = null, onMapping } = {}) {
+  let image = null, mapping = pageMapping;
   let originalGray = null, sharpenedGray = null;
   const prepared = new Map();
   const profiles = [{ marginPoints: 54 }, { marginPoints: 36 }, { legacy: true }];
@@ -146,11 +146,11 @@ export function createRectifiedSealScanner(source, { curved = false } = {}) {
     if (!image) {
       image = { data: source.data, width: source.width, height: source.height,
         paperColor: estimatePaperColor(source) };
-      if (curved) mapping = curvedPaperMapping(image, shouldContinue);
-      else {
+      if (!mapping) {
         const quad = locatePaper(image);
         mapping = quad && pageHomography(quad);
       }
+      onMapping?.(mapping);
     }
     if (!mapping) return null;
     for (const profile of profiles) {
@@ -207,6 +207,16 @@ export function scanRectifiedSeal(image, options) {
   return createRectifiedSealScanner(image)(options);
 }
 
-export function scanCurvedPageSeal(image, options) {
-  return createRectifiedSealScanner(image, { curved: true })(options);
+export function prepareCurvedPageScan(image, straightMapping, shouldContinue) {
+  if (image.width < 160 || image.height < 160 || !shouldContinue()) return null;
+  const curved = curvedPaperMapping(image, shouldContinue);
+  if (!curved) return null;
+  // When the outlines disagree by a visible fraction of the frame, checking
+  // the measured paper first can avoid spending the budget looking for ordinary QRs.
+  const outline = [[0, 0], [.5, 0], [1, 0], [1, .5], [1, 1], [.5, 1], [0, 1], [0, .5]];
+  const preferred = !straightMapping || outline.some(([u, v]) => {
+    const a = straightMapping(u, v), b = curved(u, v);
+    return Math.hypot((a.x - b.x) / image.width, (a.y - b.y) / image.height) > .025;
+  });
+  return { preferred, scan: createRectifiedSealScanner(image, { pageMapping: curved }) };
 }

@@ -7,19 +7,20 @@ import { PHOTO_SCAN_BUDGET_MS } from "./photoScanBudget.js";
 import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
 import { scanFooterSeals } from "./footerSealScan.js";
-import { scanRectifiedSeal, createRectifiedSealScanner, scanCurvedPageSeal } from "./rectifiedSealScan.js";
+import { scanRectifiedSeal, createRectifiedSealScanner, prepareCurvedPageScan } from "./rectifiedSealScan.js";
 
 vi.mock("./scanQrImage.js", () => ({ scanQrImage: vi.fn(), scanWatermarkPreview: vi.fn() }));
 vi.mock("./pageAlignedScan.js", () => ({ scanPageAlignedImage: vi.fn() }));
 vi.mock("./footerSealScan.js", () => ({ scanFooterSeals: vi.fn() }));
 vi.mock("./rectifiedSealScan.js", () => ({
-  scanRectifiedSeal: vi.fn(), createRectifiedSealScanner: vi.fn(), scanCurvedPageSeal: vi.fn(),
+  scanRectifiedSeal: vi.fn(), createRectifiedSealScanner: vi.fn(), prepareCurvedPageScan: vi.fn(),
 }));
 afterEach(() => vi.restoreAllMocks());
 
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
 const image = { width: 320, height: 240, data: new Uint8ClampedArray(320 * 240 * 4) };
 let single, multiple;
+const scanCurvedPageSeal = vi.fn();
 function code(seal) {
   const { payloadBytes, version } = createQRedQrData(seal);
   return { data: "", binaryData: Array.from(payloadBytes), version };
@@ -39,6 +40,7 @@ beforeEach(() => {
   scanPageAlignedImage.mockReset().mockReturnValue([]);
   scanRectifiedSeal.mockReset().mockReturnValue(null);
   scanCurvedPageSeal.mockReset().mockReturnValue(null);
+  prepareCurvedPageScan.mockReset().mockReturnValue({ preferred: false, scan: scanCurvedPageSeal });
   scanQrImage.mockReset().mockReturnValue(null);
 });
 
@@ -54,7 +56,7 @@ it("returns a curved-page seal before entering the wider and general searches", 
 it("ends the curved-page pass in time for other recovery methods", () => {
   let now = 0;
   vi.spyOn(performance, "now").mockImplementation(() => now);
-  scanCurvedPageSeal.mockImplementation((_image, { shouldContinue }) => {
+  scanCurvedPageSeal.mockImplementation(({ shouldContinue }) => {
     expect(shouldContinue()).toBe(true);
     now = 100;
     expect(shouldContinue()).toBe(false);
@@ -63,6 +65,30 @@ it("ends the curved-page pass in time for other recovery methods", () => {
   decodePhoto(image, { returnPayload: true, maxDurationMs: 300 });
   expect(scanCurvedPageSeal).toHaveBeenCalledOnce();
   expect(scanPageAlignedImage).toHaveBeenCalledOnce();
+});
+
+it("tries a visibly different paper outline before the ordinary searches", () => {
+  prepareCurvedPageScan.mockReturnValue({ preferred: true, scan: scanCurvedPageSeal });
+  scanCurvedPageSeal.mockReturnValue({ seal: single });
+  expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found", text: single });
+  expect(scanWatermarkPreview).not.toHaveBeenCalled();
+  expect(scanQrImage).not.toHaveBeenCalled();
+});
+
+it("caps an early curved miss and still searches other layouts without repeating the curve", () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  prepareCurvedPageScan.mockReturnValue({ preferred: true, scan: scanCurvedPageSeal });
+  scanCurvedPageSeal.mockImplementation(({ shouldContinue }) => {
+    now = 149;
+    expect(shouldContinue()).toBe(true);
+    now = 150;
+    expect(shouldContinue()).toBe(false);
+    return null;
+  });
+  decodePhoto(image, { returnPayload: true, maxDurationMs: 300 });
+  expect(scanCurvedPageSeal).toHaveBeenCalledOnce();
+  expect(scanFooterSeals).toHaveBeenCalledOnce();
 });
 
 it("returns a complete preview seal after a quick page miss and still requires signature verification", async () => {

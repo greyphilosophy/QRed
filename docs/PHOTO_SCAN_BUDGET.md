@@ -202,10 +202,12 @@ seconds. The remaining recovery steps share the time left on the same clock.
 ## Curved and tinted paper
 
 For a full-page watermark the rectified reader can use the three measured finder
-positions to constrain the grid when an extrapolated corner drifts. If ordinary
-and footer recovery also miss, the scanner follows the four paper edges on a
-small preview and fits their curvature before sampling the original photo.
-This still-photo attempt gets at most one third of the shared budget. The final
+positions to constrain the grid when an extrapolated corner drifts. If that read
+misses, the scanner measures the four paper edges on a small preview. When the
+straight and curved outlines disagree by more than 2.5% of the frame, or the
+straight outline is missing, it tries the curved mapping first with up to half of
+the shared budget. Otherwise the curved retry follows ordinary and footer reads
+with up to one third of the budget. Each photo gets at most one such retry. The
 general QR stage reuses observed pixels across consecutive filter radii at the
 same scale and measures the paper tint before rejecting colored pixels.
 The progress display identifies which fallback is running, including full-detail
