@@ -29,7 +29,8 @@ it("lets later recovery run after real jsQR cancels inside a 12 MP photo's ordin
   const image = { width: 3000, height: 4000,
     data: new Uint8ClampedArray(3000 * 4000 * 4).fill(255) };
   const stages = [];
-  const result = decodePhoto(image, { returnPayload: true,
+  // Use a two-second ordinary preflight to exercise cancellation inside jsQR.
+  const result = decodePhoto(image, { returnPayload: true, maxDurationMs: 8000,
     onStage: stage => stages.push(stage.stage) });
   expect(now).toBeGreaterThanOrEqual(2000);
   expect(now).toBeLessThan(2100);

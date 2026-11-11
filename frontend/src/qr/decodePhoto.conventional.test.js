@@ -19,8 +19,7 @@ it("recovers the original dense footer after the cheap whole-page ordinary previ
   });
   expect(qredPayloadFromScanResult(preview)).toBeNull();
   const stages = [];
-  // Algorithm compatibility, not a machine-speed assertion. Browser upload
-  // regressions exercise the unchanged real eight-second worker watchdog.
+  // Browser upload tests exercise the production worker watchdog separately.
   const result = decodePhoto(image, { returnPayload: true, maxDurationMs: 30_000,
     onStage: ({ stage }) => stages.push(stage) });
   expect(stages).toContain("ordinary-qr");

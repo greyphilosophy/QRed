@@ -1,6 +1,7 @@
 /* @vitest-environment jsdom */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createLiveScanWorker, scanPhotoInWorker, preparePhotoReadingInWorker } from "./photoScanClient.js";
+import { PHOTO_SCAN_BUDGET_MS } from "./photoScanBudget.js";
 
 let worker;
 beforeEach(() => {
@@ -35,9 +36,9 @@ it("reports live stages only while their request is current and leaves the deadl
     vi.advanceTimersByTime(5000);
     receive({ data: { scanStage: { stage: "page-aligned", elapsedMs: 4900, text: "private" } } });
     expect(onStage).toHaveBeenCalledWith({ stage: "page-aligned", elapsedMs: 4900 });
-    vi.advanceTimersByTime(3000);
+    vi.advanceTimersByTime(PHOTO_SCAN_BUDGET_MS - 5000);
     expect(onResult).toHaveBeenCalledWith(expect.objectContaining({ timedOut: true }));
-    receive({ data: { scanStage: { stage: "footer", elapsedMs: 8001 } } });
+    receive({ data: { scanStage: { stage: "footer", elapsedMs: PHOTO_SCAN_BUDGET_MS + 1 } } });
     expect(onStage).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
     live.stop();
@@ -205,12 +206,12 @@ it.each(["decode", "load", "message", "transfer"])("stops live decoding on a %s 
   expect(live.scan(image())).toBe(false);
 });
 
-it("terminates an unresponsive photo at the deadline and ignores queued success", async () => {
+it("terminates an unresponsive photo at 60 seconds and ignores queued success", async () => {
   vi.useFakeTimers();
   try {
     const pending = scanPhotoInWorker(image());
     const late = worker.onmessage;
-    vi.advanceTimersByTime(7999);
+    vi.advanceTimersByTime(59_999);
     expect(worker.terminate).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     await expect(pending).resolves.toMatchObject({ status: "feedback", timedOut: true });
@@ -220,12 +221,33 @@ it("terminates an unresponsive photo at the deadline and ignores queued success"
   } finally { vi.useRealTimers(); }
 });
 
+it("delivers selected and captured photo results that arrive after the former eight-second cutoff", async () => {
+  vi.useFakeTimers();
+  try {
+    const onResult = vi.fn(), action = { status: "found", text: "on time" };
+    const pending = scanPhotoInWorker(image());
+    vi.advanceTimersByTime(9000);
+    worker.onmessage({ data: { action } });
+    await expect(pending).resolves.toEqual(action);
+
+    const live = createLiveScanWorker({ onResult, onError: vi.fn(), requirePageQuality: true });
+    live.scan(image());
+    worker.onmessage({ data: { captured: true } });
+    vi.advanceTimersByTime(9000);
+    expect(onResult).not.toHaveBeenCalled();
+    worker.onmessage({ data: { action } });
+    expect(onResult).toHaveBeenCalledWith(action);
+    expect(vi.getTimerCount()).toBe(0);
+    live.stop();
+  } finally { vi.useRealTimers(); }
+});
+
 it("checkpoints partial chunks without settling or extending the deadline", async () => {
   vi.useFakeTimers();
   try {
     const settled = vi.fn();
     const pending = scanPhotoInWorker(image()).then(settled);
-    vi.advanceTimersByTime(7000);
+    vi.advanceTimersByTime(PHOTO_SCAN_BUDGET_MS - 1000);
     worker.onmessage({ data: { progress: { status: "found-multiple", texts: ["first", "second"] } } });
     await Promise.resolve();
     expect(settled).not.toHaveBeenCalled();
@@ -245,7 +267,7 @@ it("keeps concurrent photo deadlines and partials independent", async () => {
     first.onmessage({ data: { progress: { status: "found-multiple", texts: ["first"] } } });
     vi.advanceTimersByTime(4000);
     const two = scanPhotoInWorker(image());
-    vi.advanceTimersByTime(4000);
+    vi.advanceTimersByTime(PHOTO_SCAN_BUDGET_MS - 4000);
     await expect(one).resolves.toMatchObject({ texts: ["first"], timedOut: true });
     expect(second.terminate).not.toHaveBeenCalled();
     second.onmessage({ data: { action: { status: "found", text: "second" } } });
@@ -269,7 +291,7 @@ it.each(["success", "cancel", "load", "message", "decode", "transfer"])("clears 
     else if (kind === "cancel") await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     else await expect(pending).rejects.toBeInstanceOf(Error);
     expect(vi.getTimerCount()).toBe(0);
-    vi.advanceTimersByTime(9000);
+    vi.advanceTimersByTime(PHOTO_SCAN_BUDGET_MS + 1);
     expect(worker.terminate).toHaveBeenCalledTimes(1);
   } finally { vi.useRealTimers(); }
 });
@@ -279,7 +301,7 @@ it("does not apply the seal-reading deadline to OCR preparation", async () => {
   try {
     const pending = preparePhotoReadingInWorker(image());
     expect(vi.getTimerCount()).toBe(0);
-    vi.advanceTimersByTime(9000);
+    vi.advanceTimersByTime(PHOTO_SCAN_BUDGET_MS + 1);
     expect(worker.terminate).not.toHaveBeenCalled();
     const action = { image: image(), codes: [] };
     worker.onmessage({ data: { action } });
@@ -296,7 +318,7 @@ it("bounds a captured live photo, preserves chunks, and requires reset before re
     const late = worker.onmessage;
     worker.onmessage({ data: { captured: true, quality: { ready: true } } });
     worker.onmessage({ data: { progress: { status: "found-multiple", texts: ["partial"] } } });
-    vi.advanceTimersByTime(8000);
+    vi.advanceTimersByTime(PHOTO_SCAN_BUDGET_MS);
     expect(worker.terminate).toHaveBeenCalledTimes(1);
     expect(live.busy).toBe(false);
     expect(onResult).toHaveBeenCalledWith(expect.objectContaining({ texts: ["partial"], timedOut: true }));
@@ -329,7 +351,7 @@ it.each(["reset", "stop", "result", "error"])("clears a captured live deadline o
     if (kind === "result") worker.onmessage({ data: { action: { status: "continue" } } });
     if (kind === "error") worker.onerror({ preventDefault: vi.fn() });
     expect(vi.getTimerCount()).toBe(0);
-    vi.advanceTimersByTime(9000);
+    vi.advanceTimersByTime(PHOTO_SCAN_BUDGET_MS + 1);
     expect(onResult).toHaveBeenCalledTimes(kind === "result" ? 1 : 0);
     live.stop();
   } finally { vi.useRealTimers(); }
@@ -342,7 +364,7 @@ it("does not start a captured-photo deadline for native still handoff", () => {
     live.scan(image(), { captureOnly: true });
     worker.onmessage({ data: { captured: true, captureOnly: true, quality: { ready: true } } });
     expect(vi.getTimerCount()).toBe(0);
-    vi.advanceTimersByTime(9000);
+    vi.advanceTimersByTime(PHOTO_SCAN_BUDGET_MS + 1);
     expect(worker.terminate).not.toHaveBeenCalled();
     live.stop();
   } finally { vi.useRealTimers(); }
@@ -361,12 +383,12 @@ it("retains the last safe stage without settling, extending the deadline, or los
     receive({ data: { progress: { status: "found-multiple", texts: ["partial"] } } });
     await Promise.resolve();
     expect(settled).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1000);
+    vi.advanceTimersByTime(PHOTO_SCAN_BUDGET_MS - 7000);
     await pending;
     expect(settled).toHaveBeenCalledWith(expect.objectContaining({ timedOut: true, texts: ["partial"],
       scanDiagnostic: { stage: "ordinary-qr", elapsedMs: 6900 } }));
     expect(settled.mock.calls[0][0].message).not.toContain("private");
-    receive({ data: { scanStage: { stage: "footer", elapsedMs: 9000 } } });
+    receive({ data: { scanStage: { stage: "footer", elapsedMs: PHOTO_SCAN_BUDGET_MS + 1 } } });
     expect(settled).toHaveBeenCalledTimes(1);
     expect(worker.terminate).toHaveBeenCalledTimes(1);
   } finally { vi.useRealTimers(); }
@@ -379,7 +401,7 @@ it("keeps stage diagnostics local to each photo request", async () => {
     Worker.mockReturnValueOnce(first).mockReturnValueOnce(second);
     const one = scanPhotoInWorker(image()), two = scanPhotoInWorker(image());
     first.onmessage({ data: { scanStage: { stage: "footer", elapsedMs: 100 } } });
-    vi.advanceTimersByTime(8000);
+    vi.advanceTimersByTime(PHOTO_SCAN_BUDGET_MS);
     await expect(one).resolves.toMatchObject({ scanDiagnostic: { stage: "footer", elapsedMs: 100 } });
     expect(await two).not.toHaveProperty("scanDiagnostic");
   } finally { vi.useRealTimers(); }
@@ -393,14 +415,14 @@ it("clears a live scan's stage metadata on reset", () => {
     live.scan(image());
     worker.onmessage({ data: { captured: true } });
     worker.onmessage({ data: { scanStage: { stage: "footer", elapsedMs: 500 } } });
-    vi.advanceTimersByTime(8000);
+    vi.advanceTimersByTime(PHOTO_SCAN_BUDGET_MS);
     expect(onResult.mock.calls[0][0].scanDiagnostic).toEqual({ stage: "footer", elapsedMs: 500 });
     live.reset();
     worker = { postMessage: vi.fn(), terminate: vi.fn() };
     Worker.mockReturnValueOnce(worker);
     live.scan(image());
     worker.onmessage({ data: { captured: true } });
-    vi.advanceTimersByTime(8000);
+    vi.advanceTimersByTime(PHOTO_SCAN_BUDGET_MS);
     expect(onResult.mock.calls[1][0]).not.toHaveProperty("scanDiagnostic");
     live.stop();
   } finally { vi.useRealTimers(); }
