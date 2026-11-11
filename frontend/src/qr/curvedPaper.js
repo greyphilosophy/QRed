@@ -1,4 +1,4 @@
-// A still-photo fallback for a light sheet against textured, darker surroundings.
+// Locate a light sheet against textured, darker surroundings.
 // Follow coherent inward brightness changes along each side, then use the four
 // measured curves to predict where the printed grid bends between the corners.
 import { pageHomography } from "./pageAlignedScan.js";
@@ -93,7 +93,7 @@ function findEdge({ gray, width, height }, vertical, far, shouldContinue) {
   });
 }
 
-export function curvedPaperMapping(image, shouldContinue) {
+export function curvedPaperMapping(image, shouldContinue = () => true) {
   const sample = preview(image), { width, height } = sample;
   if (Math.min(width, height) < 40) return null;
   const sides = [];

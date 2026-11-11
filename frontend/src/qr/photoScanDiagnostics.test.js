@@ -26,3 +26,10 @@ it("retains partial chunks without claiming the last stage explains a timeout", 
   expect(result.message).not.toContain("private");
   expect(partial).toEqual({ status: "found-multiple", texts: ["partial seal"] });
 });
+
+it.each(["curved-page", "qr-full-detail", "qr-rescaled", "qr-filtered", "qr-modules"])(
+  "keeps the %s checkpoint for progress and timeout feedback", stage => {
+    const input = { stage, elapsedMs: 1200 };
+    expect(scanStageDiagnostic(input)).toEqual(input);
+    expect(scanStageFeedback(input)).toContain("1.2 s");
+  });

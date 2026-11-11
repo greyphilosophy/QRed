@@ -196,7 +196,8 @@ export function scanWatermarkPreview(data, width, height) {
  * pixel recovery. It never changes the filtered watermark preparation.
  */
 export function scanQrImage(data, width, height, { tryRescaling = true, tryWatermark = true,
-  maxAttempts = Infinity, maxScanPixels = MAX_SCAN_PIXELS, fastResize = false, shouldContinue = () => true } = {}) {
+  maxAttempts = Infinity, maxScanPixels = MAX_SCAN_PIXELS, fastResize = false, shouldContinue = () => true,
+  onStage } = {}) {
   if (!isValidImage(data, width, height)) return null;
   if (!Number.isInteger(maxScanPixels) || maxScanPixels < 1) throw new Error("Invalid QR scan pixel budget.");
   maxScanPixels = Math.min(MAX_SCAN_PIXELS, maxScanPixels);
@@ -204,6 +205,7 @@ export function scanQrImage(data, width, height, { tryRescaling = true, tryWater
   let entryToSkip = null;
   let preparedWatermark = null;
   let attempts = 0;
+  let lastStage;
   // A bounded preflight should try raw, pixel-filtered, then module-aware
   // rather than exhausting its budget on similar pixel-filter radii.
   const regularBudget = tryWatermark && Number.isFinite(maxAttempts) && maxAttempts >= 3
@@ -212,6 +214,10 @@ export function scanQrImage(data, width, height, { tryRescaling = true, tryWater
   for (let index = 0; index < sizes.length; index++) {
     const size = sizes[index];
     if (attempts >= regularBudget || !shouldContinue()) break;
+    const fullDetail = size[0] === sizes[0][0] && size[1] === sizes[0][1];
+    const stage = size[2] ? "qr-filtered" : fullDetail ? "qr-full-detail" : "qr-rescaled";
+    if (stage !== lastStage) onStage?.(stage);
+    lastStage = stage;
     const prepared = prepareAtSize(data, width, height, size, entryToSkip, fastResize, preparedWatermark);
     // Resizing/filtering can itself use the remaining allowance. Do not start
     // a QR search after preparation crossed the deadline.
@@ -234,6 +240,7 @@ export function scanQrImage(data, width, height, { tryRescaling = true, tryWater
   // Count the fallback against the same budget as ordinary scan attempts.
   // Preflight callers can reserve one attempt by setting maxAttempts = 3.
   if (preparedWatermark && attempts < maxAttempts && shouldContinue()) {
+    onStage?.("qr-modules");
     const code = decodePrepared(preparedWatermark, width, height, true, shouldContinue);
     if (usableResult(code)) return code;
     if (code?.data) entryLink ??= code;

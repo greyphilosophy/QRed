@@ -18,6 +18,15 @@ beforeEach(() => {
 });
 
 describe("bounded watermark scan budget", () => {
+  it("reports only the fallback phases actually reached, once per phase", () => {
+    const onStage = vi.fn();
+    scanQrImage(pixels, width, height, { onStage });
+    expect(onStage.mock.calls.flat()).toEqual(["qr-full-detail", "qr-rescaled", "qr-filtered", "qr-modules"]);
+    onStage.mockClear();
+    jsQR.mockReturnValueOnce({ data: "ordinary" });
+    scanQrImage(pixels, width, height, { onStage });
+    expect(onStage.mock.calls.flat()).toEqual(["qr-full-detail"]);
+  });
   it("stops between image attempts when its shared deadline expires", () => {
     let checks = 0;
     scanQrImage(pixels, width, height, { shouldContinue: () => checks++ < 2 });

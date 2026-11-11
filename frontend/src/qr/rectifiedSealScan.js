@@ -163,7 +163,9 @@ export function createRectifiedSealScanner(source, { curved = false } = {}) {
         const grid = refineQrModuleGrid(working, gridMap, { x: 0, y: 0, width: 1, height: 1 },
           version, { foregroundRobust, searchRadius, shouldContinue, measuredFinders: foregroundRobust });
         if (!grid || grid.quality < 0.66) continue;
-        const maps = grid.finderModuleMap ? [grid.moduleMap, grid.finderModuleMap] : [grid.moduleMap];
+        // Prefer the observed finders when extrapolation moved by half a module.
+        // Keep the alignment-only map as the alternate in case the finders were noisy.
+        const maps = grid.finderModuleMap ? [grid.finderModuleMap, grid.moduleMap] : [grid.moduleMap];
         for (const moduleMap of maps) {
           if (!shouldContinue()) return null;
           const observations = collectModuleSamples(gray, SIDE, SIDE, moduleMap, version);

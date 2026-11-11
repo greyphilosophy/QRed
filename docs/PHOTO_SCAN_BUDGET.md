@@ -208,6 +208,13 @@ small preview and fits their curvature before sampling the original photo.
 This still-photo attempt gets at most one third of the shared budget. The final
 general QR stage reuses observed pixels across consecutive filter radii at the
 same scale and measures the paper tint before rejecting colored pixels.
+The progress display identifies which fallback is running, including full-detail
+QR reading, resized QR reading, watermark filtering, and individual module votes.
+
+When the fast preview finds a sheet but rates its edges as soft, the native
+camera guide can measure focus along the curved outline. It compares small
+patches of the page between frames to tolerate a slight shift of dense printing
+during the steady hold.
 
 ## Conventional-code preflight
 

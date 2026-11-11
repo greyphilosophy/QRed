@@ -1,5 +1,6 @@
 import { locatePaper } from "./pageAlignedScan.js";
 import { estimatePaperColor } from "./paperColor.js";
+import { curvedPaperMapping } from "./curvedPaper.js";
 
 // Capture guidance, never a text/authenticity verdict. In particular, blurred
 // printing must not be rejected because OCR cannot read it. Measure the physical
@@ -9,6 +10,7 @@ const MAX_PREVIEW_SIDE = 480;
 const FRAME_MARGIN = .025;
 const MAX_CORNER_MOTION = .012;
 const MAX_FRAME_GAP_MS = 1500;
+const PAGE_CORNERS = [[0, 0], [1, 0], [1, 1], [0, 1]];
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 function insideFrame(corners, margin) {
@@ -45,16 +47,18 @@ function percentile(values, fraction) {
 
 // Measure edge spread on the guidance frame. Corner detection uses a smaller
 // thumbnail. The paper boundary supplies a focus signal even on a blank sheet.
-function boundarySharpness(image, corners) {
+function boundarySharpness(image, corners, mapping) {
   const step = Math.max(1, Math.min(image.width, image.height) / 720);
   const sides = [];
   for (let side = 0; side < 4; side++) {
     const a = corners[side], b = corners[(side + 1) % 4], length = distance(a, b);
+    const [u, v] = PAGE_CORNERS[side], [nextU, nextV] = PAGE_CORNERS[(side + 1) % 4];
     const nx = (b.y - a.y) / length, ny = (a.x - b.x) / length;
     const scores = [];
     for (let point = 1; point <= 16; point++) {
       const t = .12 + point / 17 * .76;
-      const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+      const { x, y } = mapping ? mapping(u + (nextU - u) * t, v + (nextV - v) * t)
+        : { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
       const samples = [];
       for (let offset = -8; offset <= 8; offset++) samples.push(gray(image, x + nx * offset * step, y + ny * offset * step));
       const contrast = Math.abs(samples.at(-1) - samples[0]);
@@ -70,24 +74,22 @@ function boundarySharpness(image, corners) {
 
 function samplePage(image, corners) {
   const [tl, tr, br, bl] = corners, values = [];
+  // Tiny shifts can move a single sample from paper to a printed module or
+  // letter on the same page. Compare local average tones between video frames.
+  const step = Math.max(1, Math.min(image.width, image.height) / 320);
   for (let row = 0; row < 16; row++) for (let col = 0; col < 16; col++) {
     const u = (col + .5) / 16, v = (row + .5) / 16;
-    values.push(gray(image, (tl.x * (1-u) + tr.x * u) * (1-v) + (bl.x * (1-u) + br.x * u) * v,
-      (tl.y * (1-u) + tr.y * u) * (1-v) + (bl.y * (1-u) + br.y * u) * v));
+    const x = (tl.x * (1-u) + tr.x * u) * (1-v) + (bl.x * (1-u) + br.x * u) * v;
+    const y = (tl.y * (1-u) + tr.y * u) * (1-v) + (bl.y * (1-u) + br.y * u) * v;
+    let sum = 0;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++)
+      sum += gray(image, x + dx * step, y + dy * step);
+    values.push(sum / 25);
   }
   return values;
 }
 
-export function inspectPageFrame(image, { captureOnly = false } = {}, margin = FRAME_MARGIN) {
-  if (!image?.data || image.data.length !== image.width * image.height * 4 || image.width < 40 || image.height < 40)
-    return { state: "framing", message: "Waiting for camera frames…", corners: null };
-  // Use the same illumination calibration as seal recovery. Otherwise warm
-  // paper/shadows can shift a detected edge into the surrounding desk and
-  // falsely fail the framing or focus gate before decoding can even start.
-  const small = preview(image);
-  const found = locatePaper({ ...small, paperColor: estimatePaperColor(small) });
-  if (!found) return { state: "framing", message: "Show all four page corners. Try a contrasting background, or use Capture now.", corners: null };
-  const corners = found.map(p => ({ x: p.x / small.width, y: p.y / small.height }));
+function assessOutline(image, corners, captureOnly, margin, mapping) {
   if (!insideFrame(corners, margin)) return moveBack(corners);
   const pixels = corners.map(p => ({ x: p.x * image.width, y: p.y * image.height }));
   const width = (distance(pixels[0], pixels[1]) + distance(pixels[2], pixels[3])) / 2;
@@ -102,10 +104,31 @@ export function inspectPageFrame(image, { captureOnly = false } = {}, margin = F
   const samples = samplePage(image, pixels);
   if (percentile([...samples], .8) < 65)
     return { state: "dark", message: "More light may help. You can also use Capture now.", corners };
-  const sharpness = boundarySharpness(image, pixels);
+  const sharpness = boundarySharpness(image, pixels, mapping);
   if (sharpness < .45)
     return { state: "soft", message: "The page edges look soft. Hold steady for focus, or use Capture now.", corners, sharpness };
   return { state: "clear", corners, sharpness, samples };
+}
+
+export function inspectPageFrame(image, { captureOnly = false } = {}, margin = FRAME_MARGIN) {
+  if (!image?.data || image.data.length !== image.width * image.height * 4 || image.width < 40 || image.height < 40)
+    return { state: "framing", message: "Waiting for camera frames…", corners: null };
+  const small = preview(image);
+  const found = locatePaper({ ...small, paperColor: estimatePaperColor(small) });
+  if (!found) return { state: "framing", message: "Show all four page corners. Try a contrasting background, or use Capture now.", corners: null };
+  const corners = found.map(p => ({ x: p.x / small.width, y: p.y / small.height }));
+  const initial = assessOutline(image, corners, captureOnly, margin);
+  if (!captureOnly || initial.state !== "soft") return initial;
+  // A fabric highlight can pull the straight edge off the sheet. Remeasure
+  // focus along the four observed paper edges before asking for a sharper photo.
+  const mapping = curvedPaperMapping(image);
+  if (!mapping) return initial;
+  const curvedCorners = PAGE_CORNERS.map(([u, v]) => {
+    const p = mapping(u, v);
+    return { x: p.x / image.width, y: p.y / image.height };
+  });
+  const curved = assessOutline(image, curvedCorners, captureOnly, margin, mapping);
+  return curved.state === "clear" ? curved : initial;
 }
 
 export function createPageCaptureGate() {

@@ -40,8 +40,9 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
   // Report only fixed stage names and elapsed time, never document pixels,
   // decoded text or seal bytes. The caller can retain the last checkpoint
   // even if its watchdog has to terminate synchronous decoding mid-attempt.
+  const reportStage = stage => onStage?.({ stage, elapsedMs: Math.max(0, Math.round(performance.now() - started)) });
   const attempt = (stage, run) => {
-    onStage?.({ stage, elapsedMs: Math.max(0, Math.round(performance.now() - started)) });
+    reportStage(stage);
     return run();
   };
   const partials = new Set();
@@ -120,7 +121,8 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
     const texts = [...new Set([...aligned.map(result => result.seal), ...partials])];
     if (texts.length) return { status: "found-multiple", texts };
   }
-  const code = shouldContinue() ? attempt("general-qr", () => scanQrImage(data, width, height, { shouldContinue })) : null;
+  const code = shouldContinue() ? attempt("general-qr", () => scanQrImage(data, width, height,
+    { shouldContinue, ...(onStage ? { onStage: reportStage } : {}) })) : null;
   if (code?.codes) return qrFrameAction(image, code, { returnPayload });
   if (!code) return { status: "feedback", message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For footer seals, try framing the individual QR instead." };
   const text = qredTextFromScanResult(code);

@@ -300,6 +300,21 @@ it("reports the direct QR stage for non-payload callers without exposing recover
   expect(Object.keys(onStage.mock.calls[0][0]).sort()).toEqual(["elapsedMs", "stage"]);
 });
 
+it("timestamps the specific final fallback before the worker starts it", () => {
+  let now = 100;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  scanQrImage.mockImplementation((_data, _width, _height, { onStage }) => {
+    now += 75;
+    onStage("qr-filtered");
+    return null;
+  });
+  const onStage = vi.fn();
+  decodePhoto(image, { onStage });
+  expect(onStage.mock.calls.flat()).toEqual([
+    { stage: "general-qr", elapsedMs: 0 }, { stage: "qr-filtered", elapsedMs: 75 },
+  ]);
+});
+
 it.each([[8000, 1300, 3300], [4000, 500, 1500]])(
   "leaves wider recovery reachable after the ordinary preflight allowance (%s ms overall)",
   (maxDurationMs, ordinaryStart, ordinaryEnd) => {
