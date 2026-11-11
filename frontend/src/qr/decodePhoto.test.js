@@ -177,12 +177,17 @@ it("reserves time for a footer seal after the local alignment deadline", () => {
 });
 
 it("keeps the wider alignment search after quick, preview and footer misses", async () => {
+  const mapping = (u, v) => ({ x: u * image.width, y: v * image.height });
+  createRectifiedSealScanner.mockImplementationOnce((source, { onMapping }) => options => {
+    onMapping(mapping);
+    return scanRectifiedSeal(source, options);
+  });
   scanRectifiedSeal.mockReturnValueOnce(null).mockReturnValueOnce({ seal: single });
   const action = decodePhoto(image, { returnPayload: true });
   expect(action).toEqual({ status: "found", text: single });
   expect(scanRectifiedSeal).toHaveBeenCalledTimes(2);
   expect(createRectifiedSealScanner).toHaveBeenCalledTimes(1);
-  expect(createRectifiedSealScanner).toHaveBeenCalledWith(image);
+  expect(prepareCurvedPageScan).toHaveBeenCalledWith(image, mapping, expect.any(Function));
   expect(scanRectifiedSeal).toHaveBeenLastCalledWith(image, { shouldContinue: expect.any(Function) });
   expect(scanQrImage.mock.invocationCallOrder[0]).toBeLessThan(scanRectifiedSeal.mock.invocationCallOrder[1]);
   expect(scanPageAlignedImage).not.toHaveBeenCalled();
