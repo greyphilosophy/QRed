@@ -121,7 +121,24 @@ def install_changing_camera(page, frames):
         };
         window.__showWorkflowFrame = mode => {
             __workflowCamera.mode = mode;
-            if (mode === 'clear') __workflowCamera.clearAt = performance.now();
+            if (mode === 'guide') {
+                // Place the whole printed page exactly where the visible corners
+                // ask the user to hold it, accounting for object-fit: contain.
+                const video = document.querySelector('video');
+                const view = video.getBoundingClientRect();
+                const box = document.querySelector('.page-scan-guide').getBoundingClientRect();
+                const scale = Math.min(view.width / frame.width, view.height / frame.height);
+                const left = view.left + (view.width - frame.width * scale) / 2;
+                const top = view.top + (view.height - frame.height * scale) / 2;
+                const guided = document.createElement('canvas');
+                guided.width = frame.width; guided.height = frame.height;
+                const g = guided.getContext('2d');
+                g.fillStyle = '#373737'; g.fillRect(0, 0, guided.width, guided.height);
+                g.drawImage(images.clipped, (box.left - left) / scale, (box.top - top) / scale,
+                    box.width / scale, box.height / scale);
+                images.guide = guided;
+            }
+            if (mode === 'clear' || mode === 'guide') __workflowCamera.clearAt = performance.now();
             draw();
         };
         __showWorkflowFrame('clipped');
@@ -156,12 +173,14 @@ def install_changing_camera(page, frames):
 
 
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
-@pytest.mark.parametrize("degraded,preview_size,guidance_size", [
-    (False, (768, 960), (768, 960)), (True, (768, 960), (768, 960)),
-    (False, (360, 480), (360, 480)), (False, (1536, 1920), (1024, 1280)),
-], ids=["clear", "scaled-dim-jpeg", "low-resolution-preview", "high-resolution-preview"])
-def test_full_printed_page_guidance_capture_and_verification(browser, printed_workflow_page, path, degraded, preview_size, guidance_size):
-    context = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="allow")
+@pytest.mark.parametrize("degraded,preview_size,guidance_size,viewport", [
+    (False, (768, 960), (768, 960), (390, 844)), (True, (768, 960), (768, 960), (390, 844)),
+    (False, (360, 480), (360, 480), (390, 844)), (False, (1536, 1920), (1024, 1280), (390, 844)),
+    (False, (1920, 1080), (1280, 720), (360, 698)), (False, (1920, 1080), (1280, 720), (800, 360)),
+], ids=["clear", "scaled-dim-jpeg", "low-resolution-preview", "high-resolution-preview",
+        "wide-camera-portrait-guide", "wide-camera-landscape-guide"])
+def test_full_printed_page_guidance_capture_and_verification(browser, printed_workflow_page, path, degraded, preview_size, guidance_size, viewport):
+    context = browser.new_context(viewport={"width": viewport[0], "height": viewport[1]}, service_workers="allow")
     try:
         context.route("**/api/keys/default", lambda route: route.fulfill(json={"public_key": PUBLIC_KEY}))
         page = context.new_page()
@@ -188,7 +207,8 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
             expect(page.locator(".page-check-list button")).to_have_count(0)
 
         started = time.monotonic()
-        page.evaluate("__workflowLongTasks.length = 0; __showWorkflowFrame('clear')")
+        clear_mode = "guide" if preview_size[0] > preview_size[1] else "clear"
+        page.evaluate("mode => { __workflowLongTasks.length = 0; __showWorkflowFrame(mode); }", clear_mode)
         # No Capture now click, file picker, seal injection, or decoded result.
         review = page.get_by_role("region", name="Review Page 1 of 1", exact=True)
         expect(review).to_be_visible(timeout=15000)
@@ -222,7 +242,7 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         assert len(decoded) == 1, decoded
         assert (decoded[0]["width"], decoded[0]["height"]) == (2400, 3000)
         assert page.evaluate("__syntheticStillRequests.length") == 1
-        assert page.evaluate("__workflowCamera.captures[0].mode") == "clear"
+        assert page.evaluate("__workflowCamera.captures[0].mode") == clear_mode
         assert page.evaluate("__workflowCamera.captures[0].at - __workflowCamera.clearAt") >= 600
         assert page.evaluate("__workflowCamera.opens") == 1
         assert page.evaluate("__workflowCamera.tracks.every(track => track.readyState === 'ended')")
