@@ -85,7 +85,7 @@ export function cameraCaptureFeedback(action, capture) {
 
 const unsupportedOptions = error => ["NotSupportedError", "OverconstrainedError", "TypeError"].includes(error?.name);
 
-export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NATIVE_PHOTO_TIMEOUT_MS, onDiagnostic,
+export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NATIVE_PHOTO_TIMEOUT_MS, onDiagnostic, onPhotoBlob,
   requireHighResolution = false } = {}) {
   signal?.throwIfAborted();
   const started = performance.now();
@@ -144,7 +144,7 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
       replacingFrame = true;
       canvas.width = widthPixels; canvas.height = heightPixels;
       context.drawImage(bitmap, 0, 0, widthPixels, heightPixels);
-      return { image: context.getImageData(0, 0, widthPixels, heightPixels),
+      return { image: context.getImageData(0, 0, widthPixels, heightPixels), blob,
         diagnostic: { source: "native-still", width: widthPixels, height: heightPixels,
           sourceWidth: bitmap.width, sourceHeight: bitmap.height,
           preparationMs: Math.round(performance.now() - started), reason: "captured" } };
@@ -168,10 +168,24 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
     ]);
     signal?.throwIfAborted();
     onDiagnostic?.(result.diagnostic);
+    if (result.image) onPhotoBlob?.(result.blob);
     return result.image;
   } finally {
     active = false; clearTimeout(timer); signal?.removeEventListener("abort", abort);
   }
+}
+
+// The user can keep the exact camera file after a failed read. Creating the
+// download only on a click keeps the photo in memory until the user chooses.
+export function downloadCameraPhoto(blob) {
+  const extensions = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+    "image/avif": ".avif", "image/heic": ".heic", "image/heif": ".heif" };
+  const url = URL.createObjectURL(blob), link = document.createElement("a");
+  link.href = url;
+  link.download = "QRed-scan-photo" + (extensions[blob.type] || "");
+  document.body.appendChild(link);
+  try { link.click(); }
+  finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 }
 
 // An operational floor for a full-page photograph, not a readability verdict.

@@ -47,20 +47,26 @@ function percentile(values, fraction) {
 
 // Measure edge spread on the guidance frame. Corner detection uses a smaller
 // thumbnail. The paper boundary supplies a focus signal even on a blank sheet.
-function boundarySharpness(image, corners, mapping) {
+function measureBoundary(image, corners, mapping) {
   const step = Math.max(1, Math.min(image.width, image.height) / 720);
-  const sides = [];
+  const sides = [], edgeSigns = [];
   for (let side = 0; side < 4; side++) {
     const a = corners[side], b = corners[(side + 1) % 4], length = distance(a, b);
     const [u, v] = PAGE_CORNERS[side], [nextU, nextV] = PAGE_CORNERS[(side + 1) % 4];
     const nx = (b.y - a.y) / length, ny = (a.x - b.x) / length;
     const scores = [];
+    let lighter = 0, darker = 0;
     for (let point = 1; point <= 16; point++) {
       const t = .12 + point / 17 * .76;
       const { x, y } = mapping ? mapping(u + (nextU - u) * t, v + (nextV - v) * t)
         : { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
       const samples = [];
       for (let offset = -8; offset <= 8; offset++) samples.push(gray(image, x + nx * offset * step, y + ny * offset * step));
+      // A sheet edge has a consistent change from outside to inside. Text
+      // near a falsely detected edge can be sharp but varies in both directions.
+      const change = (samples[0] + samples[2] + samples[4] - samples[12] - samples[14] - samples[16]) / 3;
+      if (change >= 12) lighter++;
+      if (change <= -12) darker++;
       const contrast = Math.abs(samples.at(-1) - samples[0]);
       if (contrast < 12) continue;
       let largest = 0;
@@ -68,8 +74,9 @@ function boundarySharpness(image, corners, mapping) {
       scores.push(Math.min(1, largest / contrast));
     }
     sides.push(scores.length >= 6 ? percentile(scores, .5) : 0);
+    edgeSigns.push(lighter >= 10 ? 1 : darker >= 10 ? -1 : 0);
   }
-  return percentile(sides, .25);
+  return { sharpness: percentile(sides, .25), consistent: edgeSigns[0] !== 0 && edgeSigns.every(sign => sign === edgeSigns[0]) };
 }
 
 function samplePage(image, corners) {
@@ -104,7 +111,7 @@ function assessOutline(image, corners, captureOnly, margin, mapping) {
   const samples = samplePage(image, pixels);
   if (percentile([...samples], .8) < 65)
     return { state: "dark", message: "More light may help. You can also use Capture now.", corners };
-  const sharpness = boundarySharpness(image, pixels, mapping);
+  const { sharpness } = measureBoundary(image, pixels, mapping);
   if (sharpness < .45)
     return { state: "soft", message: "The page edges look soft. Hold steady for focus, or use Capture now.", corners, sharpness };
   return { state: "clear", corners, sharpness, samples };
@@ -118,9 +125,13 @@ export function inspectPageFrame(image, { captureOnly = false } = {}, margin = F
   if (!found) return { state: "framing", message: "Show all four page corners. Try a contrasting background, or use Capture now.", corners: null };
   const corners = found.map(p => ({ x: p.x / small.width, y: p.y / small.height }));
   const initial = assessOutline(image, corners, captureOnly, margin);
-  if (!captureOnly || initial.state !== "soft") return initial;
-  // A fabric highlight can pull the straight edge off the sheet. Remeasure
-  // focus along the four observed paper edges before asking for a sharper photo.
+  if (!captureOnly || (initial.state !== "soft" && initial.state !== "small")) return initial;
+  if (initial.state === "small") {
+    const pixels = corners.map(p => ({ x: p.x * image.width, y: p.y * image.height }));
+    if (measureBoundary(image, pixels).consistent) return initial;
+  }
+  // Mixed illumination can make only the middle of a sheet look like paper.
+  // Check the other outline against the same framing, light and focus criteria.
   const mapping = curvedPaperMapping(image);
   if (!mapping) return initial;
   const curvedCorners = PAGE_CORNERS.map(([u, v]) => {

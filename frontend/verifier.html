@@ -338,9 +338,10 @@
         <button class="btn btn-primary" id="btnScan">Check document</button>
         <button class="btn btn-primary" id="btnCapture" hidden>Capture now</button>
         <button class="btn btn-secondary" id="btnChoosePhoto">Choose photo</button>
+        <button class="btn btn-secondary" id="btnSavePhoto" hidden>Save scan photo</button>
         <input id="pagePhotoInput" type="file" accept="image/*" aria-label="Choose a high-resolution page photo" hidden>
       </div>
-      <p class="page-scan-hint">Camera images stay in this session. QRed does not save them to your photo library or upload them.</p>
+      <p class="page-scan-hint">Camera photos stay on this device. QRed only saves a copy when you choose Save scan photo.</p>
       <p id="clearNotice" role="status"></p>
 
       <div class="status-bar" id="statusBar">
@@ -395,7 +396,7 @@
     import { startCameraSession } from "./src/qr/cameraSession.js";
     import { observePageScanGuide } from "./src/qr/pageScanGuide.js";
     import { getPreferredCameraStream, applyCameraQualityControls } from "./src/qr/cameraControls.js";
-    import { readCameraFrame, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext } from "./src/qr/cameraPhoto.js";
+    import { readCameraFrame, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext, downloadCameraPhoto } from "./src/qr/cameraPhoto.js";
     import { mountPhotoScanProgress } from "./src/qr/mountPhotoScanProgress.js";
     import { createLiveScanWorker, preparePhotoScanner, scanPhotoInWorker } from "./src/qr/photoScanClient.js";
     import { decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
@@ -465,6 +466,11 @@
     // Camera handling
     var btnScan = document.getElementById("btnScan");
     var btnCapture = document.getElementById("btnCapture");
+    var btnSavePhoto = document.getElementById("btnSavePhoto");
+    function offerFailedPhoto(blob) {
+      btnSavePhoto.hidden = !blob;
+      btnSavePhoto.onclick = blob ? function() { downloadCameraPhoto(blob); } : null;
+    }
     var btnNewScan = document.getElementById("btnNewScan");
     var btnChoosePhoto = document.getElementById("btnChoosePhoto");
     var pagePhotoInput = document.getElementById("pagePhotoInput");
@@ -625,7 +631,7 @@
       var liveProgress = null;
       var captureDiagnostic = null;
       var lastQuality = null;
-      var acquisitionFailed = false, manualFailure = false;
+      var acquisitionFailed = false, autoPaused = false;
       var generation = state.startGeneration;
       function active() { return state.isScanning && state.startGeneration === generation && state.liveScan === liveScan; }
       btnCapture.hidden = !openCamera; btnCapture.textContent = "Capture now";
@@ -673,7 +679,7 @@
           readiness.hidden = quality.state !== "hold"; readiness.value = quality.progress;
         },
         onCaptured: function({ captureOnly } = {}) {
-          if (!active() || state.photoScan || manualFailure) return;
+          if (!active() || state.photoScan || autoPaused) return;
           if (captureOnly) { btnCapture.onclick({ preserveGate: true }); return; }
           processingCapture = true;
           liveProgress = photoScanProgress.begin("decoding");
@@ -696,10 +702,11 @@
       state.isScanning = true;
       updatePhotoComparison();
       function cancelPhoto({ resumeCamera = false } = {}) {
+        offerFailedPhoto(null);
         photoScanProgress.clear(); liveProgress = null;
         state.photoScan?.abort(); state.photoScan = null;
         processingCapture = false;
-        manualFailure = !resumeCamera;
+        autoPaused = !resumeCamera;
         if (resumeCamera) {
           acquisitionFailed = false;
           // Begin a fresh steady hold, without reusing a queued quality result
@@ -719,8 +726,9 @@
           if (!file) return;
         }
         if (!file && (!video.videoWidth || !video.videoHeight)) { hint.textContent = "Camera is preparing. Try Capture now in a moment, or choose a photo."; return; }
+        offerFailedPhoto(null);
         if (!preserveGate) liveScan.reset();
-        acquisitionFailed = false; manualFailure = false;
+        acquisitionFailed = false; autoPaused = false;
         var controller = new AbortController(); state.photoScan = controller;
         var progress = photoScanProgress.begin(file ? "opening" : "capturing");
         var photoCanvas = document.createElement("canvas");
@@ -730,23 +738,31 @@
         captureDiagnostic = null;
         var captureContext = file ? {} : cameraCaptureContext(
           { width: video.videoWidth, height: video.videoHeight }, preserveGate, lastQuality);
+        var nativeBlob;
         try {
-          var options = { signal: controller.signal, requireHighResolution: true, onDiagnostic: function(diagnostic) {
+          var options = { signal: controller.signal, requireHighResolution: true, onPhotoBlob: function(blob) { nativeBlob = blob; }, onDiagnostic: function(diagnostic) {
             if (current()) captureDiagnostic = { ...diagnostic, ...captureContext };
           } };
           var still = file ? await readCameraPhotoFile(file, photoCanvas, options)
             : await captureCameraPhoto(video, photoCanvas, options);
           if (!current()) return;
           if (!still) {
-            acquisitionFailed = true; manualFailure = !preserveGate;
+            acquisitionFailed = true; autoPaused = !preserveGate;
             collectFrame(cameraPhotoFailure(captureDiagnostic));
             return;
           }
           progress.phase("decoding");
           var action = await scanPhotoInWorker(still, { returnPayload: true, signal: controller.signal, onStage: progress.stage });
-          if (current()) collectFrame(action, photoCanvas);
+          if (current()) {
+            if (action.timedOut) autoPaused = true;
+            if (nativeBlob && (action.timedOut || action.status === "feedback")) offerFailedPhoto(nativeBlob);
+            collectFrame(action, photoCanvas);
+          }
         } catch (error) {
-          if (current() && error.name !== "AbortError") hint.textContent = error.message;
+          if (current() && error.name !== "AbortError") {
+            if (nativeBlob) offerFailedPhoto(nativeBlob);
+            hint.textContent = error.message;
+          }
         } finally {
           progress.stop();
           photoCanvas.width = photoCanvas.height = 0;
@@ -764,7 +780,7 @@
         onFrame: function() {
           if (!active() || !video.videoWidth || !video.videoHeight) return;
           statusBar.classList.add("visible");
-          if (liveScan.busy || state.photoScan || manualFailure) return;
+          if (liveScan.busy || state.photoScan || autoPaused) return;
           var preview = readCameraFrame(video, canvas, { forGuidance: true });
           if (preview) liveScan.scan(preview, { captureOnly: true });
         },
@@ -773,6 +789,7 @@
     }
 
     function stopScanning() {
+      offerFailedPhoto(null);
       photoScanProgress.clear();
       state.isScanning = false;
       state.camera?.stop();

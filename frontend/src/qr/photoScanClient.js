@@ -62,7 +62,7 @@ function runPhotoWorker(image, { signal, onStage, ...request }) {
     // Promise.race cannot interrupt jsQR while it is still using the CPU.
     // OCR pixel preparation is a separate operation with its own caller.
     if (!request.prepareReading) timeout = setTimeout(() =>
-      finish(null, photoScanTimeoutAction(partial, stage)), PHOTO_SCAN_BUDGET_MS);
+      finish(null, photoScanTimeoutAction(partial, stage, workerUrl)), PHOTO_SCAN_BUDGET_MS);
     try {
       // Transfer ownership instead of cloning a 12–48 MP pixel buffer.
       worker.postMessage({ image: { data: image.data, width: image.width, height: image.height }, ...request },
@@ -130,7 +130,7 @@ export function createLiveScanWorker({ onResult, onError, returnPayload = false,
               if (data.captureOnly) busy = false;
               else if (timeout === undefined) timeout = setTimeout(() => {
                 if (worker !== current || stopped || !busy) return;
-                const action = photoScanTimeoutAction(partial, stage);
+                const action = photoScanTimeoutAction(partial, stage, workerUrl);
                 reset();
                 // Termination also discards the page-movement gate. Do not
                 // recapture unchanged paper forever; Capture now/reset resumes.

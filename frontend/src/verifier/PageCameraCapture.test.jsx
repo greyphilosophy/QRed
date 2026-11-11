@@ -136,6 +136,10 @@ it("sends native still pixels to retake decoding and preserves their dimensions 
   expect(screen.getByRole("alert").textContent).toContain("manual capture, 800 × 1000 preview, last guide: page edges soft");
   expect(capture).not.toHaveBeenCalled();
   expect(camera.reset).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("button", { name: "Save scan photo" })).toBeTruthy();
+  camera.liveScan.mockClear();
+  act(() => camera.options.onFrame());
+  expect(camera.liveScan).not.toHaveBeenCalled();
 });
 
 function canvasPixels() {

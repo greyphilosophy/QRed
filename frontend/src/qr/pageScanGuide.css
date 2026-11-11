@@ -1,4 +1,4 @@
-.page-scan-guide-area[hidden], .capture-readiness[hidden], #btnCapture[hidden] { display: none; }
+.page-scan-guide-area[hidden], .capture-readiness[hidden], #btnCapture[hidden], #btnSavePhoto[hidden] { display: none; }
 
 .page-scan-guide-area {
   position: absolute;

@@ -10,7 +10,7 @@ export { qrScanAction } from "./qr/decodePhoto.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
 import { PhotoScanProgress, usePhotoScanProgress } from "./qr/PhotoScanProgress.jsx";
-import { readCameraFrame, canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback, cameraPhotoFailure, cameraCaptureContext } from "./qr/cameraPhoto.js";
+import { readCameraFrame, canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback, cameraPhotoFailure, cameraCaptureContext, downloadCameraPhoto } from "./qr/cameraPhoto.js";
 import "./qrScanner.css";
 
 /**
@@ -134,7 +134,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
         React.createElement("p", { className: "eyebrow" }, "QRed AR verifier"),
         React.createElement("h1", null, "Check a printed document"),
         React.createElement("p", null, "Frame each whole page and hold steady. QRed captures automatically, then checks the seal and printed text."),
-        React.createElement("p", { className: "camera-privacy" }, "Camera images stay in this session. QRed does not save them to your photo library or upload them."),
+        React.createElement("p", { className: "camera-privacy" }, "Camera photos stay on this device. QRed only saves a copy when you choose Save scan photo."),
         completionNotice ? React.createElement("p", { id: "check-clear-note", role: "status" }, completionNotice) : null,
         preparationError ? React.createElement("p", { role: "alert" }, preparationError + " Try Check document again while connected.") : null
       )
@@ -202,6 +202,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
   const [feedback, setFeedback] = useState(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [quality, setQuality] = useState(null);
+  const [failedPhoto, setFailedPhoto] = useState(null);
 
   function markCameraReady(ready) {
     if (cameraReadyRef.current === ready) return;
@@ -216,7 +217,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
     let processingCapture = false;
     let captureDiagnostic = null;
     let lastQuality = null;
-    let manualCaptureFailed = false;
+    let autoPaused = false;
     const capturedCanvas = canvasRef.current;
     let camera;
     const stopGuide = observePageScanGuide(videoRef.current, guideAreaRef.current, guideRef.current);
@@ -230,6 +231,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
         if (!quality.ready && captureReported) { captureReported = false; setFeedback(null); }
       },
       onCaptured: ({ captureOnly } = {}) => {
+        if (autoPaused) return;
         if (captureOnly) { capturePhoto(true); return; }
         processingCapture = true;
         captureDiagnostic = cameraFrameDiagnostic(canvasRef.current);
@@ -290,10 +292,11 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
 
     function capturePhoto(preserveGate = false) {
       if (photoScanRef.current) return;
+      setFailedPhoto(null);
       // A queued live result must never be attached to the new still photo.
       if (!preserveGate) liveScan.reset();
       captureDiagnostic = null;
-      manualCaptureFailed = false;
+      autoPaused = false;
       activeProgress?.stop();
       const attemptProgress = progress.begin("capturing");
       activeProgress = attemptProgress;
@@ -303,7 +306,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
         attemptProgress.stop();
         pendingManualCaptureRef.current = false;
         pendingManualCaptureStartedAtRef.current = null;
-        manualCaptureFailed = autoCapture && !preserveGate;
+        autoPaused = autoCapture && !preserveGate;
         onReadingPhoto(false);
         setFeedback("The camera frame could not be read. Try Capture now again, or choose a photo.");
         return;
@@ -323,9 +326,10 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       const captureContext = cameraCaptureContext(image, preserveGate, lastQuality);
       captureDiagnostic = cameraFrameDiagnostic(image);
       setFeedback(null);
+      let nativeBlob;
       const read = async () => {
         const still = nativePhoto ? await captureCameraPhoto(videoRef.current, canvasRef.current,
-          { signal: controller.signal, requireHighResolution: autoCapture, onDiagnostic: diagnostic => {
+          { signal: controller.signal, requireHighResolution: autoCapture, onPhotoBlob: blob => { nativeBlob = blob; }, onDiagnostic: diagnostic => {
             if (photoScanRef.current === controller) captureDiagnostic = { ...diagnostic, ...captureContext };
           } }) : null;
         controller.signal.throwIfAborted();
@@ -335,12 +339,14 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       };
       read().then(action => {
         if (photoScanRef.current !== controller) return;
-        manualCaptureFailed = autoCapture && !preserveGate && Boolean(action.captureFailed);
+        if (nativeBlob && (action.timedOut || action.status === "feedback")) setFailedPhoto(nativeBlob);
+        autoPaused = autoCapture && (action.timedOut || (!preserveGate && action.captureFailed));
         setFeedback(null);
         handleScanActionRef.current(action);
       }).catch(error => {
         if (photoScanRef.current === controller && error.name !== "AbortError") {
-          manualCaptureFailed = autoCapture && !preserveGate;
+          if (nativeBlob) setFailedPhoto(nativeBlob);
+          autoPaused = autoCapture && !preserveGate;
           setFeedback(error.message);
         }
       }).finally(() => {
@@ -367,7 +373,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
 
     function scanFrame() {
       // Preserve the photographed canvas until its worker result is collected.
-      if (photoScanRef.current || manualCaptureFailed) return;
+      if (photoScanRef.current || autoPaused) return;
       const video = videoRef.current, canvas = canvasRef.current;
       const frameReady = isCameraFrameReady(video, canvas);
       if (frameReady) markCameraReady(true);
@@ -446,6 +452,8 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
     cameraReady && !progressSnapshot ? React.createElement("div", { className: "ar-scan-feedback", role: "status", "aria-live": "polite" },
       quality && !feedback ? React.createElement("span", null, quality.message) : null,
       feedback ? React.createElement("span", null, feedback) : null,
+      failedPhoto ? React.createElement("button", { type: "button", className: "save-scan-photo",
+        onClick: () => downloadCameraPhoto(failedPhoto) }, "Save scan photo") : null,
       !quality && !feedback ? "Keep all four page corners visible. Avoid glare." : null,
       quality?.state === "hold" && !feedback ? React.createElement("progress", { className: "capture-readiness", max: 1,
         value: quality.progress, "aria-label": "Steady hold before automatic capture" }) : null) : null,
