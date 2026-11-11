@@ -7,34 +7,38 @@ import { isChromaticForeground, normalizeWatermarkLuminance } from "./watermarkF
 const OFFSETS = [0.15, 0.325, 0.5, 0.675, 0.85];
 const MIN_SAMPLES = 4;
 
-function moduleVote(matrix, mapping, original, normalized, width, height) {
+function moduleVote(matrix, mapping, original, normalized, width, height, paperColor, shouldContinue) {
   const votes = [];
-  for (let y = 0; y < matrix.height; y++) for (let x = 0; x < matrix.width; x++) {
-    let light = 0, ink = 0;
-    for (const dy of OFFSETS) for (const dx of OFFSETS) {
-      const point = mapping(x + dx, y + dy);
-      const sx = Math.floor(point.x), sy = Math.floor(point.y);
-      if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
-      const index = sy * width + sx;
-      const value = normalized[index];
-      // A QR watermark is neutral gray. Colored text is foreground even if
-      // its *brightness* resembles our watermark, and black text hides it.
-      // Midtones near the decision threshold are uncertain, not hard votes.
-      if (value < 180 || isChromaticForeground(original, index * 4)) continue;
-      if (value <= 235) ink++;
-      else if (value >= 245) light++;
+  for (let y = 0; y < matrix.height; y++) {
+    if (shouldContinue && !shouldContinue()) return null;
+    for (let x = 0; x < matrix.width; x++) {
+      let light = 0, ink = 0;
+      for (const dy of OFFSETS) for (const dx of OFFSETS) {
+        const point = mapping(x + dx, y + dy);
+        const sx = Math.floor(point.x), sy = Math.floor(point.y);
+        if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
+        const index = sy * width + sx;
+        const value = normalized[index];
+        // A QR watermark is neutral gray. Colored text is foreground even if
+        // its *brightness* resembles our watermark, and black text hides it.
+        // Midtones near the decision threshold are uncertain, not hard votes.
+        if (value < 180 || isChromaticForeground(original, index * 4, paperColor)) continue;
+        if (value <= 235) ink++;
+        else if (value >= 245) light++;
+      }
+      const count = ink + light;
+      const reliable = count >= MIN_SAMPLES && Math.abs(ink - light) >= Math.max(2, Math.ceil(count * 0.2));
+      if (reliable) votes.push([x, y, ink > light]);
+      // Fully hidden modules retain the existing local-filter estimate.
     }
-    const count = ink + light;
-    const reliable = count >= MIN_SAMPLES && Math.abs(ink - light) >= Math.max(2, Math.ceil(count * 0.2));
-    if (reliable) votes.push([x, y, ink > light]);
-    // Fully hidden modules retain the existing local-filter estimate.
   }
   if (votes.length < matrix.width * matrix.height * 0.25) return null;
   for (const [x, y, dark] of votes) matrix.set(x, y, dark);
   return matrix;
 }
 
-export function scanModuleAwareQr(originalRgba, filteredRgba, width, height, normalizedImage = null) {
+export function scanModuleAwareQr(originalRgba, filteredRgba, width, height, normalizedImage = null,
+  { paperColor = null, shouldContinue } = {}) {
   if (!width || !height || width * height > 2_500_000 ||
       originalRgba.length !== width * height * 4 ||
       filteredRgba.length !== width * height * 4) return null;
@@ -44,7 +48,9 @@ export function scanModuleAwareQr(originalRgba, filteredRgba, width, height, nor
   // no second QR implementation, and no dependence on the original PDF.
   const code = jsQR(filteredRgba, width, height, {
     inversionAttempts: "dontInvert",
-    moduleSampler: (matrix, mapping) => moduleVote(matrix, mapping, originalRgba, normalized, width, height),
+    ...(shouldContinue ? { shouldContinue } : {}),
+    moduleSampler: (matrix, mapping) => moduleVote(matrix, mapping, originalRgba, normalized, width, height,
+      paperColor, shouldContinue),
   });
   return code ? { ...code, moduleAware: true } : null;
 }

@@ -116,7 +116,7 @@ function locateAlignment(image, expected, ux, uy, vx, vy, foregroundRobust, sear
   return best;
 }
 
-function solve3(matrix, vector) {
+export function solve3(matrix, vector) {
   const a = matrix.map((row, i) => [...row, vector[i]]);
   for (let i = 0; i < 3; i++) {
     let pivot = i;
@@ -168,7 +168,7 @@ function bracket(centers, value, extrapolate) {
 // fit a robust affine grid, then interpolate small residual distortions
 // throughout each QR independently. All observations come from the photo.
 export function refineQrModuleGrid(image, pageMapping, region, version, {
-  foregroundRobust = false, searchRadius = 39, shouldContinue = () => true,
+  foregroundRobust = false, searchRadius = 39, shouldContinue = () => true, measuredFinders = false,
 } = {}) {
   const centers = alignmentCenters(version);
   if (centers.length < 3) return null;
@@ -244,18 +244,39 @@ export function refineQrModuleGrid(image, pageMapping, region, version, {
     grid[index] = { dx: dx / sum, dy: dy / sum };
   }
   const markers = centers.map(c => c + 0.5);
-  const moduleMap = (col, row) => {
-    const p = predicted(aff, col, row);
-    const [x0, x1, fx] = bracket(markers, col, foregroundRobust);
-    const [y0, y1, fy] = bracket(markers, row, foregroundRobust);
-    const a = grid[y0 * m + x0], b = grid[y0 * m + x1];
-    const c = grid[y1 * m + x0], d = grid[y1 * m + x1];
-    return {
-      x: p.x + (a.dx * (1 - fx) + b.dx * fx) * (1 - fy) +
-        (c.dx * (1 - fx) + d.dx * fx) * fy,
-      y: p.y + (a.dy * (1 - fx) + b.dy * fx) * (1 - fy) +
-        (c.dy * (1 - fx) + d.dy * fx) * fy,
+  function mapWith(offsets) {
+    return (col, row) => {
+      const p = predicted(aff, col, row);
+      const [x0, x1, fx] = bracket(markers, col, foregroundRobust);
+      const [y0, y1, fy] = bracket(markers, row, foregroundRobust);
+      const a = offsets[y0 * m + x0], b = offsets[y0 * m + x1];
+      const c = offsets[y1 * m + x0], d = offsets[y1 * m + x1];
+      return {
+        x: p.x + (a.dx * (1 - fx) + b.dx * fx) * (1 - fy) +
+          (c.dx * (1 - fx) + d.dx * fx) * fy,
+        y: p.y + (a.dy * (1 - fx) + b.dy * fx) * (1 - fy) +
+          (c.dy * (1 - fx) + d.dy * fx) * fy,
+      };
     };
-  };
-  return { moduleMap, quality: inlierCount / (m * m - 3) };
+  }
+  const result = { moduleMap: mapWith(grid), quality: inlierCount / (m * m - 3) };
+  // A shift of half a module can move a sample into a neighboring cell.
+  const halfPitch = Math.min(Math.hypot(right.x - middle.x, right.y - middle.y),
+    Math.hypot(down.x - middle.x, down.y - middle.y)) / 2;
+  const finderPositions = [[3.5, 3.5], [size - 3.5, 3.5], [3.5, size - 3.5]];
+  if (measuredFinders && finderPositions.some(([col, row]) => {
+    const measured = map(col, row), inferred = result.moduleMap(col, row);
+    return Math.hypot(measured.x - inferred.x, measured.y - inferred.y) > halfPitch;
+  })) {
+    // Three corners contain finders instead of alignment markers. On curled
+    // paper the neighboring markers can extrapolate past those visible finders.
+    const anchored = grid.slice();
+    for (const [col, row] of [[0, 0], [m - 1, 0], [0, m - 1]]) {
+      const x = markers[col], y = markers[row];
+      const observed = map(x, y), fitted = predicted(aff, x, y);
+      anchored[row * m + col] = { dx: observed.x - fitted.x, dy: observed.y - fitted.y };
+    }
+    result.finderModuleMap = mapWith(anchored);
+  }
+  return result;
 }

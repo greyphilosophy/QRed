@@ -7,13 +7,13 @@ import { PHOTO_SCAN_BUDGET_MS } from "./photoScanBudget.js";
 import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
 import { scanFooterSeals } from "./footerSealScan.js";
-import { scanRectifiedSeal, createRectifiedSealScanner } from "./rectifiedSealScan.js";
+import { scanRectifiedSeal, createRectifiedSealScanner, scanCurvedPageSeal } from "./rectifiedSealScan.js";
 
 vi.mock("./scanQrImage.js", () => ({ scanQrImage: vi.fn(), scanWatermarkPreview: vi.fn() }));
 vi.mock("./pageAlignedScan.js", () => ({ scanPageAlignedImage: vi.fn() }));
 vi.mock("./footerSealScan.js", () => ({ scanFooterSeals: vi.fn() }));
 vi.mock("./rectifiedSealScan.js", () => ({
-  scanRectifiedSeal: vi.fn(), createRectifiedSealScanner: vi.fn(),
+  scanRectifiedSeal: vi.fn(), createRectifiedSealScanner: vi.fn(), scanCurvedPageSeal: vi.fn(),
 }));
 afterEach(() => vi.restoreAllMocks());
 
@@ -38,7 +38,31 @@ beforeEach(() => {
   scanWatermarkPreview.mockReset().mockReturnValue(null);
   scanPageAlignedImage.mockReset().mockReturnValue([]);
   scanRectifiedSeal.mockReset().mockReturnValue(null);
+  scanCurvedPageSeal.mockReset().mockReturnValue(null);
   scanQrImage.mockReset().mockReturnValue(null);
+});
+
+it("returns a curved-page seal before entering the wider and general searches", async () => {
+  scanCurvedPageSeal.mockReturnValue({ seal: single });
+  expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found", text: single });
+  expect(scanRectifiedSeal).toHaveBeenCalledTimes(1);
+  expect(scanQrImage).toHaveBeenCalledTimes(1);
+  expect(scanPageAlignedImage).not.toHaveBeenCalled();
+  await expect(verifyQRedSeals([single], publicKey)).resolves.toMatchObject({ signature_valid: true });
+});
+
+it("ends the curved-page pass in time for other recovery methods", () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  scanCurvedPageSeal.mockImplementation((_image, { shouldContinue }) => {
+    expect(shouldContinue()).toBe(true);
+    now = 100;
+    expect(shouldContinue()).toBe(false);
+    return null;
+  });
+  decodePhoto(image, { returnPayload: true, maxDurationMs: 300 });
+  expect(scanCurvedPageSeal).toHaveBeenCalledOnce();
+  expect(scanPageAlignedImage).toHaveBeenCalledOnce();
 });
 
 it("returns a complete preview seal after a quick page miss and still requires signature verification", async () => {
@@ -246,6 +270,7 @@ it("reports only fixed stage names and relative elapsed times before actual atte
     { stage: "watermark-preview", elapsedMs: 100 },
     { stage: "ordinary-qr", elapsedMs: 120 },
     { stage: "footer", elapsedMs: 150 },
+    { stage: "curved-page", elapsedMs: 190 },
     { stage: "rectified-wide", elapsedMs: 190 },
     { stage: "page-aligned", elapsedMs: 290 },
     { stage: "general-qr", elapsedMs: 340 },

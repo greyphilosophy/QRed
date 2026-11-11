@@ -59,6 +59,23 @@ it("requires printed BCH evidence instead of guessing the grid size from the cor
   expect(readRectifiedQrVersion(gray, side, corners)).toBeUndefined();
 });
 
+it("prefers a clean locally measured version word over a one-bit match to the wrong size", () => {
+  const { gray, side, corners, map, size } = printedVersion(31, {
+    ink: 185, paper: 225, finders: true, accuratePitch: true, shear: 0,
+  });
+  // Corrupt just the center pixel in each module. A one-sample read sees a
+  // plausible v30 word while the surrounding pixels still carry the printed v31.
+  const damaged = encodedVersion(30) ^ 1;
+  for (let bit = 0; bit < 18; bit++) {
+    const col = size - 11 + bit % 3, row = Math.floor(bit / 3);
+    for (const [x, y] of [[col, row], [row, col]]) {
+      const point = map(x + .5, y + .5);
+      gray[Math.round(point.y) * side + Math.round(point.x)] = damaged >> bit & 1 ? 215 : 249;
+    }
+  }
+  expect(readRectifiedQrVersion(gray, side, corners)).toBe(31);
+});
+
 it.each([
   ["shadow", 173, 229], ["pale ink", 240, 253], ["low contrast", 204, 216],
 ])("calibrates %s from public finder contrast after the fixed cut misses", (_label, ink, paper) => {

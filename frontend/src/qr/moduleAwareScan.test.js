@@ -5,6 +5,9 @@ import { filterWatermark } from "./watermarkFilter.js";
 import { scanModuleAwareQr } from "./moduleAwareScan.js";
 import { createQRedQrSymbol } from "../qredQr.js";
 import { qredPayloadFromScanResult } from "./qrPayload.js";
+import { scanWatermarkPreview } from "./scanQrImage.js";
+import { createQRedSeals } from "../qredSealer.js";
+import { verifyQRedSeals } from "../qredVerifier.js";
 
 function photographedQr({ text = true, blank = false, symbol, inkColor = null } = {}) {
   const qr = symbol ?? QRCode.create("QRED.ORG", { version: 10, errorCorrectionLevel: "L" });
@@ -35,6 +38,21 @@ function photographedQr({ text = true, blank = false, symbol, inkColor = null } 
 }
 
 describe("module-aware watermark recovery", () => {
+  it("authenticates a pale watermark photographed under a warm paper tint", async () => {
+    const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
+    const { seals } = await createQRedSeals({
+      privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey,
+      content: "Printed invoice 1042", timestamp: "2026-11-04T12:00:00Z",
+    });
+    const { rgba, width, height } = photographedQr({ symbol: createQRedQrSymbol(seals[0]), text: false });
+    for (let i = 0; i < rgba.length; i += 4) {
+      rgba[i] *= .84; rgba[i + 1] *= .77; rgba[i + 2] *= .69;
+    }
+    const code = scanWatermarkPreview(rgba, width, height);
+    const seal = qredPayloadFromScanResult(code);
+    expect(seal).toBe(seals[0]);
+    await expect(verifyQRedSeals([seal], publicKey)).resolves.toMatchObject({ signature_valid: true });
+  });
   it("locates the QR grid and reads exposed portions of text-obscured modules", () => {
     const { rgba, width, height } = photographedQr();
     const filtered = filterWatermark(rgba, width, height, 3);

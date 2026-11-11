@@ -85,16 +85,16 @@ function readVersion(gray, side, corners, thresholds = null) {
       if (word !== null) record(word, version);
     }
   }
-  return candidates.sort((a, b) => a.distance - b.distance)[0]?.version;
+  return candidates.sort((a, b) => a.distance - b.distance)[0];
 }
 
 // The version is public BCH-protected QR structure, never inferred from the
-// document text. Keep the established fast path, then make one bounded retry
-// using local finder contrast and nine samples within each module. Both passes
-// still require an observed version word with no more than three bit errors.
+// document text. A damaged fixed-threshold reading can be within three bits
+// of the wrong size. Prefer a closer BCH match from local finder contrast.
 export function readRectifiedQrVersion(gray, side, corners) {
-  const version = readVersion(gray, side, corners);
-  if (version !== undefined) return version;
+  const fixed = readVersion(gray, side, corners);
+  if (fixed?.distance === 0) return fixed.version;
   const thresholds = [null, ...corners.slice(1).map(point => finderThreshold(gray, side, point))];
-  return readVersion(gray, side, corners, thresholds);
+  const local = readVersion(gray, side, corners, thresholds);
+  return local && (!fixed || local.distance < fixed.distance) ? local.version : fixed?.version;
 }

@@ -48,6 +48,16 @@ describe("bounded watermark scan budget", () => {
     expect(normalized).toHaveLength(width * height);
   });
 
+  it("reuses one normalized photo for different filter radii and keeps the final retry on the deadline", () => {
+    const normalize = vi.spyOn(watermarkFilters, "normalizeWatermarkLuminance");
+    const shouldContinue = () => true;
+    try {
+      scanQrImage(pixels, width, height, { tryRescaling: false, shouldContinue });
+      expect(normalize.mock.calls.filter(([, w, h]) => w === width && h === height)).toHaveLength(1);
+      expect(scanModuleAwareQr.mock.calls[0][5].shouldContinue).toBe(shouldContinue);
+    } finally { normalize.mockRestore(); }
+  });
+
   it("never exceeds a one- or two-attempt budget", () => {
     scanQrImage(pixels, width, height, { tryRescaling: false, maxAttempts: 1 });
     expect(jsQR).toHaveBeenCalledTimes(1);
