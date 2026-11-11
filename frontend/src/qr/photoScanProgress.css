@@ -4,6 +4,26 @@
 .photo-scan-progress .photo-scan-step { font-weight: 600; }
 .photo-scan-progress .photo-scan-timing { font-size: .85rem; font-variant-numeric: tabular-nums; }
 .photo-scan-progress progress { display: block; width: 100%; max-width: 24rem; height: .4rem; margin-top: .45rem; }
+.camera-capture-notice {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  width: max-content;
+  max-width: min(24rem, calc(100% - 2rem));
+  pointer-events: none;
+}
+.camera-capture-notice:not(:empty) {
+  margin: 0;
+  padding: .7rem 1rem;
+  border-radius: .75rem;
+  background: #0f172a;
+  color: white;
+  font: 700 clamp(1rem, 3.5vw, 1.25rem)/1.35 system-ui, sans-serif;
+  text-align: center;
+}
+.camera-capture-notice:not(:empty) ~ .page-scan-guide-area { visibility: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .photo-scan-progress progress { visibility: hidden; }
 }

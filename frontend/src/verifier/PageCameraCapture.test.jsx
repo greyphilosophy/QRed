@@ -61,6 +61,7 @@ it("discards a retake that finishes after the session is closed", async () => {
   camera.scan.mockResolvedValue({ status: "found", text: signed.seals[0] });
   ready(); fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
   await waitFor(() => expect(finish).toBeTypeOf("function"));
+  expect(screen.getByText("Photo captured. You can move your phone.")).toBeTruthy();
   view.unmount(); await act(async () => finish(new Blob(["late"])));
   expect(capture).not.toHaveBeenCalled(); expect(camera.stop).toHaveBeenCalled();
 });
@@ -289,7 +290,8 @@ it("resumes capture-only guidance after dismissing the retake photo picker", asy
   act(() => camera.options.onFrame());
   expect(camera.liveScan).toHaveBeenCalledTimes(1);
   fireEvent(screen.getByLabelText("Choose a high-resolution page photo"), new Event("cancel"));
-  expect(screen.getByRole("status").textContent).toContain("hold steady for automatic capture");
+  expect(screen.getByText(/hold steady for automatic capture/, { selector: '[role="status"]' })).toBeTruthy();
+  expect(screen.queryByText("Photo captured. You can move your phone.")).toBeNull();
   expect(camera.reset).toHaveBeenCalledTimes(1);
   act(() => camera.options.onFrame());
   expect(camera.liveScan).toHaveBeenCalledTimes(2);

@@ -1,7 +1,7 @@
-import { createPhotoScanProgress, photoScanTiming } from "./photoScanProgress.js";
+import { CAMERA_CAPTURED_NOTICE, createPhotoScanProgress, photoScanTiming } from "./photoScanProgress.js";
 import "./photoScanProgress.css";
 
-export function mountPhotoScanProgress(element) {
+export function mountPhotoScanProgress(element, captureNotice) {
   const progress = createPhotoScanProgress();
   element.classList.add("photo-scan-progress");
   const step = document.createElement("p"), timing = document.createElement("p"), bar = document.createElement("progress");
@@ -16,6 +16,11 @@ export function mountPhotoScanProgress(element) {
   element.replaceChildren(step, timing, bar);
   const render = () => {
     const snapshot = progress.getSnapshot();
+    const message = snapshot?.cameraCaptured ? CAMERA_CAPTURED_NOTICE : "";
+    if (captureNotice && captureNotice.textContent !== message) {
+      captureNotice.textContent = message;
+      if (message) captureNotice.scrollIntoView?.({ block: "nearest", inline: "nearest", behavior: "instant" });
+    }
     element.hidden = !snapshot;
     if (!snapshot) { step.textContent = timing.textContent = ""; return; }
     if (step.textContent !== snapshot.label) step.textContent = snapshot.label;

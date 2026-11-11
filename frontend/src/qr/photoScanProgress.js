@@ -3,8 +3,11 @@ import { scanStageDiagnostic, scanStageLabel } from "./photoScanDiagnostics.js";
 const PHASES = Object.freeze({
   opening: "Opening photo on this device…",
   capturing: "Hold steady — taking photo…",
+  captured: "Reading photo…",
   decoding: "Reading photo…",
 });
+
+export const CAMERA_CAPTURED_NOTICE = "Photo captured. You can move your phone.";
 
 // UI-only clock: never estimates completion or changes the decoder's budget.
 // Each handle belongs to one capture so late events cannot revive a cancelled
@@ -31,10 +34,12 @@ export function createPhotoScanProgress() {
       const tick = () => {
         if (!active()) return;
         const now = performance.now();
-        publish({ label, elapsedMs: Math.max(0, now - started), stepElapsedMs: Math.max(0, now - stepStarted) });
+        publish({ label, cameraCaptured: phase === "captured",
+          elapsedMs: Math.max(0, now - started), stepElapsedMs: Math.max(0, now - stepStarted) });
       };
-      const step = next => {
-        if (!active() || !next || next === label) return;
+      const step = (next, nextPhase = phase) => {
+        if (!active() || !next || (next === label && nextPhase === phase)) return;
+        phase = nextPhase;
         label = next;
         stepStarted = performance.now();
         tick();
@@ -42,7 +47,7 @@ export function createPhotoScanProgress() {
       tick();
       timer = setInterval(tick, 250);
       return {
-        phase: name => step(Object.hasOwn(PHASES, name) ? PHASES[name] : null),
+        phase: name => step(Object.hasOwn(PHASES, name) ? PHASES[name] : null, name),
         stage(value) {
           const diagnostic = scanStageDiagnostic(value);
           const name = diagnostic && scanStageLabel(diagnostic);

@@ -9,7 +9,7 @@ export { QR_CAMERA_CONSTRAINTS, findPreferredMainCamera, getPreferredCameraStrea
 export { qrScanAction } from "./qr/decodePhoto.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
-import { PhotoScanProgress, usePhotoScanProgress } from "./qr/PhotoScanProgress.jsx";
+import { CameraCaptureNotice, PhotoScanProgress, usePhotoScanProgress } from "./qr/PhotoScanProgress.jsx";
 import { readCameraFrame, canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback, cameraPhotoFailure, cameraCaptureContext, downloadCameraPhoto } from "./qr/cameraPhoto.js";
 import "./qrScanner.css";
 
@@ -133,7 +133,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
       React.createElement("div", { className: "ar-copy" },
         React.createElement("p", { className: "eyebrow" }, "QRed AR verifier"),
         React.createElement("h1", null, "Check a printed document"),
-        React.createElement("p", null, "Frame each whole page and hold steady. QRed captures automatically, then checks the seal and printed text."),
+        React.createElement("p", null, "Frame the whole page and hold steady. QRed captures automatically and tells you when you can move."),
         React.createElement("p", { className: "camera-privacy" }, "Camera photos stay on this device. QRed only saves a copy when you choose Save scan photo."),
         completionNotice ? React.createElement("p", { id: "check-clear-note", role: "status" }, completionNotice) : null,
         preparationError ? React.createElement("p", { role: "alert" }, preparationError + " Try Check document again while connected.") : null
@@ -235,7 +235,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
         if (captureOnly) { capturePhoto(true); return; }
         processingCapture = true;
         captureDiagnostic = cameraFrameDiagnostic(canvasRef.current);
-        activeProgress = progress.begin("decoding");
+        activeProgress = progress.begin("captured");
         setFeedback(null);
         onReadingPhoto(true);
       },
@@ -334,7 +334,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
           } }) : null;
         controller.signal.throwIfAborted();
         if (autoCapture && !still) return cameraPhotoFailure(captureDiagnostic);
-        attemptProgress.phase("decoding");
+        attemptProgress.phase("captured");
         return scanPhotoInWorker(still || image, { returnPayload, signal: controller.signal, onStage: attemptProgress.stage });
       };
       read().then(action => {
@@ -438,6 +438,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       playsInline: true,
       autoPlay: true,
     }),
+    React.createElement(CameraCaptureNotice, { progress }),
     React.createElement("div", { className: "page-scan-guide-area", ref: guideAreaRef, "aria-hidden": "true" },
       React.createElement("div", { className: "page-scan-guide", ref: guideRef, hidden: true },
         React.createElement("span", null),

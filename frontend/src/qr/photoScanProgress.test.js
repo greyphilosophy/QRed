@@ -10,12 +10,12 @@ it("uses a real elapsed clock even when a decoder stage is silent", () => {
   const progress = createPhotoScanProgress(), changed = vi.fn();
   const unsubscribe = progress.subscribe(changed);
   const request = progress.begin("opening");
-  expect(progress.getSnapshot()).toEqual({ label: "Opening photo on this device…", elapsedMs: 0, stepElapsedMs: 0 });
+  expect(progress.getSnapshot()).toEqual({ label: "Opening photo on this device…", cameraCaptured: false, elapsedMs: 0, stepElapsedMs: 0 });
   vi.advanceTimersByTime(1000);
   request.phase("decoding");
   request.stage({ stage: "page-aligned", elapsedMs: 2600, private: "do not show" });
   vi.advanceTimersByTime(2500);
-  expect(progress.getSnapshot()).toEqual({ label: "Checking page layouts…", elapsedMs: 3500, stepElapsedMs: 2500 });
+  expect(progress.getSnapshot()).toEqual({ label: "Checking page layouts…", cameraCaptured: false, elapsedMs: 3500, stepElapsedMs: 2500 });
   expect(photoScanTiming(progress.getSnapshot())).toBe("Elapsed 3.5 s · this step 2.5 s");
   request.stage({ stage: "page-aligned", elapsedMs: 5000 });
   request.stage({ stage: "private", elapsedMs: 5000 });
@@ -64,4 +64,24 @@ it("announces stages without announcing every clock tick or inventing percent co
   expect(element.hidden).toBe(true);
   expect(element.children).toHaveLength(0);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("keeps the movement cue through decoder stages and clears it for a replacement file", () => {
+  const notice = document.createElement("p");
+  notice.scrollIntoView = vi.fn();
+  const progress = mountPhotoScanProgress(document.createElement("div"), notice);
+  const camera = progress.begin("capturing");
+  expect(notice.textContent).toBe("");
+  camera.phase("captured");
+  expect(notice.textContent).toBe("Photo captured. You can move your phone.");
+  const announcement = notice.firstChild;
+  camera.stage({ stage: "footer", elapsedMs: 800 });
+  vi.advanceTimersByTime(2500);
+  expect(notice.firstChild).toBe(announcement);
+  expect(notice.scrollIntoView).toHaveBeenCalledTimes(1);
+  const file = progress.begin("opening");
+  file.phase("decoding");
+  camera.phase("captured");
+  expect(notice.textContent).toBe("");
+  progress.dispose();
 });
