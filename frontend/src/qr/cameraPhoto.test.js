@@ -20,7 +20,12 @@ afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(
 
 it("uses still-photo detail with flash off and retains exactly the pixels sent to decoding", async () => {
   expect(canCaptureCameraPhoto(video)).toBe(true);
-  expect(await captureCameraPhoto(video, canvas)).toBe(pixels);
+  const original = new Blob(["native camera bytes"], { type: "image/jpeg" });
+  camera.takePhoto.mockResolvedValue(original);
+  const onPhotoBlob = vi.fn();
+  expect(await captureCameraPhoto(video, canvas, { onPhotoBlob })).toBe(pixels);
+  expect(onPhotoBlob).toHaveBeenCalledTimes(1);
+  expect(onPhotoBlob.mock.calls[0][0]).toBe(original);
   expect(ImageCapture).toHaveBeenCalledWith(track);
   expect(camera.takePhoto).toHaveBeenCalledWith({ fillLightMode: "off", imageWidth: 4000, imageHeight: 3000 });
   expect(canvas).toMatchObject({ width: 4000, height: 3000 });
@@ -32,7 +37,9 @@ it.each(["unsupported", "rejected", "smaller"])("retains the frozen preview when
   if (kind === "unsupported") vi.stubGlobal("ImageCapture", undefined);
   if (kind === "rejected") camera.takePhoto.mockRejectedValue(new Error("unsupported source"));
   if (kind === "smaller") { bitmap.width = 320; bitmap.height = 240; }
-  expect(await captureCameraPhoto(video, canvas)).toBeNull();
+  const onPhotoBlob = vi.fn();
+  expect(await captureCameraPhoto(video, canvas, { onPhotoBlob })).toBeNull();
+  expect(onPhotoBlob).not.toHaveBeenCalled();
   expect(canvas).toMatchObject({ width: 640, height: 480 });
   expect(context.drawImage).not.toHaveBeenCalled();
 });

@@ -27,6 +27,14 @@ it("retains partial chunks without claiming the last stage explains a timeout", 
   expect(partial).toEqual({ status: "found-multiple", texts: ["partial seal"] });
 });
 
+it("identifies the loaded scanner from its public asset hash without logging URLs", () => {
+  const path = "/assets/photoScan.worker-Ab_12-pr.js?private=sample";
+  const action = photoScanTimeoutAction(null, null, path);
+  expect(action.message).toContain("Scanner build Ab_12-pr.");
+  expect(action.message).not.toContain("private");
+  expect(photoScanTimeoutAction(null, null, "/src/photoScan.worker.js").message).not.toContain("Scanner build");
+});
+
 it.each(["curved-page", "qr-full-detail", "qr-rescaled", "qr-filtered", "qr-modules"])(
   "keeps the %s checkpoint for progress and timeout feedback", stage => {
     const input = { stage, elapsedMs: 1200 };

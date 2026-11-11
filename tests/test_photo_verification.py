@@ -441,7 +441,7 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000") + path, wait_until="networkidle")
         if path != "/":
             page.locator("#publicKeyFileInput").set_input_files({"name": "key.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode()})
-        expect(page.get_by_text("Camera images stay in this session.", exact=False)).to_be_visible()
+        expect(page.get_by_text("Camera photos stay on this device.", exact=False)).to_be_visible()
         camera_paper(page, TEXT.replace("Friday", "Monday"), sealed_text[1]["qr"])
         page.get_by_role("button", name="Check document", exact=True).click()
         expect(page.locator(".ar-collection-progress, #statusText").filter(has_text="Page 2 captured. Show page 1.")).to_be_visible(timeout=45000)

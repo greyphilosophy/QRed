@@ -117,8 +117,14 @@ guidance state before the photo. This records what the gate last reported; it
 does not infer a camera fault or claim the later live preview matches the
 captured photo. Explicitly selected files do not inherit camera guidance.
 
+After an unsuccessful native still read, **Save scan photo** downloads the original
+camera file on request. QRed holds the compressed file in memory until the next
+attempt or the end of the camera session. The download works offline.
+
 On a seal-reader timeout, a fixed-name checkpoint identifies the last reported
-decoder step and when it began relative to decoding. These checkpoints do not
+decoder step and when it began relative to decoding. The timeout also includes
+the content hash of the bundled scanner worker, so an old offline session can
+be identified from its feedback. These checkpoints do not
 extend the watchdog, settle a request, or replace partial recovered chunks.
 They do not establish why that step failed or show exactly where execution
 stopped. In particular, the watchdog includes worker startup; checkpoint time
@@ -214,7 +220,11 @@ The progress display identifies which fallback is running, including full-detail
 QR reading, resized QR reading, watermark filtering, and individual module votes.
 
 When the fast preview finds a sheet but rates its edges as soft, the native
-camera guide can measure focus along the curved outline. It compares small
+camera guide can measure focus along the curved outline. When mixed lighting
+makes the first outline look too small, the guide checks for consistent
+contrast across its four edges. A clearly bounded small sheet still prompts the
+user to move closer. An ambiguous boundary gets a second look using the measured
+paper edges and the same framing, light and focus requirements. The guide compares small
 patches of the page between frames to tolerate a slight shift of dense printing
 during the steady hold.
 

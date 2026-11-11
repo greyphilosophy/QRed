@@ -38,7 +38,43 @@ function fabricPrint(shift = 0) {
   return { width, height, data };
 }
 
+function mixedLighting({ smallPage = false } = {}) {
+  const width = 800, height = 1000, data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const u = (x - 100) / 600, v = (y - 100) / 800;
+    const at = (y * width + x) * 4;
+    let r = 34, g = 45, b = 74;
+    if (u >= 0 && u < 1 && v >= 0 && v < 1) {
+      const radius = Math.hypot(u - .5, .93 * (v - .5));
+      const fade = Math.max(0, Math.min(1, (radius - .265) / .14));
+      g = smallPage ? 178 : 185 - 20 * fade;
+      r = smallPage ? 142 : g * (1.13 - .18 * fade);
+      b = smallPage ? 214 : g * (.86 + .25 * fade);
+      if (smallPage && u > .18 && u < .82 && v > .17 && v < .83) {
+        r = 220; g = 210; b = 199;
+      }
+    }
+    data[at] = r; data[at + 1] = g; data[at + 2] = b; data[at + 3] = 255;
+  }
+  return { width, height, data };
+}
+
 describe("automatic whole-page capture", () => {
+  it("captures a full sheet when a color cast makes only the center look like paper", () => {
+    const image = mixedLighting();
+    const quality = inspectPageFrame(image, { captureOnly: true });
+    expect(quality.state).toBe("clear");
+    expect(quality.corners[0].x).toBeCloseTo(.125, 2);
+    expect(quality.corners[2].y).toBeCloseTo(.9, 2);
+    const gate = createPageCaptureGate();
+    const states = [0, 200, 400, 600, 800].map(t => gate.update(image, t, { captureOnly: true }).state);
+    expect(states).toEqual(["hold", "hold", "hold", "ready", "captured"]);
+  });
+  it("keeps a genuinely small sheet on a larger contrasting mat below the capture threshold", () => {
+    const image = mixedLighting({ smallPage: true }), gate = createPageCaptureGate();
+    for (const t of [0, 200, 400, 600, 800])
+      expect(gate.update(image, t, { captureOnly: true })).toMatchObject({ state: "small", ready: false });
+  });
   it("focuses on paper instead of a fabric fold and completes the hold during slight sway", () => {
     const frames = [0, 1, 2, -1, 0].map(fabricPrint);
     expect(inspectPageFrame(frames[0]).state).toBe("soft");

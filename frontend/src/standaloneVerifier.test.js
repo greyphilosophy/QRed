@@ -8,7 +8,7 @@ import { PNG } from "pngjs";
 import { getPreferredCameraStream, applyCameraQualityControls } from "./qr/cameraControls.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
-import { readCameraFrame, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext } from "./qr/cameraPhoto.js";
+import { readCameraFrame, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext, downloadCameraPhoto } from "./qr/cameraPhoto.js";
 import { createQrFrameScanner } from "./qr/scanQrImage.js";
 import { createLiveScanWorker, scanPhotoInWorker } from "./qr/photoScanClient.js";
 import { mountPhotoScanProgress } from "./qr/mountPhotoScanProgress.js";
@@ -61,7 +61,7 @@ function loadStandalone(overrides = {}) {
   });
   const bindings = {
     getPreferredCameraStream, applyCameraQualityControls, authProvider, startCameraSession, observePageScanGuide, createLiveScanWorker, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
-    preparePhotoScanner: vi.fn(), scanPhotoInWorker, readCameraFrame, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext,
+    preparePhotoScanner: vi.fn(), scanPhotoInWorker, readCameraFrame, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext, downloadCameraPhoto,
     createScanPhotoCollection: callback => createScanPhotoCollection(callback, async () => new Blob(["frame"], { type: "image/png" })),
     mountPhotoTextVerification: () => ({ update: vi.fn(), prepare: vi.fn().mockResolvedValue(), clear: vi.fn() }),
     mountPdfSealInput: () => ({ update: vi.fn() }),
@@ -417,6 +417,38 @@ function setupStandaloneCapture(overrides = {}) {
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context);
   return { live, scan, pixels, context, get callbacks() { return callbacks; }, get camera() { return camera; } };
 }
+it("offers the original failed camera file only on request and releases it on a new attempt", async () => {
+  const original = new Blob(["original camera bytes"], { type: "image/jpeg" });
+  const download = vi.fn();
+  const setup = setupStandaloneCapture({
+    downloadCameraPhoto: download,
+    captureCameraPhoto: async (_video, _canvas, { onPhotoBlob }) => {
+      onPhotoBlob(original);
+      return setup.pixels;
+    },
+  });
+  setup.scan.mockResolvedValueOnce({ status: "feedback", timedOut: true, message: "Retry the scan." });
+  document.getElementById("photoTextComparison").scrollIntoView = vi.fn();
+  const save = document.getElementById("btnSavePhoto"), capture = document.getElementById("btnCapture");
+  expect(save.hidden).toBe(true);
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(setup.camera).toBeDefined());
+  fireEvent.click(capture);
+  await waitFor(() => expect(save.hidden).toBe(false));
+  setup.camera.onFrame();
+  expect(setup.live.scan).not.toHaveBeenCalled();
+  expect(download).not.toHaveBeenCalled();
+  fireEvent.click(save);
+  expect(download.mock.calls[0][0]).toBe(original);
+  fireEvent.click(capture);
+  expect(save.hidden).toBe(true);
+  expect(save.onclick).toBeNull();
+  await waitFor(() => expect(setup.scan).toHaveBeenCalledTimes(2));
+  fireEvent.click(document.getElementById("btnScan"));
+  expect(save.hidden).toBe(true);
+  expect(save.onclick).toBeNull();
+});
+
 function selectedStandalonePhoto({ width = 2000, height = 3000, decode = () => Promise.resolve() } = {}) {
   const image = { naturalWidth: width, naturalHeight: height, decode, src: "" };
   vi.stubGlobal("Image", vi.fn(function () { return image; }));

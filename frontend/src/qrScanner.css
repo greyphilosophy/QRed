@@ -17,6 +17,17 @@
    reposition the manually aligned corners. */
 .ar-camera .page-scan-guide-area { inset: 5rem 1.25rem 14rem; }
 .ar-display-scanning .ar-scan-feedback { width: min(86vw, 560px); }
+.ar-scan-feedback .save-scan-photo {
+  display: block;
+  margin: .25rem auto 0;
+  padding: .5rem .75rem;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
 
 /* Keep scan steps above the controls without moving the fixed page guide. */
 .ar-camera > .photo-scan-progress {

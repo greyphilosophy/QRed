@@ -8,7 +8,7 @@ import { observePageScanGuide } from "../qr/pageScanGuide.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { bytesEqual, qrPayloadBytes } from "../sealFormat.js";
 import { PhotoScanProgress, usePhotoScanProgress } from "../qr/PhotoScanProgress.jsx";
-import { readCameraFrame, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext } from "../qr/cameraPhoto.js";
+import { readCameraFrame, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext, downloadCameraPhoto } from "../qr/cameraPhoto.js";
 
 // Match bytes from the already authenticated collection, not an untrusted page
 // number or chunk identifier supplied by the new photo.
@@ -18,17 +18,18 @@ export function confirmsPageSeal(action, seals) {
     bytesEqual(qrPayloadBytes(text), qrPayloadBytes(seal))));
 }
 
-// Native stills and explicitly selected photos stay in this browser session.
+// Camera capture, file selection and photo comparison all run locally.
 export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = false, onCapture, onClose }) {
   const title = separateOriginal ? `Photograph original ${pageLabel.toLowerCase()}` : `Retake ${pageLabel}`;
   const video = useRef(null), camera = useRef(null), generation = useRef(0);
   const scan = useRef(null), captureDiagnostic = useRef(null), photoInput = useRef(null);
   const lastQuality = useRef(null);
-  const acquisitionFailed = useRef(false), manualFailure = useRef(false);
+  const acquisitionFailed = useRef(false), autoPaused = useRef(false);
   const pickerSession = useRef(null), cameraAvailable = useRef(false), cameraFailed = useRef(false);
   const dialog = useRef(null);
   const guideArea = useRef(null), guide = useRef(null), live = useRef(null), busyRef = useRef(false);
   const [ready, setReady] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const [failedPhoto, setFailedPhoto] = useState(null);
   const [quality, setQuality] = useState(null);
   const progress = usePhotoScanProgress();
   const liveProgress = useRef(null);
@@ -45,7 +46,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
         if (epoch === generation.current && !busyRef.current) { lastQuality.current = { state: value.state }; setQuality(value); }
       },
       onCaptured: ({ captureOnly } = {}) => {
-        if (epoch !== generation.current || busyRef.current || manualFailure.current) return;
+        if (epoch !== generation.current || busyRef.current || autoPaused.current) return;
         if (captureOnly) { capture({ preserveGate: true }); return; }
         liveProgress.current = progress.begin("decoding");
         captureDiagnostic.current = cameraFrameDiagnostic(canvas);
@@ -69,7 +70,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
         const source = video.current;
         if (epoch !== generation.current || !source?.videoWidth) return;
         cameraAvailable.current = true; setReady(true);
-        if (busyRef.current || live.current.busy || manualFailure.current) return;
+        if (busyRef.current || live.current.busy || autoPaused.current) return;
         const preview = readCameraFrame(source, canvas, { forGuidance: true });
         if (preview) live.current.scan(preview, { captureOnly: true });
       },
@@ -105,10 +106,11 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
     finally { if (current()) { busyRef.current = false; setBusy(false); } }
   }
   function cancelAttempt() {
+    setFailedPhoto(null);
     pickerSession.current = null;
     progress.clear(); liveProgress.current = null;
     scan.current?.abort(); scan.current = null;
-    manualFailure.current = true;
+    autoPaused.current = true;
     busyRef.current = false; setBusy(false);
   }
   function resumePhotoPicker() {
@@ -118,7 +120,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
     // cancel event must not reset a replacement file, closed dialog or error.
     if (!pending || pending.epoch !== generation.current || pending.camera !== camera.current
       || pending.live !== live.current || cameraFailed.current || scan.current || busyRef.current) return;
-    manualFailure.current = false;
+    autoPaused.current = false;
     // Permission/startup may still be pending. Release only the picker pause;
     // the already-started session will supply its first quality frame later.
     if (!cameraAvailable.current) return;
@@ -143,7 +145,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
     if (!file && (!source?.videoWidth || busyRef.current)) return;
     cancelAttempt();
     busyRef.current = true; setBusy(true); setError("");
-    acquisitionFailed.current = false; manualFailure.current = false;
+    acquisitionFailed.current = false; autoPaused.current = false;
     if (!preserveGate) live.current.reset();
     const controller = new AbortController(); scan.current = controller;
     const current = () => epoch === generation.current && scan.current === controller && !controller.signal.aborted;
@@ -152,8 +154,9 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
     const attemptProgress = progress.begin(file ? "opening" : "capturing");
     const captureContext = file ? {} : cameraCaptureContext(
       { width: source.videoWidth, height: source.videoHeight }, preserveGate, lastQuality.current);
+    let nativeBlob;
     try {
-      const options = { signal: controller.signal, requireHighResolution: true, onDiagnostic: diagnostic => {
+      const options = { signal: controller.signal, requireHighResolution: true, onPhotoBlob: blob => { nativeBlob = blob; }, onDiagnostic: diagnostic => {
         if (current()) captureDiagnostic.current = { ...diagnostic, ...captureContext };
       } };
       const still = file ? await readCameraPhotoFile(file, canvas, options)
@@ -163,7 +166,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
         acquisitionFailed.current = true;
         // Automatic shots keep their page-movement gate. A manual failure must
         // not immediately become an automatic retry from a freshly reset gate.
-        manualFailure.current = !preserveGate;
+        autoPaused.current = !preserveGate;
         setError(cameraPhotoFailure(captureDiagnostic.current).message);
         return;
       }
@@ -177,8 +180,15 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
       const action = await scanPhotoInWorker(still, { returnPayload: true, signal: controller.signal, onStage: attemptProgress.stage });
       attemptProgress.stop();
       if (!current()) return;
+      if (action.timedOut) autoPaused.current = true;
+      if (nativeBlob && (action.timedOut || action.status === "feedback")) setFailedPhoto(nativeBlob);
       await acceptFrame(cameraCaptureFeedback(action, captureDiagnostic.current), canvas, epoch, controller);
-    } catch (cause) { if (current() && cause.name !== "AbortError") setError(cause.message); }
+    } catch (cause) {
+      if (current() && cause.name !== "AbortError") {
+        if (nativeBlob) setFailedPhoto(nativeBlob);
+        setError(cause.message);
+      }
+    }
     finally {
       attemptProgress.stop();
       canvas.width = canvas.height = 0;
@@ -208,12 +218,13 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
     {error && <p role="alert">{error}</p>}
     <div className="photo-actions"><button type="button" disabled={!ready || busy} onClick={capture}>Capture now</button>
       <button type="button" onClick={choosePhoto}>Choose photo</button>
+      {failedPhoto && <button type="button" onClick={() => downloadCameraPhoto(failedPhoto)}>Save scan photo</button>}
       <input ref={photoInput} type="file" accept="image/*" aria-label="Choose a high-resolution page photo" hidden onChange={event => {
         const file = event.target.files?.[0]; event.target.value = "";
         if (file) capture({ file });
         else resumePhotoPicker();
       }} />
       <button type="button" onClick={close}>Cancel retake</button></div>
-    <p className="photo-note">This image is used temporarily in QRed. It is not saved to your photo library.</p>
+    <p className="photo-note">Camera photos stay on this device. QRed only saves a copy when you choose Save scan photo.</p>
   </section></div>;
 }

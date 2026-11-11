@@ -52,6 +52,10 @@ it.each(["manual", "automatic"])("uses native still pixels after unavailable cap
   expect(await screen.findByText(/Camera photo: 4000 × 3000/)).toBeTruthy();
   expect(document.body.textContent).toContain(`${mode} capture, 1920 × 1080 preview, last guide: ${mode === "manual" ? "page too small" : "steady hold passed"}`);
   expect(document.body.textContent).not.toMatch(/private device detail|private camera|private ID/);
+  expect(screen.getByRole("button", { name: "Save scan photo" })).toBeTruthy();
+  camera.previewScan.mockClear();
+  act(() => camera.options.onFrame());
+  expect(camera.previewScan).not.toHaveBeenCalled();
 });
 
 it("stops before seal decoding when native photo capture fails", async () => {
