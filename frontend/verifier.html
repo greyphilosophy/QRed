@@ -395,7 +395,7 @@
     import { startCameraSession } from "./src/qr/cameraSession.js";
     import { observePageScanGuide } from "./src/qr/pageScanGuide.js";
     import { getPreferredCameraStream, applyCameraQualityControls } from "./src/qr/cameraControls.js";
-    import { captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext } from "./src/qr/cameraPhoto.js";
+    import { readCameraFrame, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext } from "./src/qr/cameraPhoto.js";
     import { mountPhotoScanProgress } from "./src/qr/mountPhotoScanProgress.js";
     import { createLiveScanWorker, preparePhotoScanner, scanPhotoInWorker } from "./src/qr/photoScanClient.js";
     import { decodeSeal as decodeQRedSeal, verifyQRedSeals } from "./src/qredVerifier.js";
@@ -765,12 +765,8 @@
           if (!active() || !video.videoWidth || !video.videoHeight) return;
           statusBar.classList.add("visible");
           if (liveScan.busy || state.photoScan || manualFailure) return;
-          if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
-          if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
-          var ctx = canvas.getContext("2d", { willReadFrequently: true });
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          liveScan.scan(imageData, { captureOnly: true });
+          var preview = readCameraFrame(video, canvas, { forGuidance: true });
+          if (preview) liveScan.scan(preview, { captureOnly: true });
         },
         onError: cameraError,
       });

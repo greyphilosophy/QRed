@@ -8,7 +8,7 @@ import { observePageScanGuide } from "../qr/pageScanGuide.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { bytesEqual, qrPayloadBytes } from "../sealFormat.js";
 import { PhotoScanProgress, usePhotoScanProgress } from "../qr/PhotoScanProgress.jsx";
-import { captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext } from "../qr/cameraPhoto.js";
+import { readCameraFrame, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext } from "../qr/cameraPhoto.js";
 
 // Match bytes from the already authenticated collection, not an untrusted page
 // number or chunk identifier supplied by the new photo.
@@ -70,11 +70,8 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
         if (epoch !== generation.current || !source?.videoWidth) return;
         cameraAvailable.current = true; setReady(true);
         if (busyRef.current || live.current.busy || manualFailure.current) return;
-        if (canvas.width !== source.videoWidth) canvas.width = source.videoWidth;
-        if (canvas.height !== source.videoHeight) canvas.height = source.videoHeight;
-        const context = canvas.getContext("2d", { willReadFrequently: true });
-        context.drawImage(source, 0, 0);
-        live.current.scan(context.getImageData(0, 0, canvas.width, canvas.height), { captureOnly: true });
+        const preview = readCameraFrame(source, canvas, { forGuidance: true });
+        if (preview) live.current.scan(preview, { captureOnly: true });
       },
       onError: cause => { if (epoch === generation.current) { liveProgress.current?.stop(); cameraAvailable.current = false; cameraFailed.current = true; setError(`Camera could not open. ${cause.message} Choose a high-resolution photo instead.`); } } });
     return () => {

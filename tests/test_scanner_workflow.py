@@ -156,9 +156,11 @@ def install_changing_camera(page, frames):
 
 
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
-@pytest.mark.parametrize("degraded,preview_size", [(False, (768, 960)), (True, (768, 960)), (False, (360, 480))],
-                         ids=["clear", "scaled-dim-jpeg", "low-resolution-preview"])
-def test_full_printed_page_guidance_capture_and_verification(browser, printed_workflow_page, path, degraded, preview_size):
+@pytest.mark.parametrize("degraded,preview_size,guidance_size", [
+    (False, (768, 960), (768, 960)), (True, (768, 960), (768, 960)),
+    (False, (360, 480), (360, 480)), (False, (1536, 1920), (1024, 1280)),
+], ids=["clear", "scaled-dim-jpeg", "low-resolution-preview", "high-resolution-preview"])
+def test_full_printed_page_guidance_capture_and_verification(browser, printed_workflow_page, path, degraded, preview_size, guidance_size):
     context = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="allow")
     try:
         context.route("**/api/keys/default", lambda route: route.fulfill(json={"public_key": PUBLIC_KEY}))
@@ -215,7 +217,7 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         else:
             expect(review.locator(".photo-summary")).to_have_text("Recognized text matches the signed text")
         previews = page.evaluate("__documentScanRequests.filter(request => request.live)")
-        assert previews and all((request["width"], request["height"]) == preview_size for request in previews)
+        assert previews and all((request["width"], request["height"]) == guidance_size for request in previews)
         decoded = assert_document_preview_not_decoded(page)
         assert len(decoded) == 1, decoded
         assert (decoded[0]["width"], decoded[0]["height"]) == (2400, 3000)

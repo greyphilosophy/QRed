@@ -3,6 +3,7 @@
 export const NATIVE_PHOTO_TIMEOUT_MS = 5000;
 export const MIN_DOCUMENT_PHOTO_PIXELS = 4_000_000;
 export const MIN_DOCUMENT_PHOTO_LONG_SIDE = 2560;
+const MAX_GUIDANCE_SIDE = 1280;
 const pendingTracks = new WeakSet();
 const GUIDE_LABELS = Object.freeze({
   framing: "page corners needed", small: "page too small", dark: "more light needed",
@@ -27,6 +28,22 @@ export function canCaptureCameraPhoto(video) {
   const track = video?.srcObject?.getVideoTracks?.()[0];
   return typeof globalThis.ImageCapture === "function" && typeof globalThis.createImageBitmap === "function"
     && track?.kind === "video" && track.readyState === "live";
+}
+
+// Document guidance uses a smaller video frame. The camera supplies a separate
+// high-resolution still for seal recovery and printed-text comparison.
+export function readCameraFrame(video, canvas, { forGuidance = false } = {}) {
+  const sourceWidth = video.videoWidth, sourceHeight = video.videoHeight;
+  if (!sourceWidth || !sourceHeight) return null;
+  const scale = forGuidance ? Math.min(1, MAX_GUIDANCE_SIDE / Math.max(sourceWidth, sourceHeight)) : 1;
+  const width = Math.max(1, Math.round(sourceWidth * scale));
+  const height = Math.max(1, Math.round(sourceHeight * scale));
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return null;
+  context.drawImage(video, 0, 0, width, height);
+  return context.getImageData(0, 0, width, height);
 }
 
 // Only dimensions and a fixed reason code leave the capture helper. Never
