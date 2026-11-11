@@ -1,6 +1,7 @@
 // A bounded working copy makes rectangular printed QR modules square before
 // locating their own public patterns. The retained photo is never modified.
 import { locatePaper, pageHomography, pageWatermarkRegions } from "./pageAlignedScan.js";
+import { curvedPaperMapping } from "./curvedPaper.js";
 import { estimatePaperColor } from "./paperColor.js";
 import { normalizeWatermarkLuminance } from "./watermarkFilter.js";
 import { readRectifiedQrVersion } from "./rectifiedQrVersion.js";
@@ -115,8 +116,8 @@ function recoverObservations(observations, photoMap, version, thresholds, should
 // retry must not rebuild the same page warp, normalized pixels and finder
 // observations after the earlier narrow search has already paid for them.
 // This closure is never retained across photographs or camera frames.
-export function createRectifiedSealScanner(source) {
-  let image = null, mapping = null;
+export function createRectifiedSealScanner(source, { pageMapping = null, onMapping } = {}) {
+  let image = null, mapping = pageMapping;
   let originalGray = null, sharpenedGray = null;
   const prepared = new Map();
   const profiles = [{ marginPoints: 54 }, { marginPoints: 36 }, { legacy: true }];
@@ -145,8 +146,11 @@ export function createRectifiedSealScanner(source) {
     if (!image) {
       image = { data: source.data, width: source.width, height: source.height,
         paperColor: estimatePaperColor(source) };
-      const quad = locatePaper(image);
-      mapping = quad && pageHomography(quad);
+      if (!mapping) {
+        const quad = locatePaper(image);
+        mapping = quad && pageHomography(quad);
+      }
+      onMapping?.(mapping);
     }
     if (!mapping) return null;
     for (const profile of profiles) {
@@ -157,35 +161,41 @@ export function createRectifiedSealScanner(source) {
       for (const foregroundRobust of [true, false]) {
         if (!shouldContinue()) break;
         const grid = refineQrModuleGrid(working, gridMap, { x: 0, y: 0, width: 1, height: 1 },
-          version, { foregroundRobust, searchRadius, shouldContinue });
+          version, { foregroundRobust, searchRadius, shouldContinue, measuredFinders: foregroundRobust });
         if (!grid || grid.quality < 0.66) continue;
-        const observations = collectModuleSamples(gray, SIDE, SIDE, grid.moduleMap, version);
-        const photoMap = (col, row) => {
-          const p = grid.moduleMap(col, row);
-          return working.toPhoto(p.x, p.y);
-        };
-        const recovered = recoverObservations(observations, photoMap, version, thresholds, shouldContinue);
-        if (recovered) return recovered;
-        if (!shouldContinue()) return null;
-        // Keep fitting public QR patterns on the bounded square copy, but do
-        // not require its resampling blur to determine the observed modules.
-        // Smaller camera frames can lose the narrow gap between pale QR ink
-        // and text when warped a second time. Read the original pixels through
-        // that same measured map only after the established fast path misses.
-        if (image.width * image.height > MAX_NATIVE_SAMPLE_PIXELS) continue;
-        originalGray ??= normalizeWatermarkLuminance(image.data, image.width, image.height);
-        if (!shouldContinue()) return null;
-        const native = collectModuleSamples(originalGray, image.width, image.height, photoMap, version);
-        const nativeRecovered = recoverObservations(native, photoMap, version, thresholds, shouldContinue);
-        if (nativeRecovered) return nativeRecovered;
-        if (!shouldContinue()) return null;
-        // Bilinear camera resizing can soften the native modules too. Allow
-        // one measured edge-emphasis retry, still under the shared deadline.
-        sharpenedGray ??= sharpenModuleLuminance(originalGray, image.width, image.height, { shouldContinue });
-        if (!sharpenedGray || !shouldContinue()) return null;
-        const sharp = collectModuleSamples(sharpenedGray, image.width, image.height, photoMap, version);
-        const sharpRecovered = recoverObservations(sharp, photoMap, version, thresholds, shouldContinue);
-        if (sharpRecovered) return sharpRecovered;
+        // Prefer the observed finders when extrapolation moved by half a module.
+        // Keep the alignment-only map as the alternate in case the finders were noisy.
+        const maps = grid.finderModuleMap ? [grid.finderModuleMap, grid.moduleMap] : [grid.moduleMap];
+        for (const moduleMap of maps) {
+          if (!shouldContinue()) return null;
+          const observations = collectModuleSamples(gray, SIDE, SIDE, moduleMap, version);
+          const photoMap = (col, row) => {
+            const p = moduleMap(col, row);
+            return working.toPhoto(p.x, p.y);
+          };
+          const recovered = recoverObservations(observations, photoMap, version, thresholds, shouldContinue);
+          if (recovered) return recovered;
+          if (!shouldContinue()) return null;
+          // Keep fitting public QR patterns on the bounded square copy, but do
+          // not require its resampling blur to determine the observed modules.
+          // Smaller camera frames can lose the narrow gap between pale QR ink
+          // and text when warped a second time. Read the original pixels through
+          // that same measured map only after the established fast path misses.
+          if (image.width * image.height > MAX_NATIVE_SAMPLE_PIXELS) continue;
+          originalGray ??= normalizeWatermarkLuminance(image.data, image.width, image.height);
+          if (!shouldContinue()) return null;
+          const native = collectModuleSamples(originalGray, image.width, image.height, photoMap, version);
+          const nativeRecovered = recoverObservations(native, photoMap, version, thresholds, shouldContinue);
+          if (nativeRecovered) return nativeRecovered;
+          if (!shouldContinue()) return null;
+          // Bilinear camera resizing can soften the native modules too. Allow
+          // one measured edge-emphasis retry, still under the shared deadline.
+          sharpenedGray ??= sharpenModuleLuminance(originalGray, image.width, image.height, { shouldContinue });
+          if (!sharpenedGray || !shouldContinue()) return null;
+          const sharp = collectModuleSamples(sharpenedGray, image.width, image.height, photoMap, version);
+          const sharpRecovered = recoverObservations(sharp, photoMap, version, thresholds, shouldContinue);
+          if (sharpRecovered) return sharpRecovered;
+        }
       }
     }
     return null;
@@ -195,4 +205,18 @@ export function createRectifiedSealScanner(source) {
 // One-off callers keep the original API and do not share request state.
 export function scanRectifiedSeal(image, options) {
   return createRectifiedSealScanner(image)(options);
+}
+
+export function prepareCurvedPageScan(image, straightMapping, shouldContinue) {
+  if (image.width < 160 || image.height < 160 || !shouldContinue()) return null;
+  const curved = curvedPaperMapping(image, shouldContinue);
+  if (!curved) return null;
+  // When the outlines disagree by a visible fraction of the frame, checking
+  // the measured paper first can avoid spending the budget looking for ordinary QRs.
+  const outline = [[0, 0], [.5, 0], [1, 0], [1, .5], [1, 1], [.5, 1], [0, 1], [0, .5]];
+  const preferred = !straightMapping || outline.some(([u, v]) => {
+    const a = straightMapping(u, v), b = curved(u, v);
+    return Math.hypot((a.x - b.x) / image.width, (a.y - b.y) / image.height) > .025;
+  });
+  return { preferred, scan: createRectifiedSealScanner(image, { pageMapping: curved }) };
 }

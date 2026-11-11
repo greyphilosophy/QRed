@@ -199,6 +199,25 @@ was consumed by preceding attempts. These measurements used a four-second
 narrow-pass cutoff. The narrow pass gets half of the current budget, up to 30
 seconds. The remaining recovery steps share the time left on the same clock.
 
+## Curved and tinted paper
+
+For a full-page watermark the rectified reader can use the three measured finder
+positions to constrain the grid when an extrapolated corner drifts. If that read
+misses, the scanner measures the four paper edges on a small preview. When the
+straight and curved outlines disagree by more than 2.5% of the frame, or the
+straight outline is missing, it tries the curved mapping first with up to half of
+the shared budget. Otherwise the curved retry follows ordinary and footer reads
+with up to one third of the budget. Each photo gets at most one such retry. The
+general QR stage reuses observed pixels across consecutive filter radii at the
+same scale and measures the paper tint before rejecting colored pixels.
+The progress display identifies which fallback is running, including full-detail
+QR reading, resized QR reading, watermark filtering, and individual module votes.
+
+When the fast preview finds a sheet but rates its edges as soft, the native
+camera guide can measure focus along the curved outline. It compares small
+patches of the page between frames to tolerate a slight shift of dense printing
+during the steady hold.
+
 ## Conventional-code preflight
 
 The early conventional-QR pass is a preliminary look, not a pair of exhaustive

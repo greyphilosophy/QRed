@@ -5,9 +5,14 @@ const STAGE_LABELS = Object.freeze({
   "watermark-preview": "checking the watermark",
   "ordinary-qr": "reading conventional QR codes",
   footer: "checking footer seals",
+  "curved-page": "following the curved page edges",
   "rectified-wide": "refining the page grid",
   "page-aligned": "checking page layouts",
   "general-qr": "trying other QR reads",
+  "qr-full-detail": "checking full-detail QR pixels",
+  "qr-rescaled": "checking QR codes at other sizes",
+  "qr-filtered": "reading filtered watermark pixels",
+  "qr-modules": "checking individual QR modules",
 });
 
 export function scanStageDiagnostic(value) {

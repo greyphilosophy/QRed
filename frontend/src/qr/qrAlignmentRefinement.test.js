@@ -47,6 +47,21 @@ it("stops between alignment markers when its scan budget expires", () => {
   expect(checks).toBe(3);
 });
 
+it("can retain the independently measured finder corners when alignment extrapolation drifts", () => {
+  const { image, mapping, version, size } = shiftedPatterns(8);
+  const grid = refineQrModuleGrid(image, mapping, { x: 0, y: 0, width: 1, height: 1 }, version,
+    { searchRadius: 12, foregroundRobust: true, measuredFinders: true });
+  const markers = alignmentCenters(version).map(c => c + .5);
+  const near = markers[0], far = markers.at(-1);
+  for (const [col, row] of [[near, near], [far, near], [near, far]]) {
+    const finder = mapping(col / size, row / size);
+    const anchored = grid.finderModuleMap(col, row), inferred = grid.moduleMap(col, row);
+    expect(Math.hypot(inferred.x - finder.x, inferred.y - finder.y)).toBeGreaterThan(3.5);
+    expect(Math.hypot(anchored.x - finder.x, anchored.y - finder.y)).toBeLessThan(1e-8);
+  }
+  expect(grid.finderModuleMap(far, far)).toEqual(grid.moduleMap(far, far));
+});
+
 it.each([7, 10, 13])("fits all six available alignment markers in QR version %s", version => {
   const { image, mapping } = shiftedPatterns(3, version);
   const grid = refineQrModuleGrid(image, mapping, { x: 0, y: 0, width: 1, height: 1 }, version,

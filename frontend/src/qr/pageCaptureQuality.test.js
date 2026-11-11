@@ -16,7 +16,36 @@ function paper({ x = 90, y = 100, width = 600, height = 800, desk = 55, ink = fa
   return image;
 }
 
+// A generated, densely printed page with a mild bow and bright fabric folds.
+function fabricPrint(shift = 0) {
+  const width = 720, height = 960, data = new Uint8ClampedArray(width * height * 4);
+  for (let row = 0; row < height; row++) for (let col = 0; col < width; col++) {
+    const x = (col - shift) / width, y = row / height;
+    const u = (x - .145 + .017 * y) / .73;
+    const v = (y - .07 - .013 * (2 * u - 1) ** 2 - .015 * u) / .78;
+    const page = u >= 0 && u <= 1 && v >= 0 && v <= 1;
+    const ridge = 62 * Math.max(0, Math.sin(41 * x + 11 * Math.sin(6 * y))) ** 12;
+    const fold = 55 * Math.max(0, Math.cos(30 * y - 7 * x + Math.cos(24 * x))) ** 10;
+    let light = 44 + 12 * Math.sin(13 * x + 8 * y) + ridge + fold;
+    if (page) {
+      const pattern = Math.imul(Math.floor(u * 150), 73856093) ^ Math.imul(Math.floor(v * 185), 19349663);
+      const ink = u > .075 && u < .925 && v > .07 && v < .93 && (pattern & 16);
+      light = 186 + 10 * Math.cos(4 * u) - 42 * v - (ink ? 32 : 0);
+    }
+    const at = (row * width + col) * 4;
+    data[at] = light * 1.17; data[at + 1] = light; data[at + 2] = light * .85; data[at + 3] = 255;
+  }
+  return { width, height, data };
+}
+
 describe("automatic whole-page capture", () => {
+  it("focuses on paper instead of a fabric fold and completes the hold during slight sway", () => {
+    const frames = [0, 1, 2, -1, 0].map(fabricPrint);
+    expect(inspectPageFrame(frames[0]).state).toBe("soft");
+    const gate = createPageCaptureGate();
+    const states = frames.map((image, i) => gate.update(image, i * 200, { captureOnly: true }).state);
+    expect(states).toEqual(["hold", "hold", "hold", "ready", "captured"]);
+  });
   it.each([[320, 400], [360, 450], [480, 600]])("uses a %i × %i preview for framing, not as the native photo resolution", (width, height) => {
     const source = paper(), data = new Uint8ClampedArray(width * height * 4);
     for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
@@ -95,6 +124,7 @@ describe("automatic whole-page capture", () => {
   });
   it("waits for focus on a blurred photograph", () => {
     expect(inspectPageFrame(paper({ blur: 5 })).state).toBe("soft");
+    expect(inspectPageFrame(paper({ blur: 5 }), { captureOnly: true }).state).toBe("soft");
   });
   it("accepts a sharp photograph even with unreadable printing or no text", () => {
     expect(inspectPageFrame(paper({ ink: true })).state).toBe("clear");

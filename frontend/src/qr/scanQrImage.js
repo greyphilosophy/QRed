@@ -4,6 +4,7 @@ import { qredPayloadFromScanResult, isQRedEntryLink } from "./qrPayload.js";
 import { filterWatermark, normalizeWatermarkLuminance } from "./watermarkFilter.js";
 import { scanModuleAwareQr } from "./moduleAwareScan.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
+import { estimatePaperColor } from "./paperColor.js";
 
 // Keep each decode bounded, including large photo uploads. Retry only when the
 // original scale fails: dense printed codes can land badly on the pixel grid.
@@ -127,7 +128,17 @@ function usableResult(code) {
 
 // Prepare a resolution only once. The module-aware retry consumes the exact
 // same normalized ink and filtered pixels as ordinary watermark decoding.
-function prepareAtSize(data, width, height, [targetWidth, targetHeight, radius], entryToSkip = null, fastResize = false) {
+function prepareAtSize(data, width, height, [targetWidth, targetHeight, radius], entryToSkip = null,
+  fastResize = false, previous = null) {
+  // Neighboring filter radii vote on exactly the same photographed pixels.
+  // Reuse the first watermark buffer already retained for module recovery.
+  if (radius && previous?.targetWidth === targetWidth && previous.targetHeight === targetHeight
+      && previous.entryToSkip === entryToSkip) {
+    if (previous.radius === radius) return previous;
+    const pixels = filterWatermark(previous.observed, targetWidth, targetHeight,
+      radius, previous.normalized, previous.paperColor);
+    return { ...previous, pixels, radius };
+  }
   const originalSize = targetWidth === width && targetHeight === height;
   let observed = originalSize ? data
     : (fastResize && !radius ? resizePreviewRgba : resizeRgba)(data, width, height, targetWidth, targetHeight);
@@ -143,14 +154,16 @@ function prepareAtSize(data, width, height, [targetWidth, targetHeight, radius],
   }
   if (!radius) return { observed, pixels: observed, targetWidth, targetHeight, originalSize, radius };
   const normalized = normalizeWatermarkLuminance(observed, targetWidth, targetHeight);
-  const pixels = filterWatermark(observed, targetWidth, targetHeight, radius, normalized);
-  return { observed, pixels, normalized, targetWidth, targetHeight, originalSize, radius };
+  const gains = estimatePaperColor({ data: observed, width: targetWidth, height: targetHeight });
+  const paperColor = gains[0] === 1 && gains[2] === 1 ? null : gains;
+  const pixels = filterWatermark(observed, targetWidth, targetHeight, radius, normalized, paperColor);
+  return { observed, pixels, normalized, paperColor, entryToSkip, targetWidth, targetHeight, originalSize, radius };
 }
 
 function decodePrepared(prepared, width, height, moduleAware = false, shouldContinue) {
-  const { observed, pixels, normalized, targetWidth, targetHeight, originalSize, radius } = prepared;
+  const { observed, pixels, normalized, paperColor, targetWidth, targetHeight, originalSize, radius } = prepared;
   const code = moduleAware && radius
-    ? scanModuleAwareQr(observed, pixels, targetWidth, targetHeight, normalized)
+    ? scanModuleAwareQr(observed, pixels, targetWidth, targetHeight, normalized, { paperColor, shouldContinue })
     : jsQR(pixels, targetWidth, targetHeight, { inversionAttempts: "attemptBoth",
       ...(shouldContinue ? { shouldContinue } : {}) });
   if (code && radius) code.watermark = true;
@@ -183,7 +196,8 @@ export function scanWatermarkPreview(data, width, height) {
  * pixel recovery. It never changes the filtered watermark preparation.
  */
 export function scanQrImage(data, width, height, { tryRescaling = true, tryWatermark = true,
-  maxAttempts = Infinity, maxScanPixels = MAX_SCAN_PIXELS, fastResize = false, shouldContinue = () => true } = {}) {
+  maxAttempts = Infinity, maxScanPixels = MAX_SCAN_PIXELS, fastResize = false, shouldContinue = () => true,
+  onStage } = {}) {
   if (!isValidImage(data, width, height)) return null;
   if (!Number.isInteger(maxScanPixels) || maxScanPixels < 1) throw new Error("Invalid QR scan pixel budget.");
   maxScanPixels = Math.min(MAX_SCAN_PIXELS, maxScanPixels);
@@ -191,6 +205,7 @@ export function scanQrImage(data, width, height, { tryRescaling = true, tryWater
   let entryToSkip = null;
   let preparedWatermark = null;
   let attempts = 0;
+  let lastStage;
   // A bounded preflight should try raw, pixel-filtered, then module-aware
   // rather than exhausting its budget on similar pixel-filter radii.
   const regularBudget = tryWatermark && Number.isFinite(maxAttempts) && maxAttempts >= 3
@@ -199,7 +214,11 @@ export function scanQrImage(data, width, height, { tryRescaling = true, tryWater
   for (let index = 0; index < sizes.length; index++) {
     const size = sizes[index];
     if (attempts >= regularBudget || !shouldContinue()) break;
-    const prepared = prepareAtSize(data, width, height, size, entryToSkip, fastResize);
+    const fullDetail = size[0] === sizes[0][0] && size[1] === sizes[0][1];
+    const stage = size[2] ? "qr-filtered" : fullDetail ? "qr-full-detail" : "qr-rescaled";
+    if (stage !== lastStage) onStage?.(stage);
+    lastStage = stage;
+    const prepared = prepareAtSize(data, width, height, size, entryToSkip, fastResize, preparedWatermark);
     // Resizing/filtering can itself use the remaining allowance. Do not start
     // a QR search after preparation crossed the deadline.
     if (!shouldContinue()) break;
@@ -221,7 +240,8 @@ export function scanQrImage(data, width, height, { tryRescaling = true, tryWater
   // Count the fallback against the same budget as ordinary scan attempts.
   // Preflight callers can reserve one attempt by setting maxAttempts = 3.
   if (preparedWatermark && attempts < maxAttempts && shouldContinue()) {
-    const code = decodePrepared(preparedWatermark, width, height, true);
+    onStage?.("qr-modules");
+    const code = decodePrepared(preparedWatermark, width, height, true, shouldContinue);
     if (usableResult(code)) return code;
     if (code?.data) entryLink ??= code;
   }

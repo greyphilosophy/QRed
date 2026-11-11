@@ -4,7 +4,7 @@ import { createQRedSeals } from "../qredSealer.js";
 import { createQRedQrData } from "../qredQr.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { pageWatermarkRegions } from "./pageAlignedScan.js";
-import { scanRectifiedSeal, createRectifiedSealScanner } from "./rectifiedSealScan.js";
+import { scanRectifiedSeal, createRectifiedSealScanner, prepareCurvedPageScan } from "./rectifiedSealScan.js";
 import * as moduleSamples from "./rectifiedModuleSamples.js";
 import * as pageGeometry from "./pageAlignedScan.js";
 import * as watermarkFilter from "./watermarkFilter.js";
@@ -16,13 +16,15 @@ const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
 // part of the sheet, making a high-percentile paper estimate brighter than
 // the exposed white modules. One global threshold then confuses them with
 // pale ink elsewhere. The decoder receives only these camera-like pixels.
-function shadowedPrint(symbol, grain) {
+function shadowedPrint(symbol, grain, { bow = 0 } = {}) {
   const width = 1000, height = 1300, data = new Uint8ClampedArray(width * height * 4);
   const paper = { x: 50, y: 50, width: 900, height: 1165 };
   const region = pageWatermarkRegions(1, undefined, { marginPoints: 54 })[0];
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-    const u = (x - paper.x) / paper.width, v = (y - paper.y) / paper.height;
+    const u = (x - paper.x) / paper.width;
+    const v = (y - paper.y) / paper.height - bow * (2 * u - 1) ** 2;
     let value = 80;
+    if (bow) value += 55 * Math.max(0, Math.cos(30 * y / height - 7 * x / width)) ** 10;
     if (u >= 0 && v >= 0 && u < 1 && v < 1) {
       const col = Math.floor((u - region.x) / region.width * symbol.modules.size);
       const row = Math.floor((v - region.y) / region.height * symbol.modules.size);
@@ -34,11 +36,31 @@ function shadowedPrint(symbol, grain) {
       if (inside && row > 15 && row < 125 && row % 19 === 0 && col % 4 !== 0) value = 40;
     }
     const at = (y * width + x) * 4;
-    data[at] = data[at + 1] = data[at + 2] = value;
+    data[at] = bow ? value * 1.1 : value;
+    data[at + 1] = value;
+    data[at + 2] = bow ? value * .9 : value;
     data[at + 3] = 255;
   }
   return { data, width, height };
 }
+
+it("authenticates a bowed warm-lit print against a ridged background from pixels alone", async () => {
+  const { seals } = await createQRedSeals({
+    privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey,
+    content: "Synthetic bowed print. ".repeat(40), encodingStrategy: "plaintext",
+    timestamp: "2026-11-04T12:00:00Z",
+  });
+  const { payloadBytes } = createQRedQrData(seals[0]);
+  const symbol = QRCode.create([{ data: payloadBytes, mode: "byte" }], { version: 31, errorCorrectionLevel: "L" });
+  const image = shadowedPrint(symbol, 8, { bow: .018 });
+  const alternative = prepareCurvedPageScan(image, null, () => true);
+  expect(alternative?.preferred).toBe(true);
+  const result = alternative.scan({ searchRadius: 12 });
+  expect(result?.seal).toBe(seals[0]);
+  await expect(verifyQRedSeals([result.seal], publicKey)).resolves.toMatchObject({
+    status: "VALID", signature_valid: true,
+  });
+}, 20000);
 
 it.each([25, 29])("recovers a shadowed print with grain %i through real finder fitting and local retries", async grain => {
   const { seals } = await createQRedSeals({

@@ -18,6 +18,15 @@ beforeEach(() => {
 });
 
 describe("bounded watermark scan budget", () => {
+  it("reports only the fallback phases actually reached, once per phase", () => {
+    const onStage = vi.fn();
+    scanQrImage(pixels, width, height, { onStage });
+    expect(onStage.mock.calls.flat()).toEqual(["qr-full-detail", "qr-rescaled", "qr-filtered", "qr-modules"]);
+    onStage.mockClear();
+    jsQR.mockReturnValueOnce({ data: "ordinary" });
+    scanQrImage(pixels, width, height, { onStage });
+    expect(onStage.mock.calls.flat()).toEqual(["qr-full-detail"]);
+  });
   it("stops between image attempts when its shared deadline expires", () => {
     let checks = 0;
     scanQrImage(pixels, width, height, { shouldContinue: () => checks++ < 2 });
@@ -46,6 +55,16 @@ describe("bounded watermark scan budget", () => {
     expect([targetWidth, targetHeight]).toEqual([width, height]);
     expect(normalized).toBeInstanceOf(Uint8Array);
     expect(normalized).toHaveLength(width * height);
+  });
+
+  it("reuses one normalized photo for different filter radii and keeps the final retry on the deadline", () => {
+    const normalize = vi.spyOn(watermarkFilters, "normalizeWatermarkLuminance");
+    const shouldContinue = () => true;
+    try {
+      scanQrImage(pixels, width, height, { tryRescaling: false, shouldContinue });
+      expect(normalize.mock.calls.filter(([, w, h]) => w === width && h === height)).toHaveLength(1);
+      expect(scanModuleAwareQr.mock.calls[0][5].shouldContinue).toBe(shouldContinue);
+    } finally { normalize.mockRestore(); }
   });
 
   it("never exceeds a one- or two-attempt budget", () => {
