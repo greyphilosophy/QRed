@@ -169,6 +169,10 @@ function locatePaperAtResolution(image) {
   };
   const rowStep = Math.max(2, Math.round(height / 280));
   const colStep = Math.max(2, Math.round(width / 280));
+  // The frame height limits the width of an upright sheet in a wide camera
+  // feed. Even a Letter page filling 92% of a 16:9 frame's height is under
+  // 40% of its width. Use the shorter dimension for the horizontal evidence.
+  const widthForEdges = Math.min(width, height);
   const left = [], right = [], top = [], bottom = [];
   const brightRunX = (x, y, direction) => {
     const end = x + 3 * direction;
@@ -187,7 +191,7 @@ function locatePaperAtResolution(image) {
     for (let x = 0; x < width - 3; x++) if (brightRunX(x, y, 1)) { lo = x; break; }
     if (lo < 0) continue;
     for (let x = width - 1; x >= 3; x--) if (brightRunX(x, y, -1)) { hi = x; break; }
-    if (hi - lo < width * 0.40) continue;
+    if (hi - lo < widthForEdges * 0.40) continue;
     left.push([y, lo]);
     right.push([y, hi]);
   }
@@ -215,7 +219,7 @@ function locatePaperAtResolution(image) {
   const [tl, tr, br, bl] = quad;
   const pageWidth = (distance(tl, tr) + distance(bl, br)) / 2;
   const pageHeight = (distance(tl, bl) + distance(tr, br)) / 2;
-  if (pageWidth < width * 0.35 || pageHeight < height * 0.35 ||
+  if (pageWidth < widthForEdges * 0.35 || pageHeight < height * 0.35 ||
       pageWidth > width * 1.15 || pageHeight > height * 1.15) return null;
   return quad;
 }
