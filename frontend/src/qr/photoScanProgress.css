@@ -23,7 +23,7 @@
   font: 700 clamp(1rem, 3.5vw, 1.25rem)/1.35 system-ui, sans-serif;
   text-align: center;
 }
-.camera-capture-notice:not(:empty) ~ .page-scan-guide-area { visibility: hidden; }
+.camera-capture-notice[data-hide-guide] ~ .page-scan-guide-area { visibility: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .photo-scan-progress progress { visibility: hidden; }
 }

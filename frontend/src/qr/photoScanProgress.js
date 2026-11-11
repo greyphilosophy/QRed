@@ -26,15 +26,16 @@ export function createPhotoScanProgress() {
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     getSnapshot: () => snapshot,
     clear,
-    begin(phase = "decoding") {
+    begin(initialPhase = "decoding") {
       clearTimer();
       const request = ++generation, started = performance.now();
-      let stepStarted = started, label = Object.hasOwn(PHASES, phase) ? PHASES[phase] : PHASES.decoding;
+      let phase = Object.hasOwn(PHASES, initialPhase) ? initialPhase : "decoding";
+      let stepStarted = started, label = PHASES[phase];
       const active = () => generation === request;
       const tick = () => {
         if (!active()) return;
         const now = performance.now();
-        publish({ label, cameraCaptured: phase === "captured",
+        publish({ phase, label,
           elapsedMs: Math.max(0, now - started), stepElapsedMs: Math.max(0, now - stepStarted) });
       };
       const step = (next, nextPhase = phase) => {

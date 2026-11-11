@@ -10,12 +10,14 @@ export function usePhotoScanProgress() {
 
 export function CameraCaptureNotice({ progress }) {
   const notice = useRef(null);
-  const captured = () => Boolean(progress.getSnapshot()?.cameraCaptured);
-  const visible = useSyncExternalStore(progress.subscribe, captured, captured);
+  const getPhase = () => progress.getSnapshot()?.phase;
+  const phase = useSyncExternalStore(progress.subscribe, getPhase, getPhase);
+  const captured = phase === "captured";
   useEffect(() => {
-    if (visible) notice.current?.scrollIntoView?.({ block: "nearest", inline: "nearest", behavior: "instant" });
-  }, [visible]);
-  return <p ref={notice} className="camera-capture-notice" role="status" aria-atomic="true">{visible ? CAMERA_CAPTURED_NOTICE : ""}</p>;
+    if (captured) notice.current?.scrollIntoView?.({ block: "nearest", inline: "nearest", behavior: "instant" });
+  }, [captured]);
+  return <p ref={notice} className="camera-capture-notice" role="status" aria-atomic="true"
+    data-hide-guide={phase && phase !== "capturing" ? "" : undefined}>{captured ? CAMERA_CAPTURED_NOTICE : ""}</p>;
 }
 
 export function PhotoScanProgress({ progress }) {

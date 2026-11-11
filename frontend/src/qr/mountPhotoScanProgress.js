@@ -16,7 +16,8 @@ export function mountPhotoScanProgress(element, captureNotice) {
   element.replaceChildren(step, timing, bar);
   const render = () => {
     const snapshot = progress.getSnapshot();
-    const message = snapshot?.cameraCaptured ? CAMERA_CAPTURED_NOTICE : "";
+    captureNotice?.toggleAttribute("data-hide-guide", Boolean(snapshot && snapshot.phase !== "capturing"));
+    const message = snapshot?.phase === "captured" ? CAMERA_CAPTURED_NOTICE : "";
     if (captureNotice && captureNotice.textContent !== message) {
       captureNotice.textContent = message;
       if (message) captureNotice.scrollIntoView?.({ block: "nearest", inline: "nearest", behavior: "instant" });
