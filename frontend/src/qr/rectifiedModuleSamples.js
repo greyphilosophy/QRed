@@ -4,14 +4,22 @@ const SAMPLES_PER_MODULE = OFFSETS.length ** 2;
 // Geometry is independent of the ink/foreground thresholds. Read it once
 // per candidate grid and reuse these observations for every threshold retry.
 // This buffer is local to one scan; it never changes the retained photo.
-export function collectModuleSamples(gray, width, height, moduleMap, version) {
+export function collectModuleSamples(pixels, width, height, moduleMap, version) {
   const size = 17 + 4 * version, values = new Uint8Array(size * size * SAMPLES_PER_MODULE);
+  const rgba = pixels.length === width * height * 4;
   let index = 0;
   for (let row = 0; row < size; row++) for (let col = 0; col < size; col++)
     for (const dy of OFFSETS) for (const dx of OFFSETS) {
       const p = moduleMap(col + 0.5 + dx, row + 0.5 + dy);
       const x = Math.round(p.x), y = Math.round(p.y);
-      values[index++] = x < 0 || y < 0 || x >= width || y >= height ? 0 : gray[y * width + x];
+      if (x >= 0 && y >= 0 && x < width && y < height) {
+        const at = y * width + x;
+        const base = at * 4;
+        values[index] = rgba
+          ? (77 * pixels[base] + 150 * pixels[base + 1] + 29 * pixels[base + 2] + 128) >> 8
+          : pixels[at];
+      }
+      index++;
     }
   return { values, size };
 }

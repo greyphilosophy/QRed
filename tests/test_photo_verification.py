@@ -283,7 +283,10 @@ def test_guided_pages_find_changed_word_and_clear_without_persistence(browser, s
         expect(review.locator(".photo-differences")).to_contain_text("Monday")
         expect(review.get_by_role("button", name="Different or extra text: Monday", exact=True)).to_be_visible()
         expect(review.get_by_role("img", name="Magnified photo difference").first).to_be_visible()
-        expect(page.get_by_role("button", name=re.compile("Page 1 of 2.*Recognized text matches"))).to_be_visible()
+        page.get_by_role("button", name=re.compile("Page 1 of 2.*Recognized text matches")).click()
+        expect(page.get_by_role("region", name="Review Page 1 of 2", exact=True)).to_be_visible()
+        page.get_by_role("button", name=re.compile("Page 2 of 2.*Differences found")).click()
+        expect(review).to_be_visible()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         assert page.locator("input[capture]").count() == 0
         assert persistent_state(page) == baseline
@@ -445,6 +448,8 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
         camera_paper(page, TEXT.replace("Friday", "Monday"), sealed_text[1]["qr"])
         page.get_by_role("button", name="Check document", exact=True).click()
         expect(page.locator(".ar-collection-progress, #statusText").filter(has_text="Page 2 captured. Show page 1.")).to_be_visible(timeout=45000)
+        if path == "/verify.htm":
+            assert page.locator("#sealList").evaluate("e => e.scrollWidth <= e.clientWidth")
         page.get_by_role("button", name="Check this page now", exact=True).click()
         review = page.get_by_role("region", name="Review Page 2 of 2", exact=True)
         expect(review.locator(".photo-differences")).to_contain_text("Monday", timeout=60000)

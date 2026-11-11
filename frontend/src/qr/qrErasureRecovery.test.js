@@ -132,6 +132,32 @@ describe("QR Reed-Solomon erasure-aware recovery", () => {
       { allowSingleBitError: true })).toBeNull();
   });
 
+  it("recovers the complete payload when weak observations exceed the parity budget", () => {
+    const qr = fixture(), bits = qr.bits.slice(), unknown = qr.unknown.slice();
+    const reliability = new Float32Array(bits.length).fill(1);
+    let seed = 12345;
+    for (let i = 0; i < bits.length; i++) {
+      if (qr.symbol.modules.isReserved(Math.floor(i / qr.size), i % qr.size)) continue;
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      const sample = seed >>> 24;
+      if (sample >= 70) continue;
+      unknown[i] = 1;
+      reliability[i] = sample / 300;
+      if (sample < 20 && (seed & 1)) bits[i] ^= 1;
+    }
+    expect(readErasedQrMatrix(bits, unknown, qr.symbol.version, null, { allowRankedErasures: false })).toBeNull();
+    const recovered = readErasedQrMatrix(bits, unknown, qr.symbol.version, null, { bitReliability: reliability });
+    expect(qredPayloadFromScanResult(recovered && {
+      data: "", binaryData: bytePayloadFromCodewords(recovered.dataCodewords, qr.symbol.version), version: qr.symbol.version,
+    })).toBe(qr.seal);
+  });
+
+  it("stops ranked bit recovery when its caller cancels", () => {
+    const qr = fixture();
+    expect(readErasedQrMatrix(qr.bits, qr.unknown, qr.symbol.version, null,
+      { bitReliability: new Float32Array(qr.bits.length), shouldContinue: () => false })).toBeNull();
+  });
+
   it("does not substitute guessed byte erasures when the measured grid has no usable data", () => {
     const qr = fixture(), bits = qr.bits.slice();
     for (let row = 0; row < qr.size; row++) for (let col = 0; col < qr.size; col++) {
@@ -141,5 +167,7 @@ describe("QR Reed-Solomon erasure-aware recovery", () => {
     const unknown = new Uint8Array(bits.length).fill(1);
     expect(readErasedQrMatrix(bits, unknown, qr.symbol.version, null,
       { allowSingleBitError: true, allowRankedErasures: false })).toBeNull();
+    expect(readErasedQrMatrix(bits, unknown, qr.symbol.version, null,
+      { bitReliability: new Float32Array(bits.length) })).toBeNull();
   });
 });

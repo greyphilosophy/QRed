@@ -16,9 +16,10 @@ const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
 // part of the sheet, making a high-percentile paper estimate brighter than
 // the exposed white modules. One global threshold then confuses them with
 // pale ink elsewhere. The decoder receives only these camera-like pixels.
-function shadowedPrint(symbol, grain, { bow = 0 } = {}) {
-  const width = 1000, height = 1300, data = new Uint8ClampedArray(width * height * 4);
-  const paper = { x: 50, y: 50, width: 900, height: 1165 };
+function shadowedPrint(symbol, grain, { bow = 0, overprint = false } = {}) {
+  const scale = overprint ? 2 : 1;
+  const width = 1000 * scale, height = 1300 * scale, data = new Uint8ClampedArray(width * height * 4);
+  const paper = { x: 50 * scale, y: 50 * scale, width: 900 * scale, height: 1165 * scale };
   const region = pageWatermarkRegions(1, undefined, { marginPoints: 54 })[0];
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     const u = (x - paper.x) / paper.width;
@@ -34,6 +35,13 @@ function shadowedPrint(symbol, grain, { bow = 0 } = {}) {
       const noise = ((Math.imul(x + 1, 73856093) ^ Math.imul(y + 1, 19349663)) >>> 0) % 1000 / 999 * 2 - 1;
       value = illumination * (dark ? 0.87 - 0.12 * v : 1) + noise * (2 + grain * v);
       if (inside && row > 15 && row < 125 && row % 19 === 0 && col % 4 !== 0) value = 40;
+      if (overprint && inside) {
+        const moduleY = (v - region.y) / region.height * symbol.modules.size;
+        if (row > 14 && row < 125 && row % 12 === 4 && col % 7 < 4 && moduleY - row < .7) value = 45;
+        // A light navigation panel covers part of the top-right finder.
+        if (col >= symbol.modules.size - 7 && col <= symbol.modules.size - 2 && row >= 2 && row < 4)
+          value = illumination;
+      }
     }
     const at = (y * width + x) * 4;
     data[at] = bow ? value * 1.1 : value;
@@ -60,6 +68,29 @@ it("authenticates a bowed warm-lit print against a ridged background from pixels
   await expect(verifyQRedSeals([result.seal], publicKey)).resolves.toMatchObject({
     status: "VALID", signature_valid: true,
   });
+}, 20000);
+
+it("authenticates a seal with an overprinted finder and dark strokes crossing the data", async () => {
+  const { seals } = await createQRedSeals({
+    privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey,
+    content: "Synthetic overprinted watermark. ".repeat(30), encodingStrategy: "plaintext",
+    timestamp: "2026-11-11T12:00:00Z",
+  });
+  const { payloadBytes } = createQRedQrData(seals[0]);
+  const symbol = QRCode.create([{ data: payloadBytes, mode: "byte" }], { version: 31, errorCorrectionLevel: "L" });
+  const image = shadowedPrint(symbol, 8, { overprint: true });
+  const recover = vi.spyOn(recovery, "recoverSampledQrMatrix");
+  let result;
+  try {
+    result = scanRectifiedSeal(image, { searchRadius: 12 });
+    const exposed = recover.mock.calls.findIndex(([, , , options]) => options?.bitReliability);
+    expect(exposed).toBeGreaterThanOrEqual(0);
+    expect(recover.mock.results[exposed].value?.seal).toBe(seals[0]);
+  } finally { recover.mockRestore(); }
+  expect(result?.seal).toBe(seals[0]);
+  await expect(verifyQRedSeals([result.seal], publicKey)).resolves.toMatchObject({ status: "VALID", signature_valid: true });
+  await expect(verifyQRedSeals([result.seal], "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI"))
+    .resolves.toMatchObject({ status: "INVALID" });
 }, 20000);
 
 it.each([25, 29])("recovers a shadowed print with grain %i through real finder fitting and local retries", async grain => {

@@ -366,50 +366,72 @@ export function recoverBitErasedDataCodewords(codewords, version, ecLevelBits, i
   return dataFromBlocks(corrected, info.sizes);
 }
 
-function moduleBitErasureMasks(unknown, version, codewordCount) {
-  const size = 17 + 4 * version;
-  const reserved = functionMask(size, version);
-  const masks = new Uint8Array(codewordCount);
+// Use the same QR zig-zag order for every kind of uncertainty.
+function visitDataBits(version, visit) {
+  const size = 17 + 4 * version, reserved = functionMask(size, version);
   let bit = 0, upward = true;
   for (let right = size - 1; right > 0; right -= 2) {
     if (right === 6) right--;
     for (let offset = 0; offset < size; offset++) {
       const row = upward ? size - 1 - offset : offset;
       for (const col of [right, right - 1]) {
-        if (reserved[row][col]) continue;
-        if ((bit >>> 3) < masks.length && unknown[row * size + col]) {
-          masks[bit >>> 3] |= 1 << (7 - (bit & 7));
-        }
-        bit++;
+        if (!reserved[row][col]) visit(bit++, row * size + col);
       }
     }
     upward = !upward;
   }
+}
+
+function moduleBitErasureMasks(unknown, version, codewordCount) {
+  const masks = new Uint8Array(codewordCount);
+  visitDataBits(version, (bit, index) => {
+    if ((bit >>> 3) < masks.length && unknown[index]) masks[bit >>> 3] |= 1 << (7 - (bit & 7));
+  });
   return masks;
 }
 
-// Recover codewords from the QR's normal zig-zag interleave. A module is
-// uncertain only if the page sampler identified occluding foreground; marks
-// in function/format/align patterns never count as RS data erasures.
 export function codewordErasureIndexes(unknown, version) {
-  const size = 17 + 4 * version;
-  if (!unknown || unknown.length !== size * size) return new Set();
-  const mask = functionMask(size, version);
-  const erased = new Set();
-  let bit = 0, upward = true;
-  for (let right = size - 1; right > 0; right -= 2) {
-    if (right === 6) right--;
-    for (let offset = 0; offset < size; offset++) {
-      const row = upward ? size - 1 - offset : offset;
-      for (const col of [right, right - 1]) {
-        if (mask[row][col]) continue;
-        if (unknown[row * size + col]) erased.add(Math.floor(bit / 8));
-        bit++;
+  const size = 17 + 4 * version, erased = new Set();
+  if (!unknown || unknown.length !== size * size) return erased;
+  visitDataBits(version, (bit, index) => { if (unknown[index]) erased.add(bit >>> 3); });
+  return erased;
+}
+
+// Rank individual weak observations inside each parity block. Leave at least
+// 24 binary parity checks unused for detecting inconsistent observations.
+function recoverRankedBits(codewords, version, ecLevel, unknown, reliability, shouldContinue) {
+  const layout = blockLayout(version, ecLevel);
+  if (!layout || codewords.length < layout.total || reliability.length !== unknown.length) return null;
+  const scores = new Float32Array(codewords.length * 8).fill(Infinity);
+  visitDataBits(version, (bit, index) => { if (bit < scores.length && unknown[index]) scores[bit] = reliability[index]; });
+  const { blocks, indexes } = separateBlocks(codewords, layout), corrected = [];
+  const parity = layout.parityPerBlock, equations = parity * 8;
+  for (let i = 0; i < blocks.length; i++) {
+    if (!shouldContinue()) return null;
+    const block = blocks[i];
+    let fixed = solveErasures(block, new Set(), parity);
+    if (!fixed) {
+      const candidates = [];
+      indexes[i].forEach((global, position) => {
+        for (let k = 0; k < 8; k++) {
+          const score = scores[global * 8 + k];
+          if (Number.isFinite(score)) candidates.push({ position, mask: 128 >> k, score });
+        }
+      });
+      candidates.sort((a, b) => a.score - b.score);
+      const budgets = new Set([48, 32, 24].map(spare => Math.min(candidates.length, equations - spare)));
+      for (const count of budgets) {
+        if (count <= 0) continue;
+        if (!shouldContinue()) return null;
+        const missing = candidates.slice(0, count);
+        fixed = solveBitErasures(block, missing, parity) || solveBitErasuresWithSingleError(block, missing, parity);
+        if (fixed) break;
       }
     }
-    upward = !upward;
+    if (!fixed) return null;
+    corrected.push(fixed);
   }
-  return erased;
+  return dataFromBlocks(corrected, layout.sizes);
 }
 
 export function readErasedQrMatrix(bits, unknown, version, confidence = null, options = {}) {
@@ -418,6 +440,11 @@ export function readErasedQrMatrix(bits, unknown, version, confidence = null, op
   const matrix = Array.from({ length: size }, (_, row) =>
     Array.from({ length: size }, (_, col) => Boolean(bits[row * size + col])));
   const { codewords, ecLevelBits } = codewordsFromMatrix(matrix, version);
+  if (options.bitReliability) {
+    const dataCodewords = recoverRankedBits(codewords, version, ecLevelBits, unknown, options.bitReliability,
+      options.shouldContinue ?? (() => true));
+    return dataCodewords && { dataCodewords };
+  }
   const erased = codewordErasureIndexes(unknown, version);
   const bitMasks = moduleBitErasureMasks(unknown, version, codewords.length);
   let data = recoverBitErasedDataCodewords(codewords, version, ecLevelBits, bitMasks, options);
@@ -429,20 +456,7 @@ export function readErasedQrMatrix(bits, unknown, version, confidence = null, op
   if (!data && erased.size && options.allowRankedErasures !== false) {
     const risk = new Uint16Array(codewords.length);
     const quality = confidence?.length === unknown.length ? confidence : unknown;
-    const reserved = functionMask(size, version);
-    let bit = 0, upward = true;
-    for (let right = size - 1; right > 0; right -= 2) {
-      if (right === 6) right--;
-      for (let offset = 0; offset < size; offset++) {
-        const row = upward ? size - 1 - offset : offset;
-        for (const col of [right, right - 1]) {
-          if (reserved[row][col]) continue;
-          if (bit >> 3 < risk.length) risk[bit >> 3] += quality[row * size + col];
-          bit++;
-        }
-      }
-      upward = !upward;
-    }
+    visitDataBits(version, (bit, index) => { if ((bit >>> 3) < risk.length) risk[bit >>> 3] += quality[index]; });
     data = recoverRankedErasedCodewords(codewords, version, ecLevelBits, risk);
   }
   return data && { dataCodewords: data, interleavedErasures: erased.size };
