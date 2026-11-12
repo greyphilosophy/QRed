@@ -55,6 +55,8 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
   }, [page?.id, pages]);
   useEffect(() => { setSelectedWord(null); setZoom(1); }, [page?.id, page?.captureId]);
   const comparison = page?.comparison;
+  const dateReviews = comparison?.retryReviews?.filter(reading => reading.dateField);
+  const lineReviews = comparison?.retryReviews?.filter(reading => !reading.dateField);
   const contentDifferences = comparison?.differences.filter(difference => !difference.typography && !difference.spacing && !difference.review) || [];
   const numbersToCheck = comparison?.differences.filter(difference => difference.review === "number") || [];
   const readingsToCheck = comparison?.differences.filter(difference => difference.review && difference.review !== "number") || [];
@@ -88,6 +90,7 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
         {page.error && <p role="alert">{page.error}</p>}
         {comparison && <>
           {difficultReading && <p className="photo-note reading-caution">Many characters could not be read reliably. Inspect the marked text on the paper; recognition errors can look like changes.</p>}
+          <RereadReview page={page} readings={dateReviews} dates />
           <div className="photo-differences">
             {contentDifferences.length > 0 && <>
               <ol>{contentDifferences.map((difference, index) => <PhotoDifference key={index} page={page} difference={difference} />)}</ol>
@@ -120,15 +123,7 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
             <summary>Photo readings to check ({readingsToCheck.length})</summary>
             <ol>{readingsToCheck.map((difference, index) => <PhotoDifference key={index} page={page} difference={difference} />)}</ol>
           </details>}
-          {comparison.retryReviews?.length > 0 && <details className="photo-typography photo-retries">
-            <summary>Reread text to review ({comparison.retryReviews.length})</summary>
-            <p className="photo-note">A closer reading disagreed with the first. Check these regions on the paper.</p>
-            <ol>{comparison.retryReviews.map((reading, index) => <li key={index}>
-              <div><strong>First reading:</strong> {reading.original}</div>
-              <div><strong>Closer reading:</strong> {reading.observed}</div>
-              <DifferenceCrop page={page} difference={{ ...reading, spacing: true }} />
-            </li>)}</ol>
-          </details>}
+          <RereadReview page={page} readings={lineReviews} />
           {comparison.contrastAssisted && <p className="photo-note reading-caution">A contrast-assisted reading was needed. Inspect pale text and marks in the original photo; this reading can miss them.</p>}
           {comparison.originalComparison && <details className="photo-original-reading">
             <summary>First reading to review ({comparison.originalComparison.differences.length})</summary>
@@ -199,6 +194,21 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
     </details>
     <p className="photo-note">QRed compares printed English text with the authenticated seal. Images and text stay in this session; QRed does not save them to your photo library or send them to a server.</p>
   </section>;
+}
+
+function RereadReview({ page, readings, dates = false }) {
+  if (!readings?.length) return null;
+  return <details className={dates ? "photo-reading-review photo-date-reviews" : "photo-typography photo-retries"} open={dates || undefined}>
+    <summary>{dates ? "Dates to check" : "Reread text to review"} ({readings.length})</summary>
+    <p className="photo-note">{dates ? "The two readings disagree. Check the digits in the original photo." :
+      "A closer reading disagreed with the first. Check these regions on the paper."}</p>
+    <ol>{readings.map((reading, index) => <li key={index}>
+      {reading.signedDate && <div><strong>Signed date:</strong> {reading.signedDate}</div>}
+      <div><strong>First reading:</strong> {reading.original}</div>
+      <div><strong>Closer reading:</strong> {reading.observed}{reading.lowConfidence && " (low confidence)"}</div>
+      <DifferenceCrop page={page} difference={{ ...reading, spacing: true }} />
+    </li>)}</ol>
+  </details>;
 }
 
 function PhotoDifference({ page, difference }) {

@@ -1,5 +1,6 @@
 import { assignPhotoLines, enclosingBox } from "./photoTextLayout.js";
 import { OCR_REVIEW_THRESHOLD } from "./photoTextComparison.js";
+import { disputedDateFields, isDateReading } from "./photoDateField.js";
 
 export const MAX_TEXT_RETRIES = 12;
 export const TEXT_RETRY_PIXELS = 2_500_000;
@@ -21,6 +22,7 @@ export function planTextRetries(words, comparison, signedLines, { width, height 
   });
   for (const indices of observed.values()) groups.push({ wordIndices: indices,
     bbox: enclosingBox(indices.map(index => words[index].bbox)) });
+  groups.unshift(...disputedDateFields(words, comparison.differences));
   const candidates = [];
   const missingBoxes = comparison.differences.filter(difference => difference.expected && !difference.observed)
     .flatMap(difference => difference.boxes || []);
@@ -30,9 +32,11 @@ export function planTextRetries(words, comparison, signedLines, { width, height 
     if (!missing && !group.wordIndices.some(index => questioned.has(index))) continue;
     const base = enclosingBox([group.bbox, ...group.wordIndices.map(index => words[index].bbox)].filter(Boolean));
     if (!base) continue;
-    const pad = Math.max(4, (base.y1 - base.y0) * .15);
-    const box = { x0: Math.max(0, Math.floor(base.x0 - pad)), y0: Math.max(0, Math.floor(base.y0 - pad)),
-      x1: Math.min(width, Math.ceil(base.x1 + pad)), y1: Math.min(height, Math.ceil(base.y1 + pad)) };
+    const h = base.y1 - base.y0, pad = Math.max(4, h * .15);
+    const px = group.dateField ? Math.max(1, Math.round(h * .23)) : pad;
+    const py = group.dateField ? Math.max(1, Math.round(h * .18)) : pad;
+    const box = { x0: Math.max(0, Math.floor(base.x0 - px)), y0: Math.max(0, Math.floor(base.y0 - py)),
+      x1: Math.min(width, Math.ceil(base.x1 + px)), y1: Math.min(height, Math.ceil(base.y1 + py)) };
     // Padding must not bring in strips of a neighboring line. Checking only
     // word centers misses these clipped glyphs, which single-line OCR can
     // hallucinate as extra punctuation. Trim padding, never signed content.
@@ -56,6 +60,11 @@ export function planTextRetries(words, comparison, signedLines, { width, height 
       return b && b.x1 > box.x0 && b.x0 < box.x1 && b.y1 > box.y0 && b.y0 < box.y1
         && (b.x0 < box.x0 || b.x1 > box.x1 || b.y0 < box.y0 || b.y1 > box.y1);
     })) continue;
+    if (group.dateField) {
+      if (indices.length === 1 && indices[0] === group.wordIndices[0])
+        candidates.push({ bbox: box, indices, priority: -1, dateField: true, signedDate: group.signedDate });
+      continue;
+    }
     const priority = indices.some(index => disputedNumbers.has(index)) ? 0 : missing ? 1
       : indices.some(index => comparison.words.find(w => w.sourceIndex === index)?.agrees === false) ? 2 : 3;
     candidates.push({ bbox: box, indices, priority, signedLine: Boolean(group.text) });
@@ -112,10 +121,22 @@ export function applyTextRetries(words, replacements) {
   const removed = new Set(), inserts = new Map(), extra = [], retryReviews = [];
   for (const { candidate, words: reading } of replacements) {
     const before = candidate.indices.map(index => words[index]);
-    if (!preferTextRetry(before, reading)) continue;
     const original = before.map(word => word.text).join(" ");
     const observed = reading.map(word => word.text).join(" ");
-    if (original && original.normalize("NFC") !== observed.normalize("NFC"))
+    const changed = original && original.normalize("NFC") !== observed.normalize("NFC");
+    if (candidate.dateField) {
+      if (reading.length !== 1 || !isDateReading(observed)) continue;
+      if (changed) {
+        retryReviews.push({ dateField: true, signedDate: candidate.signedDate, original, observed, boxes: [candidate.bbox],
+          lowConfidence: reading[0].confidence < OCR_REVIEW_THRESHOLD });
+        // A conflicting strong first read or a missing/extra digit remains
+        // a primary discrepancy. A closer pass cannot silently repair it.
+        if (before[0].confidence >= OCR_REVIEW_THRESHOLD ||
+          original.replace(/\D/gu, "").length !== observed.replace(/\D/gu, "").length) continue;
+      }
+    }
+    if (!preferTextRetry(before, reading)) continue;
+    if (changed && !candidate.dateField)
       retryReviews.push({ original, observed, boxes: [candidate.bbox] });
     candidate.indices.forEach(index => removed.add(index));
     if (candidate.indices.length) inserts.set(Math.min(...candidate.indices), reading);

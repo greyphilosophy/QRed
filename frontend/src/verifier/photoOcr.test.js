@@ -121,10 +121,9 @@ it("independently enlarges a misread caption while preserving a nearby added wor
   } finally { reader.dispose(); vi.unstubAllGlobals(); }
 });
 
-function retryFixture() {
+function retryFixture(initial = { text: "TotaI", confidence: 40, bbox: { x0: 100, y0: 200, x1: 200, y1: 230 } }) {
   const engine = worker(), copies = [], urls = { createObjectURL: vi.fn(() => "blob:retained-photo"), revokeObjectURL: vi.fn() };
   const pack = words => ({ data: { blocks: [{ paragraphs: [{ lines: [{ words }] }] }] } });
-  const initial = { text: "TotaI", confidence: 40, bbox: { x0: 100, y0: 200, x1: 200, y1: 230 } };
   engine.recognize.mockResolvedValueOnce(pack([initial]));
   let decoded;
   vi.stubGlobal("URL", urls);
@@ -142,6 +141,45 @@ function retryFixture() {
   return { engine, pack, initial, copies, urls, prepared, reader, decoded: () => decoded,
     input: { width: 1000, height: 1400 }, reference: { text: "Total", file: { type: "image/png", size: 1000 } } };
 }
+
+it("rereads a disputed date from enlarged contrast-adjusted pixels without supplying the signed digits to OCR", async () => {
+  const bbox = { x0: 100, y0: 200, x1: 190, y1: 220 };
+  const f = retryFixture({ text: "03-14-29", confidence: 51, bbox });
+  const canvases = [];
+  vi.stubGlobal("document", { createElement: () => {
+    const context = { drawImage: vi.fn(), putImageData: vi.fn(), fillRect: vi.fn(), getImageData: (_x, _y, w, h) => {
+      const data = new Uint8ClampedArray(w * h * 4);
+      for (let i = 0; i < data.length; i += 4) {
+        data[i] = data[i + 1] = data[i + 2] = i % 16 === 0 ? 90 : 180;
+        data[i + 3] = 255;
+      }
+      return { data };
+    } };
+    const canvas = { width: 0, height: 0, getContext: () => context, context };
+    canvases.push(canvas);
+    return canvas;
+  } });
+  f.engine.recognize.mockImplementationOnce(async (detail, options) => {
+    expect(options).toEqual({});
+    expect([detail.width, detail.height]).toEqual([328, 112]);
+    return f.pack([{ text: "03-14-27", confidence: 93, bbox: { x0: 14, y0: 14, x1: 300, y1: 92 } }]);
+  });
+  try {
+    // Use a third signed value. A confident independent reading still wins
+    // and the mismatch remains visible when it differs from the signed date.
+    const read = await f.reader.read(f.input, () => {}, { ...f.reference, text: "03-14-25" });
+    expect(read.words[0]).toMatchObject({ text: "03-14-27", bbox });
+    expect(read.retryReviews[0]).toMatchObject({ original: "03-14-29", observed: "03-14-27", signedDate: "03-14-25" });
+    expect(canvases[0].context.drawImage).toHaveBeenCalledWith(f.input, 95, 196, 100, 28, 0, 0, 100, 28);
+    const { data } = canvases[0].context.putImageData.mock.calls[0][0];
+    expect(data[0]).toBe(79);
+    expect(data[4]).toBe(255);
+    expect(canvases[1].context.drawImage).toHaveBeenCalledWith(canvases[0], 14, 14, 300, 84);
+    expect(f.urls.createObjectURL).not.toHaveBeenCalled();
+    expect(canvases.every(c => !c.width && !c.height)).toBe(true);
+    expect(f.engine.setParameters).toHaveBeenLastCalledWith({ tessedit_pageseg_mode: "3", thresholding_kfactor: "0.2" });
+  } finally { f.reader.dispose(); vi.unstubAllGlobals(); }
+});
 
 it("rereads native-resolution pixels independently, maps the crop back, and releases every temporary image", async () => {
   const f = retryFixture();

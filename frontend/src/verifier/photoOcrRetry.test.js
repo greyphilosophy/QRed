@@ -8,6 +8,38 @@ const word = (text, confidence = 60, y = 100, x = 20) => ({ text, confidence, li
   bbox: { x0: x, y0: y, x1: x + 100, y1: y + 25 } });
 const candidate = { indices: [0], bbox: { x0: 10, y0: 90, x1: 140, y1: 140 } };
 
+it("isolates only the disputed date in a row and leaves adjacent fields in place", () => {
+  const words = [word("Start", 98), word("03-14-29", 42, 100, 140), word("19.50", 99, 100, 244),
+    word("End", 98, 250), word("03-18-27", 98, 250, 140)];
+  const signed = "Start 03-14-27 19.50 End 03-18-27";
+  const plans = planTextRetries(words, comparePageReading(signed, { words }, size), null, size);
+  expect(plans).toEqual([{ dateField: true, signedDate: "03-14-27", indices: [1], priority: -1,
+    bbox: { x0: 134, x1: 244, y0: 95, y1: 130 } }]);
+
+  const changed = applyTextRetries(words, [{ candidate: plans[0], words: [word("03-14-27", 93, 100, 140)] }]);
+  expect(changed.words.map(w => w.text)).toEqual(["Start", "03-14-27", "19.50", "End", "03-18-27"]);
+  expect(changed.retryReviews).toEqual([expect.objectContaining({ signedDate: "03-14-27",
+    original: "03-14-29", observed: "03-14-27", boxes: [plans[0].bbox] })]);
+  expect(comparePageReading(signed, changed, size).status).toBe("uncertain");
+  const extra = { ...changed, words: [...changed.words, word("amended", 98, 350)] };
+  expect(comparePageReading(signed, extra, size).differences).toContainEqual(expect.objectContaining({ observed: "amended" }));
+});
+
+it.each([
+  ["03-14-29", 40, "03-14-29", 95, false],
+  ["03-14-29", 94, "03-14-27", 99, true],
+  ["03-14-29", 42, "03-14-27", 65, true],
+  ["03-14-2", 38, "03-14-27", 99, true],
+  ["03-14-29", 35, "", 99, false],
+])("keeps the photographed discrepancy for %s (%i) followed by %s (%i)", (first, confidence, closer, secondConfidence, review) => {
+  const date = { ...candidate, dateField: true, signedDate: "03-14-27" };
+  const merged = applyTextRetries([word(first, confidence)], [{ candidate: date, words: [word(closer, secondConfidence)] }]);
+  expect(merged.words[0].text).toBe(first);
+  expect(merged.retryReviews).toHaveLength(review ? 1 : 0);
+  if (review) expect(merged.retryReviews[0]).toMatchObject({ observed: closer, lowConfidence: secondConfidence < 85 });
+  expect(comparePageReading("03-14-27", merged, size).status).toBe("differences");
+});
+
 it("rereads a questionable line once, preserving original-image coordinates", () => {
   const words = [word("Pay"), word("123.45", 60, 100, 150), word("Friday", 98, 200)];
   const result = planTextRetries(words, comparePageReading("Pay 123.45 Friday", { words }, size), null, size);
