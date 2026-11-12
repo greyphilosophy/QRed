@@ -14,13 +14,16 @@ never the framing decision, recovered seal, authenticated result, or OCR text.
   PDF UI, rasterize the entire stamped page at 240 DPI, and put that whole page
   into the camera workflow. Feed clipped, defocused, and moving previews, then a
   steady page. No shutter click or file input is allowed. Check no early capture,
-  a fresh 600 ms steady hold before requesting the photo,
+  at least three clear guidance frames spanning 300 ms before requesting the photo,
   exactly one full-detail native photo, real signature authentication, an exact
   matched-word list with no document differences or OCR uncertainty, stopped
   tracks, and Finish & clear. When QRed's printed markings are identified,
   including its navigation caption, their separate caution must stay visible;
   it is not a document mismatch. Both `/` and `/verify.htm` run
   a clear case and a fixed 97%-print-scale, dimmed, JPEG-compressed case.
+  In the latter case the page shifts by 1.8% of the frame width between
+  guidance samples and must trigger the shutter while still swaying. A
+  single sharp frame followed by a frozen camera feed must keep waiting.
   A 1536 × 1920 video stream supplies 1024 × 1280 guidance frames while
   the seal decoder receives the 2400 × 3000 native still. The 16:9 camera
   cases place the entire printed page at the four displayed guide corners

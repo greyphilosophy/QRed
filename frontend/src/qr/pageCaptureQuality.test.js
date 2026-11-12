@@ -17,7 +17,7 @@ function paper({ x = 90, y = 100, width = 600, height = 800, desk = 55, ink = fa
 }
 
 // A generated, densely printed page with a mild bow and bright fabric folds.
-function fabricPrint(shift = 0) {
+function fabricPrint(shift = 0, striped = false) {
   const width = 720, height = 960, data = new Uint8ClampedArray(width * height * 4);
   for (let row = 0; row < height; row++) for (let col = 0; col < width; col++) {
     const x = (col - shift) / width, y = row / height;
@@ -27,6 +27,7 @@ function fabricPrint(shift = 0) {
     const ridge = 62 * Math.max(0, Math.sin(41 * x + 11 * Math.sin(6 * y))) ** 12;
     const fold = 55 * Math.max(0, Math.cos(30 * y - 7 * x + Math.cos(24 * x))) ** 10;
     let light = 44 + 12 * Math.sin(13 * x + 8 * y) + ridge + fold;
+    if (!page && striped && Math.floor((col - shift + row * .35) / 6) % 2) light += 25;
     if (page) {
       const pattern = Math.imul(Math.floor(u * 150), 73856093) ^ Math.imul(Math.floor(v * 185), 19349663);
       const ink = u > .075 && u < .925 && v > .07 && v < .93 && (pattern & 16);
@@ -67,20 +68,24 @@ describe("automatic whole-page capture", () => {
     expect(quality.corners[0].x).toBeCloseTo(.125, 2);
     expect(quality.corners[2].y).toBeCloseTo(.9, 2);
     const gate = createPageCaptureGate();
-    const states = [0, 200, 400, 600, 800].map(t => gate.update(image, t, { captureOnly: true }).state);
-    expect(states).toEqual(["hold", "hold", "hold", "ready", "captured"]);
+    const states = [0, 150, 300, 450].map(t => gate.update(image, t, { captureOnly: true }).state);
+    expect(states).toEqual(["hold", "hold", "ready", "captured"]);
   });
   it("keeps a genuinely small sheet on a larger contrasting mat below the capture threshold", () => {
     const image = mixedLighting({ smallPage: true }), gate = createPageCaptureGate();
     for (const t of [0, 200, 400, 600, 800])
       expect(gate.update(image, t, { captureOnly: true })).toMatchObject({ state: "small", ready: false });
   });
-  it("focuses on paper instead of a fabric fold and completes the hold during slight sway", () => {
-    const frames = [0, 1, 2, -1, 0].map(fabricPrint);
-    expect(inspectPageFrame(frames[0]).state).toBe("soft");
+  it.each([[false, "soft"], [true, "clear"]])("tracks swaying paper over patterned fabric (stripes: %s)", (striped, initialState) => {
+    const frames = [0, 12, -2, 12, 0].map(shift => fabricPrint(shift, striped));
+    expect(inspectPageFrame(frames[0]).state).toBe(initialState);
+    // Sharp fabric stripes can pass focus while pulling the lower-left
+    // corner away from the paper. The native-photo guide checks the edge.
+    const quality = inspectPageFrame(frames[0], { captureOnly: true });
+    expect(quality.corners[3].x).toBeCloseTo(.128, 2);
     const gate = createPageCaptureGate();
-    const states = frames.map((image, i) => gate.update(image, i * 200, { captureOnly: true }).state);
-    expect(states).toEqual(["hold", "hold", "hold", "ready", "captured"]);
+    const states = frames.map((image, i) => gate.update(image, i * 150, { captureOnly: true }).state);
+    expect(states).toEqual(["hold", "hold", "ready", "captured", "captured"]);
   });
   it.each([[320, 400], [360, 450], [480, 600]])("uses a %i × %i preview for framing, not as the native photo resolution", (width, height) => {
     const source = paper(), data = new Uint8ClampedArray(width * height * 4);
@@ -94,37 +99,40 @@ describe("automatic whole-page capture", () => {
     expect(inspectPageFrame(image).state).toBe("small");
     expect(inspectPageFrame(image, { captureOnly: true }).state).toBe("clear");
     const gate = createPageCaptureGate();
-    for (const time of [0, 200, 400]) expect(gate.update(image, time, { captureOnly: true }).ready).toBe(false);
-    expect(gate.update(image, 600, { captureOnly: true })).toMatchObject({ state: "ready", ready: true });
+    for (const time of [0, 150]) expect(gate.update(image, time, { captureOnly: true }).ready).toBe(false);
+    expect(gate.update(image, 300, { captureOnly: true })).toMatchObject({ state: "ready", ready: true });
   });
   it("still rejects a small native-photo preview page instead of bypassing framing", () => {
     expect(inspectPageFrame(paper({ x: 220, y: 280, width: 360, height: 440 }), { captureOnly: true }).state).toBe("small");
   });
-  it("waits for several steady frames and a real hold interval", () => {
+  it("requires three clear readings over at least 300 ms", () => {
     const gate = createPageCaptureGate(), image = paper();
     expect(gate.update(image, 0)).toMatchObject({ state: "hold", ready: false, progress: 0 });
-    expect(gate.update(image, 200).ready).toBe(false);
-    expect(gate.update(image, 400).ready).toBe(false);
-    expect(gate.update(image, STEADY_CAPTURE_MS)).toMatchObject({ state: "ready", ready: true, progress: 1 });
+    expect(gate.update(image, 150).ready).toBe(false);
+    expect(gate.update(image, 299).ready).toBe(false);
+    expect(gate.update(image, 300)).toMatchObject({ state: "ready", ready: true, progress: 1 });
+    const slow = createPageCaptureGate();
+    expect(slow.update(image, 0).ready).toBe(false);
+    expect(slow.update(image, 350).ready).toBe(false);
+    expect(slow.update(image, 510).ready).toBe(true);
   });
   it("captures a stationary page once, including after processing, and rearms after movement", () => {
     const gate = createPageCaptureGate(), image = paper();
-    for (const time of [0, 200, 400]) gate.update(image, time);
-    expect(gate.update(image, 600).ready).toBe(true);
+    for (const time of [0, 150]) gate.update(image, time);
+    expect(gate.update(image, 300).ready).toBe(true);
     for (const time of [800, 2400, 10000]) expect(gate.update(image, time)).toMatchObject({ state: "captured", ready: false });
     const next = paper({ x: 120 });
-    for (const time of [10200, 10400, 10600]) expect(gate.update(next, time).ready).toBe(false);
-    expect(gate.update(next, 10800).ready).toBe(true);
+    for (const time of [10200, 10350]) expect(gate.update(next, time).ready).toBe(false);
+    expect(gate.update(next, 10500).ready).toBe(true);
   });
   it("completes a steady hold when a visible corner sways across the starting margin", () => {
     const centered = paper({ x: 100, width: 676 }), near = paper({ x: 106, width: 676 });
     const gate = createPageCaptureGate(), options = { captureOnly: true };
     expect(gate.update(near, 0, options)).toMatchObject({ state: "framing", ready: false });
     expect(gate.update(centered, 200, options).state).toBe("hold");
-    expect(gate.update(near, 400, options).progress).toBeGreaterThan(0);
-    expect(gate.update(centered, 600, options).ready).toBe(false);
-    expect(gate.update(near, 800, options).ready).toBe(true);
-    expect(gate.update(near, 1000, options).state).toBe("captured");
+    expect(gate.update(near, 350, options).progress).toBeGreaterThan(0);
+    expect(gate.update(near, 500, options).ready).toBe(true);
+    expect(gate.update(centered, 650, options).state).toBe("captured");
   });
   it("requires a fresh border after clipping, a scene change, or a gap in preview frames", () => {
     const centered = paper({ x: 100, width: 676 }), near = paper({ x: 106, width: 676 });
@@ -138,19 +146,20 @@ describe("automatic whole-page capture", () => {
       expect(gate.update(near, when + 200, options).state).toBe("framing");
     }
   });
-  it("recognizes a pale content change on a new page held in exactly the same position", () => {
+  it.each([false, true])("recognizes pale printing replaced in exactly the same position (alternating tones: %s)", alternating => {
     const gate = createPageCaptureGate(), first = paper(), second = paper();
     for (let y = 300; y < 600; y++) for (let x = 200; x < 600; x++) {
       const at = (y * second.width + x) * 4;
-      second.data[at] = second.data[at + 1] = second.data[at + 2] = 224;
+      const value = alternating ? 235 + 20 * (Math.floor((x - 90) / (600 / 16)) % 2) : 224;
+      second.data[at] = second.data[at + 1] = second.data[at + 2] = value;
     }
     const a = inspectPageFrame(first), b = inspectPageFrame(second);
     const difference = a.samples.reduce((sum, value, i) => sum + Math.abs(value - b.samples[i]), 0) / a.samples.length;
     expect(difference).toBeGreaterThan(2); expect(difference).toBeLessThan(9);
-    for (const time of [0, 200, 400]) gate.update(first, time);
-    expect(gate.update(first, 600).ready).toBe(true);
-    for (const time of [2000, 2200, 2400]) expect(gate.update(second, time).ready).toBe(false);
-    expect(gate.update(second, 2600).ready).toBe(true);
+    for (const time of [0, 150]) gate.update(first, time);
+    expect(gate.update(first, 300).ready).toBe(true);
+    for (const time of [500, 650]) expect(gate.update(second, time).ready).toBe(false);
+    expect(gate.update(second, 800).ready).toBe(true);
   });
   it.each([{ x: 0 }, { y: 0 }, { width: 800 }, { desk: 245 }])("does not invent a whole-page capture for %j", options => {
     expect(inspectPageFrame(paper(options)).state).toBe("framing");
@@ -179,7 +188,7 @@ describe("automatic whole-page capture", () => {
     }
     const original = data.slice(), image = { width, height, data };
     const gate = createPageCaptureGate();
-    for (const time of [0, 200, 400]) expect(gate.update(image, time).state).toBe("hold");
+    for (const time of [0, 150]) expect(gate.update(image, time).state).toBe("hold");
     expect(gate.update(image, STEADY_CAPTURE_MS)).toMatchObject({ state: "ready", ready: true });
     expect(data.every((value, index) => value === original[index])).toBe(true);
   });
@@ -201,10 +210,17 @@ describe("automatic whole-page capture", () => {
     });
   });
   it("starts the hold again after movement, a scene change, or a long frame gap", () => {
-    for (const [image, time] of [[paper({ x: 120 }), 600], [paper({ ink: true }), 600], [paper(), 2400]]) {
+    for (const [image, time] of [[paper({ x: 120 }), 300], [paper({ x: 74, width: 632 }), 300],
+      [paper({ ink: true }), 300], [paper(), 2400]]) {
       const gate = createPageCaptureGate();
-      gate.update(paper(), 0); gate.update(paper(), 200); gate.update(paper(), 400);
+      gate.update(paper(), 0); gate.update(paper(), 150);
       expect(gate.update(image, time)).toMatchObject({ ready: false, progress: 0 });
     }
+  });
+  it("rejects a large swing across the starting position even when each endpoint is nearby", () => {
+    const gate = createPageCaptureGate(), centered = paper(), left = paper({ x: 73 }), right = paper({ x: 107 });
+    const states = [centered, left, right, left, right].map((frame, i) => gate.update(frame, i * 150));
+    expect(states.every(s => s.state === "hold" && !s.ready)).toBe(true);
+    expect(states[2].progress).toBe(0);
   });
 });

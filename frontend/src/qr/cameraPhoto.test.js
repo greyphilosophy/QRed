@@ -1,10 +1,24 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { canCaptureCameraPhoto, captureCameraPhoto, cameraCaptureFeedback, cameraFrameDiagnostic, cameraPhotoFailure, readCameraPhotoFile, NATIVE_PHOTO_TIMEOUT_MS, cameraCaptureContext } from "./cameraPhoto.js";
+import { canCaptureCameraPhoto, captureCameraPhoto, cameraCaptureFeedback, cameraFrameDiagnostic, cameraPhotoFailure, readCameraFrame, readCameraPhotoFile, NATIVE_PHOTO_TIMEOUT_MS, cameraCaptureContext } from "./cameraPhoto.js";
 
 const track = { kind: "video", readyState: "live" };
 const video = { srcObject: { getVideoTracks: () => [track] } };
 let camera, bitmap, canvas, context, pixels;
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+it("counts fresh video frames for guidance across dropped frames and stream replacement", () => {
+  const playback = { totalVideoFrames: 5, droppedVideoFrames: 1 };
+  const source = { videoWidth: 640, videoHeight: 480, srcObject: {}, getVideoPlaybackQuality: () => playback };
+  const sample = () => readCameraFrame(source, canvas, { forGuidance: true });
+  expect(sample()).toBe(pixels);
+  expect(sample()).toBeNull();
+  playback.totalVideoFrames++; playback.droppedVideoFrames++;
+  expect(sample()).toBeNull();
+  expect(readCameraFrame(source, canvas)).toBe(pixels);
+  playback.totalVideoFrames++;
+  expect(sample()).toBe(pixels);
+  source.srcObject = {};
+  expect(sample()).toBe(pixels);
+});
 beforeEach(() => {
   pixels = { width: 4000, height: 3000, data: new Uint8ClampedArray(4) };
   context = { drawImage: vi.fn(), getImageData: vi.fn(() => pixels) };

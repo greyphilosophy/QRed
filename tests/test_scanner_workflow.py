@@ -111,13 +111,23 @@ def install_changing_camera(page, frames):
         const context = frame.getContext('2d');
         window.__workflowCamera = {mode: 'clipped', opens: 0, tracks: [], ticks: 0, captures: []};
         window.__syntheticNativePhoto = images.native;
+        let track;
         const draw = () => {
-            const moving = __workflowCamera.mode === 'moving';
+            const mode = __workflowCamera.mode;
             const at = performance.now() / 250;
+            let x = 0, y = 0;
+            if (mode === 'moving') {
+                x = 35 / 768 * Math.sin(at); y = 25 / 960 * Math.cos(at);
+            } else if (mode === 'handheld') {
+                // Change pose after each real guidance sample. Waiting for
+                // the animation to pause cannot supply a steady sequence.
+                const n = __documentScanRequests.filter(r => r.live).length;
+                x = n % 2 ? .009 : -.009; y = n % 2 ? .002 : -.002;
+            }
             context.fillStyle = '#373737'; context.fillRect(0, 0, frame.width, frame.height);
-            context.drawImage(images[moving ? 'clear' : __workflowCamera.mode],
-                moving ? Math.round(frame.width * 35 / 768 * Math.sin(at)) : 0,
-                moving ? Math.round(frame.height * 25 / 960 * Math.cos(at)) : 0);
+            context.drawImage(images[['moving', 'handheld', 'frozen'].includes(mode) ? 'clear' : mode],
+                Math.round(frame.width * x), Math.round(frame.height * y));
+            track?.requestFrame();
         };
         window.__showWorkflowFrame = mode => {
             __workflowCamera.mode = mode;
@@ -138,18 +148,20 @@ def install_changing_camera(page, frames):
                     box.width / scale, box.height / scale);
                 images.guide = guided;
             }
-            if (mode === 'clear' || mode === 'guide') __workflowCamera.clearAt = performance.now();
+            if (['clear', 'handheld', 'guide'].includes(mode)) __workflowCamera.clearAt = performance.now();
             draw();
         };
         __showWorkflowFrame('clipped');
         const timer = setInterval(() => {
             __workflowCamera.ticks++;
-            draw();
+            if (__workflowCamera.mode !== 'frozen') draw();
         }, 100);
         navigator.mediaDevices.getUserMedia = async () => {
             __workflowCamera.opens++;
-            const stream = frame.captureStream(10);
+            const stream = frame.captureStream(0);
+            [track] = stream.getVideoTracks();
             __workflowCamera.tracks.push(...stream.getTracks());
+            draw();
             return stream;
         };
         navigator.mediaDevices.enumerateDevices = async () => [];
@@ -194,10 +206,15 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         page.get_by_role("button", name="Check document", exact=True).click()
         guide = page.locator(".ar-scan-feedback, #pageGuideHint").first
         expect(guide).to_contain_text("four page corners", timeout=15000)
-        # Every invalid phase lasts longer than the 600 ms steady hold. A
-        # timer-only auto-capture or a bypassed quality gate must fail here.
-        for mode, advice in [("clipped", "four page corners"), ("soft", "edges look soft"),
-                             ("moving", "Hold steady")]:
+        if degraded:
+            # Deliver one sharp frame, then stop the camera feed entirely.
+            page.evaluate("__showWorkflowFrame('frozen')")
+            expect(guide).to_contain_text("Keep the page in view")
+            page.wait_for_timeout(800)
+            assert page.evaluate("__syntheticStillRequests.length") == 0
+        # End on a clipped frame so the next page must qualify from scratch.
+        for mode, advice in [("soft", "edges look soft"), ("moving", "Keep the page in view"),
+                             ("clipped", "four page corners")]:
             page.evaluate("mode => __showWorkflowFrame(mode)", mode)
             expect(guide).to_contain_text(advice, timeout=10000)
             before = page.evaluate("__documentScanRequests.filter(request => request.live).length")
@@ -207,7 +224,9 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
             expect(page.locator(".page-check-list button")).to_have_count(0)
 
         started = time.monotonic()
-        clear_mode = "guide" if preview_size[0] > preview_size[1] else "clear"
+        clear_mode = "handheld" if degraded else "clear"
+        if preview_size[0] > preview_size[1]:
+            clear_mode = "guide"
         page.evaluate("mode => { __workflowLongTasks.length = 0; __showWorkflowFrame(mode); }", clear_mode)
         # No Capture now click, file picker, seal injection, or decoded result.
         review = page.get_by_role("region", name="Review Page 1 of 1", exact=True)
@@ -243,12 +262,13 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         assert (decoded[0]["width"], decoded[0]["height"]) == (2400, 3000)
         assert page.evaluate("__syntheticStillRequests.length") == 1
         assert page.evaluate("__workflowCamera.captures[0].mode") == clear_mode
-        assert page.evaluate("__workflowCamera.captures[0].at - __workflowCamera.clearAt") >= 600
+        hold_ms = page.evaluate("__workflowCamera.captures[0].at - __workflowCamera.clearAt")
+        assert hold_ms >= 300
         assert page.evaluate("__workflowCamera.opens") == 1
         assert page.evaluate("__workflowCamera.tracks.every(track => track.readyState === 'ended')")
         longest_task = page.evaluate("Math.max(0, ...__workflowLongTasks)")
         print("Scanner workflow: " + json.dumps({"path": path, "degraded": degraded, "preview_size": preview_size,
-            "guidance_to_authenticated_seconds": authenticated - started,
+            "valid_preview_to_shutter_ms": round(hold_ms), "guidance_to_authenticated_seconds": authenticated - started,
             "ocr_seconds": finished - authenticated, "longest_ui_task_ms": longest_task}))
         assert finished - started < 25, "Full-page camera capture and checking exceeded its CI guard"
         assert longest_task < 1000, "Scanner processing blocked the browser UI"

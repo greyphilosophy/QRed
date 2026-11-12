@@ -25,6 +25,11 @@ def test_native_still_capture_keeps_more_detail_and_acknowledges_only_after_capt
             still.width = __syntheticNativePhoto.naturalWidth; still.height = __syntheticNativePhoto.naturalHeight;
             still.getContext('2d').drawImage(__syntheticNativePhoto, 0, 0);
             const photo = await new Promise(resolve => still.toBlob(resolve, 'image/png'));
+            const openBitmap = window.createImageBitmap.bind(window);
+            window.createImageBitmap = async (source, ...options) => {
+                if (source === photo) await new Promise(resolve => { window.finishOpeningPhoto = resolve; });
+                return openBitmap(source, ...options);
+            };
             const small = document.createElement('canvas'); small.width = 360; small.height = 480;
             small.getContext('2d').drawImage(__syntheticPaper, 0, 0, 360, 480);
             const preview = new Image(); preview.src = small.toDataURL(); await preview.decode();
@@ -51,6 +56,10 @@ def test_native_still_capture_keeps_more_detail_and_acknowledges_only_after_capt
         expect(page.get_by_text("Hold steady — taking photo…", exact=True)).to_be_visible()
         expect(page.get_by_text(CAPTURED_NOTICE, exact=True)).to_have_count(0)
         page.evaluate("finishStillCapture()")
+        page.wait_for_function("typeof finishOpeningPhoto === 'function'")
+        expect(page.get_by_text(CAPTURED_NOTICE, exact=True)).to_be_visible()
+        assert assert_document_preview_not_decoded(page) == []
+        page.evaluate("finishOpeningPhoto()")
         expect(page.locator(".page-check-list button")).to_have_count(1, timeout=15000)
         assert page.evaluate("stillRequests[0]") == {"fillLightMode": "off", "imageWidth": 2880, "imageHeight": 3840}
         expect(page.get_by_text("Move the page to capture again, or use Capture now.", exact=True)).to_be_visible(timeout=5000)

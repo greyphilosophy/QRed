@@ -6,6 +6,7 @@ export const MIN_DOCUMENT_PHOTO_LONG_SIDE = 2560;
 const MAX_GUIDANCE_SIDE = 1280;
 const MAX_WORKING_PHOTO_PIXELS = 12_000_000;
 const pendingTracks = new WeakSet();
+const lastGuidanceFrame = new WeakMap();
 const GUIDE_LABELS = Object.freeze({
   framing: "page corners needed", small: "page too small", dark: "more light needed",
   soft: "page edges soft", clear: "page clear", hold: "steady hold pending",
@@ -36,6 +37,12 @@ export function canCaptureCameraPhoto(video) {
 export function readCameraFrame(video, canvas, { forGuidance = false } = {}) {
   const sourceWidth = video.videoWidth, sourceHeight = video.videoHeight;
   if (!sourceWidth || !sourceHeight) return null;
+  // The media clock and animation loop can advance while a camera keeps
+  // displaying one frame. Count a delivered preview only once.
+  const playback = forGuidance && video.getVideoPlaybackQuality?.();
+  const frame = playback ? playback.totalVideoFrames - (playback.droppedVideoFrames || 0) : 0;
+  const previous = lastGuidanceFrame.get(video);
+  if (frame > 0 && previous?.count === frame && previous.stream === video.srcObject) return null;
   const scale = forGuidance ? Math.min(1, MAX_GUIDANCE_SIDE / Math.max(sourceWidth, sourceHeight)) : 1;
   const width = Math.max(1, Math.round(sourceWidth * scale));
   const height = Math.max(1, Math.round(sourceHeight * scale));
@@ -44,7 +51,9 @@ export function readCameraFrame(video, canvas, { forGuidance = false } = {}) {
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) return null;
   context.drawImage(video, 0, 0, width, height);
-  return context.getImageData(0, 0, width, height);
+  const pixels = context.getImageData(0, 0, width, height);
+  if (frame > 0) lastGuidanceFrame.set(video, { count: frame, stream: video.srcObject });
+  return pixels;
 }
 
 // Only dimensions and a fixed reason code leave the capture helper. Never
@@ -103,7 +112,7 @@ function readPhotoPixels(photo, canvas, context, source, started) {
     preparationMs: Math.round(performance.now() - started), reason: "captured" } };
 }
 
-export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NATIVE_PHOTO_TIMEOUT_MS, onDiagnostic, onPhotoBlob,
+export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NATIVE_PHOTO_TIMEOUT_MS, onDiagnostic, onPhotoBlob, onPhotoTaken,
   requireHighResolution = false } = {}) {
   signal?.throwIfAborted();
   const started = performance.now();
@@ -147,6 +156,9 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
         blob = await camera.takePhoto({ fillLightMode: "off" });
       }
       if (!active || signal?.aborted) return fallback("capture-failed");
+      // The exposure is over. Opening and validating these bytes can still
+      // take time, but moving the phone can no longer affect this photograph.
+      if (blob?.size) onPhotoTaken?.();
       bitmap = await createImageBitmap(blob);
       if (!active || signal?.aborted) return fallback("capture-failed");
       if (!bitmap.width || !bitmap.height || bitmap.width * bitmap.height > 80_000_000)
