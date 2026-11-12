@@ -19,6 +19,25 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it("opens conflicting dates alongside the original photo and keeps other rereads separate", async () => {
+  const signed = { ...page, content: "03-14-27" };
+  const first = word("03-14-29");
+  ocr.read.mockResolvedValue({ words: [first], retryReviews: [
+    { dateField: true, signedDate: signed.content, original: first.text, observed: signed.content,
+      boxes: [first.bbox], lowConfidence: true },
+    { original: "Tota", observed: "Total", boxes: [first.bbox] },
+  ] });
+  const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
+  const dates = (await screen.findByText("Dates to check (1)")).closest("details");
+  expect(dates.open).toBe(true);
+  expect(dates.textContent).toContain("Signed date: 03-14-27");
+  expect(dates.textContent).toContain("First reading: 03-14-29");
+  expect(dates.textContent).toContain("Closer reading: 03-14-27 (low confidence)");
+  expect(dates.querySelector("image").getAttribute("href")).toBe("blob:page-photo");
+  expect(screen.getByText("Reread text to review (1)").closest("details").open).toBe(false);
+  expect(view.container.querySelector(".photo-summary.differences")).toBeTruthy();
+});
+
 it("opens doubtful numbers for inspection and keeps other weak readings out of the change list", async () => {
   const signed = { ...page, content: "Top\nAmount 17\nStatus Y\nEnd" };
   signed.evidence = { width: 200, height: 100, text: signed.content, layout: { mode: 3,

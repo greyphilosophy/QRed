@@ -5,6 +5,7 @@ All fixtures are synthetic. No personal document or uploaded QR is used.
 import base64
 import io
 import json
+import math
 import os
 import re
 import subprocess
@@ -13,7 +14,7 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from playwright.sync_api import expect
-from browser_helpers import OfflineNetworkGuard, wait_for_offline_resources, NATIVE_PHOTO_CAMERA_SCRIPT
+from browser_helpers import OfflineNetworkGuard, show_file_inputs, wait_for_offline_resources, NATIVE_PHOTO_CAMERA_SCRIPT
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="
@@ -31,8 +32,7 @@ def page_image(text, *, scale=1):
     return {"name": "synthetic-page.png", "mimeType": "image/png", "buffer": output.getvalue()}
 
 
-@pytest.fixture(scope="module")
-def sealed_text():
+def signed_pages(text, count):
     source = """
       import { createServer } from 'vite';
       import { PNG } from 'pngjs';
@@ -40,10 +40,10 @@ def sealed_text():
       const { createQRedSeals } = await server.ssrLoadModule('/src/qredSealer.js');
       const { createQRedQrSymbol } = await server.ssrLoadModule('/src/qredQr.js');
       let input = ''; for await (const chunk of process.stdin) input += chunk;
-      const pages = [];
-      for (const pageNumber of [1, 2]) {
-      const sealed = await createQRedSeals({ content: JSON.parse(input), timestamp: '2026-11-02T12:00:00Z',
-        pageContext: { pageNumber, pageCount: 2, documentRoot: 'ab'.repeat(32) },
+      const { content, pageCount } = JSON.parse(input), pages = [];
+      for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
+      const sealed = await createQRedSeals({ content, timestamp: '2026-11-02T12:00:00Z',
+        pageContext: { pageNumber, pageCount, documentRoot: 'ab'.repeat(32) },
         privateKey: 'txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=',
         publicKey: 'eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=' });
       const { modules } = createQRedQrSymbol(sealed.seals[0]);
@@ -60,9 +60,80 @@ def sealed_text():
       console.log(JSON.stringify(pages));
       await server.close();
     """
-    result = subprocess.run(["node", "--input-type=module", "-e", source], input=json.dumps(TEXT),
+    result = subprocess.run(["node", "--input-type=module", "-e", source], input=json.dumps({"content": text, "pageCount": count}),
                             cwd=ROOT / "frontend", text=True, capture_output=True, check=True)
     return json.loads(result.stdout)
+
+
+@pytest.fixture(scope="module")
+def sealed_text():
+    return signed_pages(TEXT, 2)
+
+
+@pytest.fixture(scope="module")
+def dated_form_photos():
+    signed = "Service record\nStart 03-14-27\nAmount 29.50\nStatus Approved"
+    qr = Image.open(io.BytesIO(base64.b64decode(signed_pages(signed, 1)[0]["qr"]))).convert("L")
+    watermark = qr.point(lambda ink: 224 if ink == 0 else 255).resize((1360, 1780), Image.Resampling.NEAREST)
+    font = ImageFont.truetype("DejaVuSans.ttf", 48)
+    photos = {}
+    for kind, date, amount, status in [("original", "03-14-27", "29.50", "Approved"),
+                                       ("changed", "03-14-29", "29.50", "Approved twice"),
+                                       ("erased", "03-14-2", "", "Approved")]:
+        paper = Image.new("L", (1600, 2100), "white")
+        paper.paste(watermark, (120, 175))
+        draw = ImageDraw.Draw(paper)
+        draw.text((160, 215), "Service record", font=font, fill=32)
+        for y, label, value in [(400, "Start", date), (545, "Amount", amount), (695, "Status", status)]:
+            draw.text((160, y), label, font=font, fill=32)
+            draw.text((480, y), value, font=font, fill=32)
+        paper.paste(qr.resize((710, 710), Image.Resampling.NEAREST), (720, 1120))
+        frame = Image.new("L", (1920, 2560), 55)
+        for x in range(paper.width):
+            bend = round(24 * math.sin(math.pi * x / paper.width))
+            frame.paste(paper.crop((x, 0, x + 1, paper.height)), (160 + x, 200 + bend))
+        image = io.BytesIO()
+        frame.save(image, format="JPEG", quality=91)
+        photos[kind] = {"name": f"{kind}.jpg", "mimeType": "image/jpeg", "buffer": image.getvalue()}
+    return photos
+
+
+@pytest.mark.parametrize("path", ["/", "/verify.htm"])
+def test_changed_and_erased_digits_on_a_curled_dated_form(browser, dated_form_photos, path):
+    base = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
+    context = browser.new_context(service_workers="allow")
+    try:
+        guard = OfflineNetworkGuard(context, base)
+        context.route("**/api/keys/default", lambda route: route.fulfill(json={"public_key": PUBLIC_KEY}))
+        page = context.new_page()
+        for kind, photo in dated_form_photos.items():
+            guard.allow_resources()
+            page.goto(base + path, wait_until="networkidle")
+            wait_for_offline_resources(page, photo=True)
+            if path != "/":
+                page.locator("#publicKeyFileInput").set_input_files({
+                    "name": "issuer.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode()})
+            prepare_reader(page)
+            guard.block()
+            show_file_inputs(page)
+            page.locator("#qr-image" if path == "/" else "#pagePhotoInput").set_input_files(photo)
+            review = page.get_by_role("region", name="Review Page 1 of 1", exact=True)
+            expect(review.get_by_role("heading", name=re.compile("Seal authenticated"))).to_be_visible(timeout=30000)
+            expect(page.locator(".page-check-status.queued, .page-check-status.reading")).to_have_count(0, timeout=60000)
+            if kind == "original":
+                review.get_by_label("Show matching words too").check()
+                expect(review.get_by_role("button", name="Matching text: 03-14-27", exact=True)).to_have_count(1)
+            else:
+                diff = review.locator(".photo-differences > ol")
+                expect(diff).to_contain_text("03-14-27")
+                observed = diff.locator("li > div").filter(has_text=re.compile("^Photo reading:"))
+                printed_date = "03-14-29" if kind == "changed" else "03-14-2"
+                expect(observed.filter(has_text=re.compile(r"\b" + printed_date + r"\b"))).to_have_count(1)
+                expect(diff).to_contain_text("twice" if kind == "changed" else "29.50")
+                expect(review.locator(".photo-summary")).to_contain_text("Differences found")
+            guard.assert_quiet()
+    finally:
+        context.close()
 
 
 def prepare_reader(page):

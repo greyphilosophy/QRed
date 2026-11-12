@@ -4,6 +4,7 @@ import { signedPhotoLines } from "./photoTextLayout.js";
 import { applyTextRetries, planTextRetries, TEXT_RETRY_MS, TEXT_RETRY_PIXELS } from "./photoOcrRetry.js";
 import { needsPageReread, pageReadingCanvas, preferPageReread } from "./photoOcrFallback.js";
 import { spacePhotoLine } from "./photoLineSpacing.js";
+import { dateReadingCanvas } from "./photoDateField.js";
 
 // These versioned resources are copied from locked dependencies at build time.
 // Never use Tesseract's default CDN paths: all resources belong to this origin.
@@ -148,17 +149,34 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
             // remain in retryReviews, including any faint words this misses.
             await current.setParameters({ tessedit_pageseg_mode: "7", thresholding_kfactor: "0.34" });
             try {
-              // Decode the retained file lazily for crops at its original
-              // resolution, independently of the bounded whole-page canvas.
-              if (reference.file) source = await openPhotoSource(reference.file);
-              controller.signal.throwIfAborted();
-              const input = source?.image || canvas;
-              const sx = (source?.width || canvas.width) / canvas.width;
-              const sy = (source?.height || canvas.height) / canvas.height;
               for (const candidate of candidates) {
                 if (performance.now() >= deadline) break;
                 controller.signal.throwIfAborted();
                 const box = candidate.bbox, width = box.x1 - box.x0, height = box.y1 - box.y0;
+                if (candidate.dateField) {
+                  const detail = dateReadingCanvas(canvas, box, Math.min(500000, TEXT_RETRY_PIXELS - pixels));
+                  if (!detail) continue;
+                  pixels += detail.width * detail.height;
+                  try {
+                    const read = await recognize(detail);
+                    // Only a single complete date may replace the isolated
+                    // word. Its position is the original word's page location.
+                    if (read.length === 1 && read[0].bbox) {
+                      const original = words[candidate.indices[0]];
+                      replacements.push({ candidate, words: [{ ...read[0], bbox: original.bbox, lineId: original.lineId }] });
+                    }
+                  } finally { detail.width = detail.height = 0; }
+                  continue;
+                }
+                // Only line crops need the retained file at native resolution.
+                if (reference.file && !source) {
+                  source = await openPhotoSource(reference.file);
+                  controller.signal.throwIfAborted();
+                  if (performance.now() >= deadline) break;
+                }
+                const input = source?.image || canvas;
+                const sx = (source?.width || canvas.width) / canvas.width;
+                const sy = (source?.height || canvas.height) / canvas.height;
                 const scale = Math.min(Math.max(1, sx, 64 / height), 3, Math.sqrt(500000 / (width * height)));
                 const detail = document.createElement("canvas");
                 detail.width = Math.max(1, Math.round(width * scale));
