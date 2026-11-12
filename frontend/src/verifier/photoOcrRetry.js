@@ -7,6 +7,8 @@ export const TEXT_RETRY_MS = 3000; // Cooperative: finish an in-flight crop, the
 
 export function planTextRetries(words, comparison, signedLines, { width, height }) {
   const questioned = new Set(comparison.words.filter(word => word.status !== "matched").map(word => word.sourceIndex));
+  const disputedNumbers = new Set(comparison.differences.filter(difference => /\d/u.test(difference.expected))
+    .flatMap(difference => difference.wordIndices));
   const groups = signedLines ? assignPhotoLines(signedLines, words) : [];
   const grouped = new Set(groups.flatMap(line => line.wordIndices));
   const observed = new Map();
@@ -54,8 +56,9 @@ export function planTextRetries(words, comparison, signedLines, { width, height 
       return b && b.x1 > box.x0 && b.x0 < box.x1 && b.y1 > box.y0 && b.y0 < box.y1
         && (b.x0 < box.x0 || b.x1 > box.x1 || b.y0 < box.y0 || b.y1 > box.y1);
     })) continue;
-    const priority = missing ? 0 : indices.some(index => comparison.words.find(w => w.sourceIndex === index)?.agrees === false) ? 1 : 2;
-    candidates.push({ bbox: box, indices, priority });
+    const priority = indices.some(index => disputedNumbers.has(index)) ? 0 : missing ? 1
+      : indices.some(index => comparison.words.find(w => w.sourceIndex === index)?.agrees === false) ? 2 : 3;
+    candidates.push({ bbox: box, indices, priority, signedLine: Boolean(group.text) });
   }
   const selected = [];
   for (const candidate of candidates.sort((a, b) => a.priority - b.priority)) {

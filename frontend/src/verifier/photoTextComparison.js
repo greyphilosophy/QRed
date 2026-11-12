@@ -8,7 +8,8 @@ const MAX_ALIGNMENT_CELLS = 4_000_000;
 export const OCR_REVIEW_THRESHOLD = 85; // A review heuristic, NOT a probability of authenticity.
 
 function tokenize(text) {
-  return [...text.normalize("NFC").matchAll(/[\p{L}\p{M}\p{N}]+|[^\s]/gu)]
+  // A changed digit in an amount or date should show both complete values.
+  return [...text.normalize("NFC").matchAll(/\p{N}+(?:[.,:/-]\p{N}+)+(?![\p{L}\p{M}\p{N}])|[\p{L}\p{M}\p{N}]+|[^\s]/gu)]
     .map(match => ({ value: match[0], start: match.index, end: match.index + match[0].length }));
 }
 

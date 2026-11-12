@@ -49,6 +49,11 @@ describe("photo comparison against signed text", () => {
       expect.objectContaining({ expected: "100", observed: "900" }),
     ]);
   });
+  it.each([["47.85", "42.85"], ["03-17-29", "03-12-29"]])(
+    "shows the complete signed and photographed values for a change in %s", (signed, read) => {
+      expect(comparePhotoText("Value " + signed, words("Value " + read), size).differences)
+        .toEqual([expect.objectContaining({ expected: signed, observed: read })]);
+    });
   it("aligns words on the photographed image while ignoring only whitespace and canonical Unicode composition", () => {
     const result = comparePhotoText("Café\nInvoice: 123.45", words("Cafe\u0301 Invoice : 123.45"), size);
     expect(result.status).toBe("matches");

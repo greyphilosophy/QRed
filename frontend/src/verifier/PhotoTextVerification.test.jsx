@@ -19,6 +19,27 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it("opens doubtful numbers for inspection and keeps other weak readings out of the change list", async () => {
+  const signed = { ...page, content: "Top\nAmount 17\nStatus Y\nEnd" };
+  signed.evidence = { width: 200, height: 100, text: signed.content, layout: { mode: 3,
+    lines: [.05, .3, .55, .8].map(y => ({ x: .05, y, width: .85, height: .14 })) } };
+  const located = (text, x, y, confidence = 99) => ({ text, confidence, bbox: { x0: x, y0: y, x1: x + 21, y1: y + 10 } });
+  const words = [located("Top", 10, 6), located("Amount", 10, 31), located("I7", 70, 31, 35),
+    located("Status", 10, 56), located("X", 70, 56, 35), located("End", 10, 81)];
+  const corners = [{x:0,y:0},{x:200,y:0},{x:200,y:100},{x:0,y:100}];
+  ocr.read.mockResolvedValue({ words, originalReading: words, corners });
+  const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
+  await screen.findByText("Numbers to check (1)");
+  const numeric = view.container.querySelector(".photo-number-review");
+  expect(numeric.open).toBe(true);
+  expect(numeric.textContent).toContain("Signed text: 17");
+  expect(numeric.textContent).toContain("Photo reading: I7");
+  expect(numeric.querySelector("rect.uncertain")).toBeTruthy();
+  expect(view.container.querySelector(".photo-reading-review:not(.photo-number-review)").open).toBe(false);
+  expect(view.container.querySelector(".photo-differences > ol")).toBeNull();
+  expect(view.container.querySelector(".photo-summary.uncertain")).toBeTruthy();
+});
+
 it("shows a faint addition from the first reading when contrast-assisted text agrees", async () => {
   ocr.read.mockResolvedValue({ words: [word("Friday")], originalReading: [word("Friday"),
     { ...word("Paid"), confidence: 40, bbox: {x0:10,y0:50,x1:90,y1:70} }], contrastAssisted: true });

@@ -12,7 +12,8 @@ it("locates warm, shadowed paper before making the contrast copy", () => {
   const width = 800, height = 1000, data = new Uint8ClampedArray(width * height * 4);
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     const inside = x >= 34 && x < 774 && y >= 60 && y < 960;
-    const light = inside ? 220 * (1 - y / height * .4) : 170 + (x * 7 + y * 11) % 20;
+    const ink = y % 600 >= 124 && y % 600 < 130 ? (x >= 300 && x < 360 ? .25 : x >= 380 && x < 440 ? .8 : 1) : 1;
+    const light = inside ? 220 * (1 - y / height * .4) * ink : 170 + (x * 7 + y * 11) % 20;
     const tint = inside ? [1.05, 1, .95] : [1.1, 1, .9];
     const offset = (y * width + x) * 4;
     for (let channel = 0; channel < 3; channel++) data[offset + channel] = light * tint[channel];
@@ -25,6 +26,10 @@ it("locates warm, shadowed paper before making the contrast copy", () => {
     expect(Math.abs(point.x - expected[i][0])).toBeLessThan(5);
     expect(Math.abs(point.y - expected[i][1])).toBeLessThan(5);
   });
+  for (const y of [126, 726]) {
+    expect(data[(y * width + 320) * 4]).toBeLessThan(35);
+    expect(data[(y * width + 400) * 4]).toBe(255);
+  }
 });
 
 it("only removes pale ink in the contrast copy and bounds a no-code search to one attempt", () => {

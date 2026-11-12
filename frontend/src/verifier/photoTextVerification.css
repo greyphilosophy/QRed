@@ -45,9 +45,10 @@
 .photo-word.uncertain { fill: #f59e0b40; stroke: #b45309; stroke-dasharray: 3 2; }
 .photo-word:focus { stroke: #172033; stroke-width: 3px; outline: none; }
 .photo-selected { padding: .75rem; background: #f1f5f9; overflow-wrap: anywhere; }
-.photo-differences ol { padding-left: 1.5rem; max-height: 24rem; overflow: auto; }
+.photo-differences ol, .photo-reading-review ol { padding-left: 1.5rem; max-height: 24rem; overflow: auto; }
 .photo-differences li { margin: .5rem 0; padding: .5rem; background: #fff1f2; overflow-wrap: anywhere; }
 .photo-typography li { background: #fffbeb; }
+.photo-reading-review li { margin: .5rem 0; padding: .5rem; background: #fffbeb; overflow-wrap: anywhere; }
 .evidence-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: start; }
 .evidence-comparison figure { margin: 0; min-width: 0; }
 .evidence-comparison figcaption { font-weight: 600; margin: .5rem 0; }
