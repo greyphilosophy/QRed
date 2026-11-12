@@ -290,7 +290,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       return false;
     };
 
-    function capturePhoto(preserveGate = false) {
+    async function capturePhoto(preserveGate = false) {
       if (photoScanRef.current) return;
       setFailedPhoto(null);
       // A queued live result must never be attached to the new still photo.
@@ -300,61 +300,61 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       activeProgress?.stop();
       const attemptProgress = progress.begin("capturing");
       activeProgress = attemptProgress;
-      let image;
-      try { image = captureCameraFrame(videoRef.current, canvasRef.current); }
-      catch {
-        attemptProgress.stop();
+      const controller = new AbortController();
+      photoScanRef.current = controller;
+      const current = () => photoScanRef.current === controller && !controller.signal.aborted;
+      let image, nativeBlob;
+      try {
+        const video = videoRef.current, canvas = canvasRef.current;
+        const ready = isCameraFrameReady(video, canvas);
+        // Only the general QR reader can decode a preview if the still fails.
+        const fallbackFrame = ready && !autoCapture ? captureCameraFrame(video, canvas) : null;
+        if (!ready || (!autoCapture && !fallbackFrame)) {
+          handleScanActionRef.current({ status: "pending", message: "Camera is preparing the photo. Hold steady…" });
+          return;
+        }
+        pendingManualCaptureRef.current = false;
+        pendingManualCaptureStartedAtRef.current = null;
+        markCameraReady(true);
+        onReadingPhoto(true);
+        setFeedback(null);
+        const preview = { width: video.videoWidth, height: video.videoHeight };
+        const captureContext = cameraCaptureContext(preview, preserveGate, lastQuality);
+        captureDiagnostic = cameraFrameDiagnostic(preview);
+        const still = canCaptureCameraPhoto(video) ? await captureCameraPhoto(video, canvas, {
+          signal: controller.signal, requireHighResolution: autoCapture,
+          onPhotoBlob: blob => { nativeBlob = blob; },
+          onDiagnostic: diagnostic => {
+            if (current()) captureDiagnostic = { ...diagnostic, ...captureContext };
+          },
+        }) : null;
+        if (!current()) return;
+        image = still || fallbackFrame;
+        let action;
+        if (image) {
+          attemptProgress.photoReady();
+          action = await scanPhotoInWorker(image, { returnPayload, signal: controller.signal, onStage: attemptProgress.stage });
+          if (!current()) return;
+        } else {
+          action = cameraPhotoFailure(captureDiagnostic);
+        }
+        if (nativeBlob && (action.timedOut || action.status === "feedback")) setFailedPhoto(nativeBlob);
+        autoPaused = autoCapture && (action.timedOut || (!preserveGate && action.captureFailed));
+        handleScanActionRef.current(action);
+      } catch (error) {
+        if (!current() || error.name === "AbortError") return;
+        if (nativeBlob) setFailedPhoto(nativeBlob);
         pendingManualCaptureRef.current = false;
         pendingManualCaptureStartedAtRef.current = null;
         autoPaused = autoCapture && !preserveGate;
-        onReadingPhoto(false);
-        setFeedback("The camera frame could not be read. Try Capture now again, or choose a photo.");
-        return;
-      }
-      if (!image) {
+        setFeedback(image ? error.message : "The camera frame could not be read. Try Capture now again, or choose a photo.");
+      } finally {
         attemptProgress.stop();
-        handleScanActionRef.current({ status: "pending", message: "Camera is preparing the photo. Hold steady…" });
-        return;
-      }
-      pendingManualCaptureRef.current = false;
-      pendingManualCaptureStartedAtRef.current = null;
-      markCameraReady(true);
-      const controller = new AbortController();
-      photoScanRef.current = controller;
-      onReadingPhoto(true);
-      const nativePhoto = canCaptureCameraPhoto(videoRef.current);
-      const captureContext = cameraCaptureContext(image, preserveGate, lastQuality);
-      captureDiagnostic = cameraFrameDiagnostic(image);
-      setFeedback(null);
-      let nativeBlob;
-      const read = async () => {
-        const still = nativePhoto ? await captureCameraPhoto(videoRef.current, canvasRef.current,
-          { signal: controller.signal, requireHighResolution: autoCapture, onPhotoBlob: blob => { nativeBlob = blob; }, onDiagnostic: diagnostic => {
-            if (photoScanRef.current === controller) captureDiagnostic = { ...diagnostic, ...captureContext };
-          } }) : null;
-        controller.signal.throwIfAborted();
-        if (autoCapture && !still) return cameraPhotoFailure(captureDiagnostic);
-        attemptProgress.phase("captured");
-        return scanPhotoInWorker(still || image, { returnPayload, signal: controller.signal, onStage: attemptProgress.stage });
-      };
-      read().then(action => {
-        if (photoScanRef.current !== controller) return;
-        if (nativeBlob && (action.timedOut || action.status === "feedback")) setFailedPhoto(nativeBlob);
-        autoPaused = autoCapture && (action.timedOut || (!preserveGate && action.captureFailed));
-        setFeedback(null);
-        handleScanActionRef.current(action);
-      }).catch(error => {
-        if (photoScanRef.current === controller && error.name !== "AbortError") {
-          if (nativeBlob) setFailedPhoto(nativeBlob);
-          autoPaused = autoCapture && !preserveGate;
-          setFeedback(error.message);
+        if (photoScanRef.current === controller) {
+          photoScanRef.current = null;
+          onReadingPhoto(false);
         }
-      }).finally(() => {
-        attemptProgress.stop();
-        if (photoScanRef.current !== controller) return;
-        photoScanRef.current = null;
-        onReadingPhoto(false);
-      });
+      }
     }
     photoActionRef.current = () => {
       activeProgress?.stop();

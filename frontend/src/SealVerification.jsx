@@ -143,7 +143,7 @@ export function SealVerification({ verification }) {
       });
       if (request !== imageRead.current) return;
       if (!pixels) throw new Error("This photo could not be opened at a usable size. Choose another photo.");
-      progress.phase("decoding");
+      progress.photoReady();
       // A single photographed sheet can contain four adjacent watermark
       // chunks. Recover them all without asking the user to upload the same
       // image four times. Keep the page photo once for later comparison.

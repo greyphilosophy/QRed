@@ -19,9 +19,10 @@ function open(props = {}) {
   const preview = { width: 1920, height: 1080, data: new Uint8ClampedArray(1920 * 1080 * 4).fill(1) };
   const still = { width: 4000, height: 3000, data: new Uint8ClampedArray(4000 * 3000 * 4).fill(2) };
   const bitmap = { width: 4000, height: 3000, close: vi.fn() };
+  const pixelReads = [];
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function () {
     return { drawImage: source => { this.retainedPixels = source === bitmap ? still : preview; },
-      getImageData: () => this.retainedPixels };
+      getImageData: (_x, _y, width, height) => { pixelReads.push([width, height]); return this.retainedPixels; } };
   });
   const track = { kind: "video", readyState: "live", label: "private camera", deviceId: "private ID" };
   render(React.createElement(QrScanner, { collectSeals: true, returnPayload: true, ...props }));
@@ -31,11 +32,11 @@ function open(props = {}) {
   Object.defineProperties(video, { readyState: { value: 2, configurable: true }, videoWidth: { value: 1920, configurable: true }, videoHeight: { value: 1080, configurable: true } });
   act(() => camera.options.onFrame());
   camera.scan.mockResolvedValue({ status: "feedback", timedOut: true, message: "Try another capture." });
-  return { preview, still, bitmap, canvas: document.querySelector("canvas") };
+  return { preview, still, bitmap, pixelReads, canvas: document.querySelector("canvas") };
 }
 
 it.each(["manual", "automatic"])("uses native still pixels after unavailable capability discovery during %s capture", async mode => {
-  const { still, bitmap, canvas } = open();
+  const { still, bitmap, pixelReads, canvas } = open();
   const takePhoto = vi.fn().mockResolvedValue(new Blob());
   vi.stubGlobal("ImageCapture", vi.fn(function () { return {
     getPhotoCapabilities: () => Promise.reject(new DOMException("private device detail", "NotSupportedError")), takePhoto,
@@ -46,6 +47,8 @@ it.each(["manual", "automatic"])("uses native still pixels after unavailable cap
   else act(() => camera.live.onCaptured({ captureOnly: true }));
   await waitFor(() => expect(camera.scan).toHaveBeenCalledTimes(1));
   expect(camera.scan.mock.calls[0][0]).toBe(still);
+  // One guidance sample, then the native still. No full-size video copy at the shutter.
+  expect(pixelReads).toEqual([[1280, 720], [4000, 3000]]);
   expect(canvas.retainedPixels).toBe(still);
   expect(canvas.width).toBe(4000); expect(canvas.height).toBe(3000);
   expect(takePhoto).toHaveBeenCalledWith({ fillLightMode: "off" });
@@ -179,8 +182,10 @@ it("reports live-frame decoder stages and clears them on a result", () => {
   expect(screen.queryByText(/checking footer seals/i)).toBeNull();
 });
 
-it.each(["drawImage", "getImageData"])("clears progress after a synchronous %s failure and allows a retry", async method => {
-  const { bitmap } = open();
+it.each([
+  [true, "drawImage"], [true, "getImageData"], [false, "drawImage"], [false, "getImageData"],
+])("clears progress and permits retry when document mode is %s and %s fails", async (collectSeals, method) => {
+  const { bitmap } = open({ collectSeals });
   vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: () => Promise.resolve(new Blob()) }; }));
   vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
   const intervals = vi.spyOn(globalThis, "setInterval"), clear = vi.spyOn(globalThis, "clearInterval");
@@ -189,7 +194,7 @@ it.each(["drawImage", "getImageData"])("clears progress after a synchronous %s f
     getImageData: () => { throw new Error("private readback failure"); },
   }));
   fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
-  expect(screen.getByText(/camera frame could not be read/)).toBeTruthy();
+  expect(await screen.findByText(/camera frame could not be read/)).toBeTruthy();
   expect(document.body.textContent).not.toContain("private readback failure");
   expect(screen.queryByRole("progressbar")).toBeNull();
   expect(clear).toHaveBeenCalledWith(intervals.mock.results.at(-1).value);

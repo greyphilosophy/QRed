@@ -4,6 +4,7 @@ export const NATIVE_PHOTO_TIMEOUT_MS = 5000;
 export const MIN_DOCUMENT_PHOTO_PIXELS = 4_000_000;
 export const MIN_DOCUMENT_PHOTO_LONG_SIDE = 2560;
 const MAX_GUIDANCE_SIDE = 1280;
+const MAX_WORKING_PHOTO_PIXELS = 12_000_000;
 const pendingTracks = new WeakSet();
 const GUIDE_LABELS = Object.freeze({
   framing: "page corners needed", small: "page too small", dark: "more light needed",
@@ -85,6 +86,23 @@ export function cameraCaptureFeedback(action, capture) {
 
 const unsupportedOptions = error => ["NotSupportedError", "OverconstrainedError", "TypeError"].includes(error?.name);
 
+function workingPhotoSize(width, height) {
+  const scale = Math.min(1, Math.sqrt(MAX_WORKING_PHOTO_PIXELS / (width * height)));
+  // Rounding up can exceed the decoder's pixel limit.
+  return { width: Math.floor(width * scale), height: Math.floor(height * scale) };
+}
+
+function readPhotoPixels(photo, canvas, context, source, started) {
+  const sourceWidth = photo.naturalWidth ?? photo.width;
+  const sourceHeight = photo.naturalHeight ?? photo.height;
+  const { width, height } = workingPhotoSize(sourceWidth, sourceHeight);
+  canvas.width = width; canvas.height = height;
+  context.drawImage(photo, 0, 0, width, height);
+  const image = context.getImageData(0, 0, width, height);
+  return { image, diagnostic: { source, width, height, sourceWidth, sourceHeight,
+    preparationMs: Math.round(performance.now() - started), reason: "captured" } };
+}
+
 export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NATIVE_PHOTO_TIMEOUT_MS, onDiagnostic, onPhotoBlob,
   requireHighResolution = false } = {}) {
   signal?.throwIfAborted();
@@ -116,9 +134,9 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
       const settings = { fillLightMode: "off" };
       const width = capabilities?.imageWidth, height = capabilities?.imageHeight;
       if (width?.max > 0 && height?.max > 0) {
-        const scale = Math.min(1, Math.sqrt(12_000_000 / (width.max * height.max)));
-        settings.imageWidth = Math.max(width.min || 1, Math.floor(width.max * scale));
-        settings.imageHeight = Math.max(height.min || 1, Math.floor(height.max * scale));
+        const size = workingPhotoSize(width.max, height.max);
+        settings.imageWidth = Math.max(width.min || 1, size.width);
+        settings.imageHeight = Math.max(height.min || 1, size.height);
       }
       let blob;
       try { blob = await camera.takePhoto(settings); }
@@ -136,18 +154,10 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
       if (requireHighResolution && !hasDocumentPhotoDetail(bitmap.width, bitmap.height))
         return { image: null, diagnostic: { source: "native-still", width: bitmap.width, height: bitmap.height, reason: "low-resolution" } };
       if (!requireHighResolution && bitmap.width * bitmap.height < canvas.width * canvas.height) return fallback("smaller-photo");
-      const scale = Math.min(1, Math.sqrt(12_000_000 / (bitmap.width * bitmap.height)));
-      // Rounding both axes upward can cross the native decoder's exact pixel cap.
-      const widthPixels = Math.floor(bitmap.width * scale), heightPixels = Math.floor(bitmap.height * scale);
       const context = canvas.getContext("2d", { willReadFrequently: true });
       if (!context) return fallback("invalid-photo");
       replacingFrame = true;
-      canvas.width = widthPixels; canvas.height = heightPixels;
-      context.drawImage(bitmap, 0, 0, widthPixels, heightPixels);
-      return { image: context.getImageData(0, 0, widthPixels, heightPixels), blob,
-        diagnostic: { source: "native-still", width: widthPixels, height: heightPixels,
-          sourceWidth: bitmap.width, sourceHeight: bitmap.height,
-          preparationMs: Math.round(performance.now() - started), reason: "captured" } };
+      return { ...readPhotoPixels(bitmap, canvas, context, "native-still", started), blob };
     } catch (error) {
       // Once replacing the retained canvas begins, a drawing failure must
       // surface instead of pairing old decoder pixels with a different photo.
@@ -238,16 +248,11 @@ export async function readCameraPhotoFile(file, canvas, { signal, onDiagnostic, 
     const width = photo.naturalWidth, height = photo.naturalHeight;
     if (!width || !height || width * height > 80_000_000) return failure("invalid-photo");
     if (requireHighResolution && !hasDocumentPhotoDetail(width, height)) return failure("low-resolution");
-    const scale = Math.min(1, Math.sqrt(12_000_000 / (width * height)));
-    const widthPixels = Math.floor(width * scale), heightPixels = Math.floor(height * scale);
     const context = canvas.getContext("2d", { willReadFrequently: true });
     if (!context) return failure("invalid-photo");
     // As with native capture, do not fall back to old pixels if drawing fails.
-    canvas.width = widthPixels; canvas.height = heightPixels;
-    context.drawImage(photo, 0, 0, widthPixels, heightPixels);
-    const image = context.getImageData(0, 0, widthPixels, heightPixels);
-    onDiagnostic?.({ source: "selected-photo", width: widthPixels, height: heightPixels,
-      sourceWidth: width, sourceHeight: height, preparationMs: Math.round(performance.now() - started), reason: "captured" });
+    const { image, diagnostic } = readPhotoPixels(photo, canvas, context, "selected-photo", started);
+    onDiagnostic?.(diagnostic);
     return image;
   } finally {
     signal?.removeEventListener("abort", abort);
