@@ -229,6 +229,14 @@ reliable bits while reserving parity checks to reject inconsistent solutions.
 The scanner skips this retry on a layout where it has already run to completion and missed.
 Recovered seals still pass through the usual payload and signature checks.
 
+A bend confined to one corner can move genuine alignment marks outside the
+flat-page fit. After the exposed-pixel read misses, a strong displaced mark
+can extend the measured trend along its row or column. A cubic fit through
+those marks samples the middle half of each module on the original photo.
+This retry uses the existing QR parity and signature checks and shares the
+same deadline. A generated overprinted page with one curled corner exercises
+the complete signed read without publishing a phone photograph.
+
 When the fast preview finds a sheet but rates its edges as soft, the native
 camera guide can measure focus along the curved outline. When mixed lighting
 makes the first outline look too small, the guide checks for consistent

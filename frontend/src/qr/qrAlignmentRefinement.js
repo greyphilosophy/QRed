@@ -1,5 +1,7 @@
 // Recover QR module locations from public alignment patterns on a photographed
 // page. No original PDF, signing keys, or expected QR payload enters this path.
+import { supportedBendAnchors } from "./bentModuleGrid.js";
+import { solveLinearSystem } from "./linearSystem.js";
 import { alignmentCenters } from "./qrLowLevel.js";
 import { photoLuminance } from "./paperColor.js";
 
@@ -116,24 +118,6 @@ function locateAlignment(image, expected, ux, uy, vx, vy, foregroundRobust, sear
   return best;
 }
 
-export function solve3(matrix, vector) {
-  const a = matrix.map((row, i) => [...row, vector[i]]);
-  for (let i = 0; i < 3; i++) {
-    let pivot = i;
-    for (let j = i + 1; j < 3; j++)
-      if (Math.abs(a[j][i]) > Math.abs(a[pivot][i])) pivot = j;
-    if (Math.abs(a[pivot][i]) < 1e-8) return null;
-    [a[i], a[pivot]] = [a[pivot], a[i]];
-    const factor = 1 / a[i][i];
-    for (let j = i; j < 4; j++) a[i][j] *= factor;
-    for (let j = 0; j < 3; j++) if (j !== i) {
-      const f = a[j][i];
-      for (let k = i; k < 4; k++) a[j][k] -= f * a[i][k];
-    }
-  }
-  return a.map(row => row[3]);
-}
-
 function fitAffine(points, weights) {
   const matrix = Array.from({ length: 3 }, () => [0, 0, 0]);
   const x = [0, 0, 0], y = [0, 0, 0];
@@ -145,7 +129,7 @@ function fitAffine(points, weights) {
       y[a] += w * v[a] * p.y;
     }
   }
-  const xx = solve3(matrix, x), yy = solve3(matrix, y);
+  const xx = solveLinearSystem(matrix, x), yy = solveLinearSystem(matrix, y);
   return xx && yy ? { x: xx, y: yy } : null;
 }
 function predicted(aff, col, row) {
@@ -225,6 +209,8 @@ export function refineQrModuleGrid(image, pageMapping, region, version, {
   }
   const inlierCount = grid.filter(Boolean).length;
   if (inlierCount < minimumInliers) return null;
+  const bendAnchors = measuredFinders && inlierCount < points.length
+    ? supportedBendAnchors(points, centers, grid, p => predicted(aff, p.col, p.row), map, tolerance) : null;
   for (let row = 0; row < m; row++) for (let col = 0; col < m; col++) {
     const index = row * m + col;
     if (grid[index]) continue;
@@ -278,5 +264,6 @@ export function refineQrModuleGrid(image, pageMapping, region, version, {
     }
     result.finderModuleMap = mapWith(anchored);
   }
+  if (bendAnchors) result.bendAnchors = bendAnchors;
   return result;
 }
