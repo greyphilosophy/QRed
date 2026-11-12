@@ -55,7 +55,9 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
   }, [page?.id, pages]);
   useEffect(() => { setSelectedWord(null); setZoom(1); }, [page?.id, page?.captureId]);
   const comparison = page?.comparison;
-  const contentDifferences = comparison?.differences.filter(difference => !difference.typography && !difference.spacing) || [];
+  const contentDifferences = comparison?.differences.filter(difference => !difference.typography && !difference.spacing && !difference.review) || [];
+  const numbersToCheck = comparison?.differences.filter(difference => difference.review === "number") || [];
+  const readingsToCheck = comparison?.differences.filter(difference => difference.review && difference.review !== "number") || [];
   const typographyDifferences = comparison?.differences.filter(difference => difference.typography) || [];
   const spacingDifferences = comparison?.differences.filter(difference => difference.spacing) || [];
   const difficultReading = comparison?.words.length >= 5 && comparison.uncertainCount > comparison.words.length * 0.3;
@@ -88,12 +90,7 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
           {difficultReading && <p className="photo-note reading-caution">Many characters could not be read reliably. Inspect the marked text on the paper; recognition errors can look like changes.</p>}
           <div className="photo-differences">
             {contentDifferences.length > 0 && <>
-              <ol>{contentDifferences.map((difference, index) => <li key={index}>
-                <div><strong>Signed text:</strong> {difference.expected || "(no text here)"}</div>
-                <div><strong>Photo reading:</strong> {difference.observed || "(not read — inspect for missing text)"}</div>
-                <DifferenceCrop page={page} difference={difference} />
-                {difference.context && <p className="photo-note">Signed wording nearby: {difference.context}</p>}
-              </li>)}</ol>
+              <ol>{contentDifferences.map((difference, index) => <PhotoDifference key={index} page={page} difference={difference} />)}</ol>
               <p className="photo-note">Confirm the photo reading against the paper. A recognition error can also cause a difference.</p></>}
             {spacingDifferences.length > 0 && <details className="photo-typography photo-spacing">
               <summary>Word spacing to review ({spacingDifferences.length})</summary>
@@ -115,6 +112,14 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
               </li>)}</ol>
             </details>}
           </div>
+          {numbersToCheck.length > 0 && <details className="photo-reading-review photo-number-review" open>
+            <summary>Numbers to check ({numbersToCheck.length})</summary>
+            <ol>{numbersToCheck.map((difference, index) => <PhotoDifference key={index} page={page} difference={difference} />)}</ol>
+          </details>}
+          {readingsToCheck.length > 0 && <details className="photo-reading-review">
+            <summary>Photo readings to check ({readingsToCheck.length})</summary>
+            <ol>{readingsToCheck.map((difference, index) => <PhotoDifference key={index} page={page} difference={difference} />)}</ol>
+          </details>}
           {comparison.retryReviews?.length > 0 && <details className="photo-typography photo-retries">
             <summary>Reread text to review ({comparison.retryReviews.length})</summary>
             <p className="photo-note">A closer reading disagreed with the first. Check these regions on the paper.</p>
@@ -196,6 +201,17 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
   </section>;
 }
 
+function PhotoDifference({ page, difference }) {
+  return <li>
+    {difference.review === "firstReading" && <p>The first reading found this wording in the same place. Check the photo to resolve the disagreement.</p>}
+    {difference.review === "artwork" ? <p>The signed page image shows ink here. The seal has no wording for this area. Check the lettering on the page.</p>
+      : <div><strong>Signed text:</strong> {difference.expected || "(no text here)"}</div>}
+    <div><strong>Photo reading:</strong> {difference.observed || "(not read — inspect for missing text)"}</div>
+    <DifferenceCrop page={page} difference={difference} />
+    {difference.context && <p className="photo-note">Signed wording nearby: {difference.context}</p>}
+  </li>;
+}
+
 function DifferenceCrop({ page, difference }) {
   const boxes = difference.boxes || difference.wordIndices.map(index => page.comparison.words.find(word => word.sourceIndex === index)?.bbox).filter(Boolean);
   if (!boxes.length) return <p className="photo-note">No reliable photo location. Inspect the signed wording and nearby text on the full page.</p>;
@@ -205,6 +221,6 @@ function DifferenceCrop({ page, difference }) {
   const height = Math.min(page.height - top, Math.max(...boxes.map(box => box.y1)) - top + 24);
   return <svg className="difference-crop" viewBox={`${left} ${top} ${width} ${height}`} role="img" aria-label="Magnified photo difference">
     <image href={page.url} width={page.width} height={page.height} />
-    {boxes.map((box, index) => <rect key={index} x={box.x0} y={box.y0} width={box.x1 - box.x0} height={box.y1 - box.y0} className={`photo-word ${difference.typography || difference.spacing ? "uncertain" : "different"}`} />)}
+    {boxes.map((box, index) => <rect key={index} x={box.x0} y={box.y0} width={box.x1 - box.x0} height={box.y1 - box.y0} className={`photo-word ${difference.review || difference.typography || difference.spacing ? "uncertain" : "different"}`} />)}
   </svg>;
 }

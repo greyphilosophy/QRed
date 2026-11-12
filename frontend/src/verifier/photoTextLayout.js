@@ -10,7 +10,7 @@ export function enclosingBox(boxes) {
 // Signed locations describe the ORIGINAL page. Coarse line starts and a
 // different paper aspect (for example a Letter page extended with a Legal
 // footer) are not enough to infer safe line boxes: keep sequence comparison.
-export function signedPhotoLines(text, evidence, corners, { width, height }, words = []) {
+export function signedPhotoLayout(text, evidence, corners, { width, height }, words = []) {
   const lines = text.split("\n").filter(line => line.trim());
   if (evidence?.text !== text || evidence.layout?.mode !== 3 || lines.length > 512
       || words.length > 4000 || !Array.isArray(evidence.layout.lines) || evidence.layout.lines.length !== lines.length || corners?.length !== 4
@@ -43,7 +43,11 @@ export function signedPhotoLines(text, evidence, corners, { width, height }, wor
       === compact(line.wordIndices.map(i => words[i].text).join(" ")));
     if (anchors.length < Math.min(lines.length, 2)) return null;
   }
-  return result;
+  return { lines: result, project };
+}
+
+export function signedPhotoLines(...args) {
+  return signedPhotoLayout(...args)?.lines || null;
 }
 
 const compact = text => text.normalize("NFC").replace(/\s/gu, "");
@@ -59,6 +63,31 @@ function pagePoint(mapping, x, y) {
     v += (a * (y - p.y) - c * (x - p.x)) / determinant;
   }
   return Number.isFinite(u) && Number.isFinite(v) ? { x: u, y: v } : null;
+}
+
+// A signed thumbnail can establish that ink was already present beneath an
+// unlisted OCR word. Its resolution cannot authenticate those letters.
+export function overlapsReferenceInk(box, project, raster) {
+  if (!box || !raster) return false;
+  const corners = [[box.x0, box.y0], [box.x1, box.y0], [box.x1, box.y1], [box.x0, box.y1]]
+    .map(([x, y]) => pagePoint(project, x, y));
+  if (corners.some(p => !p || p.x < 0 || p.y < 0 || p.x > 1 || p.y > 1)) return false;
+  const xs = corners.map(p => p.x * raster.width), ys = corners.map(p => p.y * raster.height);
+  const left = Math.floor(Math.min(...xs)), right = Math.ceil(Math.max(...xs));
+  const top = Math.max(0, Math.floor(Math.min(...ys)) - 1);
+  const bottom = Math.min(raster.height, Math.ceil(Math.max(...ys)) + 1);
+  const columns = Math.min(right - left, 24), rows = Math.min(bottom - top, 12);
+  if (columns < 3 || rows < 1) return false;
+  let inkColumns = 0;
+  for (let col = 0; col < columns; col++) {
+    const x = left + Math.floor((col + .5) * (right - left) / columns);
+    for (let row = 0; row < rows; row++) {
+      const y = top + Math.floor((row + .5) * (bottom - top) / rows);
+      // One grayscale quantization step below white in the signed codebook.
+      if (raster.data[4 * (y * raster.width + x)] <= 238) { inkColumns++; break; }
+    }
+  }
+  return inkColumns >= columns * .65;
 }
 
 // Printer fit-to-page scales/offsets the entire document inside the paper.
@@ -123,7 +152,13 @@ export function assignPhotoLines(lines, words) {
     const box = word.bbox;
     if (!box) return;
     const x = (box.x0 + box.x1) / 2, y = (box.y0 + box.y1) / 2;
-    const candidates = assigned.filter(line => contains(line.polygon, x, y));
+    let candidates = assigned.filter(line => contains(line.polygon, x, y));
+    // A narrow field separator can fall just beyond the registered line edge.
+    // Assign by geometry only, then compare it with every other character.
+    if (!candidates.length && /^[.:,;]$/u.test(word.text)) {
+      const margin = Math.min((box.y1 - box.y0) * .25, (box.x1 - box.x0) * 1.5);
+      candidates = assigned.filter(line => contains(line.polygon, x - margin, y) || contains(line.polygon, x + margin, y));
+    }
     // Overlapping PDF line boxes must not reuse one photographed word twice.
     candidates.sort((a, b) => Math.abs(y - (a.bbox.y0 + a.bbox.y1) / 2)
       - Math.abs(y - (b.bbox.y0 + b.bbox.y1) / 2));
@@ -142,10 +177,15 @@ export function compareLocatedPhotoText(expected, words, dimensions, lines) {
     const indices = line.wordIndices;
     indices.forEach(index => used.add(index));
     const comparison = comparePhotoText(line.text, indices.map(index => words[index]), dimensions);
+    const first = words[indices[0]];
+    const weakStart = first?.bbox && first.confidence < OCR_REVIEW_THRESHOLD &&
+      Math.abs(first.bbox.x0 - line.bbox.x0) < (line.bbox.y1 - line.bbox.y0) * .25;
     classified.push(...comparison.words.map(word => ({ ...word, sourceIndex: indices[word.sourceIndex] })));
     differences.push(...comparison.differences.map(difference => ({ ...difference,
       wordIndices: difference.wordIndices.map(index => indices[index]),
       ...(!difference.wordIndices.length ? { boxes: [line.bbox] } : {}),
+      ...(weakStart && !difference.observed && /^\p{L}$/u.test(difference.expected)
+        && line.text.startsWith(difference.expected + " ") ? { weakLeadingGlyph: true } : {}),
     })));
   }
   // An expected-region crop is never permission to ignore added text elsewhere.
@@ -165,7 +205,8 @@ export function compareLocatedPhotoText(expected, words, dimensions, lines) {
       classified.push({ ...word, sourceIndex, agrees: false, bbox: valid ? box : null,
         status: valid && Number.isFinite(word.confidence) && word.confidence >= OCR_REVIEW_THRESHOLD ? "different" : "uncertain" });
     }
-    differences.push({ expected: "", observed: indices.map(index => words[index].text).join(" "), wordIndices: indices, context: "" });
+    differences.push({ expected: "", observed: indices.map(index => words[index].text).join(" "),
+      wordIndices: indices, context: "", outsideSignedLines: true });
   }
   classified.sort((a, b) => a.sourceIndex - b.sourceIndex);
   const uncertainCount = classified.filter(word => word.status === "uncertain").length;

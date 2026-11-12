@@ -1,5 +1,7 @@
 import { preparePhotoReadingInWorker } from "../qr/photoScanClient.js";
-import { compareLocatedPhotoText, signedPhotoLines } from "./photoTextLayout.js";
+import { renderVisualReference } from "../pageEvidence.js";
+import { assignPhotoLines, compareLocatedPhotoText, overlapsReferenceInk, signedPhotoLayout } from "./photoTextLayout.js";
+import { OCR_REVIEW_THRESHOLD } from "./photoTextComparison.js";
 
 // This is a second reading, never a replacement for the displayed original.
 // Removing a pale watermark can also remove pale writing: a result using this
@@ -111,10 +113,68 @@ export function possiblePrintedMarkings(words, codes, { pageNumber } = {}) {
   return groups;
 }
 
+// Require the missing phrase and two neighboring words in the same signed
+// row of the original photo. This can establish disagreement between reads,
+// never a match. Repeated wording and missing numbers stay prominent.
+function originallyRead(line, missing, originalWords) {
+  if (!line || !/\p{L}/u.test(missing) || /\p{N}/u.test(missing)) return false;
+  const signed = line.text.trim().split(/\s+/u), phrase = missing.split(/\s+/u);
+  const starts = signed.flatMap((_, i) => phrase.every((token, j) => signed[i + j] === token) ? [i] : []);
+  if (starts.length !== 1) return false;
+  const original = " " + line.wordIndices.map(i => originalWords[i].confidence >= OCR_REVIEW_THRESHOLD
+    ? originalWords[i].text : "\u0000").join(" ") + " ";
+  return [0, 1, 2].some(before => {
+    const start = starts[0] - before, end = start + phrase.length + 2;
+    return start >= 0 && end <= signed.length && original.includes(" " + signed.slice(start, end).join(" ") + " ");
+  });
+}
+
+function qualifyPhotoReadings(comparison, layout, visual, reread, originalWords) {
+  if (!layout || !comparison.differences.length) return;
+  const byIndex = new Map(comparison.words.map(word => [word.sourceIndex, word]));
+  const review = new Set(), discrepancies = new Set();
+  let raster, originalLines;
+  for (const difference of comparison.differences) {
+    if (difference.typography || difference.spacing) continue;
+    const { expected, observed, wordIndices } = difference;
+    const words = wordIndices.map(index => byIndex.get(index));
+    if (visual && difference.outsideSignedLines && words.length) {
+      raster ??= renderVisualReference(visual);
+      if (words.every(word => overlapsReferenceInk(word?.bbox, layout.project, raster))) difference.review = "artwork";
+    }
+    if (reread && !difference.review) {
+      // A missing field separator or an ambiguous vertical stroke in prose
+      // still needs a visual check. Preserve numeric substitutions as differences.
+      const number = /^[+−-]?[\p{Sc}]?\d+(?:[.,:/-]\d+)*%?$/u;
+      const numericChange = number.test(expected) && number.test(observed);
+      if (expected === ":" && !observed && /[\p{L}.]\s*:/u.test(difference.context)) difference.review = "unclear";
+      else if (difference.weakLeadingGlyph ||
+        (expected === "I" && /^[|l1]$/u.test(observed) && /\bI\s+\p{Ll}/u.test(difference.context))) difference.review = "unclear";
+      else if (!numericChange && words.length && words.every(word => !word?.bbox || !(word.confidence >= OCR_REVIEW_THRESHOLD))) {
+        difference.review = /\d/u.test(expected || observed) ? "number" : "unclear";
+      } else if (originalWords && !observed && difference.boxes?.length && /\p{L}/u.test(expected)) {
+        originalLines ??= new Map(assignPhotoLines(layout.lines, originalWords).map(line => [line.bbox, line]));
+        if (originallyRead(originalLines.get(difference.boxes[0]), expected, originalWords)) difference.review = "firstReading";
+      }
+    }
+    const indices = difference.review ? review : discrepancies;
+    wordIndices.forEach(index => indices.add(index));
+  }
+  for (const word of comparison.words) {
+    if (word.status === "different" && review.has(word.sourceIndex) && !discrepancies.has(word.sourceIndex)) {
+      word.status = "uncertain";
+      comparison.differentCount--; comparison.uncertainCount++;
+    }
+  }
+  if (comparison.status === "differences" && comparison.differences.every(d => d.review || d.typography || d.spacing)) {
+    comparison.status = "uncertain";
+  }
+}
+
 export function comparePageReading(expected, reading, dimensions, evidence, options = {}) {
   const { words, codes = [], contrastAssisted = false, corners, retryReviews = [], originalReading } = Array.isArray(reading) ? { words: reading } : reading;
-  const lines = signedPhotoLines(expected, evidence, corners, dimensions, words);
-  const compare = input => compareLocatedPhotoText(expected, input, dimensions, lines);
+  const layout = signedPhotoLayout(expected, evidence, corners, dimensions, words);
+  const compare = input => compareLocatedPhotoText(expected, input, dimensions, layout?.lines);
   let comparison = compare(words);
   const groups = possiblePrintedMarkings(words, codes, options).filter(indices => indices.every(index =>
     comparison.words.find(word => word.sourceIndex === index)?.agrees === false));
@@ -129,6 +189,7 @@ export function comparePageReading(expected, reading, dimensions, evidence, opti
   }
   const markings = groups.map(indices => ({ observed: indices.map(index => words[index].text).join(" "),
     boxes: indices.map(index => words[index].bbox) }));
+  qualifyPhotoReadings(comparison, layout, evidence?.visual, contrastAssisted || Boolean(originalReading), originalReading);
   if (comparison.status === "matches" && (contrastAssisted || originalReading || markings.length || retryReviews.length)) comparison.status = "uncertain";
   const originalComparison = originalReading ? comparePageReading(expected,
     { words: originalReading, codes, corners }, dimensions, evidence, options) : null;

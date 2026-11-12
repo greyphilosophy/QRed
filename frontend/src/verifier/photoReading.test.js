@@ -7,6 +7,66 @@ const text = [word("Friday", 10, 10)];
 const caption = [word("Verify", 90, 280, 30), word("at", 125, 280, 10), word("qred.org", 140, 280, 40)];
 const dimensions = { width: 600, height: 800 };
 
+function registeredReading(signedLine, field, extras = [], { visual, reread = true, originalField = field } = {}) {
+  const expected = ["Start", signedLine, "End"].join("\n");
+  const pageWords = row => [word("Start", 60, 85), ...row, word("End", 60, 645), ...extras];
+  const evidence = { ...dimensions, text: expected, layout: { mode: 3,
+    lines: [.1, .5, .8].map(y => ({ x: .1, y, width: .65, height: .04 })) }, visual };
+  const corners = [{x:0,y:0},{x:600,y:0},{x:600,y:800},{x:0,y:800}];
+  return comparePageReading(expected, { words: pageWords(field), corners, originalReading: reread ? pageWords(originalField) : undefined }, dimensions, evidence);
+}
+
+it("retains lettering over original artwork for review and reports new text in a blank area", () => {
+  const indices = new Uint8Array(20 * 20).fill(15);
+  indices.fill(0, 6 * 20 + 4, 6 * 20 + 8);
+  const visual = { codebook: 1, rows: 20, columns: 20, indices };
+  const art = word("Crest", 125, 249, 90), addition = word("PAID", 400, 245, 42);
+  const read = (extras, options) => registeredReading("Due", [word("Due", 60, 402)], extras, options);
+  const review = read([art], { visual });
+  expect(review.status).toBe("uncertain");
+  expect(review.differences).toEqual([expect.objectContaining({ observed: "Crest", review: "artwork" })]);
+  expect(review.words.at(-1)).toMatchObject({ status: "uncertain", agrees: false, bbox: art.bbox });
+  expect(read([art, addition], { visual }).differences.find(d => d.observed === "PAID").review).toBeUndefined();
+  expect(read([art], {}).status).toBe("differences");
+});
+
+it("keeps digit changes and missing signed words prominent even on a noisy reread", () => {
+  const weak = text => ({ ...word(text, 165, 403), confidence: 35 });
+  const amount = read => registeredReading("Amount 47.85", [word("Amount", 60, 403), weak(read)]);
+  expect(amount("42.85").differences).toEqual([expect.objectContaining({ expected: "47.85", observed: "42.85" })]);
+  expect(amount("42.85").status).toBe("differences");
+  const unclear = amount("4l.8S");
+  expect(unclear.status).toBe("uncertain");
+  expect(unclear.differences[0].review).toBe("number");
+  for (const [signed, read] of [["Do not pay", "Do pay"], ["I agree", "agree"], ["Pay 7", "Pay"]]) {
+    const result = registeredReading(signed, read.split(" ").map((t, i) => word(t, 60 + i * 45, 403)));
+    expect(result.status).toBe("differences");
+    expect(result.differences[0].review).toBeUndefined();
+  }
+});
+
+it("keeps weak original observations available when the clearer page still has a doubtful reading", () => {
+  const field = [word("Status", 60, 403), { ...word("X", 180, 403), confidence: 32 }];
+  const result = registeredReading("Status Y", field);
+  expect(result.differences[0]).toMatchObject({ expected: "Y", observed: "X", review: "unclear" });
+  expect(result.status).toBe("uncertain");
+  expect(result.originalComparison.status).toBe("differences");
+  expect(registeredReading("Status Y", field, [], { reread: false }).status).toBe("differences");
+});
+
+it("requires confident neighboring words in the same row to qualify a conflicting omission", () => {
+  const row = (text, y = 403, confidence = 99) => text.split(" ").map((t, i) => ({ ...word(t, 60 + 40 * i, y), confidence }));
+  const signed = "Allow two working days", field = row("Allow days");
+  const read = originalField => registeredReading(signed, field, [], { originalField });
+  const corroborated = read(row(signed));
+  expect(corroborated.status).toBe("uncertain");
+  expect(corroborated.differences[0]).toMatchObject({ expected: "two working", review: "firstReading" });
+  for (const original of [row("two working"), row(signed, 250), row(signed, 403, 40)]) {
+    expect(read(original).status).toBe("differences");
+  }
+  expect(registeredReading("Allow 2 days", field, [], { originalField: row("Allow 2 days") }).status).toBe("differences");
+});
+
 it("keeps a contrast-assisted agreement uncertain, and still detects changed or added text", () => {
   expect(comparePageReading("Friday", { words: text, contrastAssisted: true }, dimensions).status).toBe("uncertain");
   expect(comparePageReading("Monday", { words: text, contrastAssisted: true }, dimensions).status).toBe("differences");

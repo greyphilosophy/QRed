@@ -4,6 +4,7 @@ import { isQRedEntryLink, qredPayloadFromScanResult } from "../qr/qrPayload.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { locatePaper } from "../qr/pageAlignedScan.js";
 import { estimatePaperColor } from "../qr/paperColor.js";
+import { normalizeWatermarkLuminance } from "../qr/watermarkFilter.js";
 
 // Runs in the photo worker on a transferred working copy, never the retained
 // photograph. The contrast copy can lose pale writing; its reading is always
@@ -13,8 +14,14 @@ export function preparePhotoReadingPixels({ data, width, height }) {
   // This is a bounded edge search, not another seal-recovery attempt.
   const source = { data, width, height };
   const corners = locatePaper({ ...source, paperColor: estimatePaperColor(source) });
+  const normalized = corners ? normalizeWatermarkLuminance(data, width, height) : null;
   for (let i = 0; i < data.length; i += 4) {
-    if (Math.min(data[i], data[i + 1], data[i + 2]) > 150)
+    if (normalized) {
+      // Normalize against nearby paper before suppressing pale watermark
+      // modules. A soft ramp preserves the edges of dark letters in shadow.
+      const luminance = (normalized[i / 4] - 80) * 255 / (174 - 80);
+      data[i] = data[i + 1] = data[i + 2] = luminance;
+    } else if (Math.min(data[i], data[i + 1], data[i + 2]) > 150)
       data[i] = data[i + 1] = data[i + 2] = 255;
   }
   const codes = [];

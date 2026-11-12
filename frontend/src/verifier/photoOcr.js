@@ -3,6 +3,7 @@ import { captionLineCandidates, comparePageReading, isPrintedCaption, preparePho
 import { signedPhotoLines } from "./photoTextLayout.js";
 import { applyTextRetries, planTextRetries, TEXT_RETRY_MS, TEXT_RETRY_PIXELS } from "./photoOcrRetry.js";
 import { needsPageReread, pageReadingCanvas, preferPageReread } from "./photoOcrFallback.js";
+import { spacePhotoLine } from "./photoLineSpacing.js";
 
 // These versioned resources are copied from locked dependencies at build time.
 // Never use Tesseract's default CDN paths: all resources belong to this origin.
@@ -85,7 +86,7 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
         let contrastAssisted = words.length === 0, originalReading;
         if (contrastAssisted) words = await recognize(prepared.canvas);
         else if (needsPageReread(words)) {
-          const page = pageReadingCanvas(canvas, prepared.corners);
+          const page = pageReadingCanvas(prepared.canvas, prepared.corners);
           if (page) try {
             await current.setParameters({ thresholding_kfactor: "0.34" });
             const reread = await recognize(page);
@@ -165,12 +166,24 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
                 pixels += detail.width * detail.height;
                 if (pixels > TEXT_RETRY_PIXELS) { detail.width = detail.height = 0; break; }
                 try {
-                  detail.getContext("2d").drawImage(input, box.x0 * sx, box.y0 * sy, width * sx, height * sy,
+                  const context = detail.getContext("2d", { willReadFrequently: true });
+                  context.drawImage(input, box.x0 * sx, box.y0 * sy, width * sx, height * sy,
                     0, 0, detail.width, detail.height);
+                  const originalWidth = detail.width, originalHeight = detail.height;
+                  const spaced = originalReading && candidate.signedLine
+                    ? spacePhotoLine(context.getImageData(0, 0, originalWidth, originalHeight)) : null;
+                  if (spaced) {
+                    pixels += Math.max(0, spaced.width * spaced.height - originalWidth * originalHeight);
+                    if (pixels > TEXT_RETRY_PIXELS) break;
+                    detail.width = spaced.width; detail.height = spaced.height;
+                    context.putImageData(new ImageData(spaced.data, spaced.width, spaced.height), 0, 0);
+                  }
                   const read = await recognize(detail);
+                  const sourceX = x => spaced ? spaced.sourceX[Math.max(0, Math.min(spaced.width, Math.round(x)))] : x;
+                  const sourceY = y => spaced ? Math.max(0, Math.min(originalHeight, y - spaced.pad)) : y;
                   const mapped = read.filter(word => word.bbox).map(word => ({ ...word, bbox: {
-                    x0: box.x0 + word.bbox.x0 * width / detail.width, x1: box.x0 + word.bbox.x1 * width / detail.width,
-                    y0: box.y0 + word.bbox.y0 * height / detail.height, y1: box.y0 + word.bbox.y1 * height / detail.height,
+                    x0: box.x0 + sourceX(word.bbox.x0) * width / originalWidth, x1: box.x0 + sourceX(word.bbox.x1) * width / originalWidth,
+                    y0: box.y0 + sourceY(word.bbox.y0) * height / originalHeight, y1: box.y0 + sourceY(word.bbox.y1) * height / originalHeight,
                   } }));
                   replacements.push({ candidate, words: mapped });
                 } finally { detail.width = detail.height = 0; }
