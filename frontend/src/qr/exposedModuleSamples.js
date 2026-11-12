@@ -5,15 +5,16 @@ function reflect(i, size) {
   return i < 0 ? -i - 1 : i >= size ? 2 * size - i - 1 : i;
 }
 
-export function classifyExposedModules({ values, size }, shouldContinue = () => true) {
+export function classifyExposedModules({ values, size }, shouldContinue = () => true, { inner = false } = {}) {
   const count = size * size, bright = new Float32Array(count), low = new Float32Array(count);
   const cell = new Uint8Array(25);
   for (let i = 0; i < count; i++) {
     if (i % size === 0 && !shouldContinue()) return null;
     cell.set(values.subarray(i * 25, i * 25 + 25));
     cell.sort();
-    // 80th and 15th percentiles of the 5 by 5 interior sample.
-    bright[i] = .8 * cell[19] + .2 * cell[20];
+    // The narrow sampler stays inside the middle half of the module. Its
+    // upper quartile is less sensitive to a single bright, blurred edge.
+    bright[i] = inner ? cell[17] : .8 * cell[19] + .2 * cell[20];
     low[i] = .4 * cell[3] + .6 * cell[4];
   }
   const bits = new Uint8Array(count), reliability = new Float32Array(count);
@@ -41,7 +42,9 @@ export function classifyExposedModules({ values, size }, shouldContinue = () => 
       // Dark strokes within a cell and even its brightest samples falling
       // below pale ink both weaken the evidence for its underlying bit.
       const belowInk = Math.max(0, -level - .1);
-      reliability[i] = Math.abs(distance) * Math.exp(-Math.min(4, covered) - belowInk);
+      // A stroke or a textureless graphic across that smaller footprint
+      // obscures more of the available evidence. Rank those bits lower.
+      reliability[i] = Math.abs(distance) * Math.exp(-(inner ? 2 : 1) * Math.min(4, covered) - belowInk);
       // A quiet white area around an overprinted graphic supplies little QR
       // evidence even when its white modules appear to have decisive votes.
       const exposed = Math.abs(level) < .42 && bright[i] - low[i] < .8 * gap && covered < .75;
@@ -64,7 +67,8 @@ export function classifyExposedModules({ values, size }, shouldContinue = () => 
         - exposedInk[bottom * stride + left] + exposedInk[top * stride + left];
       const fraction = ink / ((bottom - top) * (right - left));
       const i = row * size + col;
-      reliability[i] *= Math.max(.008, Math.min(1, fraction / .27));
+      const texture = Math.max(.008, Math.min(1, fraction / (inner ? .35 : .27)));
+      reliability[i] *= inner ? texture * texture : texture;
       unknown[i] = Number(reliability[i] < .25);
     }
   }

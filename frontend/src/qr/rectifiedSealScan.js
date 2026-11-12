@@ -1,6 +1,7 @@
 // A bounded working copy makes rectangular printed QR modules square before
 // locating their own public patterns. The retained photo is never modified.
 import { locatePaper, pageHomography, pageWatermarkRegions } from "./pageAlignedScan.js";
+import { bentModuleGrid } from "./bentModuleGrid.js";
 import { curvedPaperMapping } from "./curvedPaper.js";
 import { estimatePaperColor } from "./paperColor.js";
 import { normalizeWatermarkLuminance } from "./watermarkFilter.js";
@@ -113,6 +114,13 @@ function recoverObservations(observations, photoMap, version, thresholds, should
   return null;
 }
 
+function recoverExposed(image, moduleMap, version, shouldContinue, inner = false) {
+  const raw = collectModuleSamples(image.data, image.width, image.height, moduleMap, version, { inner });
+  const exposed = classifyExposedModules(raw, shouldContinue, { inner });
+  if (!exposed || !shouldContinue()) return null;
+  return recoverSampledQrMatrix(exposed, moduleMap, version, { bitReliability: exposed.reliability, shouldContinue });
+}
+
 // Share only measured preparation within one frozen photo request. The wider
 // retry must not rebuild the same page warp, normalized pixels and finder
 // observations after the earlier narrow search has already paid for them.
@@ -143,7 +151,7 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
       prepared.set(profile, null); return null;
     }
     const thresholds = [...new Set([230, measuredThreshold(gray, corners)])];
-    const candidate = { working, gray, version, gridMap, thresholds, weakFinder: strong < 3, triedExposed: false };
+    const candidate = { working, gray, version, gridMap, thresholds, weakFinder: strong < 3, triedExposed: false, bentRadius: null };
     prepared.set(profile, candidate);
     return candidate;
   }
@@ -180,14 +188,19 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
             return working.toPhoto(p.x, p.y);
           };
           const tryExposed = () => {
-            if (candidate.triedExposed || !foregroundRobust || grid.quality < .8 || !shouldContinue()) return null;
-            const raw = collectModuleSamples(image.data, image.width, image.height, photoMap, version);
-            const exposed = classifyExposedModules(raw, shouldContinue);
-            if (!exposed || !shouldContinue()) return null;
-            const recovered = recoverSampledQrMatrix(exposed, photoMap, version,
-              { bitReliability: exposed.reliability, shouldContinue });
-            // A later pass can finish an attempt interrupted by the narrow deadline.
-            if (!recovered && shouldContinue()) candidate.triedExposed = true;
+            if (!foregroundRobust || grid.quality < .8 || !shouldContinue()) return null;
+            if (!candidate.triedExposed) {
+              const recovered = recoverExposed(image, photoMap, version, shouldContinue);
+              if (recovered || !shouldContinue()) return recovered;
+              candidate.triedExposed = true;
+            }
+            if (!grid.bendAnchors || candidate.bentRadius === searchRadius) return null;
+            const bent = bentModuleGrid(grid.bendAnchors, working.toPhoto, 17 + 4 * version, shouldContinue);
+            if (!bent || !shouldContinue()) return null;
+            const recovered = recoverExposed(image, bent, version, shouldContinue, true);
+            // A wider search may find different marks. An interrupted attempt
+            // can also resume in the later scan budget.
+            if (shouldContinue()) candidate.bentRadius = searchRadius;
             return recovered;
           };
           // A partly covered finder can still define the grid when separate

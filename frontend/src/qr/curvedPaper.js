@@ -2,7 +2,7 @@
 // Follow coherent inward brightness changes along each side, then use the four
 // measured curves to predict where the printed grid bends between the corners.
 import { pageHomography } from "./pageAlignedScan.js";
-import { solve3 } from "./qrAlignmentRefinement.js";
+import { solveLinearSystem } from "./linearSystem.js";
 
 function preview(image) {
   const scale = Math.min(1, 384 / Math.max(image.width, image.height));
@@ -31,7 +31,7 @@ function fit(samples, quadratic) {
       for (let j = 0; j < 3; j++) matrix[i][j] += bases[i] * bases[j];
     }
   }
-  const c = solve3(matrix, rhs);
+  const c = solveLinearSystem(matrix, rhs);
   return c && (t => c[0] + t * (c[1] + t * c[2]));
 }
 

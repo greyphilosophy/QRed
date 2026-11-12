@@ -16,14 +16,15 @@ const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
 // part of the sheet, making a high-percentile paper estimate brighter than
 // the exposed white modules. One global threshold then confuses them with
 // pale ink elsewhere. The decoder receives only these camera-like pixels.
-function shadowedPrint(symbol, grain, { bow = 0, overprint = false } = {}) {
+function shadowedPrint(symbol, grain, { bow = 0, overprint = false, cornerBend = 0 } = {}) {
   const scale = overprint ? 2 : 1;
   const width = 1000 * scale, height = 1300 * scale, data = new Uint8ClampedArray(width * height * 4);
   const paper = { x: 50 * scale, y: 50 * scale, width: 900 * scale, height: 1165 * scale };
   const region = pageWatermarkRegions(1, undefined, { marginPoints: 54 })[0];
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-    const u = (x - paper.x) / paper.width;
-    const v = (y - paper.y) / paper.height - bow * (2 * u - 1) ** 2;
+    const px = (x - paper.x) / paper.width, py = (y - paper.y) / paper.height;
+    const bend = cornerBend * Math.max(0, (px - .45) / .55) ** 2 * Math.max(0, (py - .45) / .55) ** 2;
+    const u = px + bend, v = py - bow * (2 * px - 1) ** 2 + bend * .65;
     let value = 80;
     if (bow) value += 55 * Math.max(0, Math.cos(30 * y / height - 7 * x / width)) ** 10;
     if (u >= 0 && v >= 0 && u < 1 && v < 1) {
@@ -87,6 +88,22 @@ it("authenticates a seal with an overprinted finder and dark strokes crossing th
     expect(exposed).toBeGreaterThanOrEqual(0);
     expect(recover.mock.results[exposed].value?.seal).toBe(seals[0]);
   } finally { recover.mockRestore(); }
+  expect(result?.seal).toBe(seals[0]);
+  await expect(verifyQRedSeals([result.seal], publicKey)).resolves.toMatchObject({ status: "VALID", signature_valid: true });
+  await expect(verifyQRedSeals([result.seal], "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI"))
+    .resolves.toMatchObject({ status: "INVALID" });
+}, 20000);
+
+it("authenticates an overprinted seal when one corner of the paper bends inward", async () => {
+  const { seals } = await createQRedSeals({
+    privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey,
+    content: "Invoice line 100.50, item 42. ".repeat(30), encodingStrategy: "plaintext",
+    timestamp: "2026-11-11T12:00:00Z",
+  });
+  const { payloadBytes } = createQRedQrData(seals[0]);
+  const symbol = QRCode.create([{ data: payloadBytes, mode: "byte" }], { version: 31, errorCorrectionLevel: "L" });
+  const image = shadowedPrint(symbol, 8, { cornerBend: .065, overprint: true });
+  const result = scanRectifiedSeal(image, { searchRadius: 12 });
   expect(result?.seal).toBe(seals[0]);
   await expect(verifyQRedSeals([result.seal], publicKey)).resolves.toMatchObject({ status: "VALID", signature_valid: true });
   await expect(verifyQRedSeals([result.seal], "Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI"))

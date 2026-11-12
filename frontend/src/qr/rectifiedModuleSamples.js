@@ -1,15 +1,17 @@
 const OFFSETS = [-0.3, -0.15, 0, 0.15, 0.3];
+const INNER_OFFSETS = [-.25, -.125, 0, .125, .25];
 const SAMPLES_PER_MODULE = OFFSETS.length ** 2;
 
 // Geometry is independent of the ink/foreground thresholds. Read it once
 // per candidate grid and reuse these observations for every threshold retry.
 // This buffer is local to one scan; it never changes the retained photo.
-export function collectModuleSamples(pixels, width, height, moduleMap, version) {
+export function collectModuleSamples(pixels, width, height, moduleMap, version, { inner = false } = {}) {
   const size = 17 + 4 * version, values = new Uint8Array(size * size * SAMPLES_PER_MODULE);
   const rgba = pixels.length === width * height * 4;
+  const offsets = inner ? INNER_OFFSETS : OFFSETS;
   let index = 0;
   for (let row = 0; row < size; row++) for (let col = 0; col < size; col++)
-    for (const dy of OFFSETS) for (const dx of OFFSETS) {
+    for (const dy of offsets) for (const dx of offsets) {
       const p = moduleMap(col + 0.5 + dx, row + 0.5 + dy);
       const x = Math.round(p.x), y = Math.round(p.y);
       if (x >= 0 && y >= 0 && x < width && y < height) {
