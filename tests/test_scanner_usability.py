@@ -248,6 +248,7 @@ def test_live_worker_has_no_backlog_and_capture_can_resume_the_same_camera_offli
             canvas.getContext('2d').drawImage(native, 0, 0, canvas.width, canvas.height);
             const stream = canvas.captureStream(10);
             window.liveTestStream = stream;
+            setInterval(() => canvas.getContext('2d').drawImage(native, 0, 0, canvas.width, canvas.height), 100);
             navigator.mediaDevices.getUserMedia = async () => { liveTest.opens++; return stream; };
             navigator.mediaDevices.enumerateDevices = async () => [];
             setInterval(() => liveTest.ticks++, 25);

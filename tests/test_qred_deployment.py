@@ -739,6 +739,7 @@ class TestCameraFrameScanning:
                     full.fillStyle = 'white'; full.fillRect(0, 0, camera.width, camera.height);
                     context.drawImage(still, 0, 0, canvas.width, canvas.height);
                     const stream = canvas.captureStream(10);
+                    setInterval(() => context.drawImage(still, 0, 0, canvas.width, canvas.height), 100);
                     window.showCameraSeal = () => {
                         full.fillStyle = '#373737';
                         full.fillRect(0, 0, canvas.width, canvas.height);

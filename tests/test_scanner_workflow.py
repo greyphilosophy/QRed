@@ -111,6 +111,7 @@ def install_changing_camera(page, frames):
         const context = frame.getContext('2d');
         window.__workflowCamera = {mode: 'clipped', opens: 0, tracks: [], ticks: 0, captures: []};
         window.__syntheticNativePhoto = images.native;
+        let track;
         const draw = () => {
             const mode = __workflowCamera.mode;
             const at = performance.now() / 250;
@@ -124,8 +125,9 @@ def install_changing_camera(page, frames):
                 x = n % 2 ? .009 : -.009; y = n % 2 ? .002 : -.002;
             }
             context.fillStyle = '#373737'; context.fillRect(0, 0, frame.width, frame.height);
-            context.drawImage(images[mode === 'moving' || mode === 'handheld' ? 'clear' : mode],
+            context.drawImage(images[['moving', 'handheld', 'frozen'].includes(mode) ? 'clear' : mode],
                 Math.round(frame.width * x), Math.round(frame.height * y));
+            track?.requestFrame();
         };
         window.__showWorkflowFrame = mode => {
             __workflowCamera.mode = mode;
@@ -152,12 +154,14 @@ def install_changing_camera(page, frames):
         __showWorkflowFrame('clipped');
         const timer = setInterval(() => {
             __workflowCamera.ticks++;
-            draw();
+            if (__workflowCamera.mode !== 'frozen') draw();
         }, 100);
         navigator.mediaDevices.getUserMedia = async () => {
             __workflowCamera.opens++;
-            const stream = frame.captureStream(10);
+            const stream = frame.captureStream(0);
+            [track] = stream.getVideoTracks();
             __workflowCamera.tracks.push(...stream.getTracks());
+            draw();
             return stream;
         };
         navigator.mediaDevices.enumerateDevices = async () => [];
@@ -202,6 +206,12 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         page.get_by_role("button", name="Check document", exact=True).click()
         guide = page.locator(".ar-scan-feedback, #pageGuideHint").first
         expect(guide).to_contain_text("four page corners", timeout=15000)
+        if degraded:
+            # Deliver one sharp frame, then stop the camera feed entirely.
+            page.evaluate("__showWorkflowFrame('frozen')")
+            expect(guide).to_contain_text("Keep the page in view")
+            page.wait_for_timeout(800)
+            assert page.evaluate("__syntheticStillRequests.length") == 0
         # End on a clipped frame so the next page must qualify from scratch.
         for mode, advice in [("soft", "edges look soft"), ("moving", "Keep the page in view"),
                              ("clipped", "four page corners")]:
