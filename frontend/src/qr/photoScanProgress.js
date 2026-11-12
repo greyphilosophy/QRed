@@ -48,7 +48,10 @@ export function createPhotoScanProgress() {
       tick();
       timer = setInterval(tick, 250);
       return {
-        phase: name => step(Object.hasOwn(PHASES, name) ? PHASES[name] : null, name),
+        photoReady() {
+          if (phase === "capturing") step(PHASES.captured, "captured");
+          else if (phase === "opening") step(PHASES.decoding, "decoding");
+        },
         stage(value) {
           const diagnostic = scanStageDiagnostic(value);
           const name = diagnostic && scanStageLabel(diagnostic);

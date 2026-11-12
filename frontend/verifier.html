@@ -753,7 +753,7 @@
             collectFrame(cameraPhotoFailure(captureDiagnostic));
             return;
           }
-          progress.phase(file ? "decoding" : "captured");
+          progress.photoReady();
           var action = await scanPhotoInWorker(still, { returnPayload: true, signal: controller.signal, onStage: progress.stage });
           if (current()) {
             if (action.timedOut) autoPaused = true;

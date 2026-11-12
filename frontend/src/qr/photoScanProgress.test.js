@@ -12,14 +12,14 @@ it("uses a real elapsed clock even when a decoder stage is silent", () => {
   const request = progress.begin("opening");
   expect(progress.getSnapshot()).toEqual({ phase: "opening", label: "Opening photo on this device…", elapsedMs: 0, stepElapsedMs: 0 });
   vi.advanceTimersByTime(1000);
-  request.phase("decoding");
+  request.photoReady();
   request.stage({ stage: "page-aligned", elapsedMs: 2600, private: "do not show" });
   vi.advanceTimersByTime(2500);
   expect(progress.getSnapshot()).toEqual({ phase: "decoding", label: "Checking page layouts…", elapsedMs: 3500, stepElapsedMs: 2500 });
   expect(photoScanTiming(progress.getSnapshot())).toBe("Elapsed 3.5 s · this step 2.5 s");
   request.stage({ stage: "page-aligned", elapsedMs: 5000 });
   request.stage({ stage: "private", elapsedMs: 5000 });
-  request.phase("private");
+  request.photoReady();
   vi.advanceTimersByTime(500);
   expect(progress.getSnapshot().stepElapsedMs).toBe(3000);
   expect(JSON.stringify(progress.getSnapshot())).not.toContain("private");
@@ -31,12 +31,12 @@ it("uses a real elapsed clock even when a decoder stage is silent", () => {
 });
 
 it.each(["stop", "clear", "replacement"])("ignores queued stages and settlement after %s", reason => {
-  const progress = createPhotoScanProgress(), old = progress.begin();
+  const progress = createPhotoScanProgress(), old = progress.begin("capturing");
   if (reason === "stop") old.stop();
   if (reason === "clear") progress.clear();
   const current = progress.begin("opening");
   old.stage({ stage: "footer", elapsedMs: 500 });
-  old.phase("capturing");
+  old.photoReady();
   old.stop();
   expect(progress.getSnapshot().label).toBe("Opening photo on this device…");
   vi.advanceTimersByTime(500);
@@ -73,7 +73,7 @@ it("keeps the movement cue through decoder stages and clears it for a replacemen
   const camera = progress.begin("capturing");
   expect(notice.textContent).toBe("");
   expect(notice.hasAttribute("data-hide-guide")).toBe(false);
-  camera.phase("captured");
+  camera.photoReady();
   expect(notice.textContent).toBe("Photo captured. You can move your phone.");
   expect(notice.hasAttribute("data-hide-guide")).toBe(true);
   const announcement = notice.firstChild;
@@ -84,8 +84,9 @@ it("keeps the movement cue through decoder stages and clears it for a replacemen
   const file = progress.begin("opening");
   expect(notice.textContent).toBe("");
   expect(notice.hasAttribute("data-hide-guide")).toBe(true);
-  file.phase("decoding");
-  camera.phase("captured");
+  file.photoReady();
+  expect(progress.getSnapshot().phase).toBe("decoding");
+  camera.photoReady();
   expect(notice.textContent).toBe("");
   expect(notice.hasAttribute("data-hide-guide")).toBe(true);
   file.stop();

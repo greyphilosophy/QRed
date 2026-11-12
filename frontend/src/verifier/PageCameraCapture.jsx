@@ -172,7 +172,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
         setError(cameraPhotoFailure(captureDiagnostic.current).message);
         return;
       }
-      attemptProgress.phase(file ? "decoding" : "captured");
+      attemptProgress.photoReady();
       if (separateOriginal) {
         // The recipient explicitly selected an authenticated page reference.
         // Its original may carry no QR. Only the later comparison evaluates it.
