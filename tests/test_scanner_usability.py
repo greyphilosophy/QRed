@@ -16,23 +16,33 @@ def test_main_camera_at_one_times_zoom_without_flashlight(browser, path):
         page.goto(BASE_URL + path, wait_until="networkidle")
         page.evaluate("""() => {
             window.cameraTest = { requests: [], controls: [], stopped: [] };
+            let activeTrack;
             const makeStream = (label, id) => {
                 const canvas = document.createElement('canvas'); canvas.width = canvas.height = 64;
                 canvas.getContext('2d').fillRect(0, 0, 64, 64);
                 const stream = canvas.captureStream(10), [track] = stream.getVideoTracks();
+                activeTrack = track;
                 Object.defineProperty(track, 'label', { value: label });
                 track.getSettings = () => ({ deviceId: id });
                 track.getCapabilities = () => ({ focusMode: ['continuous'], zoom: { min: 1, max: 5 }, torch: true });
-                track.applyConstraints = async constraints => cameraTest.controls.push({ id, constraints });
+                track.applyConstraints = constraints => {
+                    cameraTest.controls.push({ id, constraints });
+                    return new Promise(() => {}); // Driver never acknowledges autofocus.
+                };
                 const stop = track.stop.bind(track);
                 track.stop = () => { cameraTest.stopped.push(id); stop(); };
                 return stream;
             };
-            const tele = makeStream('Back Telephoto Camera', 'tele');
-            const main = makeStream('Back Main Camera 1x', 'main');
             navigator.mediaDevices.getUserMedia = async constraints => {
                 cameraTest.requests.push(constraints);
-                return constraints.video.deviceId?.exact === 'main' ? main : tele;
+                if (activeTrack?.readyState === 'live') return new Promise(() => {});
+                return constraints.video.deviceId?.exact === 'main'
+                    ? makeStream('Back Main Camera 1x', 'main') : makeStream('Back Telephoto Camera', 'tele');
+            };
+            window.setCameraTestHidden = hidden => {
+                Object.defineProperty(document, 'hidden', {configurable: true, value: hidden});
+                Object.defineProperty(document, 'visibilityState', {configurable: true, value: hidden ? 'hidden' : 'visible'});
+                document.dispatchEvent(new Event('visibilitychange'));
             };
             navigator.mediaDevices.enumerateDevices = async () => [
                 { kind: 'videoinput', deviceId: 'ultra', label: 'Back Ultra Wide Camera' },
@@ -101,9 +111,16 @@ def test_main_camera_at_one_times_zoom_without_flashlight(browser, path):
             }""")
             assert stationary
         expect(page.get_by_text("Show all four page corners. Try a contrasting background, or use Capture now.", exact=True)).to_be_visible()
+        page.evaluate("setCameraTestHidden(true)")
+        assert page.locator("video").evaluate("video => video.srcObject === null")
+        assert page.evaluate("cameraTest.stopped") == ["tele", "main"]
+        page.evaluate("setCameraTestHidden(false)")
+        page.wait_for_function("document.querySelector('video').readyState >= 2 && cameraTest.controls.length === 2")
         page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
         expect(page.locator(".page-scan-guide")).not_to_be_visible()
-        assert page.evaluate("cameraTest.stopped") == ["tele", "main"]
+        page.evaluate("() => { setCameraTestHidden(true); setCameraTestHidden(false); }")
+        assert page.evaluate("cameraTest.stopped") == ["tele", "main", "tele", "main"]
+        assert page.evaluate("cameraTest.requests.length") == 4
     finally:
         context.close()
 

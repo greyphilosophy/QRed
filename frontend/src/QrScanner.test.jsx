@@ -102,7 +102,10 @@ describe("QrScanner camera controls", () => {
     const mediaDevices = {
       getUserMedia: vi.fn()
         .mockResolvedValueOnce(firstStream)
-        .mockResolvedValueOnce(mainStream),
+        .mockImplementationOnce(() => {
+          expect(firstStop).toHaveBeenCalledTimes(1);
+          return Promise.resolve(mainStream);
+        }),
       enumerateDevices: vi.fn().mockResolvedValue([
         { kind: "videoinput", label: "Back Wide Camera", deviceId: "wide" },
         { kind: "videoinput", label: "Back Telephoto Camera", deviceId: "tele" },
@@ -120,25 +123,79 @@ describe("QrScanner camera controls", () => {
     });
   });
 
-  it("falls back to the initially working camera when the preferred camera cannot open", async () => {
+  it("reopens the initially working camera when the preferred camera cannot open", async () => {
     const firstStop = vi.fn();
     const firstStream = {
       getTracks: () => [{ stop: firstStop }],
-      getVideoTracks: () => [{ label: "Back Telephoto Camera" }],
+      getVideoTracks: () => [{ label: "Back Telephoto Camera", getSettings: () => ({ deviceId: "tele" }) }],
     };
+    const reopened = { getTracks: () => [] };
     const mediaDevices = {
       getUserMedia: vi.fn()
         .mockResolvedValueOnce(firstStream)
-        .mockRejectedValueOnce(new Error("exact device unavailable")),
+        .mockRejectedValueOnce(new Error("exact device unavailable"))
+        .mockResolvedValueOnce(reopened),
       enumerateDevices: vi.fn().mockResolvedValue([
         { kind: "videoinput", label: "Back Wide Camera", deviceId: "wide" },
         { kind: "videoinput", label: "Back Telephoto Camera", deviceId: "tele" },
       ]),
     };
 
-    await expect(getPreferredCameraStream(mediaDevices)).resolves.toBe(firstStream);
+    await expect(getPreferredCameraStream(mediaDevices)).resolves.toBe(reopened);
+    expect(firstStop).toHaveBeenCalledTimes(1);
+    expect(mediaDevices.getUserMedia).toHaveBeenLastCalledWith({ video: {
+      ...QR_CAMERA_CONSTRAINTS.video, deviceId: { ideal: "tele" },
+    } });
+  });
 
-    expect(firstStop).not.toHaveBeenCalled();
+  it("releases the camera immediately on close during lens discovery and never opens the late lens", async () => {
+    const controller = new AbortController(), stop = vi.fn();
+    let finishListing;
+    const mediaDevices = {
+      getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop }] }),
+      enumerateDevices: vi.fn(() => new Promise(resolve => { finishListing = resolve; })),
+    };
+    const opening = getPreferredCameraStream(mediaDevices, controller.signal);
+    await waitFor(() => expect(finishListing).toBeTypeOf("function"));
+    controller.abort();
+    expect(stop).toHaveBeenCalledTimes(1);
+    finishListing([{ kind: "videoinput", deviceId: "wide", label: "Back Main Camera" }]);
+    await expect(opening).rejects.toMatchObject({ name: "AbortError" });
+    expect(mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the granted stream when lens discovery never returns", async () => {
+    vi.useFakeTimers();
+    try {
+      const stream = { getTracks: () => [] };
+      const mediaDevices = {
+        getUserMedia: vi.fn().mockResolvedValue(stream),
+        enumerateDevices: () => new Promise(() => {}),
+      };
+      const opening = getPreferredCameraStream(mediaDevices);
+      await vi.advanceTimersByTimeAsync(1000);
+      await expect(opening).resolves.toBe(stream);
+      expect(mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each(["preferred", "fallback"])("stops a %s lens granted after close", async lens => {
+    const controller = new AbortController(), firstStop = vi.fn(), lateStop = vi.fn();
+    let grant;
+    const getUserMedia = vi.fn().mockResolvedValueOnce({ getTracks: () => [{ stop: firstStop }] });
+    if (lens === "fallback") getUserMedia.mockRejectedValueOnce(new Error("Lens unavailable"));
+    getUserMedia.mockImplementationOnce(() => new Promise(resolve => { grant = resolve; }));
+    const opening = getPreferredCameraStream({ getUserMedia, enumerateDevices: async () => [
+      { kind: "videoinput", label: "Back Main Camera", deviceId: "wide" },
+    ] }, controller.signal);
+    await waitFor(() => expect(grant).toBeTypeOf("function"));
+    controller.abort();
+    grant({ getTracks: () => [{ stop: lateStop }] });
+    await expect(opening).rejects.toMatchObject({ name: "AbortError" });
+    expect(firstStop).toHaveBeenCalledTimes(1);
+    expect(lateStop).toHaveBeenCalledTimes(1);
+    expect(getUserMedia).toHaveBeenCalledTimes(lens === "fallback" ? 3 : 2);
   });
 
   it("chooses a rear main lens without selecting front, ultrawide, or zoom lenses", () => {
@@ -259,6 +316,22 @@ describe("QrScanner manual photo capture", () => {
     expect(screen.getByRole("button", { name: "Capture now" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Check this page now" })).toBeNull();
     await waitFor(() => expect(screen.getByText(/Camera access needed: denied/)).toBeTruthy());
+  });
+
+  it("offers a working retry and a photo picker after startup fails", async () => {
+    const stop = vi.fn(), onChoosePhoto = vi.fn();
+    const getUserMedia = vi.fn().mockRejectedValueOnce(new Error("Camera busy"))
+      .mockResolvedValueOnce({ getTracks: () => [{ stop }] });
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    render(<QrScanner onChoosePhoto={onChoosePhoto} />);
+    fireEvent.click(screen.getByRole("button", { name: "Check document" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry camera" }));
+    await waitFor(() => expect(document.querySelector("video")?.srcObject).toBeTruthy());
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Choose photo" }));
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(onChoosePhoto).toHaveBeenCalledTimes(1);
   });
 
   it("has no flashlight control even when the camera advertises a torch", async () => {

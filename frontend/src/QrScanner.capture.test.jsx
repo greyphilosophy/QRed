@@ -61,6 +61,22 @@ it.each(["manual", "automatic"])("uses native still pixels after unavailable cap
   expect(camera.previewScan).not.toHaveBeenCalled();
 });
 
+it("finishes a captured photo if the camera cannot reopen on return to the tab", async () => {
+  const onSealDetected = vi.fn();
+  const { bitmap, canvas } = open({ onSealDetected });
+  vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: async () => new Blob() }; }));
+  vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
+  let finish;
+  camera.scan.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(screen.getByRole("button", { name: "Capture now" }));
+  await screen.findByText("Photo captured. You can move your phone.");
+  act(() => { camera.options.onStream(null); camera.options.onError(new Error("Camera busy"), "access"); });
+  expect(screen.getByText("Photo captured. You can move your phone.")).toBeTruthy();
+  expect(camera.scan.mock.calls[0][1].signal.aborted).toBe(false);
+  await act(async () => finish({ status: "found", text: "retained QR" }));
+  expect(onSealDetected).toHaveBeenCalledWith("retained QR", canvas);
+});
+
 it("stops before seal decoding when native photo capture fails", async () => {
   const { preview, canvas } = open();
   vi.stubGlobal("ImageCapture", vi.fn(function () { return {
