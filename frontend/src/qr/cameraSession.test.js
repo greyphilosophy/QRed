@@ -12,7 +12,7 @@ function setup(options = {}) {
   const camera = startCameraSession({ video, requestStream: async () => stream, onFrame, onError, ...options });
   return { camera, video, stream, onFrame, onError };
 }
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it("releases a delayed camera grant after stop without attaching it or restarting decoding", async () => {
   const pending = deferred();
@@ -27,10 +27,13 @@ it("releases a delayed camera grant after stop without attaching it or restartin
   expect(test.onFrame).not.toHaveBeenCalled();
 });
 
-it("stops while camera controls are pending and leaves a replacement session untouched", async () => {
+it("plays and scans while camera controls are pending and leaves a replacement session untouched", async () => {
   const controls = deferred();
   const first = setup({ prepareStream: () => controls.promise });
   await flush();
+  expect(first.video.srcObject).toBe(first.stream);
+  expect(first.video.play).toHaveBeenCalledTimes(1);
+  expect(first.onFrame).toHaveBeenCalledTimes(1);
   first.camera.stop();
   const second = setup({ video: first.video });
   await flush();
@@ -38,10 +41,74 @@ it("stops while camera controls are pending and leaves a replacement session unt
   await flush();
   expect(first.stream.stop).toHaveBeenCalledTimes(1);
   expect(first.video.srcObject).toBe(second.stream);
-  expect(first.onFrame).not.toHaveBeenCalled();
+  expect(first.onFrame).toHaveBeenCalledTimes(1);
   second.camera.stop(); second.camera.stop();
   expect(second.stream.stop).toHaveBeenCalledTimes(1);
   expect(first.video.srcObject).toBeNull();
+});
+
+it("releases a hidden tab's stream and reopens only while the scanner is still open", async () => {
+  const page = Object.assign(new EventTarget(), { hidden: true });
+  vi.stubGlobal("document", page);
+  const first = makeStream(), second = makeStream();
+  const requestStream = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+  const test = setup({ requestStream });
+  function hide(hidden) {
+    page.hidden = hidden;
+    page.dispatchEvent(new Event("visibilitychange"));
+  }
+  expect(requestStream).not.toHaveBeenCalled();
+  hide(false); hide(false);
+  await flush();
+  expect(test.video.srcObject).toBe(first);
+  hide(true);
+  expect(first.stop).toHaveBeenCalledTimes(1);
+  expect(test.video.srcObject).toBeNull();
+  hide(false);
+  await flush();
+  expect(test.video.srcObject).toBe(second);
+  test.camera.stop();
+  hide(true); hide(false);
+  expect(second.stop).toHaveBeenCalledTimes(1);
+  expect(requestStream).toHaveBeenCalledTimes(2);
+});
+
+it("ignores a stale grant after switching back to a newer preview", async () => {
+  const page = Object.assign(new EventTarget(), { hidden: false });
+  vi.stubGlobal("document", page);
+  const oldGrant = deferred(), old = makeStream(), current = makeStream();
+  const test = setup({ requestStream: vi.fn().mockReturnValueOnce(oldGrant.promise).mockResolvedValueOnce(current) });
+  page.hidden = true; page.dispatchEvent(new Event("visibilitychange"));
+  page.hidden = false; page.dispatchEvent(new Event("visibilitychange"));
+  await flush();
+  oldGrant.resolve(old);
+  await flush();
+  expect(old.stop).toHaveBeenCalledTimes(1);
+  expect(test.video.srcObject).toBe(current);
+  expect(current.stop).not.toHaveBeenCalled();
+  expect(test.onError).not.toHaveBeenCalled();
+  test.camera.stop();
+});
+
+it("reports a stuck permission request and releases a grant arriving after the timeout", async () => {
+  vi.useFakeTimers();
+  const pending = deferred();
+  const test = setup({ requestStream: () => pending.promise });
+  await vi.advanceTimersToNextTimerAsync();
+  expect(test.onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/permission/i) }), "access");
+  pending.resolve(test.stream);
+  await flush();
+  expect(test.stream.stop).toHaveBeenCalledTimes(1);
+  expect(test.video.play).not.toHaveBeenCalled();
+});
+
+it("releases the camera if playback never delivers its first frame", async () => {
+  vi.useFakeTimers();
+  const test = setup({ waitForMetadata: true, video: { readyState: 0, play: () => new Promise(() => {}) } });
+  await flush();
+  await vi.advanceTimersToNextTimerAsync();
+  expect(test.onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/did not deliver a preview/) }), "play");
+  expect(test.stream.stop).toHaveBeenCalledTimes(1);
 });
 
 it("releases tracks and scheduled decoding if video playback fails", async () => {

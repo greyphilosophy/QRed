@@ -3,7 +3,6 @@ import { scanQrImage } from "./qr/scanQrImage.js";
 import { decodeSeal } from "./qredVerifier.js";
 import { decodePhoto, qrFrameAction } from "./qr/decodePhoto.js";
 import { createLiveScanWorker, preparePhotoScanner, scanPhotoInWorker } from "./qr/photoScanClient.js";
-import { getPreferredCameraStream, applyCameraQualityControls } from "./qr/cameraControls.js";
 export { QR_CAMERA_CONSTRAINTS, findPreferredMainCamera, getPreferredCameraStream,
   applyCameraQualityControls, applyContinuousCameraFocus } from "./qr/cameraControls.js";
 export { qrScanAction } from "./qr/decodePhoto.js";
@@ -27,6 +26,8 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
   const [captureRequest, setCaptureRequest] = useState(0);
+  const [cameraAttempt, setCameraAttempt] = useState(0);
+  const [cameraFailed, setCameraFailed] = useState(false);
   const [readingPhoto, setReadingPhoto] = useState(false);
   const [preparing, setPreparing] = useState(false), [preparationError, setPreparationError] = useState("");
   const startGeneration = useRef(0);
@@ -52,7 +53,9 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
         || startingCollection.current.activeSeal !== collectionProgress.activeSeal)) setMode("result");
   }, [mode, collectSeals, collectionProgress]);
 
-  const scanButtonLabel = preparing ? "Preparing check…" : mode === "scanning" ? (readingPhoto ? "Cancel and resume camera" : "Capture now") : mode === "result" ? "Scan more pages" : "Check document";
+  const captureLabel = readingPhoto ? "Cancel and resume camera" : cameraFailed ? "Retry camera" : "Capture now";
+  const scanButtonLabel = preparing ? "Preparing check…" : mode === "scanning" ? captureLabel
+    : mode === "result" ? "Scan more pages" : "Check document";
   const controls = React.createElement("div", { className: "ar-controls" },
     React.createElement("button", {
       className: "ar-button ar-button-primary",
@@ -61,7 +64,11 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
       disabled: preparing,
       onClick: async () => {
         if (mode === "scanning") {
-          setCaptureRequest((request) => request + 1);
+          if (cameraFailed && !readingPhoto) {
+            setCameraFailed(false);
+            setCaptureRequest(0);
+            setCameraAttempt(attempt => attempt + 1);
+          } else setCaptureRequest((request) => request + 1);
           return;
         }
         const generation = ++startGeneration.current;
@@ -75,6 +82,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
         startingCollection.current = collectionProgress;
         setScannedText(null);
         setCaptureRequest(0);
+        setCameraFailed(false);
         setMode("scanning");
       },
     }, scanButtonLabel),
@@ -110,6 +118,8 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
   if (mode === "scanning") {
     return React.createElement("section", { className: "ar-display ar-display-scanning", "aria-label": "QRed AR scanner" },
       React.createElement(ScannerView, {
+        key: cameraAttempt,
+        onCameraFailed: setCameraFailed,
         onScan: handleScan,
         onClose: () => setMode("idle"),
         captureRequest,
@@ -185,7 +195,7 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
   return qrFrameAction(image, code, options);
 }
 
-function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPayload, autoCapture }) {
+function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadingPhoto, returnPayload, autoCapture }) {
   const progress = usePhotoScanProgress();
   const progressSnapshot = useSyncExternalStore(progress.subscribe, progress.getSnapshot, progress.getSnapshot);
   const videoRef = useRef(null);
@@ -245,7 +255,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
         if (processingCapture) { processingCapture = false; onReadingPhoto(false); }
         handleScanActionRef.current(action);
       },
-      onError: error => { activeProgress?.stop(); processingCapture = false; onReadingPhoto(false); camera.stop(); setError(error.message); },
+      onError: error => { activeProgress?.stop(); processingCapture = false; onReadingPhoto(false); camera.stop(); setError(error.message); onCameraFailed(true); },
     });
 
     handleScanActionRef.current = (scanAction) => {
@@ -372,11 +382,11 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
     };
 
     function scanFrame() {
-      // Preserve the photographed canvas until its worker result is collected.
-      if (photoScanRef.current || autoPaused) return;
       const video = videoRef.current, canvas = canvasRef.current;
       const frameReady = isCameraFrameReady(video, canvas);
       if (frameReady) markCameraReady(true);
+      // Preserve the photographed canvas until its worker result is collected.
+      if (photoScanRef.current || autoPaused) return;
       if (pendingManualCaptureRef.current && frameReady) { capturePhoto(); return; }
       const timeout = pendingManualCaptureRef.current
         ? manualCapturePendingAction(pendingManualCaptureStartedAtRef.current) : null;
@@ -392,14 +402,19 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
 
     camera = startCameraSession({
       video: videoRef.current,
-      requestStream: getPreferredCameraStream,
-      prepareStream: applyCameraQualityControls,
+      onStream: stream => {
+        if (stream) return;
+        markCameraReady(false);
+        if (!photoScanRef.current && !processingCapture && !captureReported) liveScan.reset();
+      },
       onFrame: scanFrame,
       onError: (error, stage) => {
-        activeProgress?.stop();
-        liveScan.stop();
-        setError((stage === "play" ? "Camera preview could not start: " : "Camera access needed: ")
+        // A previously captured photo can finish even if reopening the
+        // preview fails after a tab switch. Keep its canvas mounted.
+        if (!processingCapture) liveScan.stop();
+        setError((stage === "access" ? "Camera access needed: " : "Camera preview could not start: ")
           + (error.message || "environment camera"));
+        onCameraFailed(true);
       },
     });
 
@@ -418,16 +433,16 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       if (capturedCanvas) capturedCanvas.width = capturedCanvas.height = 0;
       stopGuide();
     };
-  }, [onScan, returnPayload, onReadingPhoto, autoCapture, progress]);
+  }, [onScan, returnPayload, onReadingPhoto, onCameraFailed, autoCapture, progress]);
 
   useEffect(() => {
-    if (captureRequest > 0 && !error) photoActionRef.current();
-  }, [captureRequest, error]);
+    if (captureRequest > 0) photoActionRef.current();
+  }, [captureRequest]);
 
-  if (error) {
+  if (error && !progressSnapshot) {
     return React.createElement("div", { className: "ar-error" },
       React.createElement("h2", null, "Camera unavailable"),
-      React.createElement("p", null, error),
+      React.createElement("p", { role: "alert" }, error),
       React.createElement("button", { onClick: onClose, style: { marginTop: "1rem" }}, "Close")
     );
   }
@@ -448,7 +463,7 @@ function ScannerView({ onScan, onClose, captureRequest, onReadingPhoto, returnPa
       )
     ),
     React.createElement("canvas", { ref: canvasRef, style: { display: "none" } }),
-    !cameraReady ? React.createElement(CameraLoadingIndicator, { message: feedback || "Starting camera…" }) : null,
+    !cameraReady && !progressSnapshot ? React.createElement(CameraLoadingIndicator, { message: feedback || "Starting camera…" }) : null,
     React.createElement(PhotoScanProgress, { progress }),
     cameraReady && !progressSnapshot ? React.createElement("div", { className: "ar-scan-feedback", role: "status", "aria-live": "polite" },
       quality && !feedback ? React.createElement("span", null, quality.message) : null,

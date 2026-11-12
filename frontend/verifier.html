@@ -397,7 +397,6 @@
   <script type="module">
     import { startCameraSession } from "./src/qr/cameraSession.js";
     import { observePageScanGuide } from "./src/qr/pageScanGuide.js";
-    import { getPreferredCameraStream, applyCameraQualityControls } from "./src/qr/cameraControls.js";
     import { readCameraFrame, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext, downloadCameraPhoto } from "./src/qr/cameraPhoto.js";
     import { mountPhotoScanProgress } from "./src/qr/mountPhotoScanProgress.js";
     import { createLiveScanWorker, preparePhotoScanner, scanPhotoInWorker } from "./src/qr/photoScanClient.js";
@@ -630,6 +629,7 @@
       var readiness = document.getElementById("captureReadiness");
       var seen = new Set();
       var processingCapture = false;
+      var previewError = null;
       var liveProgress = null;
       var captureDiagnostic = null;
       var lastQuality = null;
@@ -671,6 +671,10 @@
         placeholder.style.display = "flex";
         placeholder.innerHTML = "<div class='icon'>&#128247;</div><div>" + escapeHtml(err.message) + "</div>";
       }
+      function reportPreviewError() {
+        // Keep a captured still or selected file until its result is collected.
+        if (previewError && !state.photoScan && !processingCapture) cameraError(previewError);
+      }
       var liveScan = createLiveScanWorker({
         returnPayload: true,
         requirePageQuality: true,
@@ -697,6 +701,7 @@
           liveProgress?.stop(); liveProgress = null;
           if (processingCapture) { processingCapture = false; btnCapture.textContent = "Capture now"; }
           collectFrame(action);
+          reportPreviewError();
         },
         onError: cameraError,
       });
@@ -719,6 +724,7 @@
         btnCapture.textContent = "Capture now";
         hint.textContent = resumeCamera ? "Capture cancelled. Frame the page and hold steady to capture automatically."
           : "Capture cancelled. Use Capture now or Choose photo to try again.";
+        if (resumeCamera) reportPreviewError();
       }
       state.cancelPhoto = cancelPhoto;
       async function acquirePhoto({ preserveGate = false, file } = {}) {
@@ -768,7 +774,10 @@
         } finally {
           progress.stop();
           photoCanvas.width = photoCanvas.height = 0;
-          if (state.photoScan === controller) { state.photoScan = null; btnCapture.textContent = "Capture now"; }
+          if (state.photoScan === controller) {
+            state.photoScan = null; btnCapture.textContent = "Capture now";
+            reportPreviewError();
+          }
         }
       }
       btnCapture.onclick = acquirePhoto;
@@ -777,8 +786,6 @@
       state.camera = startCameraSession({
         video: video,
         waitForMetadata: true,
-        requestStream: getPreferredCameraStream,
-        prepareStream: applyCameraQualityControls,
         onFrame: function() {
           if (!active() || !video.videoWidth || !video.videoHeight) return;
           statusBar.classList.add("visible");
@@ -786,7 +793,7 @@
           var preview = readCameraFrame(video, canvas, { forGuidance: true });
           if (preview) liveScan.scan(preview, { captureOnly: true });
         },
-        onError: cameraError,
+        onError: function(error) { previewError = error; reportPreviewError(); },
       });
     }
 

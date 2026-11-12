@@ -1,7 +1,6 @@
 /* eslint-disable no-unused-vars */
 import React, { useEffect, useRef, useState } from "react";
 import { startCameraSession } from "../qr/cameraSession.js";
-import { getPreferredCameraStream, applyCameraQualityControls } from "../qr/cameraControls.js";
 import { snapshotScanPhoto } from "./scanPhotos.js";
 import { createLiveScanWorker, scanPhotoInWorker } from "../qr/photoScanClient.js";
 import { observePageScanGuide } from "../qr/pageScanGuide.js";
@@ -66,8 +65,11 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
           if (action.message) setError(action.message);
         }
       }, onError: cause => { if (epoch !== generation.current) return; liveProgress.current?.stop(); busyRef.current = false; setBusy(false); setError(cause.message); } });
-    camera.current = startCameraSession({ video: video.current, requestStream: getPreferredCameraStream,
-      prepareStream: applyCameraQualityControls,
+    camera.current = startCameraSession({ video: video.current,
+      onStream: stream => {
+        if (stream || epoch !== generation.current) return;
+        cameraAvailable.current = false; setReady(false);
+      },
       onFrame: () => {
         const source = video.current;
         if (epoch !== generation.current || !source?.videoWidth) return;

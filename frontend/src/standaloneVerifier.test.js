@@ -5,7 +5,6 @@ import { afterEach, expect, it, vi } from "vitest";
 import { fireEvent, waitFor } from "@testing-library/react";
 import jsQR from "jsqr";
 import { PNG } from "pngjs";
-import { getPreferredCameraStream, applyCameraQualityControls } from "./qr/cameraControls.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
 import { readCameraFrame, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext, downloadCameraPhoto } from "./qr/cameraPhoto.js";
@@ -60,7 +59,7 @@ function loadStandalone(overrides = {}) {
     terminate() { this.stopped = true; }
   });
   const bindings = {
-    getPreferredCameraStream, applyCameraQualityControls, authProvider, startCameraSession, observePageScanGuide, createLiveScanWorker, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
+    authProvider, startCameraSession, observePageScanGuide, createLiveScanWorker, readSigningKeyFile, createVerificationSession, ...verifier, decodeQRedSeal: verifier.decodeSeal,
     preparePhotoScanner: vi.fn(), scanPhotoInWorker, readCameraFrame, captureCameraPhoto, readCameraPhotoFile, cameraPhotoFailure, cameraFrameDiagnostic, cameraCaptureFeedback, cameraCaptureContext, downloadCameraPhoto,
     createScanPhotoCollection: callback => createScanPhotoCollection(callback, async () => new Blob(["frame"], { type: "image/png" })),
     mountPhotoTextVerification: () => ({ update: vi.fn(), prepare: vi.fn().mockResolvedValue(), clear: vi.fn() }),
@@ -447,6 +446,22 @@ it("offers the original failed camera file only on request and releases it on a 
   fireEvent.click(document.getElementById("btnScan"));
   expect(save.hidden).toBe(true);
   expect(save.onclick).toBeNull();
+});
+
+it("keeps decoding the captured photo if the camera cannot reopen on return to the tab", async () => {
+  let finish;
+  const capture = vi.fn();
+  const setup = setupStandaloneCapture({ captureCameraPhoto: capture });
+  capture.mockResolvedValue(setup.pixels);
+  setup.scan.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(setup.camera).toBeDefined());
+  fireEvent.click(document.getElementById("btnCapture"));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  setup.camera.onError(new Error("Camera busy"), "access");
+  expect(setup.scan.mock.calls[0][1].signal.aborted).toBe(false);
+  finish({ status: "found", text: "retained QR" });
+  await waitFor(() => expect(document.getElementById("resultContent").textContent).toContain("retained QR"));
 });
 
 function selectedStandalonePhoto({ width = 2000, height = 3000, decode = () => Promise.resolve() } = {}) {

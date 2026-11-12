@@ -16,22 +16,57 @@ export function findPreferredMainCamera(devices = []) {
     || rear.find(device => /wide/i.test(device.label)) || null;
 }
 
-export async function getPreferredCameraStream(mediaDevices = navigator.mediaDevices) {
-  const stream = await mediaDevices.getUserMedia(QR_CAMERA_CONSTRAINTS);
-  if (typeof mediaDevices.enumerateDevices !== "function") return stream;
-  let preferred;
-  try { preferred = findPreferredMainCamera(await mediaDevices.enumerateDevices()); }
-  catch { return stream; }
-  const [track] = stream.getVideoTracks?.() || [];
-  if (!preferred?.deviceId || track?.getSettings?.().deviceId === preferred.deviceId
-    || track?.label === preferred.label) return stream;
+// Lens discovery is optional. Some browsers defer it until the tab regains focus.
+async function discoverMainCamera(mediaDevices) {
+  if (!mediaDevices.enumerateDevices) return null;
+  let timer;
   try {
-    const main = await mediaDevices.getUserMedia({ video: {
-      ...QR_CAMERA_CONSTRAINTS.video, deviceId: { exact: preferred.deviceId },
-    } });
-    stream.getTracks().forEach(current => current.stop());
-    return main;
-  } catch { return stream; }
+    const devices = await Promise.race([
+      mediaDevices.enumerateDevices(),
+      new Promise(resolve => { timer = setTimeout(() => resolve([]), 800); }),
+    ]);
+    return findPreferredMainCamera(devices);
+  } catch { return null; }
+  finally { clearTimeout(timer); }
+}
+
+export async function getPreferredCameraStream(mediaDevices = navigator.mediaDevices, signal) {
+  let stream;
+  function release() {
+    stream?.getTracks().forEach(track => track.stop());
+    stream = null;
+  }
+  signal?.addEventListener("abort", release, { once: true });
+  try {
+    signal?.throwIfAborted();
+    stream = await mediaDevices.getUserMedia(QR_CAMERA_CONSTRAINTS);
+    signal?.throwIfAborted();
+    const preferred = await discoverMainCamera(mediaDevices);
+    signal?.throwIfAborted();
+    const [track] = stream.getVideoTracks?.() || [];
+    const initialId = track?.getSettings?.().deviceId;
+    if (!preferred?.deviceId || preferred.deviceId === initialId || track?.label === preferred.label) return stream;
+
+    // A phone may only open one rear lens at a time. Reacquire the original
+    // camera if the advertised main lens cannot be opened.
+    release();
+    try {
+      stream = await mediaDevices.getUserMedia({ video: {
+        ...QR_CAMERA_CONSTRAINTS.video, deviceId: { exact: preferred.deviceId },
+      } });
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (error.name === "NotAllowedError" || error.name === "SecurityError") throw error;
+      const fallback = initialId ? { video: { ...QR_CAMERA_CONSTRAINTS.video, deviceId: { ideal: initialId } } }
+        : QR_CAMERA_CONSTRAINTS;
+      stream = await mediaDevices.getUserMedia(fallback);
+    }
+    signal?.throwIfAborted();
+    return stream;
+  } catch (error) {
+    release();
+    throw error;
+  } finally { signal?.removeEventListener("abort", release); }
 }
 
 export async function applyCameraQualityControls(stream) {
