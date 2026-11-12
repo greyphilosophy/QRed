@@ -103,7 +103,7 @@ function readPhotoPixels(photo, canvas, context, source, started) {
     preparationMs: Math.round(performance.now() - started), reason: "captured" } };
 }
 
-export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NATIVE_PHOTO_TIMEOUT_MS, onDiagnostic, onPhotoBlob,
+export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NATIVE_PHOTO_TIMEOUT_MS, onDiagnostic, onPhotoBlob, onPhotoTaken,
   requireHighResolution = false } = {}) {
   signal?.throwIfAborted();
   const started = performance.now();
@@ -147,6 +147,9 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
         blob = await camera.takePhoto({ fillLightMode: "off" });
       }
       if (!active || signal?.aborted) return fallback("capture-failed");
+      // The exposure is over. Opening and validating these bytes can still
+      // take time, but moving the phone can no longer affect this photograph.
+      if (blob?.size) onPhotoTaken?.();
       bitmap = await createImageBitmap(blob);
       if (!active || signal?.aborted) return fallback("capture-failed");
       if (!bitmap.width || !bitmap.height || bitmap.width * bitmap.height > 80_000_000)

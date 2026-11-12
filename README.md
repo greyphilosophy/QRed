@@ -191,8 +191,8 @@ On the homepage or `verify.htm`, choose **Check document** and allow camera acce
 QRed prepares its local English text reader before opening the camera. Frame each
 whole page upright, in good light, against a contrasting background. QRed requests
 3840×2880 camera detail where available; lower resolutions remain supported. It detects
-the paper edges and waits for a sharp boundary and a steady hold of at least
-600 ms across several frames before reading its seal. Four fixed corners have
+the paper edges and requests the photo once three or more sharp previews span
+300 ms. A little hand movement is fine while all four corners stay in view. Four fixed corners have
 the proportions of US Letter paper (8.5:11); align the sheet within them. They
 stay still as edge detection and guidance change. Live guidance explains when to move back, move closer, or wait for
 focus. These are capture heuristics, not proof of document completeness or text
@@ -217,8 +217,8 @@ conditions, not signature verification. Retakes use the same automatic capture
 and manual fallback. Physical phone/print trials are still needed to tune the
 capture thresholds across cameras, lighting, backgrounds, and paper conditions.
 
-After the 600 ms steady-hold check, **Photo captured — processing…** appears
-before seal decoding. Recovery continues on that same retained frame, so movement
+Once the camera returns the photo, **Photo captured. You can move your phone.**
+appears while QRed opens the image. Recovery continues on that same retained frame, so movement
 after the message cannot change the photograph being checked. Capture can still
 be cancelled, and an unreadable seal prompts another attempt. Text recognition
 shows its reported percentage while reading; additional processing remains

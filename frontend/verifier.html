@@ -748,7 +748,8 @@
           { width: video.videoWidth, height: video.videoHeight }, preserveGate, lastQuality);
         var nativeBlob;
         try {
-          var options = { signal: controller.signal, requireHighResolution: true, onPhotoBlob: function(blob) { nativeBlob = blob; }, onDiagnostic: function(diagnostic) {
+          var options = { signal: controller.signal, requireHighResolution: true, onPhotoTaken: progress.photoReady,
+            onPhotoBlob: function(blob) { nativeBlob = blob; }, onDiagnostic: function(diagnostic) {
             if (current()) captureDiagnostic = { ...diagnostic, ...captureContext };
           } };
           var still = file ? await readCameraPhotoFile(file, photoCanvas, options)

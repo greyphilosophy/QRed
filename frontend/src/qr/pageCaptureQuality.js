@@ -5,10 +5,12 @@ import { curvedPaperMapping } from "./curvedPaper.js";
 // Capture guidance, never a text/authenticity verdict. In particular, blurred
 // printing must not be rejected because OCR cannot read it. Measure the physical
 // paper boundary and movement; retain the original frame without stacking it.
-export const STEADY_CAPTURE_MS = 600;
+export const STEADY_CAPTURE_MS = 300;
 const MAX_PREVIEW_SIDE = 480;
 const FRAME_MARGIN = .025;
-const MAX_CORNER_MOTION = .012;
+const TRACKED_FRAME_MARGIN = .013;
+const MAX_PAGE_SHIFT = .027;
+const MAX_CORNER_DRIFT = .012;
 const MAX_FRAME_GAP_MS = 1500;
 const PAGE_CORNERS = [[0, 0], [1, 0], [1, 1], [0, 1]];
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -19,6 +21,15 @@ function insideFrame(corners, margin) {
 
 function moveBack(corners) {
   return { state: "framing", message: "Move back slightly to include all four page corners.", corners };
+}
+
+function sameFraming(corners, reference) {
+  // Allow the whole sheet to shift with the hand. A corner moving on its own
+  // is a change of pose or outline and still has the tighter allowance.
+  const dx = corners.reduce((sum, p, i) => sum + (p.x - reference[i].x), 0) / corners.length;
+  const dy = corners.reduce((sum, p, i) => sum + (p.y - reference[i].y), 0) / corners.length;
+  return Math.hypot(dx, dy) <= MAX_PAGE_SHIFT && corners.every((p, i) =>
+    Math.hypot(p.x - reference[i].x - dx, p.y - reference[i].y - dy) <= MAX_CORNER_DRIFT);
 }
 
 function preview(image) {
@@ -96,6 +107,28 @@ function samplePage(image, corners) {
   return values;
 }
 
+function pageContentChanged(samples, corners, anchor, captured) {
+  const reference = anchor.samples;
+  const difference = samples.reduce((sum, value, i) => sum + Math.abs(value - reference[i]), 0) / samples.length;
+  if (difference > 9) return true;
+  if (!captured || difference <= 2) return false;
+  // Keep the fine comparison for a sheet replaced in the same position.
+  if (corners.every((p, i) => distance(p, anchor.corners[i]) < 1 / MAX_PREVIEW_SIDE)) return true;
+  // Small errors aligning letters and watermark modules produce both darker
+  // and lighter samples. Average within patches to distinguish that jitter
+  // from a pale change in the printing when deciding to rearm the shutter.
+  let total = 0;
+  for (let row = 0; row < 16; row += 4) for (let col = 0; col < 16; col += 4) {
+    let patch = 0;
+    for (let y = row; y < row + 4; y++) for (let x = col; x < col + 4; x++) {
+      const i = y * 16 + x;
+      patch += samples[i] - reference[i];
+    }
+    total += Math.abs(patch);
+  }
+  return total / samples.length > 2;
+}
+
 function assessOutline(image, corners, captureOnly, margin, mapping) {
   if (!insideFrame(corners, margin)) return moveBack(corners);
   const pixels = corners.map(p => ({ x: p.x * image.width, y: p.y * image.height }));
@@ -111,10 +144,10 @@ function assessOutline(image, corners, captureOnly, margin, mapping) {
   const samples = samplePage(image, pixels);
   if (percentile([...samples], .8) < 65)
     return { state: "dark", message: "More light may help. You can also use Capture now.", corners };
-  const { sharpness } = measureBoundary(image, pixels, mapping);
+  const { sharpness, consistent } = measureBoundary(image, pixels, mapping);
   if (sharpness < .45)
     return { state: "soft", message: "The page edges look soft. Hold steady for focus, or use Capture now.", corners, sharpness };
-  return { state: "clear", corners, sharpness, samples };
+  return { state: "clear", corners, sharpness, consistent, samples };
 }
 
 export function inspectPageFrame(image, { captureOnly = false } = {}, margin = FRAME_MARGIN) {
@@ -125,13 +158,14 @@ export function inspectPageFrame(image, { captureOnly = false } = {}, margin = F
   if (!found) return { state: "framing", message: "Show all four page corners. Try a contrasting background, or use Capture now.", corners: null };
   const corners = found.map(p => ({ x: p.x / small.width, y: p.y / small.height }));
   const initial = assessOutline(image, corners, captureOnly, margin);
-  if (!captureOnly || (initial.state !== "soft" && initial.state !== "small")) return initial;
+  const ambiguous = initial.state === "clear" && !initial.consistent;
+  if (!captureOnly || (!ambiguous && initial.state !== "soft" && initial.state !== "small")) return initial;
   if (initial.state === "small") {
     const pixels = corners.map(p => ({ x: p.x * image.width, y: p.y * image.height }));
     if (measureBoundary(image, pixels).consistent) return initial;
   }
-  // Mixed illumination can make only the middle of a sheet look like paper.
-  // Check the other outline against the same framing, light and focus criteria.
+  // Uneven lighting can hide the edges. A fabric pattern can also be sharp
+  // enough to pass focus while disagreeing about which side is paper.
   const mapping = curvedPaperMapping(image);
   if (!mapping) return initial;
   const curvedCorners = PAGE_CORNERS.map(([u, v]) => {
@@ -139,24 +173,24 @@ export function inspectPageFrame(image, { captureOnly = false } = {}, margin = F
     return { x: p.x / image.width, y: p.y / image.height };
   });
   const curved = assessOutline(image, curvedCorners, captureOnly, margin, mapping);
-  return curved.state === "clear" ? curved : initial;
+  return curved.state === "clear" && (!ambiguous || curved.consistent) ? curved : initial;
 }
 
 export function createPageCaptureGate() {
-  let anchor = null, lastAt = null, startedAt = null, frames = 0, captured = false;
+  let anchor = null, lastCorners = null, lastAt = null, startedAt = null, frames = 0, captured = false;
   return {
     update(image, now, options) {
       const continuous = anchor && now >= lastAt && now - lastAt <= MAX_FRAME_GAP_MS;
       // Start a hold with the full border. Let the same tracked page use its
       // existing movement allowance without resetting on a few pixels of sway.
-      const margin = continuous ? FRAME_MARGIN - MAX_CORNER_MOTION : FRAME_MARGIN;
+      const margin = continuous ? TRACKED_FRAME_MARGIN : FRAME_MARGIN;
       const measured = inspectPageFrame(image, options, margin);
       let { samples, ...quality } = measured;
       // After capture, a small change in the printing can identify a new page.
       const moved = quality.state === "clear" && (!anchor
-        || quality.corners.some((p, i) => distance(p, anchor.corners[i]) > MAX_CORNER_MOTION)
-        || samples.reduce((sum, value, i) => sum + Math.abs(value - anchor.samples[i]), 0)
-          / samples.length > (captured ? 2 : 9));
+        || !sameFraming(quality.corners, anchor.corners)
+        || (!captured && !sameFraming(quality.corners, lastCorners))
+        || pageContentChanged(samples, quality.corners, anchor, captured));
       // A changed scene needs to qualify on its own before another hold starts.
       if (moved && !insideFrame(quality.corners, FRAME_MARGIN)) quality = moveBack(quality.corners);
       if (quality.state !== "clear") {
@@ -168,11 +202,11 @@ export function createPageCaptureGate() {
       if (moved || !continuous) {
         anchor = measured; startedAt = now; frames = 0; captured = false;
       }
-      lastAt = now; frames++;
-      const progress = Math.min(1, (now - startedAt) / STEADY_CAPTURE_MS, frames / 4);
+      lastCorners = quality.corners; lastAt = now; frames++;
+      const progress = Math.min(1, (now - startedAt) / STEADY_CAPTURE_MS, frames / 3);
       if (progress === 1) captured = true;
       return { ...quality, ready: progress === 1, progress, state: progress === 1 ? "ready" : "hold",
-        message: progress === 1 ? "Page steady. Hold still for the photo…" : "Hold steady — capturing automatically…" };
+        message: progress === 1 ? "Taking the photo…" : "Keep the page in view — capturing automatically…" };
     },
   };
 }
