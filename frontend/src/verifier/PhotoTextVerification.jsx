@@ -213,6 +213,7 @@ function RereadReview({ page, readings, dates = false }) {
 
 function PhotoDifference({ page, difference }) {
   return <li>
+    {difference.sourceReading && <p>OCR read this line the same way before sealing. <strong>{difference.sourceReading}</strong></p>}
     {difference.review === "firstReading" && <p>The first reading found this wording in the same place. Check the photo to resolve the disagreement.</p>}
     {difference.review === "artwork" ? <p>The signed page image shows ink here. The seal has no wording for this area. Check the lettering on the page.</p>
       : <div><strong>Signed text:</strong> {difference.expected || "(no text here)"}</div>}

@@ -1,11 +1,21 @@
 # Signed page references
 
-Blank and image-only PDF pages no longer fail text extraction. A blank page gets
-an explicit signed marker; other pages without extracted text get a grayscale
-vector-quantized reference. Text pages keep their full canonical text and may add
-line positions and a thumbnail in unused QR capacity. No server receives images,
-text, positions, or the reference dictionary. Google signing still receives only
-salted commitments; the existing attestation protocol signs the new binary body.
+Before stamping, QRed renders each nonblank original page and runs the same local
+English OCR engine used for photos. It keeps embedded PDF text and adds confident
+lettering found outside its line boxes, including text in images and outlined
+letters. Identical wording in a header and a footer has two separate positions.
+A page without recovered text gets a grayscale reference or an explicit blank
+marker. If the English reader cannot load, the stamp result identifies the pages
+sealed using only the embedded text and visual evidence.
+
+For a native text line that OCR reads slightly differently, the seal can also
+carry the exact observed wording and its line index. The verifier independently
+reads the photo. When it locates the signed line and repeats that reading, it
+shows the wording for review and excludes it from the discrepancy count. Repeated
+numeric ambiguities appear under **Numbers to check**. A new substitution, added
+text, or the same wording in another position is compared normally. Old seals
+retain their original evidence. Documents, recognized text and positions stay
+in the browser. Account signing receives only the existing page commitments.
 
 ## Budget and representation
 
@@ -13,7 +23,8 @@ The PDF stamper limits each page to four QR codes. Required text determines the
 code count. Optional evidence never increases it. The planner measures actual
 plaintext/zlib/gzip bytes, including record overhead and the 40-byte header per
 chunk. It tries line boxes (8 bytes per nonblank line), finer line starts (2 bytes),
-then 16×16 start cells (1 byte). It then tries visual grids up to 4,096 tiles,
+then 16×16 start cells (1 byte). With full boxes it fits exact source OCR readings
+before trying visual grids up to 4,096 tiles,
 reducing detail until the record fits. A full text page can retain the existing
 text-only body with no evidence overhead. Each finished QR uses the smallest
 fitting version, capped at 40, with its usual printed dimensions.
@@ -47,7 +58,7 @@ verifier route and saved offline copy together.
 | Field | Bytes | Encoding |
 | --- | ---: | --- |
 | Body format | 1 | `1` |
-| Body flags | 1 | Bit 0 blank; bit 1 visual; bits 2–3 line-position mode; other bits rejected |
+| Body flags | 1 | Bit 0 blank, bit 1 visual, bits 2–3 line-position mode, bit 4 source OCR readings. Other bits are rejected. |
 | Visible width, height | 4 | Two big-endian unsigned 16-bit integers, rounded page points |
 | Text byte length | 1–4 | Canonical unsigned base-128 varint, low group first |
 | Text | Variable | Strict UTF-8, including canonical line breaks |
@@ -55,6 +66,12 @@ verifier route and saved offline copy together.
 | Positions | 1, 2, or 8 per line | Mode 1: high nibble X, low nibble Y, each floor(16×normalized position). Mode 2: X,Y bytes normalized by 255. Mode 3: X,Y,width,height as u16 normalized by 65,535 |
 | Visual header, if present | 3 | Codebook ID 1, tile columns, tile rows |
 | Visual indices | columns × rows | One dictionary index per tile, row-major; maximum 4,096 |
+| Source OCR count, if flagged | Varint | 1–512 entries, requires mode 3 |
+| Each source reading | Variable | Varint count of skipped lines since the previous entry (initially line −1), then varint UTF-8 byte length and the exact observed line (1–1,024 bytes) |
+
+The body flag for source readings is part of the authenticated payload. Verifiers
+from before this extension reject a body carrying it. Refresh both verifier
+routes and any offline copy to read new seals.
 
 Coordinates have a top-left origin in the original visible, rotated page, before
 footer scaling. Mode 1 identifies a cell, mode 2 a point, and mode 3 an approximate

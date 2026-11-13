@@ -138,7 +138,7 @@ function qualifyPhotoReadings(comparison, layout, visual, reread, originalWords)
     if (difference.typography || difference.spacing) continue;
     const { expected, observed, wordIndices } = difference;
     const words = wordIndices.map(index => byIndex.get(index));
-    if (visual && difference.outsideSignedLines && words.length) {
+    if (!difference.review && visual && difference.outsideSignedLines && words.length) {
       raster ??= renderVisualReference(visual);
       if (words.every(word => overlapsReferenceInk(word?.bbox, layout.project, raster))) difference.review = "artwork";
     }

@@ -7,14 +7,37 @@ const text = [word("Friday", 10, 10)];
 const caption = [word("Verify", 90, 280, 30), word("at", 125, 280, 10), word("qred.org", 140, 280, 40)];
 const dimensions = { width: 600, height: 800 };
 
-function registeredReading(signedLine, field, extras = [], { visual, reread = true, originalField = field } = {}) {
+function registeredReading(signedLine, field, extras = [], { visual, ocrReadings, reread = true, originalField = field } = {}) {
   const expected = ["Start", signedLine, "End"].join("\n");
   const pageWords = row => [word("Start", 60, 85), ...row, word("End", 60, 645), ...extras];
   const evidence = { ...dimensions, text: expected, layout: { mode: 3,
-    lines: [.1, .5, .8].map(y => ({ x: .1, y, width: .65, height: .04 })) }, visual };
+    lines: [.1, .5, .8].map(y => ({ x: .1, y, width: .65, height: .04 })) }, visual, ocrReadings };
   const corners = [{x:0,y:0},{x:600,y:0},{x:600,y:800},{x:0,y:800}];
   return comparePageReading(expected, { words: pageWords(field), corners, originalReading: reread ? pageWords(originalField) : undefined }, dimensions, evidence);
 }
+
+it("uses the exact pre-seal OCR reading only on its registered line", () => {
+  const signed = "Room number 2017";
+  const check = (observed, recorded, extras = []) => registeredReading(signed,
+    observed.split(" ").map((t, i) => word(t, 65 + i * 70, 403)), extras,
+    { reread: false, ocrReadings: [{ line: 1, observed: recorded }] });
+
+  const repeat = check("Room nurnber 2017", "Room nurnber 2017");
+  expect(repeat).toMatchObject({ status: "uncertain", differentCount: 0 });
+  expect(repeat.differences[0]).toMatchObject({ expected: "number", observed: "nurnber", review: "sourceOcr" });
+  expect(check("Room number 2012", "Room number 2012").differences[0]).toMatchObject({
+    expected: "2017", observed: "2012", review: "number",
+  });
+  for (const changed of ["Room nurnber 2012", "Room 2017", "Room nurnber 2017 PAID"]) {
+    const difference = check(changed, "Room nurnber 2017");
+    expect(difference.status).toBe("differences");
+    expect(difference.differences.some(d => !d.review && !d.spacing && !d.typography)).toBe(true);
+  }
+  const elsewhere = check(signed, "Room nurnber 2017", [word("nurnber", 65, 250)]);
+  expect(elsewhere.differences[0].review).toBeUndefined();
+  expect(elsewhere.status).toBe("differences");
+  expect(check(signed, "Room nurnber 2017").status).toBe("matches");
+});
 
 it("retains lettering over original artwork for review and reports new text in a blank area", () => {
   const indices = new Uint8Array(20 * 20).fill(15);

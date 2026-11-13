@@ -17,7 +17,7 @@ for protocol details.
 
 1. The UI prepares one selected PDF at a time. Supported form fields are flattened before extraction; unsupported forms, inconsistent appearances and missing required fonts stop sealing.
 2. Text canonicalization removes trailing whitespace, collapses repeated blank lines and removes leading/trailing blank lines. It does not preserve every visual feature of the source PDF.
-3. Text pages contain canonical text and may use spare capacity for signed line positions and a lossy grayscale reference. Image-only pages use a visual reference; blank pages use an explicit marker. Optional evidence must not add QR codes beyond the count needed for text.
+3. Before stamping, local OCR adds confidently readable image lettering to embedded PDF text. Spare capacity can carry line positions, exact OCR readings of difficult lines, and a grayscale reference. A repeated source reading at the same verified location goes to review. Pages without recognized lettering use a visual reference or an explicit blank marker. Optional evidence must not add QR codes beyond the count needed for text.
 4. Local seals use Ed25519 and compact v3 records. Account-backed v4 seals bind a page commitment to provider identity, authority key ID and server time. Their signature is checked with a bundled trusted authority key.
 5. Multipage seals include signed page position/count and a shared document root. These support grouping and detection of mixed documents; they do not prove every printed page is present until collection is complete.
 6. A key ID is eight SHA-256 digest bytes, displayed as 16 lowercase hexadecimal characters. Private keys are never included in seals.
