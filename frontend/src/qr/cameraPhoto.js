@@ -7,6 +7,7 @@ const MAX_GUIDANCE_SIDE = 1280;
 const MAX_WORKING_PHOTO_PIXELS = 12_000_000;
 const pendingTracks = new WeakSet();
 const lastGuidanceFrame = new WeakMap();
+const deliveredFrames = new WeakMap();
 const GUIDE_LABELS = Object.freeze({
   framing: "page corners needed", small: "page too small", dark: "more light needed",
   soft: "page edges soft", clear: "page clear", hold: "steady hold pending",
@@ -32,6 +33,24 @@ export function canCaptureCameraPhoto(video) {
     && track?.kind === "video" && track.readyState === "live";
 }
 
+// The compositor can drop most screen repaints while the media source keeps
+// delivering frames. A media timestamp advances only on a fresh video frame.
+export function observeCameraFrames(video, stream) {
+  if (typeof video.requestVideoFrameCallback !== "function") return;
+  const frame = { stream, time: null };
+  const onFrame = (_, metadata) => {
+    if (deliveredFrames.get(video) !== frame) return;
+    frame.time = metadata.mediaTime;
+    request = video.requestVideoFrameCallback(onFrame);
+  };
+  let request = video.requestVideoFrameCallback(onFrame);
+  deliveredFrames.set(video, frame);
+  return () => {
+    if (deliveredFrames.get(video) === frame) deliveredFrames.delete(video);
+    video.cancelVideoFrameCallback?.(request);
+  };
+}
+
 // Document guidance uses a smaller video frame. The camera supplies a separate
 // high-resolution still for seal recovery and printed-text comparison.
 export function readCameraFrame(video, canvas, { forGuidance = false } = {}) {
@@ -39,10 +58,19 @@ export function readCameraFrame(video, canvas, { forGuidance = false } = {}) {
   if (!sourceWidth || !sourceHeight) return null;
   // The media clock and animation loop can advance while a camera keeps
   // displaying one frame. Count a delivered preview only once.
-  const playback = forGuidance && video.getVideoPlaybackQuality?.();
-  const frame = playback ? playback.totalVideoFrames - (playback.droppedVideoFrames || 0) : 0;
-  const previous = lastGuidanceFrame.get(video);
-  if (frame > 0 && previous?.count === frame && previous.stream === video.srcObject) return null;
+  let frame;
+  if (forGuidance) {
+    const delivered = deliveredFrames.get(video);
+    if (delivered && delivered.stream === video.srcObject) {
+      if (delivered.time === null) return null;
+      frame = delivered.time;
+    } else {
+      const playback = video.getVideoPlaybackQuality?.();
+      if (playback?.totalVideoFrames > 0) frame = playback.totalVideoFrames - (playback.droppedVideoFrames || 0);
+    }
+    const previous = lastGuidanceFrame.get(video);
+    if (frame !== undefined && previous?.count === frame && previous.stream === video.srcObject) return null;
+  }
   const scale = forGuidance ? Math.min(1, MAX_GUIDANCE_SIDE / Math.max(sourceWidth, sourceHeight)) : 1;
   const width = Math.max(1, Math.round(sourceWidth * scale));
   const height = Math.max(1, Math.round(sourceHeight * scale));
@@ -52,7 +80,7 @@ export function readCameraFrame(video, canvas, { forGuidance = false } = {}) {
   if (!context) return null;
   context.drawImage(video, 0, 0, width, height);
   const pixels = context.getImageData(0, 0, width, height);
-  if (frame > 0) lastGuidanceFrame.set(video, { count: frame, stream: video.srcObject });
+  if (frame !== undefined) lastGuidanceFrame.set(video, { count: frame, stream: video.srcObject });
   return pixels;
 }
 
