@@ -18,6 +18,24 @@ it("compares a column-first OCR table by its signed row locations", () => {
   expect(result.words.map(w => w.sourceIndex)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
 });
 
+it("recognizes a recorded reading after line 512 and flags a fresh digit change on that line", () => {
+  const dimensions = { width: 1000, height: 10000 };
+  const corners = [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 10000 }, { x: 0, y: 10000 }];
+  const rows = Array.from({ length: 514 }, (_, i) => `Row${i}`);
+  const text = rows.join("\n");
+  const layout = { mode: 3, lines: rows.map((_, i) => ({ x: .1, y: (i + 1) / 600, width: .5, height: .0015 })) };
+  const evidence = { text, ...dimensions, layout, ocrReadings: [{ line: 513, observed: "Row512" }] };
+  const read = value => {
+    const words = rows.map((row, i) => {
+      const top = (i + 1) * dimensions.height / 600;
+      return { text: i === 513 ? value : row, confidence: 99, bbox: { x0: 110, y0: top + 1, x1: 180, y1: top + 10 } };
+    });
+    return comparePageReading(text, { words, corners }, dimensions, evidence);
+  };
+  expect(read("Row512")).toMatchObject({ lineAware: true, status: "uncertain", differentCount: 0 });
+  expect(read("Row510")).toMatchObject({ lineAware: true, status: "differences", differentCount: 1 });
+});
+
 it("does not accept swapped amounts or rows just because the same words exist", () => {
   for (const [a, b] of [[4, 5], [1, 2]]) {
     const swapped = words.map((w, i) => ({ ...w, text: i === a ? words[b].text : i === b ? words[a].text : w.text }));

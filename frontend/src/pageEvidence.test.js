@@ -6,7 +6,7 @@ import { CODEBOOK, decodePageEvidence, encodePageEvidence, encodeVisualReference
 import { createQRedSeals, computeKeyId } from "./qredSealer.js";
 import { decodeSeal, verifyQRedSeals } from "./qredVerifier.js";
 import { attestationMessage, pageCommitment } from "./attestation.js";
-import { bytesToHex, concatenate, decodeBase64Url, encodeBase64Url, encodeEnvelope, sealString, sha256 } from "./sealFormat.js";
+import { bytesToHex, concatenate, decodeBase64Url, encodeBase64Url, encodeEnvelope, MAX_CHUNKS, sealString, sha256 } from "./sealFormat.js";
 import { evidenceBodyBudget, planPageEvidence } from "./pdf/pageEvidencePlan.js";
 import { MAX_PDF_SEALS } from "./sealBudget.js";
 
@@ -153,6 +153,50 @@ describe("optional evidence budget", () => {
     expect(plan.body.length + 85).toBeLessThanOrEqual(2953);
     const sealed = await createQRedSeals({ content: base.text, pageEvidence: plan.body, pageContext, privateKey, publicKey, encodingStrategy: "plaintext" });
     expect(sealed.seals).toHaveLength(1);
+  });
+  it("adds a QR for required readings and keeps every reading through multipart verification", async () => {
+    const rows = Array.from({ length: 35 }, (_, i) => `Record ${i} approved for delivery. ${"A".repeat(40)}`);
+    const text = rows.join("\n");
+    const layout = rows.map((_, i) => ({ x: .1, y: i / 40, width: .8, height: .02 }));
+    const ocrReadings = rows.map((row, line) => ({ line, observed: row.replace("delivery", "deIivery") }));
+    const page = { text, lines: layout, width: 612, height: 792, image, ocrReadings };
+    const options = { encodingStrategy: "plaintext" };
+    const textSeal = await createQRedSeals({ content: text, pageContext, privateKey, publicKey, ...options });
+    expect(textSeal.seals).toHaveLength(1);
+    const plan = await planPageEvidence(page, options);
+    const sealed = await createQRedSeals({ content: text, pageEvidence: plan.body, pageContext, privateKey, publicKey, ...options });
+    expect(sealed.seals).toHaveLength(2);
+    expect((await verifyQRedSeals(sealed.seals.slice(1), publicKey)).status).toBe("INCOMPLETE");
+    const verified = await verifyQRedSeals(sealed.seals.toReversed(), publicKey);
+    expect(verified).toMatchObject({ status: "VALID", content: text, evidence: { layout: { mode: 3 }, ocrReadings } });
+    expect(verified.evidence.ocrReadings).toHaveLength(rows.length);
+  });
+
+  it("retains required readings when the account identity could cross a QR boundary", async () => {
+    const text = "x".repeat(2400) + "\nAmount 2017";
+    const ocrReadings = [{ line: 1, observed: "Amount 2012" }];
+    const record = { ...base, text, layout: { mode: 3, lines }, visual: null, ocrReadings };
+    const body = encodePageEvidence(record);
+    expect(evidenceBodyBudget(body.length, { attested: true })).toBe(0);
+    const plan = await planPageEvidence({ ...base, text, lines, image, ocrReadings }, { attested: true, encodingStrategy: "plaintext" });
+    expect(plan.body).toEqual(body);
+    expect(plan.pageEvidence).toEqual(body);
+  });
+
+  it("requires overflow beyond four QRs and retains readings past the 512th line", async () => {
+    const rows = Array.from({ length: 520 }, (_, i) => `Field ${i}`);
+    const text = rows.join("\n");
+    const layout = rows.map((_, i) => ({ x: .1, y: i / 525, width: .6, height: .001 }));
+    const ocrReadings = rows.map((row, line) => ({ line, observed: row.replace("Field", "FieId") }));
+    const page = { ...base, text, lines: layout, image, ocrReadings, pageNumber: 1 };
+    await expect(planPageEvidence(page, { encodingStrategy: "plaintext" })).rejects.toThrow(/4-QR limit.*appended seal sheets/);
+    const plan = await planPageEvidence(page, { maxPageSeals: MAX_CHUNKS, encodingStrategy: "plaintext" });
+    const seal = await createQRedSeals({ content: text, pageEvidence: plan.body, pageContext, privateKey, publicKey,
+      maxPageSeals: MAX_CHUNKS, encodingStrategy: "plaintext" });
+    expect(seal.seals.length).toBeGreaterThan(4);
+    const verified = await verifyQRedSeals(seal.seals.toReversed(), publicKey);
+    expect(verified.status).toBe("VALID");
+    expect(verified.evidence.ocrReadings).toEqual(ocrReadings);
   });
   it("omits optional evidence at a capacity boundary and rejects a fifth PDF code", async () => {
     const text = "x".repeat(2860);
