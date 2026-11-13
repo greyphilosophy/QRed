@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { canCaptureCameraPhoto, captureCameraPhoto, cameraCaptureFeedback, cameraFrameDiagnostic, cameraPhotoFailure, readCameraFrame, readCameraPhotoFile, NATIVE_PHOTO_TIMEOUT_MS, cameraCaptureContext } from "./cameraPhoto.js";
+import { canCaptureCameraPhoto, captureCameraPhoto, cameraCaptureFeedback, cameraFrameDiagnostic, cameraPhotoFailure, observeCameraFrames, readCameraFrame, readCameraPhotoFile, NATIVE_PHOTO_TIMEOUT_MS, cameraCaptureContext } from "./cameraPhoto.js";
 
 const track = { kind: "video", readyState: "live" };
 const video = { srcObject: { getVideoTracks: () => [track] } };
@@ -18,6 +18,29 @@ it("counts fresh video frames for guidance across dropped frames and stream repl
   expect(sample()).toBe(pixels);
   source.srcObject = {};
   expect(sample()).toBe(pixels);
+});
+
+it("uses fresh media timestamps while the browser drops screen repaints", () => {
+  let deliver, request = 0;
+  const playback = { totalVideoFrames: 6, droppedVideoFrames: 2 };
+  const source = { videoWidth: 640, videoHeight: 480, srcObject: {}, getVideoPlaybackQuality: () => playback,
+    requestVideoFrameCallback: fn => { deliver = fn; return ++request; }, cancelVideoFrameCallback: vi.fn() };
+  const sample = () => readCameraFrame(source, canvas, { forGuidance: true });
+  const stop = observeCameraFrames(source, source.srcObject);
+  expect(sample()).toBeNull();
+  deliver(1, { mediaTime: 0 });
+  expect(sample()).toBe(pixels);
+  playback.totalVideoFrames++; playback.droppedVideoFrames++;
+  expect(sample()).toBeNull();
+  deliver(2, { mediaTime: .1 });
+  expect(sample()).toBe(pixels);
+  deliver(3, { mediaTime: .1 });
+  expect(sample()).toBeNull();
+  stop();
+  expect(source.cancelVideoFrameCallback).toHaveBeenCalledWith(request);
+  const last = request;
+  deliver(4, { mediaTime: .2 });
+  expect(request).toBe(last);
 });
 beforeEach(() => {
   pixels = { width: 4000, height: 3000, data: new Uint8ClampedArray(4) };

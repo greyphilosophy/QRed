@@ -18,8 +18,8 @@ def test_main_camera_at_one_times_zoom_without_flashlight(browser, path):
             window.cameraTest = { requests: [], controls: [], stopped: [] };
             let activeTrack;
             const makeStream = (label, id) => {
-                const canvas = document.createElement('canvas'); canvas.width = canvas.height = 64;
-                canvas.getContext('2d').fillRect(0, 0, 64, 64);
+                const canvas = document.createElement('canvas'); canvas.width = 360; canvas.height = 480;
+                canvas.getContext('2d').fillRect(0, 0, canvas.width, canvas.height);
                 const stream = canvas.captureStream(10), [track] = stream.getVideoTracks();
                 activeTrack = track;
                 Object.defineProperty(track, 'label', { value: label });
@@ -86,6 +86,8 @@ def test_main_camera_at_one_times_zoom_without_flashlight(browser, path):
                 return {
                     insideImage: box.left >= left - 1 && box.right <= left + w + 1 && box.top >= top - 1 && box.bottom <= top + h + 1,
                     ratio: box.width / box.height,
+                    centerOffset: [box.left + box.width / 2 - (left + w / 2), box.top + box.height / 2 - (top + h / 2)],
+                    imageCoverage: box.width * box.height / (w * h),
                     overlappingControls: [...document.querySelectorAll('.ar-controls, .ar-close, .ar-scan-feedback, .controls, .page-scan-hint')]
                         .filter(element => !element.hidden && overlaps(element))
                         .map(element => ({ name: element.className, bounds: element.getBoundingClientRect().toJSON() })),
@@ -97,6 +99,8 @@ def test_main_camera_at_one_times_zoom_without_flashlight(browser, path):
             assert geometry["insideImage"], (width, height, geometry)
             assert geometry["overlappingControls"] == [], (width, height, geometry)
             assert geometry["ratio"] == pytest.approx(8.5 / 11, abs=0.01)
+            assert geometry["centerOffset"] == pytest.approx([0, 0], abs=1), geometry
+            assert geometry["imageCoverage"] > .72, geometry
             assert geometry["animation"] == "none"
             assert geometry["pointerEvents"] == "none"
             expect(page.locator(".page-detected-outline")).to_have_count(0)

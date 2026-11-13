@@ -1,4 +1,4 @@
-import { locatePaper } from "./pageAlignedScan.js";
+import { locatePaper, pageHomography } from "./pageAlignedScan.js";
 import { estimatePaperColor } from "./paperColor.js";
 import { curvedPaperMapping } from "./curvedPaper.js";
 
@@ -16,6 +16,8 @@ const PAGE_CORNERS = [[0, 0], [1, 0], [1, 1], [0, 1]];
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const DIM_PAPER_LEVEL = 125;
 const MORE_LIGHT = "Add light across the page or move it to a brighter spot.";
+const CENTER_PAGE = "Center the page in the guide and move closer, keeping all four corners visible.";
+const SOFT_PRINT = "The printing looks blurry. Hold the phone parallel to the page and let the camera focus.";
 
 function insideFrame(corners, margin) {
   return corners.every(p => p.x >= margin && p.y >= margin && p.x <= 1 - margin && p.y <= 1 - margin);
@@ -63,18 +65,25 @@ function percentile(values, fraction) {
 function measureBoundary(image, corners, mapping) {
   const step = Math.max(1, Math.min(image.width, image.height) / 720);
   const sides = [], edgeSigns = [];
+  let printedSides = 0;
   for (let side = 0; side < 4; side++) {
     const a = corners[side], b = corners[(side + 1) % 4], length = distance(a, b);
     const [u, v] = PAGE_CORNERS[side], [nextU, nextV] = PAGE_CORNERS[(side + 1) % 4];
     const nx = (b.y - a.y) / length, ny = (a.x - b.x) / length;
     const scores = [];
-    let lighter = 0, darker = 0;
+    let lighter = 0, darker = 0, paperContinues = 0;
     for (let point = 1; point <= 16; point++) {
       const t = .12 + point / 17 * .76;
       const { x, y } = mapping ? mapping(u + (nextU - u) * t, v + (nextV - v) * t)
         : { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
       const samples = [];
       for (let offset = -8; offset <= 8; offset++) samples.push(gray(image, x + nx * offset * step, y + ny * offset * step));
+      // An interior grid on white paper can make a sharp rectangle. Look
+      // for the same unbroken paper tone outside and between strokes inside.
+      const outside = samples.slice(12), inside = samples.slice(0, 7);
+      const paper = Math.max(...outside);
+      if (paper - Math.min(...outside) < 5 && Math.abs(Math.max(...inside) - paper) < 5
+        && paper - Math.min(...inside) > 15) paperContinues++;
       // A sheet edge has a consistent change from outside to inside. Text
       // near a falsely detected edge can be sharp but varies in both directions.
       const change = (samples[0] + samples[2] + samples[4] - samples[12] - samples[14] - samples[16]) / 3;
@@ -88,8 +97,10 @@ function measureBoundary(image, corners, mapping) {
     }
     sides.push(scores.length >= 6 ? percentile(scores, .5) : 0);
     edgeSigns.push(lighter >= 10 ? 1 : darker >= 10 ? -1 : 0);
+    if (paperContinues >= 8) printedSides++;
   }
-  return { sharpness: percentile(sides, .25), consistent: edgeSigns[0] !== 0 && edgeSigns.every(sign => sign === edgeSigns[0]) };
+  return { sharpness: percentile(sides, .25), consistent: edgeSigns[0] !== 0 && edgeSigns.every(sign => sign === edgeSigns[0]),
+    internalPrint: printedSides >= 3 };
 }
 
 function samplePage(image, corners) {
@@ -109,6 +120,38 @@ function samplePage(image, corners) {
   return values;
 }
 
+// Measure how abruptly ink changes on the paper. Average three parallel
+// scanlines so isolated sensor noise cannot stand in for a sharp stroke.
+// Blank areas supply no focus evidence.
+function printLooksSoft(image, map) {
+  if (!map) return false;
+  const patches = [];
+  for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
+    const center = map(.125 + .75 * col / 7, .125 + .75 * row / 7);
+    const cx = Math.round(center.x), cy = Math.round(center.y), edges = [];
+    for (const vertical of [false, true]) {
+      for (let line = -11; line <= 9; line += 4) {
+        let first = 0, previous = 0, largest = 0;
+        for (let along = -12; along <= 12; along++) {
+          const x = cx + (vertical ? line : along), y = cy + (vertical ? along : line);
+          const dx = vertical ? 1 : 0, dy = vertical ? 0 : 1;
+          const value = (gray(image, x, y) + gray(image, x - dx, y - dy) + gray(image, x + dx, y + dy)) / 3;
+          if (along > -12) largest = Math.max(largest, Math.abs(value - previous));
+          if ((along + 12) % 6 === 0) {
+            const contrast = Math.abs(value - first);
+            if (along > -12 && contrast >= 26) edges.push(largest / contrast);
+            first = value;
+            largest = 0;
+          }
+          previous = value;
+        }
+      }
+    }
+    if (edges.length >= 3) patches.push(percentile(edges, .5));
+  }
+  return patches.length >= 4 && percentile(patches, .5) < .38;
+}
+
 function paperBrightness(samples) {
   return percentile([...samples], .8);
 }
@@ -120,13 +163,29 @@ function centerLooksDim(image) {
   return paperBrightness(samples) < DIM_PAPER_LEVEL;
 }
 
-// The decoder already located this sheet. Sample the paper only after a failed
-// read so dark furniture and borders cannot turn a clear page into a lighting warning.
-export function dimPageScanFeedback(image, mapping) {
+// A captured still can differ from its preview. Diagnose the measured paper
+// after recovery has run, including for files selected from the phone.
+export function pageScanQualityFeedback(image, mapping) {
   if (!mapping) return null;
   const corners = PAGE_CORNERS.map(([u, v]) => mapping(u, v));
-  return paperBrightness(samplePage(image, corners)) < DIM_PAPER_LEVEL
-    ? `No readable seal found. The page looks dim. ${MORE_LIGHT} Retake the full page with all four corners in view.` : null;
+  const dim = paperBrightness(samplePage(image, corners)) < DIM_PAPER_LEVEL;
+  const soft = printLooksSoft(image, mapping);
+  const placement = needsFraming(image, corners);
+  if (!dim && !soft && !placement) return null;
+  return ["No readable seal found.", dim && `The page looks dim. ${MORE_LIGHT}`, soft && SOFT_PRINT,
+    placement ? CENTER_PAGE : "Retake the full page with all four corners in view."].filter(Boolean).join(" ");
+}
+
+function needsFraming(image, corners) {
+  const [tl, tr, br, bl] = corners;
+  const width = (distance(tl, tr) + distance(bl, br)) / 2;
+  const height = (distance(tl, bl) + distance(tr, br)) / 2;
+  // An upright sheet on a wide preview leaves unavoidable side margins.
+  // Require most of the dimension that actually limits how close it can fit.
+  const fill = Math.max(width / image.width, height / image.height);
+  const centerX = (tl.x + tr.x + br.x + bl.x) / (4 * image.width);
+  const centerY = (tl.y + tr.y + br.y + bl.y) / (4 * image.height);
+  return fill < .74 || (fill < .85 && Math.max(Math.abs(centerX - .5), Math.abs(centerY - .5)) > .085);
 }
 
 function pageContentChanged(samples, corners, anchor, captured) {
@@ -167,13 +226,14 @@ function assessOutline(image, corners, captureOnly, margin, mapping) {
   if (paperBrightness(samples) < DIM_PAPER_LEVEL)
     return { state: "dark", message: `The page looks dim. ${MORE_LIGHT} You can also use Capture now.`,
       corners, consistent: mapping ? measureBoundary(image, pixels, mapping).consistent : undefined };
-  const { sharpness, consistent } = measureBoundary(image, pixels, mapping);
+  const { sharpness, consistent, internalPrint } = measureBoundary(image, pixels, mapping);
+  if (internalPrint) return moveBack(corners);
   if (sharpness < .45)
     return { state: "soft", message: "The page edges look soft. Hold steady for focus, or use Capture now.", corners, sharpness };
   return { state: "clear", corners, sharpness, consistent, samples };
 }
 
-export function inspectPageFrame(image, { captureOnly = false } = {}, margin = FRAME_MARGIN) {
+function findPageOutline(image, captureOnly, margin) {
   if (!image?.data || image.data.length !== image.width * image.height * 4 || image.width < 40 || image.height < 40)
     return { state: "framing", message: "Waiting for camera frames…", corners: null };
   const small = preview(image);
@@ -193,7 +253,7 @@ export function inspectPageFrame(image, { captureOnly = false } = {}, margin = F
   // Uneven lighting can hide the edges. A fabric pattern can also be sharp
   // enough to pass focus while disagreeing about which side is paper.
   const mapping = curvedPaperMapping(image);
-  if (!mapping) return initial;
+  if (!mapping) return ambiguous ? moveBack(corners) : initial;
   const curvedCorners = PAGE_CORNERS.map(([u, v]) => {
     const p = mapping(u, v);
     return { x: p.x / image.width, y: p.y / image.height };
@@ -201,7 +261,22 @@ export function inspectPageFrame(image, { captureOnly = false } = {}, margin = F
   const curved = assessOutline(image, curvedCorners, captureOnly, margin, mapping);
   if (curved.state === "dark" && curved.consistent) return curved;
   if (initial.state === "framing") return initial;
-  return curved.state === "clear" && (!ambiguous || curved.consistent) ? curved : initial;
+  if (curved.state === "clear" && (!ambiguous || curved.consistent)) return curved;
+  return ambiguous ? moveBack(corners) : initial;
+}
+
+export function inspectPageFrame(image, { captureOnly = false } = {}, margin = FRAME_MARGIN) {
+  const quality = findPageOutline(image, captureOnly, margin);
+  if (quality.state !== "clear" && quality.state !== "dark") return quality;
+  const pixels = quality.corners.map(p => ({ x: p.x * image.width, y: p.y * image.height }));
+  const misplaced = needsFraming(image, pixels);
+  if (quality.state === "dark") {
+    return misplaced ? { ...quality, message: `The page looks dim. ${MORE_LIGHT} ${CENTER_PAGE}` } : quality;
+  }
+  if (misplaced) return { state: "small", message: CENTER_PAGE, corners: quality.corners };
+  if (printLooksSoft(image, pageHomography(pixels)))
+    return { state: "soft", message: SOFT_PRINT, corners: quality.corners };
+  return quality;
 }
 
 export function createPageCaptureGate() {

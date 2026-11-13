@@ -1,4 +1,5 @@
 import { applyCameraQualityControls, getPreferredCameraStream } from "./cameraControls.js";
+import { observeCameraFrames } from "./cameraPhoto.js";
 
 const CAMERA_ACCESS_TIMEOUT_MS = 30000;
 const FIRST_FRAME_TIMEOUT_MS = 10000;
@@ -39,7 +40,7 @@ export function startCameraSession(options) {
 async function openPreview({ video, requestStream = signal => getPreferredCameraStream(undefined, signal),
   prepareStream = applyCameraQualityControls, onStream, onFrame, waitForMetadata = false, interval = 125 },
   signal, onFailure) {
-  let stream = null, animation = null, started = false;
+  let stream = null, animation = null, started = false, stopFrameObserver;
   let lastScanAt = -Infinity;
   let timer = setTimeout(() => fail(new Error("Camera access did not finish. Check camera permission and try again."), "access"),
     CAMERA_ACCESS_TIMEOUT_MS);
@@ -50,6 +51,7 @@ async function openPreview({ video, requestStream = signal => getPreferredCamera
 
   signal.addEventListener("abort", () => {
     clearTimeout(timer);
+    stopFrameObserver?.();
     if (animation !== null) cancelAnimationFrame(animation);
     if (video.onloadedmetadata === startFrames) video.onloadedmetadata = null;
     if (stream) {
@@ -93,6 +95,7 @@ async function openPreview({ video, requestStream = signal => getPreferredCamera
     if (waitForMetadata) video.onloadedmetadata = startFrames;
     video.muted = true;
     video.srcObject = stream;
+    stopFrameObserver = observeCameraFrames(video, stream);
     onStream?.(stream);
     video.play()?.catch(error => fail(error, "play"));
     if (!waitForMetadata || video.readyState >= 1) startFrames();
