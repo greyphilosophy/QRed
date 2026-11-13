@@ -178,7 +178,11 @@ describe("automatic whole-page capture", () => {
     expect(gate.update(second, 800).ready).toBe(true);
   });
   it.each([{ x: 0 }, { y: 0 }, { width: 800 }, { desk: 245 }])("does not invent a whole-page capture for %j", options => {
-    expect(inspectPageFrame(paper(options)).state).toBe("framing");
+    const image = paper(options);
+    expect(inspectPageFrame(image).state).toBe("framing");
+    const gate = createPageCaptureGate();
+    for (const t of [0, 150, 300, 450])
+      expect(gate.update(image, t, { captureOnly: true })).toMatchObject({ state: "framing", ready: false });
   });
   it("asks to move closer for a page too small to read", () => {
     expect(inspectPageFrame(paper({ x: 220, y: 280, width: 360, height: 440 })).state).toBe("small");

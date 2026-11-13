@@ -113,6 +113,13 @@ function paperBrightness(samples) {
   return percentile([...samples], .8);
 }
 
+function centerLooksDim(image) {
+  const samples = [];
+  for (let y = 2; y <= 6; y++) for (let x = 2; x <= 6; x++)
+    samples.push(gray(image, x * image.width / 8, y * image.height / 8));
+  return paperBrightness(samples) < DIM_PAPER_LEVEL;
+}
+
 // The decoder already located this sheet. Sample the paper only after a failed
 // read so dark furniture and borders cannot turn a clear page into a lighting warning.
 export function dimPageScanFeedback(image, mapping) {
@@ -176,6 +183,9 @@ export function inspectPageFrame(image, { captureOnly = false } = {}, margin = F
     : { state: "framing", message: "Show all four page corners. Try a contrasting background, or use Capture now.", corners: null };
   const ambiguous = initial.state === "clear" && !initial.consistent;
   if (!captureOnly || (initial.state !== "framing" && !ambiguous && initial.state !== "soft" && initial.state !== "small")) return initial;
+  // A missed or clipped outline may receive lighting advice. A second edge
+  // hypothesis alone must never start the shutter for that frame.
+  if (initial.state === "framing" && !centerLooksDim(small)) return initial;
   if (initial.state === "small") {
     const pixels = corners.map(p => ({ x: p.x * image.width, y: p.y * image.height }));
     if (measureBoundary(image, pixels).consistent) return initial;
@@ -190,7 +200,8 @@ export function inspectPageFrame(image, { captureOnly = false } = {}, margin = F
   });
   const curved = assessOutline(image, curvedCorners, captureOnly, margin, mapping);
   if (curved.state === "dark" && curved.consistent) return curved;
-  return curved.state === "clear" && (curved.consistent || (!ambiguous && initial.state !== "framing")) ? curved : initial;
+  if (initial.state === "framing") return initial;
+  return curved.state === "clear" && (!ambiguous || curved.consistent) ? curved : initial;
 }
 
 export function createPageCaptureGate() {
