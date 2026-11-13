@@ -152,6 +152,43 @@ describe("QR Reed-Solomon erasure-aware recovery", () => {
     })).toBe(qr.seal);
   });
 
+  it("uses independent parity checks for two misread bits beyond the ranked erasures", () => {
+    const qr = fixture(), version = qr.symbol.version, bits = qr.bits.slice();
+    const unknown = new Uint8Array(bits.length), reliability = new Float32Array(bits.length).fill(1);
+    const blockCount = EC_BLOCKS_BY_LEVEL[1][version], firstBlock = [];
+    let index = 0, upward = true;
+    // Select bits of the first interleaved data block via the public QR
+    // traversal, keeping the version and format fields intact.
+    for (let right = qr.size - 1; right > 0; right -= 2) {
+      if (right === 6) right--;
+      for (let k = 0; k < qr.size; k++) for (const x of [right, right - 1]) {
+        const y = upward ? qr.size - 1 - k : k;
+        if (qr.symbol.modules.isReserved(y, x)) continue;
+        if (Math.floor(index / 8) % blockCount === 0) firstBlock.push(y * qr.size + x);
+        index++;
+      }
+      upward = !upward;
+    }
+    // Many ordinary byte errors, plus two observations ranked beyond every
+    // erasure budget. Spread the weak bits over separate codewords.
+    const weak = firstBlock.filter((_, i) => i % 8 === 0).slice(0, 70);
+    for (const at of weak) { bits[at] ^= 1; unknown[at] = 1; reliability[at] = .02; }
+    for (const at of [firstBlock[1], firstBlock[11]]) {
+      bits[at] ^= 1; unknown[at] = 1; reliability[at] = .5;
+    }
+    // Known outliers must lie beyond the erased subset even when the
+    // candidate list is shorter than the parity budget.
+    for (const at of firstBlock.slice(0, 282)) {
+      if (unknown[at]) continue;
+      unknown[at] = 1; reliability[at] = .2;
+    }
+    const decode = rankedOutliers => readErasedQrMatrix(bits, unknown, version, null, { bitReliability: reliability, rankedOutliers });
+    expect(decode(false)).toBeNull();
+    const fixed = decode(true);
+    expect(qredPayloadFromScanResult(fixed && { data: "", version,
+      binaryData: bytePayloadFromCodewords(fixed.dataCodewords, version) })).toBe(qr.seal);
+  });
+
   it("stops ranked bit recovery when its caller cancels", () => {
     const qr = fixture();
     expect(readErasedQrMatrix(qr.bits, qr.unknown, qr.symbol.version, null,
