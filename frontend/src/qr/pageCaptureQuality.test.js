@@ -99,10 +99,11 @@ describe("automatic whole-page capture", () => {
     expect(pageScanQualityFeedback(high, (u, v) => ({ x: 105 + 590 * u, y: 35 + 710 * v }))).toContain("Center the page");
   });
 
-  it("does not capture an interior printed grid when the sheet fills the entire frame", () => {
+  it.each([false, true])("does not capture an interior printed grid when the sheet fills the frame (checkerboard: %s)", checkerboard => {
     const width = 360, height = 480, data = new Uint8ClampedArray(width * height * 4).fill(255);
     for (let y = 35; y < 440; y++) for (let x = 33; x < 325; x++) {
-      const ink = (Math.imul(Math.floor(x / 3), 73856093) ^ Math.imul(Math.floor(y / 3), 19349663)) & 16;
+      const ink = checkerboard ? (Math.floor(x / 5) + Math.floor(y / 5)) % 2
+        : (Math.imul(Math.floor(x / 3), 73856093) ^ Math.imul(Math.floor(y / 3), 19349663)) & 16;
       const i = (y * width + x) * 4;
       data.fill(ink ? 164 : 253, i, i + 3);
     }

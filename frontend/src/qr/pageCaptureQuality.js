@@ -65,18 +65,25 @@ function percentile(values, fraction) {
 function measureBoundary(image, corners, mapping) {
   const step = Math.max(1, Math.min(image.width, image.height) / 720);
   const sides = [], edgeSigns = [];
+  let printedSides = 0;
   for (let side = 0; side < 4; side++) {
     const a = corners[side], b = corners[(side + 1) % 4], length = distance(a, b);
     const [u, v] = PAGE_CORNERS[side], [nextU, nextV] = PAGE_CORNERS[(side + 1) % 4];
     const nx = (b.y - a.y) / length, ny = (a.x - b.x) / length;
     const scores = [];
-    let lighter = 0, darker = 0;
+    let lighter = 0, darker = 0, paperContinues = 0;
     for (let point = 1; point <= 16; point++) {
       const t = .12 + point / 17 * .76;
       const { x, y } = mapping ? mapping(u + (nextU - u) * t, v + (nextV - v) * t)
         : { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
       const samples = [];
       for (let offset = -8; offset <= 8; offset++) samples.push(gray(image, x + nx * offset * step, y + ny * offset * step));
+      // An interior grid on white paper can make a sharp rectangle. Look
+      // for the same unbroken paper tone outside and between strokes inside.
+      const outside = samples.slice(12), inside = samples.slice(0, 7);
+      const paper = Math.max(...outside);
+      if (paper - Math.min(...outside) < 5 && Math.abs(Math.max(...inside) - paper) < 5
+        && paper - Math.min(...inside) > 15) paperContinues++;
       // A sheet edge has a consistent change from outside to inside. Text
       // near a falsely detected edge can be sharp but varies in both directions.
       const change = (samples[0] + samples[2] + samples[4] - samples[12] - samples[14] - samples[16]) / 3;
@@ -90,8 +97,10 @@ function measureBoundary(image, corners, mapping) {
     }
     sides.push(scores.length >= 6 ? percentile(scores, .5) : 0);
     edgeSigns.push(lighter >= 10 ? 1 : darker >= 10 ? -1 : 0);
+    if (paperContinues >= 8) printedSides++;
   }
-  return { sharpness: percentile(sides, .25), consistent: edgeSigns[0] !== 0 && edgeSigns.every(sign => sign === edgeSigns[0]) };
+  return { sharpness: percentile(sides, .25), consistent: edgeSigns[0] !== 0 && edgeSigns.every(sign => sign === edgeSigns[0]),
+    internalPrint: printedSides >= 3 };
 }
 
 function samplePage(image, corners) {
@@ -217,7 +226,8 @@ function assessOutline(image, corners, captureOnly, margin, mapping) {
   if (paperBrightness(samples) < DIM_PAPER_LEVEL)
     return { state: "dark", message: `The page looks dim. ${MORE_LIGHT} You can also use Capture now.`,
       corners, consistent: mapping ? measureBoundary(image, pixels, mapping).consistent : undefined };
-  const { sharpness, consistent } = measureBoundary(image, pixels, mapping);
+  const { sharpness, consistent, internalPrint } = measureBoundary(image, pixels, mapping);
+  if (internalPrint) return moveBack(corners);
   if (sharpness < .45)
     return { state: "soft", message: "The page edges look soft. Hold steady for focus, or use Capture now.", corners, sharpness };
   return { state: "clear", corners, sharpness, consistent, samples };
