@@ -201,12 +201,36 @@ describe("QrScanner camera controls", () => {
   it("chooses a rear main lens without selecting front, ultrawide, or zoom lenses", () => {
     const wide = { kind: "videoinput", label: "Back Wide Camera", deviceId: "wide" };
     const main = { kind: "videoinput", label: "Rear Main Camera 1x", deviceId: "main" };
-    const alternatives = ["Front Main Camera", "Back Ultra Wide Camera", "Back 3x Camera", "Back Telephoto Camera"]
+    const alternatives = ["Front Main Camera", "Back Ultra Wide Camera", "Back 3x Camera", "Back Telephoto Camera",
+      "Rear 10×", "Back Macro", "Back Depth Camera", "Back 0.6 ×"]
       .map(label => ({ kind: "videoinput", label, deviceId: label }));
     expect(findPreferredMainCamera([...alternatives, wide, main])).toBe(main);
     expect(findPreferredMainCamera([...alternatives, wide])).toBe(wide);
     expect(findPreferredMainCamera(alternatives)).toBeNull();
     expect(findPreferredMainCamera([{ kind: "videoinput", label: "", deviceId: "unknown" }])).toBeNull();
+  });
+
+  it("selects the focusing rear lens with generic duplicate labels and different device IDs", async () => {
+    const label = "Camera, facing back";
+    const camera = (id, modes) => ({ kind: "videoinput", deviceId: id, label,
+      getCapabilities: () => ({ facingMode: ["environment"], focusMode: modes }) });
+    const fixed = camera("second", ["none"]), focusing = camera("first", ["continuous"]);
+    const stop = vi.fn();
+    const initial = { getVideoTracks: () => [{ label, getSettings: () => ({ deviceId: fixed.deviceId }) }], getTracks: () => [{ stop }] };
+    const main = { getVideoTracks: () => [], getTracks: () => [] };
+    const mediaDevices = { getUserMedia: vi.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(main),
+      enumerateDevices: async () => [fixed, focusing] };
+    await expect(getPreferredCameraStream(mediaDevices)).resolves.toBe(main);
+    expect(mediaDevices.getUserMedia.mock.calls[1][0].video.deviceId).toEqual({ exact: focusing.deviceId });
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses browser rear-camera order when lens capabilities are unavailable", () => {
+    const first = { kind: "videoinput", deviceId: "opaque-b", label: "camera2 5, facing back",
+      getCapabilities: () => { throw new Error("Unavailable"); } };
+    const second = { kind: "videoinput", deviceId: "opaque-a", label: "camera2 0, facing back" };
+    expect(findPreferredMainCamera([first, second])).toBe(first);
+    expect(findPreferredMainCamera([{ ...second, label: "", getCapabilities: () => ({ facingMode: ["user"] }) }])).toBeNull();
   });
 
   it("keeps the current main camera without reopening it", async () => {

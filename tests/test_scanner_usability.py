@@ -14,7 +14,7 @@ def test_main_camera_at_one_times_zoom_without_flashlight(browser, path):
     try:
         page = context.new_page()
         page.goto(BASE_URL + path, wait_until="networkidle")
-        page.evaluate("""() => {
+        page.evaluate("""generic => {
             window.cameraTest = { requests: [], controls: [], stopped: [] };
             let activeTrack;
             const makeStream = (label, id) => {
@@ -36,20 +36,24 @@ def test_main_camera_at_one_times_zoom_without_flashlight(browser, path):
             navigator.mediaDevices.getUserMedia = async constraints => {
                 cameraTest.requests.push(constraints);
                 if (activeTrack?.readyState === 'live') return new Promise(() => {});
-                return constraints.video.deviceId?.exact === 'main'
-                    ? makeStream('Back Main Camera 1x', 'main') : makeStream('Back Telephoto Camera', 'tele');
+                const main = constraints.video.deviceId?.exact === 'main';
+                const label = generic ? 'Camera, facing back' : main ? 'Back Main Camera 1x' : 'Back Telephoto Camera';
+                return makeStream(label, main ? 'main' : 'tele');
             };
             window.setCameraTestHidden = hidden => {
                 Object.defineProperty(document, 'hidden', {configurable: true, value: hidden});
                 Object.defineProperty(document, 'visibilityState', {configurable: true, value: hidden ? 'hidden' : 'visible'});
                 document.dispatchEvent(new Event('visibilitychange'));
             };
-            navigator.mediaDevices.enumerateDevices = async () => [
+            navigator.mediaDevices.enumerateDevices = async () => generic ? [
+                { kind: 'videoinput', deviceId: 'tele', label: 'Camera, facing back', getCapabilities: () => ({focusMode: ['none']}) },
+                { kind: 'videoinput', deviceId: 'main', label: 'Camera, facing back', getCapabilities: () => ({focusMode: ['continuous']}) },
+            ] : [
                 { kind: 'videoinput', deviceId: 'ultra', label: 'Back Ultra Wide Camera' },
                 { kind: 'videoinput', deviceId: 'tele', label: 'Back Telephoto Camera' },
                 { kind: 'videoinput', deviceId: 'main', label: 'Back Main Camera 1x' },
             ];
-        }""")
+        }""", path == "/verify.htm")
         page.get_by_role("button", name="Check document", exact=True).click()
         page.wait_for_function("cameraTest.controls.length === 1")
         state = page.evaluate("cameraTest")

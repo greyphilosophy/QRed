@@ -3,6 +3,7 @@ import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
 import { scanFooterSeals } from "./footerSealScan.js";
 import { createRectifiedSealScanner, prepareCurvedPageScan } from "./rectifiedSealScan.js";
+import { dimPageScanFeedback } from "./pageCaptureQuality.js";
 import { isQRedEntryLink, qredPayloadFromScanResult } from "./qrPayload.js";
 import { decodeSeal, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult,
   qredTextFromScanResult } from "../qredVerifier.js";
@@ -46,6 +47,7 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
     return run();
   };
   const partials = new Set();
+  let straightMapping;
   const singleOriginal = seal => {
     const decoded = decodeSeal(seal);
     return decoded?.total_chunks === 1 && !decoded.seal_sheet;
@@ -60,7 +62,6 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
   if (returnPayload) {
     // Try the measured whole-page grid before general-purpose QR location.
     // Reserve half the cooperative budget for other layouts if this misses.
-    let straightMapping;
     const scanRectified = createRectifiedSealScanner(image, { onMapping: measured => { straightMapping = measured; } });
     const fastDeadline = started + maxDurationMs / 2;
     const fast = attempt("rectified-fast", () => scanRectified({
@@ -134,7 +135,8 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
   const code = shouldContinue() ? attempt("general-qr", () => scanQrImage(data, width, height,
     { shouldContinue, ...(onStage ? { onStage: reportStage } : {}) })) : null;
   if (code?.codes) return qrFrameAction(image, code, { returnPayload });
-  if (!code) return { status: "feedback", message: "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For footer seals, try framing the individual QR instead." };
+  if (!code) return { status: "feedback", message: dimPageScanFeedback(image, straightMapping) ||
+    "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For footer seals, try framing the individual QR instead." };
   const text = qredTextFromScanResult(code);
   if (isQRedEntryLink(text)) {
     return { status: "feedback", message: "That code opens qred.org. Include the full printed page against a contrasting background for its pale watermark, or frame an individual larger footer seal." };
