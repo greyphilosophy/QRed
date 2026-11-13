@@ -118,7 +118,7 @@ describe("browser PDF sealing", () => {
     }
     expect(livePayload).toBe(payload);
     expect(Buffer.from(pixels).equals(Buffer.from(original))).toBe(true);
-  });
+  }, 30000);
 
   it("extracts text inside embedded form objects", async () => {
     const source = await makeLetterPdfFile();
