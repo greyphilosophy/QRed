@@ -39,6 +39,25 @@ describe("signed binary page references", () => {
     });
     expect(encodePageEvidence({ ...decoded, layout: { mode, lines: decoded.layout.lines } })).toEqual(bytes);
   });
+  it("authenticates the exact source reading and its line, and rejects malformed readings", async () => {
+    const layout = { mode: 3, lines };
+    const ocrReadings = [{ line: 1, observed: "TotaI 50.00" }];
+    const bytes = encodePageEvidence({ ...base, layout, ocrReadings });
+    expect(decodePageEvidence(bytes)).toMatchObject({ text: base.text, layout: { mode: 3 }, visual, ocrReadings });
+    expect(decodePageEvidence(encodePageEvidence({ ...base, layout })).ocrReadings).toBeUndefined();
+    const sealed = await createQRedSeals({ content: base.text, pageEvidence: bytes, pageContext, privateKey, publicKey, encodingStrategy: "plaintext" });
+    expect(await verifyQRedSeals(sealed.seals, publicKey)).toMatchObject({ status: "VALID", evidence: { ocrReadings } });
+    const decoded = decodeSeal(sealed.seals[0]);
+    for (const altered of [[{ line: 0, observed: "TotaI 50.00" }], [{ line: 1, observed: "TotaI 50.01" }]]) {
+      const forged = sealString(encodeEnvelope(decoded, decoded.signature, encodePageEvidence({ ...base, layout, ocrReadings: altered }), "plaintext"));
+      expect((await verifyQRedSeals([forged], publicKey)).status).toBe("INVALID");
+    }
+    expect(() => encodePageEvidence({ ...base, layout: { mode: 2, lines }, ocrReadings })).toThrow();
+    for (const entries of [[...ocrReadings, ...ocrReadings], [{ line: 2, observed: "extra" }], [{ line: 0, observed: " " }]]) {
+      expect(() => encodePageEvidence({ ...base, layout, ocrReadings: entries })).toThrow();
+    }
+    expect(() => decodePageEvidence(bytes.subarray(0, bytes.length - 1))).toThrow();
+  });
   it("stores blank pages in seven bytes and distinguishes them from images", () => {
     const bytes = encodePageEvidence({ width: 612, height: 792, blank: true });
     expect(bytes.length).toBe(7);

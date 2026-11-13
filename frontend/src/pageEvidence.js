@@ -34,12 +34,14 @@ function dimension(value) {
 }
 function quantize(value, maximum) { return Math.round(Math.max(0, Math.min(1, value)) * maximum); }
 
-export function encodePageEvidence({ text = "", width, height, blank = false, layout = null, visual = null }) {
+export function encodePageEvidence({ text = "", width, height, blank = false, layout = null, visual = null, ocrReadings = [] }) {
   const textBytes = utf8.encode(text);
   const mode = layout?.mode || 0;
   if (textBytes.length > MAX_SEAL_TEXT_BYTES || ![0, 1, 2, 3].includes(mode)) throw new Error("Invalid page evidence");
   if (blank && (text || visual || mode) || !blank && !text.trim() && !visual) throw new Error("A nonblank page needs text or a visual reference");
-  const parts = [new Uint8Array([1, (blank ? 1 : 0) | (visual ? 2 : 0) | (mode << 2)]),
+  if (!Array.isArray(ocrReadings) || ocrReadings.length > 512 || (ocrReadings.length && mode !== 3))
+    throw new Error("Invalid source OCR readings");
+  const parts = [new Uint8Array([1, (blank ? 1 : 0) | (visual ? 2 : 0) | (mode << 2) | (ocrReadings.length ? 16 : 0)]),
     word(dimension(width)), word(dimension(height)), varint(textBytes.length), textBytes];
   if (mode) {
     const lines = layout.lines;
@@ -58,6 +60,18 @@ export function encodePageEvidence({ text = "", width, height, blank = false, la
       columns < 1 || columns > 255 || rows < 1 || rows > 255 || columns * rows > MAX_VISUAL_TILES ||
       !(indices instanceof Uint8Array) || indices.length !== columns * rows) throw new Error("Invalid visual reference");
     parts.push(new Uint8Array([CODEBOOK_ID, columns, rows]), indices);
+  }
+  if (ocrReadings.length) {
+    parts.push(varint(ocrReadings.length));
+    let previous = -1;
+    for (const { line, observed } of ocrReadings) {
+      if (!Number.isInteger(line) || line <= previous || line >= layout.lines.length ||
+          typeof observed !== "string" || !observed.trim() || /[\p{Cc}]/u.test(observed))
+        throw new Error("Invalid source OCR reading");
+      const encoded = utf8.encode(observed);
+      if (encoded.length > 1024) throw new Error("Source OCR reading is too long");
+      parts.push(varint(line - previous - 1), varint(encoded.length), encoded); previous = line;
+    }
   }
   const bytes = concatenate(parts);
   if (bytes.length > MAX_SEAL_TEXT_BYTES) throw new Error("Page evidence exceeds the 8 MiB limit");
@@ -84,8 +98,8 @@ export function decodePageEvidence(bytes) {
   };
   if (byte() !== 1) throw new Error("Unsupported page evidence format");
   const flags = byte();
-  if (flags & ~15) throw new Error("Unsupported page evidence flags");
-  const blank = Boolean(flags & 1), mode = flags >> 2;
+  if (flags & ~31) throw new Error("Unsupported page evidence flags");
+  const blank = Boolean(flags & 1), mode = (flags >> 2) & 3;
   const width = uint16(), height = uint16();
   if (!width || !height) throw new Error("Invalid page dimensions");
   const text = strictUtf8.decode(read(uint()));
@@ -105,8 +119,22 @@ export function decodePageEvidence(bytes) {
     if (codebook !== CODEBOOK_ID || !columns || !rows || columns * rows > MAX_VISUAL_TILES) throw new Error("Unsupported visual reference");
     visual = { codebook, columns, rows, indices: read(columns * rows).slice() };
   }
+  const ocrReadings = [];
+  if (flags & 16) {
+    const count = uint();
+    if (mode !== 3 || !count || count > Math.min(512, layout.lines.length)) throw new Error("Invalid source OCR readings");
+    let line = -1;
+    for (let i = 0; i < count; i++) {
+      line += 1 + uint();
+      const length = uint();
+      if (line >= layout.lines.length || !length || length > 1024) throw new Error("Invalid source OCR reading");
+      const observed = strictUtf8.decode(read(length));
+      if (!observed.trim() || /[\p{Cc}]/u.test(observed)) throw new Error("Invalid source OCR reading");
+      ocrReadings.push({ line, observed });
+    }
+  }
   if (offset !== bytes.length || blank && (text || layout || visual) || !blank && !text.trim() && !visual) throw new Error("Invalid page evidence");
-  return { text, width, height, blank, layout, visual };
+  return { text, width, height, blank, layout, visual, ...(ocrReadings.length ? { ocrReadings } : {}) };
 }
 
 // Area averaging preserves the overall ink/shade of a cell before VQ. Avoid

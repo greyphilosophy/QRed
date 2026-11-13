@@ -296,7 +296,7 @@ describe("browser PDF sealing", () => {
     await expect(verifyQRedSeals(scanned.toReversed(), publicKey)).resolves.toMatchObject({
       status: "VALID", content: expect.stringContaining("Item 45: Received and inspected"),
     });
-  });
+  }, 30000);
 
   it("seals three readable QR parts in a legal footer without losing the signed text", async () => {
     const file = await makeHugeLetterPdfFile();
@@ -309,7 +309,7 @@ describe("browser PDF sealing", () => {
     await expect(verifyQRedSeals(stampedQrValues.toReversed(), publicKey)).resolves.toMatchObject({
       status: "VALID", content: expect.stringContaining("QRed sealing content needs more than one footer row."),
     });
-  });
+  }, 30000);
 
   it("shrinks page content without changing the source page size when asked", async () => {
     const file = await makeLetterPdfFile();

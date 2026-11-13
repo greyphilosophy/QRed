@@ -1,14 +1,11 @@
 import { createWorker } from "tesseract.js";
+import { DOCUMENT_OCR_PARAMETERS, openLocalOcrWorker, recognizedWords } from "../ocrEngine.js";
 import { captionLineCandidates, comparePageReading, isPrintedCaption, preparePhotoReading } from "./photoReading.js";
 import { signedPhotoLines } from "./photoTextLayout.js";
 import { applyTextRetries, planTextRetries, TEXT_RETRY_MS, TEXT_RETRY_PIXELS } from "./photoOcrRetry.js";
 import { needsPageReread, pageReadingCanvas, preferPageReread } from "./photoOcrFallback.js";
 import { spacePhotoLine } from "./photoLineSpacing.js";
 import { dateReadingCanvas } from "./photoDateField.js";
-
-// These versioned resources are copied from locked dependencies at build time.
-// Never use Tesseract's default CDN paths: all resources belong to this origin.
-export const OCR_ASSET_PATH = "/ocr/v1";
 
 export function createPhotoOcrReader(workerFactory = createWorker, prepareImage = preparePhotoReading) {
   let worker = null, pending = null, generation = 0;
@@ -20,15 +17,7 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
     if (worker) return worker;
     if (!pending) {
       const epoch = generation;
-      pending = workerFactory("eng", 1, {
-        workerPath: `${OCR_ASSET_PATH}/worker.min.js`,
-        corePath: OCR_ASSET_PATH,
-        langPath: OCR_ASSET_PATH,
-        workerBlobURL: false,
-        cacheMethod: "none", // No separate persistent OCR/document storage.
-        logger: event => { if (epoch === generation) progress(event); },
-        errorHandler: () => {}, // Errors reject the API promise; don't also throw globally.
-      }).then(async next => {
+      pending = openLocalOcrWorker(workerFactory, event => { if (epoch === generation) progress(event); }).then(async next => {
         if (epoch !== generation) { await next.terminate(); throw new Error("Reading cancelled."); }
         worker = next;
         // A pale watermark can dominate a page-wide threshold and turn the
@@ -36,7 +25,7 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
         // original pixels, including faint additions, without a second pass.
         // A less aggressive factor retains light-gray additions that the
         // engine's default Sauvola factor can discard beside a watermark.
-        await next.setParameters({ tessedit_pageseg_mode: "3", thresholding_method: "2", thresholding_kfactor: "0.2" });
+        await next.setParameters(DOCUMENT_OCR_PARAMETERS);
         return next;
       }).catch(error => {
         if (epoch === generation) { pending = null; worker?.terminate(); worker = null; }
@@ -62,9 +51,7 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
         const { data } = await current.recognize(image, {}, { text: true, blocks: true });
         controller.signal.throwIfAborted();
         onProgress({ status: "processing" });
-        return (data.blocks || []).flatMap((block, b) => (block.paragraphs || [])
-          .flatMap((paragraph, p) => (paragraph.lines || []).flatMap((line, l) => (line.words || [])
-            .map(({ text, confidence, bbox }) => ({ text, confidence, bbox, lineId: `${pass}:${b}:${p}:${l}` })))));
+        return recognizedWords(data, pass);
       };
       const controller = new AbortController();
       preprocessing = controller;

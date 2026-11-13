@@ -27,13 +27,14 @@ export function signedPhotoLayout(text, evidence, corners, { width, height }, wo
     || box.x + box.width > 1.001 || box.y + box.height > 1.001)) return null;
   const adjustment = words.length ? printAdjustment(lines, evidence.layout.lines, words, mapping) : null;
   const project = (x, y) => adjustment ? mapping(x * adjustment.scale + adjustment.x, y * adjustment.scale + adjustment.y) : mapping(x, y);
+  const readings = new Map((evidence.ocrReadings || []).map(entry => [entry.line, entry.observed]));
   const result = [];
   for (let i = 0; i < lines.length; i++) {
     const box = evidence.layout.lines[i];
     const polygon = [[box.x, box.y], [box.x + box.width, box.y],
       [box.x + box.width, box.y + box.height], [box.x, box.y + box.height]].map(([x, y]) => project(x, y));
     const bounds = enclosingBox(polygon.map(p => ({ x0: p.x, y0: p.y, x1: p.x, y1: p.y })));
-    result.push({ text: lines[i], polygon, bbox: bounds, wordIndices: [] });
+    result.push({ text: lines[i], polygon, bbox: bounds, wordIndices: [], sourceReading: readings.get(i) });
   }
   // A page border alone cannot establish the position of printed content.
   // Without a calibrated print transform, require several independently read
@@ -176,7 +177,18 @@ export function compareLocatedPhotoText(expected, words, dimensions, lines) {
   for (const line of assigned) {
     const indices = line.wordIndices;
     indices.forEach(index => used.add(index));
-    const comparison = comparePhotoText(line.text, indices.map(index => words[index]), dimensions);
+    const observed = indices.map(index => words[index]);
+    const comparison = comparePhotoText(line.text, observed, dimensions);
+    const repeated = line.sourceReading && observed.map(word => word.text).join(" ").normalize("NFC") === line.sourceReading.normalize("NFC");
+    if (repeated) {
+      for (const difference of comparison.differences) {
+        // Repeating an ambiguous numeral still calls for a visual check of
+        // the value. A different reading, even on this line, has no exemption.
+        const numeric = /[\p{N}\p{Sc}%]/u.test(difference.expected + difference.observed);
+        difference.review = numeric ? "number" : "sourceOcr";
+        difference.sourceReading = line.sourceReading;
+      }
+    }
     const first = words[indices[0]];
     const weakStart = first?.bbox && first.confidence < OCR_REVIEW_THRESHOLD &&
       Math.abs(first.bbox.x0 - line.bbox.x0) < (line.bbox.y1 - line.bbox.y0) * .25;

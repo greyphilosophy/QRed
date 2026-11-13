@@ -37,6 +37,17 @@ export async function planPageEvidence(page, { attested = false, multiple = fals
       if (candidate) { record.layout = layout; chosen = candidate; break; }
     }
   }
+  // Before spending the remainder on a thumbnail, bind observed readings
+  // to exact line boxes. Respect the existing no-extra-QR evidence budget.
+  if (record.layout?.mode === 3 && lines.length <= 512 && page.ocrReadings?.length) {
+    let start = 1, end = Math.min(512, page.ocrReadings.length);
+    while (start <= end) {
+      const count = Math.floor((start + end) / 2), ocrReadings = page.ocrReadings.slice(0, count);
+      const candidate = await fits({ ...record, ocrReadings });
+      if (candidate) { record.ocrReadings = ocrReadings; chosen = candidate; start = count + 1; }
+      else end = count - 1;
+    }
+  }
   for (const tiles of [4096, 3072, 2304, 1728, 1296, 972, 729, 486, 324, 192, 96, 32]) {
     const aspect = width / height;
     const columns = Math.max(1, Math.min(255, Math.floor(Math.sqrt(tiles * aspect))));
