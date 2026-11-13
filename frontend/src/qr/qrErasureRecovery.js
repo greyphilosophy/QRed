@@ -265,9 +265,9 @@ function solveBitErasures(block, erasedBits, parityBytes) {
   return syndromes(corrected, parityBytes).every(value => value === 0) ? corrected : null;
 }
 
-// Eliminate the uncertain bits, then find which measured column reproduces
-// the remaining syndrome. A ranked photo retry can also test pairs when
-// enough independent constraints remain to rule out ambiguous corrections.
+// Eliminate the uncertain bits, then find which measured columns reproduce
+// the remaining syndrome. Ranked photo retries can test pairs and triples
+// when enough independent parity checks remain to reject ambiguous solutions.
 function solveBitErasuresWithOutliers(block, erasedBits, parityBytes, ranked = null, shouldContinue = () => true) {
   const count = erasedBits.length, equations = parityBytes * 8;
   // Keep spare parity constraints for locating the unexpected error. The
@@ -344,6 +344,25 @@ function solveBitErasuresWithOutliers(block, erasedBits, parityBytes, ranked = n
         if (b <= a || !consistent([a, b])) continue;
         if (outliers) return null;
         outliers = [a, b];
+      }
+    }
+    if (!outliers && residual.length >= 48) {
+      // Try two of the next 48 least reliable bits. Each pair determines
+      // the signature of the third, which may be anywhere in this block.
+      // This costs at most 1,128 lookups. Confirm all residual equations.
+      const limit = Math.min(count + 48, ranked.length);
+      for (let a = count; a < limit; a++) {
+        if (!shouldContinue()) return null;
+        const remainder = target ^ signatures[a];
+        for (let b = a + 1; b < limit; b++) {
+          const matches = bySignature.get(remainder ^ signatures[b]);
+          if (!matches) continue;
+          for (const c of matches) {
+            if (c <= b || !consistent([a, b, c])) continue;
+            if (outliers) return null;
+            outliers = [a, b, c];
+          }
+        }
       }
     }
   }

@@ -4,7 +4,7 @@ import { createQRedQrSymbol, createQRedQrData } from "../qredQr.js";
 import { encodeChunk, sealString } from "../sealFormat.js";
 import { bytePayloadFromCodewords, qredPayloadFromScanResult } from "./qrPayload.js";
 import { readErasedQrMatrix, recoverBitErasedDataCodewords, recoverErasedDataCodewords } from "./qrErasureRecovery.js";
-import { codewordsFromMatrix, EC_BLOCKS_BY_LEVEL } from "./qrLowLevel.js";
+import { codewordsFromMatrix, EC_BLOCKS_BY_LEVEL, EC_CODEWORDS_BY_LEVEL } from "./qrLowLevel.js";
 
 function fixture() {
   const payload = new Uint8Array(720);
@@ -152,7 +152,7 @@ describe("QR Reed-Solomon erasure-aware recovery", () => {
     })).toBe(qr.seal);
   });
 
-  it("uses independent parity checks for two misread bits beyond the ranked erasures", () => {
+  it.each([2, 3, 4])("checks the parity evidence for %i misread bits beyond the ranked erasures", outliers => {
     const qr = fixture(), version = qr.symbol.version, bits = qr.bits.slice();
     const unknown = new Uint8Array(bits.length), reliability = new Float32Array(bits.length).fill(1);
     const blockCount = EC_BLOCKS_BY_LEVEL[1][version], firstBlock = [];
@@ -169,22 +169,25 @@ describe("QR Reed-Solomon erasure-aware recovery", () => {
       }
       upward = !upward;
     }
-    // Many ordinary byte errors, plus two observations ranked beyond every
-    // erasure budget. Spread the weak bits over separate codewords.
+    // Spread erased bits over enough codewords to exhaust ordinary byte correction.
     const weak = firstBlock.filter((_, i) => i % 8 === 0).slice(0, 70);
     for (const at of weak) { bits[at] ^= 1; unknown[at] = 1; reliability[at] = .02; }
-    for (const at of [firstBlock[1], firstBlock[11]]) {
-      bits[at] ^= 1; unknown[at] = 1; reliability[at] = .5;
-    }
-    // Known outliers must lie beyond the erased subset even when the
-    // candidate list is shorter than the parity budget.
-    for (const at of firstBlock.slice(0, 282)) {
+    const equations = 8 * EC_CODEWORDS_BY_LEVEL[1][version] / blockCount;
+    const erasedCount = equations - 48;
+    const ranked = [...weak, ...firstBlock.filter(at => !unknown[at])];
+    // Include confidently measured errors beyond every erasure budget. For
+    // the triple, two sit just outside the largest parity reserve, and one
+    // falls outside the ranked list entirely.
+    const ranks = [erasedCount + 26, erasedCount + 41, erasedCount + 300, erasedCount + 420];
+    for (const rank of ranks.slice(0, outliers)) bits[ranked[rank]] ^= 1;
+    for (const [rank, at] of ranked.slice(0, erasedCount + 230).entries()) {
       if (unknown[at]) continue;
-      unknown[at] = 1; reliability[at] = .2;
+      unknown[at] = 1; reliability[at] = 1 + rank / ranked.length;
     }
     const decode = rankedOutliers => readErasedQrMatrix(bits, unknown, version, null, { bitReliability: reliability, rankedOutliers });
     expect(decode(false)).toBeNull();
     const fixed = decode(true);
+    if (outliers === 4) { expect(fixed).toBeNull(); return; }
     expect(qredPayloadFromScanResult(fixed && { data: "", version,
       binaryData: bytePayloadFromCodewords(fixed.dataCodewords, version) })).toBe(qr.seal);
   });

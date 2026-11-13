@@ -237,6 +237,12 @@ QR parity block. This retry shares the photo deadline. A completed miss is
 skipped on later attempts with the same page layout, while an interrupted read
 can resume in a later budget.
 
+If three misread modules remain in a block after erasures, the reader can
+try two of its next 48 least reliable observations and locate the third from
+the parity equations. This search runs only after the single and pair checks
+miss and at least 48 independent parity checks remain. It rejects multiple
+matching triples and verifies the corrected block before returning its bytes.
+
 A bend confined to one corner can move genuine alignment marks outside the
 flat-page fit. After the exposed-pixel read misses, a strong displaced mark
 can extend the measured trend along its row or column. A cubic fit through
