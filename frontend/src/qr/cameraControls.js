@@ -9,11 +9,21 @@ export const QR_CAMERA_CONSTRAINTS = {
 };
 
 export function findPreferredMainCamera(devices = []) {
-  const rear = devices.filter(device => device.kind === "videoinput"
-    && /back|rear|environment/i.test(device.label || "")
-    && !/front|ultra|telephoto|zoom|\b[2-9](?:\.\d+)?x\b|\b0\.\d+x\b/i.test(device.label || ""));
-  return rear.find(device => /main|primary|\b1x\b/i.test(device.label))
-    || rear.find(device => /wide/i.test(device.label)) || null;
+  const rear = [];
+  for (const device of devices) {
+    if (device.kind !== "videoinput" || !device.deviceId) continue;
+    const label = device.label || "";
+    if (/front|ultra|telephoto|zoom|macro|depth|\b(?:[2-9]|\d{2,})(?:\.\d+)?\s*[x×]|\b0\.\d+\s*[x×]/i.test(label)) continue;
+    let capabilities;
+    try { capabilities = device.getCapabilities?.(); } catch { /* Optional after camera permission. */ }
+    if (!/back|rear|environment/i.test(label) && !capabilities?.facingMode?.includes("environment")) continue;
+    rear.push({ device, label, autofocus: capabilities?.focusMode?.includes("continuous") });
+  }
+  // Some Android browsers expose only numbered rear cameras. Prefer a lens
+  // with autofocus, then the browser's listed order, without guessing an ID.
+  const preferred = rear.find(item => /main|primary|\b1(?:\.0+)?x\b/i.test(item.label))
+    || rear.find(item => /wide/i.test(item.label)) || rear.find(item => item.autofocus) || rear[0];
+  return preferred?.device || null;
 }
 
 // Lens discovery is optional. Some browsers defer it until the tab regains focus.
@@ -45,7 +55,8 @@ export async function getPreferredCameraStream(mediaDevices = navigator.mediaDev
     signal?.throwIfAborted();
     const [track] = stream.getVideoTracks?.() || [];
     const initialId = track?.getSettings?.().deviceId;
-    if (!preferred?.deviceId || preferred.deviceId === initialId || track?.label === preferred.label) return stream;
+    if (!preferred?.deviceId || preferred.deviceId === initialId ||
+        (!initialId && preferred.label && track?.label === preferred.label)) return stream;
 
     // A phone may only open one rear lens at a time. Reacquire the original
     // camera if the advertised main lens cannot be opened.

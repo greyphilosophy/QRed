@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createPageCaptureGate, inspectPageFrame, STEADY_CAPTURE_MS } from "./pageCaptureQuality.js";
+import { createPageCaptureGate, dimPageScanFeedback, inspectPageFrame, STEADY_CAPTURE_MS } from "./pageCaptureQuality.js";
 
 function paper({ x = 90, y = 100, width = 600, height = 800, desk = 55, ink = false, blur = 0 } = {}) {
   const image = { width: 800, height: 1000, data: new Uint8ClampedArray(800 * 1000 * 4) };
@@ -61,6 +61,22 @@ function mixedLighting({ smallPage = false } = {}) {
 }
 
 describe("automatic whole-page capture", () => {
+  it("guides a dim watermark into better light and captures as soon as exposure recovers", () => {
+    const dim = fabricPrint(), bright = fabricPrint(), gate = createPageCaptureGate();
+    for (let i = 0; i < dim.data.length; i += 4)
+      for (let c = 0; c < 3; c++) dim.data[i+c] = Math.round(.67 * dim.data[i+c]);
+    for (const t of [0, 150, 300, 450]) {
+      const value = gate.update(dim, t, { captureOnly: true });
+      expect(value).toMatchObject({ state: "dark", ready: false });
+      expect(value.message).toContain("Add light");
+    }
+    expect([600, 750, 900].map(t => gate.update(bright, t, { captureOnly: true }).state)).toEqual(["hold", "hold", "ready"]);
+    const paperMap = (u,v) => ({ x: (u * .73 + .14) * dim.width, y: (v * .78 + .08) * dim.height });
+    expect(dimPageScanFeedback(dim, paperMap)).toContain("The page looks dim");
+    expect(dimPageScanFeedback(bright, paperMap)).toBeNull();
+    expect(dimPageScanFeedback(dim, null)).toBeNull();
+  });
+
   it("captures a full sheet when a color cast makes only the center look like paper", () => {
     const image = mixedLighting();
     const quality = inspectPageFrame(image, { captureOnly: true });

@@ -14,6 +14,8 @@ const MAX_CORNER_DRIFT = .012;
 const MAX_FRAME_GAP_MS = 1500;
 const PAGE_CORNERS = [[0, 0], [1, 0], [1, 1], [0, 1]];
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const DIM_PAPER_LEVEL = 125;
+const MORE_LIGHT = "Add light across the page or move it to a brighter spot.";
 
 function insideFrame(corners, margin) {
   return corners.every(p => p.x >= margin && p.y >= margin && p.x <= 1 - margin && p.y <= 1 - margin);
@@ -107,6 +109,19 @@ function samplePage(image, corners) {
   return values;
 }
 
+function paperBrightness(samples) {
+  return percentile([...samples], .8);
+}
+
+// The decoder already located this sheet. Sample the paper only after a failed
+// read so dark furniture and borders cannot turn a clear page into a lighting warning.
+export function dimPageScanFeedback(image, mapping) {
+  if (!mapping) return null;
+  const corners = PAGE_CORNERS.map(([u, v]) => mapping(u, v));
+  return paperBrightness(samplePage(image, corners)) < DIM_PAPER_LEVEL
+    ? `No readable seal found. The page looks dim. ${MORE_LIGHT} Retake the full page with all four corners in view.` : null;
+}
+
 function pageContentChanged(samples, corners, anchor, captured) {
   const reference = anchor.samples;
   const difference = samples.reduce((sum, value, i) => sum + Math.abs(value - reference[i]), 0) / samples.length;
@@ -142,8 +157,9 @@ function assessOutline(image, corners, captureOnly, margin, mapping) {
   if (Math.min(width, height) < minimumSide || width * height < image.width * image.height * .28)
     return { state: "small", message: "Move closer while keeping all four corners visible.", corners };
   const samples = samplePage(image, pixels);
-  if (percentile([...samples], .8) < 65)
-    return { state: "dark", message: "More light may help. You can also use Capture now.", corners };
+  if (paperBrightness(samples) < DIM_PAPER_LEVEL)
+    return { state: "dark", message: `The page looks dim. ${MORE_LIGHT} You can also use Capture now.`,
+      corners, consistent: mapping ? measureBoundary(image, pixels, mapping).consistent : undefined };
   const { sharpness, consistent } = measureBoundary(image, pixels, mapping);
   if (sharpness < .45)
     return { state: "soft", message: "The page edges look soft. Hold steady for focus, or use Capture now.", corners, sharpness };
@@ -155,11 +171,11 @@ export function inspectPageFrame(image, { captureOnly = false } = {}, margin = F
     return { state: "framing", message: "Waiting for camera frames…", corners: null };
   const small = preview(image);
   const found = locatePaper({ ...small, paperColor: estimatePaperColor(small) });
-  if (!found) return { state: "framing", message: "Show all four page corners. Try a contrasting background, or use Capture now.", corners: null };
-  const corners = found.map(p => ({ x: p.x / small.width, y: p.y / small.height }));
-  const initial = assessOutline(image, corners, captureOnly, margin);
+  const corners = found?.map(p => ({ x: p.x / small.width, y: p.y / small.height }));
+  const initial = corners ? assessOutline(image, corners, captureOnly, margin)
+    : { state: "framing", message: "Show all four page corners. Try a contrasting background, or use Capture now.", corners: null };
   const ambiguous = initial.state === "clear" && !initial.consistent;
-  if (!captureOnly || (!ambiguous && initial.state !== "soft" && initial.state !== "small")) return initial;
+  if (!captureOnly || (initial.state !== "framing" && !ambiguous && initial.state !== "soft" && initial.state !== "small")) return initial;
   if (initial.state === "small") {
     const pixels = corners.map(p => ({ x: p.x * image.width, y: p.y * image.height }));
     if (measureBoundary(image, pixels).consistent) return initial;
@@ -173,7 +189,8 @@ export function inspectPageFrame(image, { captureOnly = false } = {}, margin = F
     return { x: p.x / image.width, y: p.y / image.height };
   });
   const curved = assessOutline(image, curvedCorners, captureOnly, margin, mapping);
-  return curved.state === "clear" && (!ambiguous || curved.consistent) ? curved : initial;
+  if (curved.state === "dark" && curved.consistent) return curved;
+  return curved.state === "clear" && (curved.consistent || (!ambiguous && initial.state !== "framing")) ? curved : initial;
 }
 
 export function createPageCaptureGate() {
