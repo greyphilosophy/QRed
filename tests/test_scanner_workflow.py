@@ -92,6 +92,12 @@ def camera_frames(printed, *, degraded=False, preview_size=(768, 960)):
         "soft": preview.filter(ImageFilter.GaussianBlur(5)),
         "clipped": paper.resize(preview_size, Image.Resampling.LANCZOS),
     }
+    if degraded:
+        # Blur the middle of the sheet while its four edges remain sharp.
+        soft_print = preview.copy()
+        box = (preview.width // 8, preview.height // 8, preview.width * 7 // 8, preview.height * 7 // 8)
+        soft_print.paste(preview.crop(box).filter(ImageFilter.GaussianBlur(1.8)), box)
+        frames["soft-print"] = soft_print
     urls = {}
     for name, image in frames.items():
         encoded = io.BytesIO()
@@ -213,8 +219,10 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
             page.wait_for_timeout(800)
             assert page.evaluate("__syntheticStillRequests.length") == 0
         # End on a clipped frame so the next page must qualify from scratch.
-        for mode, advice in [("soft", "edges look soft"), ("moving", "Keep the page in view"),
-                             ("clipped", "four page corners")]:
+        rejected = [("soft", "edges look soft"), ("moving", "Keep the page in view"), ("clipped", "four page corners")]
+        if degraded:
+            rejected.insert(1, ("soft-print", "printing looks blurry"))
+        for mode, advice in rejected:
             page.evaluate("mode => __showWorkflowFrame(mode)", mode)
             expect(guide).to_contain_text(advice, timeout=10000)
             before = page.evaluate("__documentScanRequests.filter(request => request.live).length")

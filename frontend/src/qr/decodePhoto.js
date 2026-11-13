@@ -3,7 +3,7 @@ import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
 import { scanFooterSeals } from "./footerSealScan.js";
 import { createRectifiedSealScanner, prepareCurvedPageScan } from "./rectifiedSealScan.js";
-import { dimPageScanFeedback } from "./pageCaptureQuality.js";
+import { pageScanQualityFeedback } from "./pageCaptureQuality.js";
 import { isQRedEntryLink, qredPayloadFromScanResult } from "./qrPayload.js";
 import { decodeSeal, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult,
   qredTextFromScanResult } from "../qredVerifier.js";
@@ -135,7 +135,7 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
   const code = shouldContinue() ? attempt("general-qr", () => scanQrImage(data, width, height,
     { shouldContinue, ...(onStage ? { onStage: reportStage } : {}) })) : null;
   if (code?.codes) return qrFrameAction(image, code, { returnPayload });
-  if (!code) return { status: "feedback", message: dimPageScanFeedback(image, straightMapping) ||
+  if (!code) return { status: "feedback", message: pageScanQualityFeedback(image, straightMapping) ||
     "No readable seal found. Include all four page corners against a contrasting background, hold steady, and avoid glare. For footer seals, try framing the individual QR instead." };
   const text = qredTextFromScanResult(code);
   if (isQRedEntryLink(text)) {

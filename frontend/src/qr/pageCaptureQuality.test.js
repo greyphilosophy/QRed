@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createPageCaptureGate, dimPageScanFeedback, inspectPageFrame, STEADY_CAPTURE_MS } from "./pageCaptureQuality.js";
+import { createPageCaptureGate, pageScanQualityFeedback, inspectPageFrame, STEADY_CAPTURE_MS } from "./pageCaptureQuality.js";
 
 function paper({ x = 90, y = 100, width = 600, height = 800, desk = 55, ink = false, blur = 0 } = {}) {
   const image = { width: 800, height: 1000, data: new Uint8ClampedArray(800 * 1000 * 4) };
@@ -61,6 +61,64 @@ function mixedLighting({ smallPage = false } = {}) {
 }
 
 describe("automatic whole-page capture", () => {
+  it("waits for sharp printing inside an already sharp page outline", () => {
+    const preview = soft => {
+      const image = paper();
+      for (let y = 170; y < 830; y++) for (let x = 145; x < 630; x++) {
+        const distance = Math.cos(x * Math.PI / 10);
+        const value = soft ? 165 + 78 * distance : distance > 0 ? 243 : 87;
+        const i = 4 * (y * image.width + x);
+        image.data.fill(value, i, i + 3);
+      }
+      return image;
+    };
+    const gate = createPageCaptureGate(), soft = preview(true), sharp = preview(false);
+    for (const t of [0, 150, 300, 450]) {
+      const quality = gate.update(soft, t, { captureOnly: true });
+      expect(quality).toMatchObject({ state: "soft", ready: false });
+      expect(quality.message).toContain("printing looks blurry");
+    }
+    const mapping = (u, v) => ({ x: 90 + 600 * u, y: 100 + 800 * v });
+    expect(pageScanQualityFeedback(soft, mapping)).toContain("printing looks blurry");
+    expect(pageScanQualityFeedback(sharp, mapping)).toBeNull();
+    expect([600, 750, 900].map(t => gate.update(sharp, t, { captureOnly: true }).state))
+      .toEqual(["hold", "hold", "ready"]);
+  });
+
+  it("asks to center a page with a large unused lower margin, then captures a closer page", () => {
+    const high = paper({ x: 105, y: 35, width: 590, height: 710 });
+    const close = paper({ x: 55, y: 55, width: 685, height: 890 });
+    const gate = createPageCaptureGate();
+    for (const t of [0, 150, 300]) {
+      const quality = gate.update(high, t, { captureOnly: true });
+      expect(quality).toMatchObject({ state: "small", ready: false });
+      expect(quality.message).toContain("Center the page");
+    }
+    expect([450, 600, 750].map(t => gate.update(close, t, { captureOnly: true }).state))
+      .toEqual(["hold", "hold", "ready"]);
+    expect(pageScanQualityFeedback(high, (u, v) => ({ x: 105 + 590 * u, y: 35 + 710 * v }))).toContain("Center the page");
+  });
+
+  it("does not capture an interior printed grid when the sheet fills the entire frame", () => {
+    const width = 360, height = 480, data = new Uint8ClampedArray(width * height * 4).fill(255);
+    for (let y = 35; y < 440; y++) for (let x = 33; x < 325; x++) {
+      const ink = (Math.imul(Math.floor(x / 3), 73856093) ^ Math.imul(Math.floor(y / 3), 19349663)) & 16;
+      const i = (y * width + x) * 4;
+      data.fill(ink ? 164 : 253, i, i + 3);
+    }
+    // Repeat ink patches through the center of the print, leaving a white border.
+    for (let row = 3; row <= 7; row++) for (let col = 3; col <= 7; col++) {
+      const cx = Math.round((width - 1) * col / 10), cy = Math.round((height - 1) * row / 10);
+      for (let y = cy - 1; y <= cy + 1; y++) for (let x = cx - 1; x <= cx + 1; x++) {
+        const i = (y * width + x) * 4;
+        data.fill(164, i, i + 3);
+      }
+    }
+    const gate = createPageCaptureGate();
+    for (const t of [0, 150, 300, 450])
+      expect(gate.update({ width, height, data }, t, { captureOnly: true })).toMatchObject({ state: "framing", ready: false });
+  });
+
   it("guides a dim watermark into better light and captures as soon as exposure recovers", () => {
     const dim = fabricPrint(), bright = fabricPrint(), gate = createPageCaptureGate();
     for (let i = 0; i < dim.data.length; i += 4)
@@ -72,9 +130,9 @@ describe("automatic whole-page capture", () => {
     }
     expect([600, 750, 900].map(t => gate.update(bright, t, { captureOnly: true }).state)).toEqual(["hold", "hold", "ready"]);
     const paperMap = (u,v) => ({ x: (u * .73 + .14) * dim.width, y: (v * .78 + .08) * dim.height });
-    expect(dimPageScanFeedback(dim, paperMap)).toContain("The page looks dim");
-    expect(dimPageScanFeedback(bright, paperMap)).toBeNull();
-    expect(dimPageScanFeedback(dim, null)).toBeNull();
+    expect(pageScanQualityFeedback(dim, paperMap)).toContain("The page looks dim");
+    expect(pageScanQualityFeedback(bright, paperMap)).toBeNull();
+    expect(pageScanQualityFeedback(dim, null)).toBeNull();
   });
 
   it("captures a full sheet when a color cast makes only the center look like paper", () => {
