@@ -123,6 +123,18 @@ function recoverExposed(image, moduleMap, version, shouldContinue, inner = false
   return recoverSampledQrMatrix(exposed, moduleMap, version, { bitReliability: exposed.reliability, shouldContinue });
 }
 
+function recoverShadowedGrid(image, initialMap, version, shouldContinue) {
+  if (!initialMap || !shouldContinue()) return null;
+  const map = refineShadowGrid(image, initialMap, version, shouldContinue);
+  if (!map || !shouldContinue()) return null;
+  const size = 17 + 4 * version;
+  const observed = classifyShadowedModules(sampleGrid(image, map, size, shouldContinue), size, shouldContinue);
+  if (!observed || !shouldContinue()) return null;
+  return recoverSampledQrMatrix(observed, map, version, {
+    bitReliability: observed.reliability, rankedOutliers: true, shouldContinue,
+  });
+}
+
 // Share only measured preparation within one frozen photo request. The wider
 // retry must not rebuild the same page warp, normalized pixels and finder
 // observations after the earlier narrow search has already paid for them.
@@ -153,7 +165,8 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
       prepared.set(profile, null); return null;
     }
     const thresholds = [...new Set([230, measuredThreshold(gray, corners)])];
-    const candidate = { working, gray, version, gridMap, thresholds, weakFinder: strong < 3, needsAlignmentEvidence: strong < 2, triedExposed: false, bentRadius: null };
+    const candidate = { working, gray, version, gridMap, thresholds, weakFinder: strong < 3,
+      needsAlignmentEvidence: strong < 2, triedExposed: false, triedShadow: false, bentRadius: null };
     prepared.set(profile, candidate);
     return candidate;
   }
@@ -184,18 +197,9 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
         // finder pitches and independently remeasured public patterns agree.
         if (foregroundRobust && grid?.bendAnchors && grid.quality >= .5 &&
             (candidate.needsAlignmentEvidence || grid.quality < .66)) {
-          const size = 17 + 4 * version;
-          const bent = bentModuleGrid(grid.bendAnchors, working.toPhoto, size, shouldContinue);
-          const map = bent && refineShadowGrid(image, bent, version, shouldContinue);
-          if (map && shouldContinue()) {
-            const observed = classifyShadowedModules(sampleGrid(image, map, size, shouldContinue), size, shouldContinue);
-            if (observed && shouldContinue()) {
-              const recovered = recoverSampledQrMatrix(observed, map, version, {
-                bitReliability: observed.reliability, rankedOutliers: true, shouldContinue,
-              });
-              if (recovered) return recovered;
-            }
-          }
+          const bent = bentModuleGrid(grid.bendAnchors, working.toPhoto, 17 + 4 * version, shouldContinue);
+          const recovered = recoverShadowedGrid(image, bent, version, shouldContinue);
+          if (recovered) return recovered;
         }
         if (candidate.needsAlignmentEvidence || !grid || grid.quality < 0.66) continue;
         // Prefer the observed finders when extrapolation moved by half a module.
@@ -207,26 +211,32 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
             const p = moduleMap(col, row);
             return working.toPhoto(p.x, p.y);
           };
-          const tryExposed = () => {
+          const tryNativeContrast = () => {
             if (!foregroundRobust || grid.quality < .8 || !shouldContinue()) return null;
             if (!candidate.triedExposed) {
               const recovered = recoverExposed(image, photoMap, version, shouldContinue);
               if (recovered || !shouldContinue()) return recovered;
               candidate.triedExposed = true;
             }
-            if (!grid.bendAnchors || candidate.bentRadius === searchRadius) return null;
-            const bent = bentModuleGrid(grid.bendAnchors, working.toPhoto, 17 + 4 * version, shouldContinue);
-            if (!bent || !shouldContinue()) return null;
-            const recovered = recoverExposed(image, bent, version, shouldContinue, true);
-            // A wider search may find different marks. An interrupted attempt
-            // can also resume in the later scan budget.
-            if (shouldContinue()) candidate.bentRadius = searchRadius;
+            if (grid.bendAnchors && candidate.bentRadius !== searchRadius) {
+              const bent = bentModuleGrid(grid.bendAnchors, working.toPhoto, 17 + 4 * version, shouldContinue);
+              if (bent && shouldContinue()) {
+                const recovered = recoverExposed(image, bent, version, shouldContinue, true);
+                if (recovered || !shouldContinue()) return recovered;
+                candidate.bentRadius = searchRadius;
+              }
+            }
+            // Even perfectly aligned QR marks can cross a deep shadow. Refit
+            // the measured grid on the native samples once for this layout.
+            if (candidate.triedShadow || !shouldContinue()) return null;
+            const recovered = recoverShadowedGrid(image, photoMap, version, shouldContinue);
+            if (!recovered && shouldContinue()) candidate.triedShadow = true;
             return recovered;
           };
           // A partly covered finder can still define the grid when separate
           // alignment patterns agree. Try the exposed native pixels first.
           if (candidate.weakFinder) {
-            const result = tryExposed();
+            const result = tryNativeContrast();
             if (result) return result;
           }
           if (!shouldContinue()) return null;
@@ -254,7 +264,7 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
           const sharpRecovered = recoverObservations(sharp, photoMap, version, thresholds, shouldContinue);
           if (sharpRecovered) return sharpRecovered;
           if (!candidate.weakFinder) {
-            const result = tryExposed();
+            const result = tryNativeContrast();
             if (result) return result;
           }
         }

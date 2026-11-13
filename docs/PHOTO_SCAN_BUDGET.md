@@ -229,6 +229,14 @@ reliable bits while reserving parity checks to reject inconsistent solutions.
 The scanner skips this retry on a layout where it has already run to completion and missed.
 Recovered seals still pass through the usual payload and signature checks.
 
+Accurate QR alignment can coexist with a deep shadow or an opaque printed panel.
+When the exposed-pixel read misses on a well-supported grid, the scanner can
+refine that grid against the native photo and compare the brightness on both
+sides of each module boundary. It ranks the least reliable readings within each
+QR parity block. This retry shares the photo deadline. A completed miss is
+skipped on later attempts with the same page layout, while an interrupted read
+can resume in a later budget.
+
 A bend confined to one corner can move genuine alignment marks outside the
 flat-page fit. After the exposed-pixel read misses, a strong displaced mark
 can extend the measured trend along its row or column. A cubic fit through
