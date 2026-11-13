@@ -737,14 +737,24 @@ class TestCameraFrameScanning:
                     window.__syntheticNativePhoto = still;
                     const full = still.getContext('2d'); full.scale(3, 3);
                     full.fillStyle = 'white'; full.fillRect(0, 0, camera.width, camera.height);
-                    context.drawImage(still, 0, 0, canvas.width, canvas.height);
+                    const preview = document.createElement('canvas');
+                    preview.width = canvas.width; preview.height = canvas.height;
+                    const pixels = preview.getContext('2d');
+                    pixels.drawImage(still, 0, 0, preview.width, preview.height);
                     const stream = canvas.captureStream(0), [track] = stream.getVideoTracks();
                     // Supply distinct preview frames of the same unmoving page,
                     // as a running camera does. The shutter ignores repeated frames.
+                    let tick = false;
                     const draw = () => {
-                        context.drawImage(still, 0, 0, canvas.width, canvas.height);
+                        context.drawImage(preview, 0, 0);
+                        // A changing desk pixel keeps headless capture from
+                        // coalescing identical frames. The sheet and still stay fixed.
+                        context.fillStyle = tick ? '#373737' : '#383838';
+                        context.fillRect(2, 2, 2, 2);
+                        tick = !tick;
                         track.requestFrame();
                     };
+                    draw();
                     const timer = setInterval(draw, 100);
                     window.addEventListener('pagehide', () => clearInterval(timer), {once: true});
                     window.showCameraSeal = () => {
@@ -756,6 +766,7 @@ class TestCameraFrameScanning:
                         // then put its corners beyond the old center 50% ROI.
                         full.imageSmoothingEnabled = false;
                         full.drawImage(image, 75, 0, 825, 825, camera.left, camera.top, camera.size, camera.size);
+                        pixels.drawImage(still, 0, 0, preview.width, preview.height);
                         draw();
                     };
                     return stream;
