@@ -1,4 +1,5 @@
-import { createCanvas } from "@napi-rs/canvas";
+import { createRequire } from "node:module";
+import { createCanvas, GlobalFonts } from "@napi-rs/canvas";
 import { PDFDocument } from "pdf-lib";
 import { expect, it } from "vitest";
 import { generateSigningKeyPair } from "../signingKeys.js";
@@ -25,9 +26,12 @@ it("keeps native wording, blank lines and separate occurrences of the same lette
 
 it("reads actual raster lettering and signs its location even when the footer has identical native text", async () => {
   const pdf = await PDFDocument.create(), page = pdf.addPage([480, 600]);
+  // Render the same fixture pixels regardless of the runner's system fonts.
+  const font = createRequire(import.meta.url).resolve("pdfjs-dist/standard_fonts/LiberationSans-Bold.ttf");
+  expect(GlobalFonts.registerFromPath(font, "QRedFixtureSans")).not.toBeNull();
   const canvas = createCanvas(700, 160), ctx = canvas.getContext("2d");
   ctx.fillStyle = "white"; ctx.fillRect(0, 0, 700, 160);
-  ctx.fillStyle = "black"; ctx.font = "bold 64px sans-serif";
+  ctx.fillStyle = "black"; ctx.font = "bold 64px QRedFixtureSans";
   ctx.fillText("HARBOR INN", 30, 80);
   const logo = await pdf.embedPng(canvas.toBuffer("image/png"));
   page.drawImage(logo, { x: 90, y: 465, width: 315, height: 72 });
