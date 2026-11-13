@@ -1,6 +1,8 @@
 // A bounded working copy makes rectangular printed QR modules square before
 // locating their own public patterns. The retained photo is never modified.
 import { locatePaper, pageHomography, pageWatermarkRegions } from "./pageAlignedScan.js";
+import { refineShadowGrid, sampleGrid } from "./shadowedGrid.js";
+import { classifyShadowedModules } from "./shadowedModules.js";
 import { bentModuleGrid } from "./bentModuleGrid.js";
 import { curvedPaperMapping } from "./curvedPaper.js";
 import { estimatePaperColor } from "./paperColor.js";
@@ -137,7 +139,7 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
     const working = rectifiedImage(image, mapping, region);
     const gray = normalizeWatermarkLuminance(working.data, SIDE, SIDE), corners = findCorners(gray);
     const strong = corners.filter(p => p.score >= .8).length;
-    if (strong < 2 || corners.some(p => p.score < .70)) { prepared.set(profile, null); return null; }
+    if (strong < 1 || corners.some(p => p.score < .70)) { prepared.set(profile, null); return null; }
     const version = readRectifiedQrVersion(gray, SIDE, corners);
     if (!version) { prepared.set(profile, null); return null; }
     const size = 17 + 4 * version, [tl, tr, bl] = corners;
@@ -151,7 +153,7 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
       prepared.set(profile, null); return null;
     }
     const thresholds = [...new Set([230, measuredThreshold(gray, corners)])];
-    const candidate = { working, gray, version, gridMap, thresholds, weakFinder: strong < 3, triedExposed: false, bentRadius: null };
+    const candidate = { working, gray, version, gridMap, thresholds, weakFinder: strong < 3, needsAlignmentEvidence: strong < 2, triedExposed: false, bentRadius: null };
     prepared.set(profile, candidate);
     return candidate;
   }
@@ -177,7 +179,25 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
         if (!shouldContinue()) break;
         const grid = refineQrModuleGrid(working, gridMap, { x: 0, y: 0, width: 1, height: 1 },
           version, { foregroundRobust, searchRadius, shouldContinue, measuredFinders: foregroundRobust });
-        if (!grid || grid.quality < 0.66) continue;
+        // A bowed sheet can move true alignment marks outside the affine
+        // fit. Keep the coherent curved marks only after the version field,
+        // finder pitches and independently remeasured public patterns agree.
+        if (foregroundRobust && grid?.bendAnchors && grid.quality >= .5 &&
+            (candidate.needsAlignmentEvidence || grid.quality < .66)) {
+          const size = 17 + 4 * version;
+          const bent = bentModuleGrid(grid.bendAnchors, working.toPhoto, size, shouldContinue);
+          const map = bent && refineShadowGrid(image, bent, version, shouldContinue);
+          if (map && shouldContinue()) {
+            const observed = classifyShadowedModules(sampleGrid(image, map, size, shouldContinue), size, shouldContinue);
+            if (observed && shouldContinue()) {
+              const recovered = recoverSampledQrMatrix(observed, map, version, {
+                bitReliability: observed.reliability, rankedOutliers: true, shouldContinue,
+              });
+              if (recovered) return recovered;
+            }
+          }
+        }
+        if (candidate.needsAlignmentEvidence || !grid || grid.quality < 0.66) continue;
         // Prefer the observed finders when extrapolation moved by half a module.
         // Keep the alignment-only map as the alternate in case the finders were noisy.
         const maps = grid.finderModuleMap ? [grid.finderModuleMap, grid.moduleMap] : [grid.moduleMap];

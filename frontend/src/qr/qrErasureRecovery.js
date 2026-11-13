@@ -265,18 +265,22 @@ function solveBitErasures(block, erasedBits, parityBytes) {
   return syndromes(corrected, parityBytes).every(value => value === 0) ? corrected : null;
 }
 
-// A dark-text photo may also contain one wrongly classified "known" bit.
-// After eliminating the erasure columns, the remaining parity equations
-// identify that bit only when exactly one observed column matches the
-// residual syndrome. No payload guesses or source data enter the search.
-function solveBitErasuresWithSingleError(block, erasedBits, parityBytes) {
+// Eliminate the uncertain bits, then find which measured column reproduces
+// the remaining syndrome. A ranked photo retry can also test pairs when
+// enough independent constraints remain to rule out ambiguous corrections.
+function solveBitErasuresWithOutliers(block, erasedBits, parityBytes, ranked = null, shouldContinue = () => true) {
   const count = erasedBits.length, equations = parityBytes * 8;
   // Keep spare parity constraints for locating the unexpected error. The
   // ordinary erasure-only solver handles consistent systems separately.
   if (!count || equations - count < 16) return null;
   const erasedMasks = new Uint8Array(block.length);
   for (const { position, mask } of erasedBits) erasedMasks[position] |= mask;
-  const variables = [...erasedBits];
+  const variables = ranked ? ranked.slice() : [...erasedBits];
+  if (ranked) {
+    // Keep remaining measured bits in confidence order, then cover any bits
+    // excluded from the ranking so ambiguity checks account for them too.
+    for (const { position, mask } of ranked) erasedMasks[position] |= mask;
+  }
   for (let position = 0; position < block.length; position++) {
     for (let bit = 0; bit < 8; bit++) {
       const mask = 1 << bit;
@@ -313,23 +317,48 @@ function solveBitErasuresWithSingleError(block, erasedBits, parityBytes) {
   }
   const residual = rows.slice(count);
   if (residual.every(row => !bitAt(row, total))) return null;
-  let candidate = -1;
+  let outliers = null;
+  const consistent = cols => residual.every(row =>
+    cols.reduce((value, col) => value ^ Number(bitAt(row, col)), Number(bitAt(row, total))) === 0);
   for (let col = count; col < total; col++) {
-    if (residual.some(row => bitAt(row, col) !== bitAt(row, total))) continue;
-    if (candidate !== -1) return null; // Ambiguous location; fail closed.
-    candidate = col;
+    if (!consistent([col])) continue;
+    if (outliers) return null;
+    outliers = [col];
   }
-  if (candidate === -1) return null;
+  if (!outliers && ranked && residual.length >= 32) {
+    // Index 32 parity checks for a complementary column, then confirm
+    // the pair against the full residual. Bound the search to pairs with
+    // at least one low-confidence observation, rejecting multiple matches.
+    const signatureRows = residual.slice(0, 32);
+    const signature = col => signatureRows.reduce((v, row, b) => v | (Number(bitAt(row, col)) << b), 0);
+    const target = signature(total), signatures = new Int32Array(total), bySignature = new Map();
+    for (let col = count; col < total; col++) {
+      const key = signatures[col] = signature(col);
+      const previous = bySignature.get(key);
+      if (previous) previous.push(col);
+      else bySignature.set(key, [col]);
+    }
+    for (let a = count; a < Math.min(count + 192, ranked.length); a++) {
+      if (!shouldContinue()) return null;
+      for (const b of bySignature.get(target ^ signatures[a]) || []) {
+        if (b <= a || !consistent([a, b])) continue;
+        if (outliers) return null;
+        outliers = [a, b];
+      }
+    }
+  }
+  if (!outliers) return null;
   const corrections = new Uint8Array(count);
   for (let row = count - 1; row >= 0; row--) {
-    let value = Number(bitAt(rows[row], total)) ^ Number(bitAt(rows[row], candidate));
+    let value = Number(bitAt(rows[row], total));
+    for (const col of outliers) value ^= Number(bitAt(rows[row], col));
     for (let col = row + 1; col < count; col++) {
       if (corrections[col] && bitAt(rows[row], col)) value ^= 1;
     }
     corrections[row] = value;
   }
   const corrected = Uint8Array.from(block);
-  corrected[variables[candidate].position] ^= variables[candidate].mask;
+  for (const col of outliers) corrected[variables[col].position] ^= variables[col].mask;
   erasedBits.forEach(({ position, mask }, index) => {
     if (corrections[index]) corrected[position] ^= mask;
   });
@@ -358,7 +387,7 @@ export function recoverBitErasedDataCodewords(codewords, version, ecLevelBits, i
     // a small unmarked error. Extra work is limited to the deep-photo retry.
     if (!fixed && allowSingleBitError) {
       fixed = solveErasures(blocks[i], new Set(), info.parityPerBlock) ||
-        solveBitErasuresWithSingleError(blocks[i], missing, info.parityPerBlock);
+        solveBitErasuresWithOutliers(blocks[i], missing, info.parityPerBlock);
     }
     if (!fixed) return null;
     corrected.push(fixed);
@@ -399,7 +428,7 @@ export function codewordErasureIndexes(unknown, version) {
 
 // Rank individual weak observations inside each parity block. Leave at least
 // 24 binary parity checks unused for detecting inconsistent observations.
-function recoverRankedBits(codewords, version, ecLevel, unknown, reliability, shouldContinue) {
+function recoverRankedBits(codewords, version, ecLevel, unknown, reliability, shouldContinue, rankedOutliers) {
   const layout = blockLayout(version, ecLevel);
   if (!layout || codewords.length < layout.total || reliability.length !== unknown.length) return null;
   const scores = new Float32Array(codewords.length * 8).fill(Infinity);
@@ -424,7 +453,7 @@ function recoverRankedBits(codewords, version, ecLevel, unknown, reliability, sh
         if (count <= 0) continue;
         if (!shouldContinue()) return null;
         const missing = candidates.slice(0, count);
-        fixed = solveBitErasures(block, missing, parity) || solveBitErasuresWithSingleError(block, missing, parity);
+        fixed = solveBitErasures(block, missing, parity) || solveBitErasuresWithOutliers(block, missing, parity, rankedOutliers ? candidates : null, shouldContinue);
         if (fixed) break;
       }
     }
@@ -442,7 +471,7 @@ export function readErasedQrMatrix(bits, unknown, version, confidence = null, op
   const { codewords, ecLevelBits } = codewordsFromMatrix(matrix, version);
   if (options.bitReliability) {
     const dataCodewords = recoverRankedBits(codewords, version, ecLevelBits, unknown, options.bitReliability,
-      options.shouldContinue ?? (() => true));
+      options.shouldContinue ?? (() => true), options.rankedOutliers);
     return dataCodewords && { dataCodewords };
   }
   const erased = codewordErasureIndexes(unknown, version);
