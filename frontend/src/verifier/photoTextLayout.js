@@ -1,5 +1,9 @@
 import { pageHomography } from "../qr/pageAlignedScan.js";
-import { boundedPhotoTokens, comparePhotoText, OCR_REVIEW_THRESHOLD } from "./photoTextComparison.js";
+import { boundedPhotoTokens, comparePhotoText, MAX_PHOTO_TOKENS, OCR_REVIEW_THRESHOLD } from "./photoTextComparison.js";
+
+// Bound the work of assigning words to boxes. Pages with many short rows
+// can use their stored readings within the same registration work limit.
+const MAX_LAYOUT_PAIRS = 2_048_000;
 
 export function enclosingBox(boxes) {
   if (!boxes.length) return null;
@@ -12,8 +16,9 @@ export function enclosingBox(boxes) {
 // footer) are not enough to infer safe line boxes: keep sequence comparison.
 export function signedPhotoLayout(text, evidence, corners, { width, height }, words = []) {
   const lines = text.split("\n").filter(line => line.trim());
-  if (evidence?.text !== text || evidence.layout?.mode !== 3 || lines.length > 512
-      || words.length > 4000 || !Array.isArray(evidence.layout.lines) || evidence.layout.lines.length !== lines.length || corners?.length !== 4
+  if (evidence?.text !== text || evidence.layout?.mode !== 3 || lines.length > MAX_PHOTO_TOKENS
+      || words.length > MAX_PHOTO_TOKENS || lines.length * words.length > MAX_LAYOUT_PAIRS
+      || !Array.isArray(evidence.layout.lines) || evidence.layout.lines.length !== lines.length || corners?.length !== 4
       || corners.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y)
         || p.x < 0 || p.y < 0 || p.x > width || p.y > height)) return null;
   const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -101,10 +106,11 @@ function printAdjustment(textLines, boxes, words, mapping) {
     if (!grouped.has(word.lineId)) grouped.set(word.lineId, []);
     grouped.get(word.lineId).push(word);
   }
-  const keys = textLines.map(compact), anchors = [];
+  const keys = textLines.map(compact), counts = new Map(), anchors = [];
+  for (const key of keys) counts.set(key, (counts.get(key) || 0) + 1);
   for (let i = 0; i < keys.length && anchors.length < 48; i++) {
     const key = keys[i];
-    if (key.length < 8 || key.length > 250 || !/[\p{L}]{3}/u.test(key) || keys.indexOf(key) !== keys.lastIndexOf(key)) continue;
+    if (key.length < 8 || key.length > 250 || !/[\p{L}]{3}/u.test(key) || counts.get(key) !== 1) continue;
     const matches = [];
     for (const group of grouped.values()) for (let first = 0; first < group.length; first++) {
       let observed = "";

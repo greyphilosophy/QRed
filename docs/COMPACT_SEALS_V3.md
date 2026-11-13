@@ -75,7 +75,8 @@ PDF the reader uses the original page index to obtain the comparison image.
 
 A footer or watermark carries up to four codes on an original page. Explicit
 seal-sheet layouts can paginate additional chunks within the transport limits.
-Optional evidence uses spare capacity within the count needed for text.
+The page text, recorded OCR misreadings and the line boxes they require determine
+the number of codes. Optional visual detail uses the remaining capacity.
 
 First construct the complete record above. If it exceeds the maximum
 QR byte payload (2,953 bytes at version 40-L), split that record into raw byte chunks.

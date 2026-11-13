@@ -39,7 +39,7 @@ export function encodePageEvidence({ text = "", width, height, blank = false, la
   const mode = layout?.mode || 0;
   if (textBytes.length > MAX_SEAL_TEXT_BYTES || ![0, 1, 2, 3].includes(mode)) throw new Error("Invalid page evidence");
   if (blank && (text || visual || mode) || !blank && !text.trim() && !visual) throw new Error("A nonblank page needs text or a visual reference");
-  if (!Array.isArray(ocrReadings) || ocrReadings.length > 512 || (ocrReadings.length && mode !== 3))
+  if (!Array.isArray(ocrReadings) || (ocrReadings.length && (mode !== 3 || ocrReadings.length > layout.lines.length)))
     throw new Error("Invalid source OCR readings");
   const parts = [new Uint8Array([1, (blank ? 1 : 0) | (visual ? 2 : 0) | (mode << 2) | (ocrReadings.length ? 16 : 0)]),
     word(dimension(width)), word(dimension(height)), varint(textBytes.length), textBytes];
@@ -122,7 +122,7 @@ export function decodePageEvidence(bytes) {
   const ocrReadings = [];
   if (flags & 16) {
     const count = uint();
-    if (mode !== 3 || !count || count > Math.min(512, layout.lines.length)) throw new Error("Invalid source OCR readings");
+    if (mode !== 3 || !count || count > layout.lines.length) throw new Error("Invalid source OCR readings");
     let line = -1;
     for (let i = 0; i < count; i++) {
       line += 1 + uint();

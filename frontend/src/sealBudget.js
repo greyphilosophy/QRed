@@ -20,7 +20,7 @@ export function evidenceBodyBudget(baseLength, { attested = false, multiple = fa
   if (baseLength + minimum <= recordCapacity(1)) return 0;
   // Optional thumbnails and text coordinates must never turn a two-QR page
   // into three or four QRs merely because more physical slots now exist.
-  // Count only the chunks needed by the essential signed text. If the
+  // Count the chunks needed by the required text and source OCR evidence. If the
   // provider's unknown identity could increase that count, omit optional
   // evidence instead of spending a speculative extra QR.
   const needed = recordQrCount(baseLength + minimum, attested ? "4" : "3");

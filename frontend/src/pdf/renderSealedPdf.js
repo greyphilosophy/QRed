@@ -122,7 +122,7 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
       const minModulePoints = Math.min(...qrValues.map(value =>
         layout.qrSize / (createQRedQrSymbol(value).modules.size + 8)));
       if (minModulePoints < 0.9) {
-        throw new Error(`PDF page ${pageIndex + 1} has too many dense QR seals for a readable footer. Use a verified watermark layout or split this page's content.`);
+        throw new Error(`PDF page ${pageIndex + 1} has too many dense QR seals for a readable footer. Choose a layout with appended seal sheets.`);
       }
       const { footerMargin, footerHeight } = layout;
       page = await applyPageScaling(pdf, pageIndex, page, resolvedPageScalingStrategy, footerHeight);

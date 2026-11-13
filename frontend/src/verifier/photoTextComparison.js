@@ -3,7 +3,7 @@
 // never case-fold, strip punctuation, or substitute lookalike letters/digits.
 // Typography and split/joined words remain visible review items, never matches.
 const MAX_TEXT_LENGTH = 60000;
-const MAX_TOKENS = 4000;
+export const MAX_PHOTO_TOKENS = 4000;
 const MAX_ALIGNMENT_CELLS = 4_000_000;
 export const OCR_REVIEW_THRESHOLD = 85; // A review heuristic, NOT a probability of authenticity.
 
@@ -30,7 +30,7 @@ function validBox(box, width, height) {
 
 export function boundedPhotoTokens(expectedText, words) {
   if (typeof expectedText !== "string" || !Array.isArray(words)) throw new Error("No text available for comparison.");
-  if (expectedText.length > MAX_TEXT_LENGTH || words.length > MAX_TOKENS
+  if (expectedText.length > MAX_TEXT_LENGTH || words.length > MAX_PHOTO_TOKENS
       || words.reduce((sum, word) => sum + String(word.text || "").length, 0) > MAX_TEXT_LENGTH) {
     throw new Error("This page has too much text for photo comparison. Compare its recovered text manually.");
   }
@@ -39,7 +39,7 @@ export function boundedPhotoTokens(expectedText, words) {
   const observed = words.flatMap((word, wordIndex) => tokenize(String(word.text || "")).map(token => ({ ...token, wordIndex })));
   if (!reference.length) throw new Error("The seal contains no text to compare.");
   const columns = observed.length + 1;
-  if (reference.length > MAX_TOKENS || observed.length > MAX_TOKENS
+  if (reference.length > MAX_PHOTO_TOKENS || observed.length > MAX_PHOTO_TOKENS
       || (reference.length + 1) * columns > MAX_ALIGNMENT_CELLS) {
     throw new Error("This page has too much text for photo comparison. Compare its recovered text manually.");
   }

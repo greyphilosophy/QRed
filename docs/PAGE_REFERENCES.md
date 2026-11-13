@@ -8,8 +8,8 @@ A page without recovered text gets a grayscale reference or an explicit blank
 marker. If the English reader cannot load, the stamp result identifies the pages
 sealed using only the embedded text and visual evidence.
 
-For a native text line that OCR reads slightly differently, the seal can also
-carry the exact observed wording and its line index. The verifier independently
+For each qualifying difference on a native text line, the seal carries the exact
+OCR reading and the signed position of the line. The verifier independently
 reads the photo. When it locates the signed line and repeats that reading, it
 shows the wording for review and excludes it from the discrepancy count. Repeated
 numeric ambiguities appear under **Numbers to check**. A new substitution, added
@@ -19,21 +19,23 @@ in the browser. Account signing receives only the existing page commitments.
 
 ## Budget and representation
 
-The PDF stamper limits each page to four QR codes. Required text determines the
-code count. Optional evidence never increases it. The planner measures actual
-plaintext/zlib/gzip bytes, including record overhead and the 40-byte header per
-chunk. It tries line boxes (8 bytes per nonblank line), finer line starts (2 bytes),
-then 16×16 start cells (1 byte). With full boxes it fits exact source OCR readings
-before trying visual grids up to 4,096 tiles,
-reducing detail until the record fits. A full text page can retain the existing
-text-only body with no evidence overhead. Each finished QR uses the smallest
-fitting version, capped at 40, with its usual printed dimensions.
+The planner measures the compressed or plaintext size of the page text, all
+recorded OCR readings and the full line boxes needed to locate those readings.
+These bytes determine how many QR codes the page needs. The default layout can
+put up to four codes on the original and append any remaining pieces on seal
+sheets. An original-page-only layout reports an error if the complete record
+exceeds its four-code limit. The signer can choose a layout with seal sheets.
 
-Google identity is returned after commitments have been bound to the login.
-Planning therefore reserves the maximum identity size, 677 bytes, plus its
-32-byte salt. If the unknown identity could put the baseline text on either side
-of a QR boundary, optional evidence is omitted. This conservative choice can
-leave unused space, but cannot force an extra code when the real identity arrives.
+On text pages without recorded misreadings, spare capacity can carry full line
+boxes (8 bytes per nonblank line), finer line starts (2 bytes), or 16×16
+line-start cells (1 byte). The planner then tries grayscale grids of up to
+4,096 tiles. A thumbnail on a text page uses the capacity already allocated to
+the required record. Each QR uses the smallest fitting version, up to version 40.
+
+Account sign-in returns the identity after the page commitments are bound. When
+different identity sizes could change the QR count, the planner omits optional
+details and retains the complete required record. The final signing step applies
+the chosen layout's limit using the actual encoded identity.
 
 A visual reference uses a fixed dictionary of 256 four-by-four grayscale tiles:
 16 flat shades and 240 oriented edges. Each tile index takes one byte before
@@ -66,7 +68,7 @@ verifier route and saved offline copy together.
 | Positions | 1, 2, or 8 per line | Mode 1: high nibble X, low nibble Y, each floor(16×normalized position). Mode 2: X,Y bytes normalized by 255. Mode 3: X,Y,width,height as u16 normalized by 65,535 |
 | Visual header, if present | 3 | Codebook ID 1, tile columns, tile rows |
 | Visual indices | columns × rows | One dictionary index per tile, row-major; maximum 4,096 |
-| Source OCR count, if flagged | Varint | 1–512 entries, requires mode 3 |
+| Source OCR count, if flagged | Varint | One entry per recorded line, up to the layout line count, requires mode 3 |
 | Each source reading | Variable | Varint count of skipped lines since the previous entry (initially line −1), then varint UTF-8 byte length and the exact observed line (1–1,024 bytes) |
 
 The body flag for source readings is part of the authenticated payload. Verifiers
