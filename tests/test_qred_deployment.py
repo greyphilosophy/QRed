@@ -738,8 +738,15 @@ class TestCameraFrameScanning:
                     const full = still.getContext('2d'); full.scale(3, 3);
                     full.fillStyle = 'white'; full.fillRect(0, 0, camera.width, camera.height);
                     context.drawImage(still, 0, 0, canvas.width, canvas.height);
-                    const stream = canvas.captureStream(10);
-                    setInterval(() => context.drawImage(still, 0, 0, canvas.width, canvas.height), 100);
+                    const stream = canvas.captureStream(0), [track] = stream.getVideoTracks();
+                    // Supply distinct preview frames of the same unmoving page,
+                    // as a running camera does. The shutter ignores repeated frames.
+                    const draw = () => {
+                        context.drawImage(still, 0, 0, canvas.width, canvas.height);
+                        track.requestFrame();
+                    };
+                    const timer = setInterval(draw, 100);
+                    window.addEventListener('pagehide', () => clearInterval(timer), {once: true});
                     window.showCameraSeal = () => {
                         full.fillStyle = '#373737';
                         full.fillRect(0, 0, canvas.width, canvas.height);
@@ -749,8 +756,7 @@ class TestCameraFrameScanning:
                         // then put its corners beyond the old center 50% ROI.
                         full.imageSmoothingEnabled = false;
                         full.drawImage(image, 75, 0, 825, 825, camera.left, camera.top, camera.size, camera.size);
-                        context.drawImage(still, 0, 0, canvas.width, canvas.height);
-                        stream.getVideoTracks()[0].requestFrame();
+                        draw();
                     };
                     return stream;
                 },
