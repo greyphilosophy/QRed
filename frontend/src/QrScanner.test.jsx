@@ -230,6 +230,9 @@ describe("QrScanner camera controls", () => {
       getCapabilities: () => { throw new Error("Unavailable"); } };
     const second = { kind: "videoinput", deviceId: "opaque-a", label: "camera2 0, facing back" };
     expect(findPreferredMainCamera([first, second])).toBe(first);
+    expect(findPreferredMainCamera([first, second], second.deviceId)).toBe(second);
+    const illuminated = { ...second, getCapabilities: () => ({ torch: [false, true] }) };
+    expect(findPreferredMainCamera([first, illuminated], first.deviceId)).toBe(illuminated);
     expect(findPreferredMainCamera([{ ...second, label: "", getCapabilities: () => ({ facingMode: ["user"] }) }])).toBeNull();
   });
 
@@ -358,7 +361,7 @@ describe("QrScanner manual photo capture", () => {
     expect(onChoosePhoto).toHaveBeenCalledTimes(1);
   });
 
-  it("has no flashlight control even when the camera advertises a torch", async () => {
+  it("offers the flashlight on the active lens and switches it only on request", async () => {
     const applyConstraints = vi.fn().mockResolvedValue(undefined);
     const stream = {
       getTracks: () => [{ stop: vi.fn() }],
@@ -379,8 +382,13 @@ describe("QrScanner manual photo capture", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Check document" }));
     await waitFor(() => expect(play).toHaveBeenCalled());
-    expect(screen.queryByRole("button", { name: /Flashlight/ })).toBeNull();
+    const light = await screen.findByRole("button", { name: "Flashlight off" });
     expect(applyConstraints).not.toHaveBeenCalled();
+    fireEvent.click(light);
+    await screen.findByRole("button", { name: "Flashlight on" });
+    expect(applyConstraints).toHaveBeenCalledWith({ torch: { exact: true }, advanced: [] });
+    fireEvent.click(light);
+    await screen.findByRole("button", { name: "Flashlight off" });
     play.mockRestore();
   });
 

@@ -8,7 +8,7 @@ export const QR_CAMERA_CONSTRAINTS = {
   },
 };
 
-export function findPreferredMainCamera(devices = []) {
+export function findPreferredMainCamera(devices = [], activeId) {
   const rear = [];
   for (const device of devices) {
     if (device.kind !== "videoinput" || !device.deviceId) continue;
@@ -17,17 +17,21 @@ export function findPreferredMainCamera(devices = []) {
     let capabilities;
     try { capabilities = device.getCapabilities?.(); } catch { /* Optional after camera permission. */ }
     if (!/back|rear|environment/i.test(label) && !capabilities?.facingMode?.includes("environment")) continue;
-    rear.push({ device, label, autofocus: capabilities?.focusMode?.includes("continuous") });
+    const torch = capabilities?.torch;
+    rear.push({ device, label, autofocus: capabilities?.focusMode?.includes("continuous"),
+      light: torch === true || torch?.includes?.(true) });
   }
   // Some Android browsers expose only numbered rear cameras. Prefer a lens
-  // with autofocus, then the browser's listed order, without guessing an ID.
+  // with autofocus or a light. On a tie, keep the browser's working lens.
   const preferred = rear.find(item => /main|primary|\b1(?:\.0+)?x\b/i.test(item.label))
-    || rear.find(item => /wide/i.test(item.label)) || rear.find(item => item.autofocus) || rear[0];
+    || rear.find(item => /wide/i.test(item.label)) || rear.find(item => item.autofocus && item.light)
+    || rear.find(item => item.autofocus) || rear.find(item => item.light)
+    || rear.find(item => item.device.deviceId === activeId) || rear[0];
   return preferred?.device || null;
 }
 
 // Lens discovery is optional. Some browsers defer it until the tab regains focus.
-async function discoverMainCamera(mediaDevices) {
+async function discoverMainCamera(mediaDevices, activeId) {
   if (!mediaDevices.enumerateDevices) return null;
   let timer;
   try {
@@ -35,7 +39,7 @@ async function discoverMainCamera(mediaDevices) {
       mediaDevices.enumerateDevices(),
       new Promise(resolve => { timer = setTimeout(() => resolve([]), 800); }),
     ]);
-    return findPreferredMainCamera(devices);
+    return findPreferredMainCamera(devices, activeId);
   } catch { return null; }
   finally { clearTimeout(timer); }
 }
@@ -51,10 +55,10 @@ export async function getPreferredCameraStream(mediaDevices = navigator.mediaDev
     signal?.throwIfAborted();
     stream = await mediaDevices.getUserMedia(QR_CAMERA_CONSTRAINTS);
     signal?.throwIfAborted();
-    const preferred = await discoverMainCamera(mediaDevices);
-    signal?.throwIfAborted();
     const [track] = stream.getVideoTracks?.() || [];
     const initialId = track?.getSettings?.().deviceId;
+    const preferred = await discoverMainCamera(mediaDevices, initialId);
+    signal?.throwIfAborted();
     if (!preferred?.deviceId || preferred.deviceId === initialId ||
         (!initialId && preferred.label && track?.label === preferred.label)) return stream;
 
@@ -80,10 +84,7 @@ export async function getPreferredCameraStream(mediaDevices = navigator.mediaDev
   } finally { signal?.removeEventListener("abort", release); }
 }
 
-export async function applyCameraQualityControls(stream) {
-  const [track] = stream?.getVideoTracks?.() || [];
-  if (!track || typeof track.applyConstraints !== "function") return;
-  const capabilities = typeof track.getCapabilities === "function" ? track.getCapabilities() : {};
+export function cameraQualityPreferences(capabilities = {}) {
   const advanced = [];
   for (const name of ["focusMode", "exposureMode", "whiteBalanceMode"]) {
     if (capabilities[name]?.includes?.("continuous")) advanced.push({ [name]: "continuous" });
@@ -93,6 +94,13 @@ export async function applyCameraQualityControls(stream) {
     // Explicitly reset a retained zoom setting, even when 1x is the minimum.
     advanced.push({ zoom: Math.max(min, Math.min(1, capabilities.zoom.max)) });
   }
+  return advanced;
+}
+
+export async function applyCameraQualityControls(stream) {
+  const [track] = stream?.getVideoTracks?.() || [];
+  if (!track || typeof track.applyConstraints !== "function") return;
+  const advanced = cameraQualityPreferences(track.getCapabilities?.());
   if (advanced.length) {
     try { await track.applyConstraints({ advanced }); }
     catch { /* Keep the working rear camera if advertised controls are rejected. */ }
