@@ -8,19 +8,26 @@ export const QR_CAMERA_CONSTRAINTS = {
   },
 };
 
-export function findPreferredMainCamera(devices = [], activeId) {
+function documentCameras(devices) {
   const rear = [];
   for (const device of devices) {
     if (device.kind !== "videoinput" || !device.deviceId) continue;
     const label = device.label || "";
-    if (/front|ultra|telephoto|zoom|macro|depth|\b(?:[2-9]|\d{2,})(?:\.\d+)?\s*[x×]|\b0\.\d+\s*[x×]/i.test(label)) continue;
+    if (/front|selfie|user[- ]facing|ultra|telephoto|zoom|macro|depth|\b(?:[2-9]|\d{2,})(?:\.\d+)?\s*[x×]|\b0\.\d+\s*[x×]/i.test(label)) continue;
     let capabilities;
     try { capabilities = device.getCapabilities?.(); } catch { /* Optional after camera permission. */ }
-    if (!/back|rear|environment/i.test(label) && !capabilities?.facingMode?.includes("environment")) continue;
+    const rearFacing = capabilities?.facingMode?.includes("environment");
+    if ((!rearFacing && capabilities?.facingMode?.includes("user")) ||
+        (!rearFacing && !/back|rear|environment/i.test(label))) continue;
     const torch = capabilities?.torch;
     rear.push({ device, label, autofocus: capabilities?.focusMode?.includes("continuous"),
       light: torch === true || torch?.includes?.(true) });
   }
+  return rear;
+}
+
+export function findPreferredMainCamera(devices = [], activeId) {
+  const rear = documentCameras(devices);
   // Some Android browsers expose only numbered rear cameras. Prefer a lens
   // with autofocus or a light. On a tie, keep the browser's working lens.
   const preferred = rear.find(item => /main|primary|\b1(?:\.0+)?x\b/i.test(item.label))
@@ -31,17 +38,37 @@ export function findPreferredMainCamera(devices = [], activeId) {
 }
 
 // Lens discovery is optional. Some browsers defer it until the tab regains focus.
-async function discoverMainCamera(mediaDevices, activeId) {
-  if (!mediaDevices.enumerateDevices) return null;
+async function listCameraDevices(mediaDevices) {
+  if (!mediaDevices?.enumerateDevices) return [];
   let timer;
   try {
-    const devices = await Promise.race([
+    return await Promise.race([
       mediaDevices.enumerateDevices(),
       new Promise(resolve => { timer = setTimeout(() => resolve([]), 800); }),
     ]);
-    return findPreferredMainCamera(devices, activeId);
-  } catch { return null; }
+  } catch { return []; }
   finally { clearTimeout(timer); }
+}
+
+// Device listings on Android may contain only numbered rear cameras, with
+// lighting available exclusively on the live track. Test each candidate once.
+export async function alternateLightCameras(track, mediaDevices = navigator.mediaDevices) {
+  const devices = await listCameraDevices(mediaDevices);
+  let activeId;
+  try { activeId = track.getSettings?.().deviceId; } catch { /* Match an unambiguous label instead. */ }
+  if (!activeId) {
+    const matches = devices.filter(device => device.kind === "videoinput" && track.label && device.label === track.label);
+    if (matches.length === 1) activeId = matches[0].deviceId;
+  }
+  if (!activeId) return { activeId, alternatives: [] };
+  const candidates = documentCameras(devices).filter(item => item.device.deviceId !== activeId);
+  candidates.sort((a, b) => Number(Boolean(b.light)) - Number(Boolean(a.light)) ||
+    Number(Boolean(b.autofocus)) - Number(Boolean(a.autofocus)));
+  return { activeId, alternatives: [...new Set(candidates.map(item => item.device.deviceId))] };
+}
+
+export function requestCameraById(deviceId, mediaDevices = navigator.mediaDevices) {
+  return mediaDevices.getUserMedia({ video: { ...QR_CAMERA_CONSTRAINTS.video, deviceId: { exact: deviceId } } });
 }
 
 export async function getPreferredCameraStream(mediaDevices = navigator.mediaDevices, signal) {
@@ -57,7 +84,7 @@ export async function getPreferredCameraStream(mediaDevices = navigator.mediaDev
     signal?.throwIfAborted();
     const [track] = stream.getVideoTracks?.() || [];
     const initialId = track?.getSettings?.().deviceId;
-    const preferred = await discoverMainCamera(mediaDevices, initialId);
+    const preferred = findPreferredMainCamera(await listCameraDevices(mediaDevices), initialId);
     signal?.throwIfAborted();
     if (!preferred?.deviceId || preferred.deviceId === initialId ||
         (!initialId && preferred.label && track?.label === preferred.label)) return stream;
@@ -66,9 +93,7 @@ export async function getPreferredCameraStream(mediaDevices = navigator.mediaDev
     // camera if the advertised main lens cannot be opened.
     release();
     try {
-      stream = await mediaDevices.getUserMedia({ video: {
-        ...QR_CAMERA_CONSTRAINTS.video, deviceId: { exact: preferred.deviceId },
-      } });
+      stream = await requestCameraById(preferred.deviceId, mediaDevices);
     } catch (error) {
       signal?.throwIfAborted();
       if (error.name === "NotAllowedError" || error.name === "SecurityError") throw error;

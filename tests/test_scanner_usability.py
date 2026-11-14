@@ -145,29 +145,48 @@ def test_main_camera_at_one_times_zoom_with_optional_flashlight(browser, path):
 
 
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
-@pytest.mark.parametrize("mode", ["late-torch", "shutter-only", "ignored"])
+@pytest.mark.parametrize("mode", ["late-torch", "shutter-only", "ignored", "other-lens", "other-flash", "no-lit-lens"])
 def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path, mode):
     context = browser.new_context(service_workers="block", viewport={"width": 360, "height": 780})
     try:
         page = context.new_page()
+        key = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="
+        context.route("**/api/keys/default", lambda route: route.fulfill(json={"public_key": key}))
         page.goto(BASE_URL + path, wait_until="networkidle")
+        if path != "/":
+            page.locator("#publicKeyFileInput").set_input_files({"name": "key.txt", "mimeType": "text/plain", "buffer": key.encode()})
         page.evaluate("""mode => {
-            navigator.mediaDevices.enumerateDevices = async () => [];
+            const multi = ['other-lens', 'other-flash', 'no-lit-lens'].includes(mode);
+            navigator.mediaDevices.enumerateDevices = async () => multi ? [
+                {kind:'videoinput', deviceId:'original', label:'Camera 2, facing back'},
+                {kind:'videoinput', deviceId:'front', label:'Front Camera'},
+                {kind:'videoinput', deviceId:'ultra', label:'Rear Ultra Wide Camera'},
+                {kind:'videoinput', deviceId:'main', label:'Camera 0, facing back'},
+            ] : [];
             window.lightRequests = [];
+            window.lensRequests = [];
+            window.lensTracks = [];
             window.ImageCapture = class {
+                constructor(track) { this.track = track; }
                 async getPhotoCapabilities() {
-                    return {fillLightMode: mode === 'shutter-only' && document.querySelector('video').readyState >= 2
+                    const shutter = mode === 'shutter-only' || mode === 'other-flash' && this.track.getSettings().deviceId === 'main';
+                    return {fillLightMode: shutter && document.querySelector('video').readyState >= 2
                         ? ['off', 'flash'] : []};
                 }
             };
-            navigator.mediaDevices.getUserMedia = async () => {
+            navigator.mediaDevices.getUserMedia = async constraints => {
+                if (lensTracks.some(t => t.readyState === 'live')) throw new DOMException('Camera in use','NotReadableError');
+                const id = constraints.video.deviceId?.exact || 'original';
+                lensRequests.push(id);
                 const canvas = document.createElement('canvas');
                 canvas.width = 360; canvas.height = 480;
                 canvas.getContext('2d').fillRect(0, 0, 360, 480);
                 const stream = canvas.captureStream(10), [track] = stream.getVideoTracks();
+                lensTracks.push(track);
                 let torch = false;
-                const advertisesTorch = () => mode === 'late-torch' && document.querySelector('video')?.readyState >= 2;
-                track.getSettings = () => advertisesTorch() ? {torch} : {};
+                const advertisesTorch = () => (mode === 'late-torch' || mode === 'other-lens' && id === 'main')
+                    && document.querySelector('video')?.readyState >= 2;
+                track.getSettings = () => ({deviceId:id, ...(advertisesTorch() ? {torch} : {})});
                 track.getCapabilities = () => advertisesTorch() ? {torch: [false, true]} : {};
                 track.applyConstraints = async request => {
                     lightRequests.push(request);
@@ -177,32 +196,58 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
             };
         }""", mode)
         page.get_by_role("button", name="Check document", exact=True).click()
-        labels = {"late-torch": "Flashlight off", "shutter-only": "Photo flash off", "ignored": "Try flashlight"}
-        light = page.get_by_role("button", name=labels[mode], exact=True)
+        label = {"late-torch": "Flashlight off", "shutter-only": "Photo flash off"}.get(mode, "Try flashlight")
+        light = page.get_by_role("button", name=label, exact=True)
         expect(light).to_be_visible()
         assert page.evaluate("lightRequests") == []
         light.click()
-        if mode == "ignored":
-            light = page.get_by_role("button", name="Flashlight unavailable")
+        if mode in ("ignored", "no-lit-lens"):
+            light = page.get_by_role("button", name="Use phone camera")
             expect(light).to_be_visible()
-            expect(light).to_have_attribute("aria-pressed", "false")
-            help_text = page.get_by_text("For flash, take a photo in your phone’s Camera app, then select Choose photo.")
+            assert light.get_attribute("aria-pressed") is None
+            help_text = page.get_by_text("Use the flash in your phone’s Camera app. QRed will read the photo when you return.")
             expect(help_text).to_be_visible()
             paper = page.locator(".page-scan-guide").bounding_box()
             help_box = help_text.bounding_box()
             assert paper and help_box and help_box["y"] >= paper["y"] + paper["height"]
-            light.click()
-            expect(help_text).not_to_be_visible()
-            expect(page.get_by_role("button", name="Capture now")).to_be_enabled()
-            with page.expect_file_chooser():
+            assert page.evaluate("lensRequests") == (["original", "main", "original"] if mode == "no-lit-lens" else ["original"])
+            with page.expect_file_chooser() as camera:
+                light.click()
+            assert camera.value.element.get_attribute("capture") == "environment"
+            assert page.evaluate("lensTracks.every(t => t.readyState === 'ended')")
+            page.evaluate("""() => {
+                for (const hidden of [true, false]) {
+                    Object.defineProperty(document, 'hidden', {configurable:true, value:hidden});
+                    document.dispatchEvent(new Event('visibilitychange'));
+                }
+            }""")
+            assert page.evaluate("lensTracks.every(t => t.readyState === 'ended')")
+            camera.value.element.dispatch_event("cancel")
+            expect(light).to_be_visible()
+            with page.expect_file_chooser() as camera:
+                light.click()
+            fixture = Path(__file__).parent / "fixtures" / "compact-qr" / "invoice-full-300dpi.png"
+            camera.value.set_files(fixture)
+            if path == "/":
+                show_seal_details(page)
+                expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_be_visible(timeout=30000)
+            else:
+                expect(page.locator("#resultStatus")).to_have_text("Seal authenticated", timeout=30000)
+                page.get_by_role("button", name="Finish & clear", exact=True).click()
+            page.get_by_role("button", name="Scan more pages" if path == "/" else "Check document", exact=True).click()
+            with page.expect_file_chooser() as gallery:
                 page.get_by_role("button", name="Choose photo").click()
+            assert gallery.value.element.get_attribute("capture") is None
         else:
-            on = page.get_by_role("button", name=labels[mode].replace(" off", " on"), exact=True)
+            on_name = "Photo flash on" if mode in ("shutter-only", "other-flash") else "Flashlight on"
+            on = page.get_by_role("button", name=on_name, exact=True)
             expect(on).to_have_attribute("aria-pressed", "true")
+            if mode in ("other-lens", "other-flash"):
+                assert page.evaluate("lensRequests") == ["original", "main"]
             on.click()
-            expect(light).to_have_attribute("aria-pressed", "false")
+            expect(page.get_by_role("button", name=on_name.replace(" on", " off"), exact=True)).to_have_attribute("aria-pressed", "false")
             page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
-            expect(light).not_to_be_visible()
+            assert page.evaluate("lensTracks.every(t => t.readyState === 'ended')")
     finally:
         context.close()
 

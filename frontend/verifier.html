@@ -791,6 +791,8 @@
       state.camera = startCameraSession({
         video: video,
         lightButton: document.getElementById("btnCameraLight"),
+        onPhonePhoto: file => acquirePhoto({ file }),
+        onStream: stream => { if (!stream && active() && !state.photoScan && !processingCapture) liveScan.reset(); },
         progress: photoScanProgress,
         waitForMetadata: true,
         onFrame: function() {
