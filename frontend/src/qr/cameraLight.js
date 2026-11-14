@@ -76,7 +76,8 @@ export function attachCameraLight(button, track, { video, progress, enableOnPlay
     void discoverFlash();
     if (enableWhenReady && video?.readyState >= 2) {
       enableWhenReady = false;
-      startChange();
+      if (state.mode === "torch") { onProbeFinished?.(true); render(); }
+      else startChange();
     }
   }
   function prefersPhotoFlash() {
@@ -102,7 +103,6 @@ export function attachCameraLight(button, track, { video, progress, enableOnPlay
   }
   async function change() {
     refreshTorch();
-    if (enableOnPlayback && state.mode === "torch") { onProbeFinished?.(true); return; }
     if (state.mode === "flash") { state.mode = "off"; return; }
     const on = state.mode !== "torch";
     if (on && torch !== true && !flash) await checkPhotoFlash();
