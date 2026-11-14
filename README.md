@@ -139,7 +139,9 @@ Both camera views prefer the rear main camera at 1× and show a page-shaped guid
 Keep all four page corners visible and avoid glare. Lens selection depends on
 what the browser exposes. In dim light, turn on **Flashlight** to light the page
 while framing and taking the photo. Cameras with only a shutter flash show
-**Photo flash**. Lighting is optional and starts off when you open the scanner.
+**Photo flash**. If the camera has yet to report a light, **Try flashlight**
+checks it directly. Tap **Flashlight unavailable** for the phone Camera app
+alternative. Lighting is optional and starts off when you open the scanner.
 Automatic and manual full-page capture can take up to three full-resolution
 exposures. Keep the page framed until the captured notice appears. QRed aligns
 matching exposures to read faint watermarks and keeps the first original for

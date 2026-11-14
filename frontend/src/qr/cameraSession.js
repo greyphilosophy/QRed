@@ -39,7 +39,7 @@ export function startCameraSession(options) {
 }
 
 async function openPreview({ video, requestStream = signal => getPreferredCameraStream(undefined, signal),
-  prepareStream = applyCameraQualityControls, lightButton, onStream, onFrame, waitForMetadata = false, interval = 125 },
+  prepareStream = applyCameraQualityControls, lightButton, progress, onStream, onFrame, waitForMetadata = false, interval = 125 },
   signal, onFailure) {
   let stream = null, animation = null, started = false, stopFrameObserver, detachLight;
   let lastScanAt = -Infinity;
@@ -106,7 +106,7 @@ async function openPreview({ video, requestStream = signal => getPreferredCamera
   // Some camera drivers wait for playback before applying focus or zoom.
   // These controls are optional and must never gate the preview or frame loop.
   if (!signal.aborted) {
-    detachLight = attachCameraLight(lightButton, stream.getVideoTracks?.()[0]);
+    detachLight = attachCameraLight(lightButton, stream.getVideoTracks?.()[0], { video, progress });
     try { await prepareStream?.(stream); } catch { /* The preview can continue. */ }
   }
 }

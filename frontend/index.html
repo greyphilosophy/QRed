@@ -195,7 +195,7 @@
         to { transform: rotate(360deg); }
       }
 
-      .ar-scan-feedback {
+      .ar-scan-feedback, .ar-light-feedback {
         backdrop-filter: blur(14px);
         background: rgba(15, 23, 42, 0.78);
         border: 1px solid rgba(255, 255, 255, 0.18);
@@ -406,7 +406,7 @@
       @media (max-width: 640px) {
         .demo-grid, .sealing-method-grid { grid-template-columns: 1fr; }
         .ar-controls { border-radius: 28px; flex-direction: column; }
-        .ar-scan-feedback { bottom: calc(clamp(1rem, 3vw, 2rem) + 8.5rem); }
+        .ar-scan-feedback, .ar-light-feedback { bottom: calc(clamp(1rem, 3vw, 2rem) + 8.5rem); }
 
         /* The idle screen must reserve real space for BOTH actions. A 100vh
            hero with bottom-positioned stacked buttons hid Stamp PDF on phones. */

@@ -1,5 +1,5 @@
 /* eslint-disable no-unused-vars */
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import { startCameraSession } from "../qr/cameraSession.js";
 import { snapshotScanPhoto } from "./scanPhotos.js";
 import { createLiveScanWorker, scanPhotoInWorker } from "../qr/photoScanClient.js";
@@ -22,6 +22,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
   const title = separateOriginal ? `Photograph original ${pageLabel.toLowerCase()}` : `Retake ${pageLabel}`;
   const video = useRef(null), camera = useRef(null), generation = useRef(0);
   const lightButton = useRef(null);
+  const lightHint = useId();
   const scan = useRef(null), captureDiagnostic = useRef(null), photoInput = useRef(null);
   const lastQuality = useRef(null);
   const acquisitionFailed = useRef(false), autoPaused = useRef(false);
@@ -66,7 +67,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
           if (action.message) setError(action.message);
         }
       }, onError: cause => { if (epoch !== generation.current) return; liveProgress.current?.stop(); busyRef.current = false; setBusy(false); setError(cause.message); } });
-    camera.current = startCameraSession({ video: video.current, lightButton: lightButton.current,
+    camera.current = startCameraSession({ video: video.current, lightButton: lightButton.current, progress,
       onStream: stream => {
         if (stream || epoch !== generation.current) return;
         cameraAvailable.current = false; setReady(false);
@@ -224,7 +225,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
     <PhotoScanProgress progress={progress} />
     {error && <p role="alert">{error}</p>}
     <div className="photo-actions"><button type="button" disabled={!ready || busy} onClick={capture}>Capture now</button>
-      <button type="button" ref={lightButton} hidden disabled={busy || undefined}>Flashlight off</button>
+      <button type="button" ref={lightButton} hidden aria-describedby={lightHint}>Flashlight off</button>
       <button type="button" onClick={choosePhoto}>Choose photo</button>
       {failedPhoto && <button type="button" onClick={() => downloadCameraPhoto(failedPhoto)}>Save scan photo</button>}
       <input ref={photoInput} type="file" accept="image/*" aria-label="Choose a high-resolution page photo" hidden onChange={event => {
@@ -233,6 +234,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
         else resumePhotoPicker();
       }} />
       <button type="button" onClick={close}>Cancel retake</button></div>
+    <p id={lightHint} className="camera-light-hint" role="status" />
     <p className="photo-note">Camera photos stay on this device. QRed only saves a copy when you choose Save scan photo.</p>
   </section></div>;
 }

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { scanQrImage } from "./qr/scanQrImage.js";
 import { decodeSeal } from "./qredVerifier.js";
 import { decodePhoto, qrFrameAction } from "./qr/decodePhoto.js";
@@ -200,6 +200,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
   const progressSnapshot = useSyncExternalStore(progress.subscribe, progress.getSnapshot, progress.getSnapshot);
   const videoRef = useRef(null);
   const lightButton = useRef(null);
+  const lightHint = useId();
   const canvasRef = useRef(null);
   const guideAreaRef = useRef(null);
   const guideRef = useRef(null);
@@ -405,6 +406,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
     camera = startCameraSession({
       video: videoRef.current,
       lightButton: lightButton.current,
+      progress,
       onStream: stream => {
         if (stream) return;
         markCameraReady(false);
@@ -468,7 +470,9 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
     React.createElement("canvas", { ref: canvasRef, style: { display: "none" } }),
     !cameraReady && !progressSnapshot ? React.createElement(CameraLoadingIndicator, { message: feedback || "Starting camera…" }) : null,
     React.createElement(PhotoScanProgress, { progress }),
-    cameraReady && !progressSnapshot ? React.createElement("div", { className: "ar-scan-feedback", role: "status", "aria-live": "polite" },
+    React.createElement("p", { id: lightHint, className: "ar-light-feedback camera-light-hint", role: "status",
+      hidden: Boolean(progressSnapshot) }),
+    cameraReady && !progressSnapshot ? React.createElement("div", { className: "ar-scan-feedback ar-camera-advice", role: "status", "aria-live": "polite" },
       quality && !feedback ? React.createElement("span", null, quality.message) : null,
       feedback ? React.createElement("span", null, feedback) : null,
       failedPhoto ? React.createElement("button", { type: "button", className: "save-scan-photo",
@@ -478,7 +482,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
         value: quality.progress, "aria-label": "Steady hold before automatic capture" }) : null) : null,
     React.createElement("div", { className: "ar-camera-tools" },
       React.createElement("button", { type: "button", className: "ar-light", ref: lightButton, hidden: true,
-        disabled: Boolean(progressSnapshot) || undefined }, "Flashlight off"),
+        "aria-describedby": lightHint }, "Flashlight off"),
       React.createElement("button", { className: "ar-close", onClick: onClose }, "Close"))
   );
 }

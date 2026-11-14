@@ -144,6 +144,69 @@ def test_main_camera_at_one_times_zoom_with_optional_flashlight(browser, path):
         context.close()
 
 
+@pytest.mark.parametrize("path", ["/", "/verify.htm"])
+@pytest.mark.parametrize("mode", ["late-torch", "shutter-only", "ignored"])
+def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path, mode):
+    context = browser.new_context(service_workers="block", viewport={"width": 360, "height": 780})
+    try:
+        page = context.new_page()
+        page.goto(BASE_URL + path, wait_until="networkidle")
+        page.evaluate("""mode => {
+            navigator.mediaDevices.enumerateDevices = async () => [];
+            window.lightRequests = [];
+            window.ImageCapture = class {
+                async getPhotoCapabilities() {
+                    return {fillLightMode: mode === 'shutter-only' && document.querySelector('video').readyState >= 2
+                        ? ['off', 'flash'] : []};
+                }
+            };
+            navigator.mediaDevices.getUserMedia = async () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = 360; canvas.height = 480;
+                canvas.getContext('2d').fillRect(0, 0, 360, 480);
+                const stream = canvas.captureStream(10), [track] = stream.getVideoTracks();
+                let torch = false;
+                const advertisesTorch = () => mode === 'late-torch' && document.querySelector('video')?.readyState >= 2;
+                track.getSettings = () => advertisesTorch() ? {torch} : {};
+                track.getCapabilities = () => advertisesTorch() ? {torch: [false, true]} : {};
+                track.applyConstraints = async request => {
+                    lightRequests.push(request);
+                    if (advertisesTorch()) torch = request.torch?.exact ?? request.advanced[0].torch;
+                };
+                return stream;
+            };
+        }""", mode)
+        page.get_by_role("button", name="Check document", exact=True).click()
+        labels = {"late-torch": "Flashlight off", "shutter-only": "Photo flash off", "ignored": "Try flashlight"}
+        light = page.get_by_role("button", name=labels[mode], exact=True)
+        expect(light).to_be_visible()
+        assert page.evaluate("lightRequests") == []
+        light.click()
+        if mode == "ignored":
+            light = page.get_by_role("button", name="Flashlight unavailable")
+            expect(light).to_be_visible()
+            expect(light).to_have_attribute("aria-pressed", "false")
+            help_text = page.get_by_text("For flash, take a photo in your phone’s Camera app, then select Choose photo.")
+            expect(help_text).to_be_visible()
+            paper = page.locator(".page-scan-guide").bounding_box()
+            help_box = help_text.bounding_box()
+            assert paper and help_box and help_box["y"] >= paper["y"] + paper["height"]
+            light.click()
+            expect(help_text).not_to_be_visible()
+            expect(page.get_by_role("button", name="Capture now")).to_be_enabled()
+            with page.expect_file_chooser():
+                page.get_by_role("button", name="Choose photo").click()
+        else:
+            on = page.get_by_role("button", name=labels[mode].replace(" off", " on"), exact=True)
+            expect(on).to_have_attribute("aria-pressed", "true")
+            on.click()
+            expect(light).to_have_attribute("aria-pressed", "false")
+            page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
+            expect(light).not_to_be_visible()
+    finally:
+        context.close()
+
+
 def test_large_photo_can_be_cancelled_then_another_seal_verified_offline(browser):
     # A synthetic 12 MP page with no seal exercises the real exhaustive decoder.
     # The private printer/phone trial photographs are deliberately not fixtures.

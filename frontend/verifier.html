@@ -133,6 +133,7 @@
 
     .controls {
       display: flex;
+      flex-wrap: wrap;
       gap: 0.75rem;
       margin-bottom: 1rem;
     }
@@ -339,11 +340,12 @@
       <div class="controls">
         <button class="btn btn-primary" id="btnScan">Check document</button>
         <button class="btn btn-primary" id="btnCapture" hidden>Capture now</button>
-        <button class="btn btn-secondary" id="btnCameraLight" hidden>Flashlight off</button>
+        <button class="btn btn-secondary" id="btnCameraLight" hidden aria-describedby="cameraLightHint">Flashlight off</button>
         <button class="btn btn-secondary" id="btnChoosePhoto">Choose photo</button>
         <button class="btn btn-secondary" id="btnSavePhoto" hidden>Save scan photo</button>
         <input id="pagePhotoInput" type="file" accept="image/*" aria-label="Choose a high-resolution page photo" hidden>
       </div>
+      <p id="cameraLightHint" class="page-scan-hint camera-light-hint" role="status"></p>
       <p class="page-scan-hint">Camera photos stay on this device. QRed only saves a copy when you choose Save scan photo.</p>
       <p id="clearNotice" role="status"></p>
 
@@ -789,6 +791,7 @@
       state.camera = startCameraSession({
         video: video,
         lightButton: document.getElementById("btnCameraLight"),
+        progress: photoScanProgress,
         waitForMetadata: true,
         onFrame: function() {
           if (!active() || !video.videoWidth || !video.videoHeight) return;

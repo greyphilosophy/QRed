@@ -1,88 +1,133 @@
 // A preview torch belongs to the live track. A still-photo flash belongs to
 // ImageCapture. Keep the user's selection with the track that will take it.
 import { cameraQualityPreferences } from "./cameraControls.js";
-const lights = new WeakMap();
-const torchSupported = modes => modes === true || modes?.includes?.(true);
 
-export function attachCameraLight(button, track) {
+const lights = new WeakMap();
+const flashHelp = "For flash, take a photo in your phone’s Camera app, then select Choose photo.";
+
+async function waitForLight(request) {
+  let timer;
+  try {
+    await Promise.race([request, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new DOMException("Camera light did not respond.", "TimeoutError")), 750);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
+export function attachCameraLight(button, track, { video, progress } = {}) {
   if (!button || !track) return;
-  let capabilities;
-  try { capabilities = track.getCapabilities?.(); } catch { /* Optional on some cameras. */ }
-  let torch = Boolean(track.applyConstraints && torchSupported(capabilities?.torch));
-  let flash = false, detached = false, busy = false, failed = false;
-  let discoverFlash;
+  const hint = button.ownerDocument.getElementById(button.getAttribute("aria-describedby"));
   const state = { mode: "off", pending: null };
+  let capabilities, torch, flash = false, detached = false, torchFailed = false;
+  let showHelp = false;
   const reportedTorch = () => {
     try { return track.getSettings?.().torch; } catch { return undefined; }
   };
-  if (torch && reportedTorch() === true) state.mode = "torch";
-  lights.set(track, state);
-
+  function refreshTorch() {
+    const previous = torch;
+    try { capabilities = track.getCapabilities?.(); } catch { capabilities = undefined; }
+    const modes = capabilities?.torch;
+    const actual = reportedTorch();
+    // Missing capabilities can mean the driver is still opening. A settings
+    // readback can be available even when capabilities omit the feature.
+    if (typeof track.applyConstraints !== "function") torch = false;
+    else if (typeof modes === "boolean") torch = modes;
+    else if (modes?.length) torch = modes.includes(true);
+    else torch = typeof actual === "boolean" ? true : undefined;
+    if (torch === true && previous !== true) { torchFailed = false; showHelp = false; }
+    if (actual === true) state.mode = "torch";
+  }
   function render() {
     if (detached) return;
-    button.hidden = !torch && !flash && !failed;
-    button.disabled = busy || (!torch && !flash);
     const on = state.mode !== "off";
+    const unavailable = !on && !flash && (torchFailed || torch === false);
+    let label = "Try flashlight";
+    if (unavailable) label = "Flashlight unavailable";
+    else if (state.mode === "flash" || (!on && prefersPhotoFlash())) label = `Photo flash ${on ? "on" : "off"}`;
+    else if (on || torch === true) label = `Flashlight ${on ? "on" : "off"}`;
+    button.hidden = false;
+    button.disabled = Boolean(state.pending || progress?.getSnapshot());
     button.setAttribute("aria-pressed", String(on));
-    const name = torch ? "Flashlight" : "Photo flash";
-    button.textContent = failed ? "Flashlight unavailable" : `${name} ${on ? "on" : "off"}`;
+    if (button.textContent !== label) button.textContent = label;
+    const message = unavailable && showHelp ? flashHelp : "";
+    if (hint && hint.textContent !== message) hint.textContent = message;
   }
-  // An advanced constraint may resolve even when the driver skips it. Use
-  // the required form first, and check the actual setting where available.
+  async function discoverFlash() {
+    if (typeof globalThis.ImageCapture !== "function" || flash) return;
+    try {
+      const caps = await new ImageCapture(track).getPhotoCapabilities?.();
+      if (detached) return;
+      if (caps?.fillLightMode?.includes("flash")) { flash = true; showHelp = false; }
+      refreshTorch();
+      render();
+    } catch { /* The track may only support a preview torch. */ }
+  }
+  function onPlaying() {
+    if (detached) return;
+    refreshTorch();
+    render();
+    void discoverFlash();
+  }
+  function prefersPhotoFlash() {
+    return flash && (torch !== true || torchFailed);
+  }
   async function setTorch(on) {
     const advanced = cameraQualityPreferences(capabilities);
+    const advertised = capabilities?.torch === true || capabilities?.torch?.includes?.(true);
+    // An unknown constraint can resolve without doing anything. For an
+    // unadvertised torch, require confirmation from the lens before saying on.
     for (const request of [{ torch: { exact: on }, advanced }, { advanced: [{ torch: on }, ...advanced] }]) {
       try {
-        await track.applyConstraints(request);
+        await waitForLight(track.applyConstraints(request));
         if (detached) return false;
         const actual = reportedTorch();
-        if (actual === undefined || actual === on) return true;
+        if (actual === on || (actual === undefined && advertised)) return true;
       } catch (error) {
+        if (reportedTorch() === on) return true;
         if (detached || !["OverconstrainedError", "NotSupportedError", "TypeError"].includes(error.name)) break;
       }
     }
     return false;
   }
   async function change() {
-    const on = state.mode === "off";
-    if (torch) {
-      if (await setTorch(on)) { state.mode = on ? "torch" : "off"; return; }
-      if (detached) return;
-      if (!on) return; // Keep the off switch available if the light is still on.
-      torch = false;
+    refreshTorch();
+    if (state.mode === "flash") { state.mode = "off"; return; }
+    const on = state.mode !== "torch";
+    if (!on || (torch !== false && !prefersPhotoFlash())) {
+      if (await setTorch(on)) { state.mode = on ? "torch" : "off"; torchFailed = false; showHelp = false; return; }
+      if (detached || !on) return; // Keep the off switch if the light is still on.
     }
-    if (!flash && discoverFlash) await discoverFlash;
+    if (!flash) {
+      // A slow shutter capability query must not hold up an ordinary capture.
+      try { await waitForLight(discoverFlash()); } catch { /* A later report can still enable photo flash. */ }
+    }
     if (detached) return;
-    if (flash) state.mode = on ? "flash" : "off";
-    else failed = true;
+    torchFailed = true;
+    if (flash) state.mode = "flash";
+    else showHelp = true;
   }
   function toggle() {
-    if (busy || detached) return;
-    busy = true; render();
-    state.pending = change().finally(() => { state.pending = null; busy = false; render(); });
+    if (state.pending || detached || progress?.getSnapshot()) return;
+    if (showHelp) { showHelp = false; render(); return; }
+    state.pending = change().finally(() => { state.pending = null; render(); });
+    render();
   }
+
+  lights.set(track, state);
   button.addEventListener("click", toggle);
-  render();
-  // Discover shutter-only lighting without holding up the preview or a torch.
-  if (typeof globalThis.ImageCapture === "function") {
-    const discover = async () => {
-      try {
-        const caps = await new ImageCapture(track).getPhotoCapabilities?.();
-        if (detached) return;
-        flash = Boolean(caps?.fillLightMode?.includes("flash"));
-        if (flash && failed) failed = false;
-        render();
-      } catch { /* The track may only support a preview torch. */ }
-    };
-    discoverFlash = discover();
-  }
+  video?.addEventListener?.("playing", onPlaying, { once: true });
+  const unsubscribe = progress?.subscribe(render);
+  onPlaying();
   return () => {
     detached = true;
     lights.delete(track);
+    unsubscribe?.();
+    video?.removeEventListener?.("playing", onPlaying);
     button.removeEventListener("click", toggle);
     button.hidden = true;
     button.disabled = false;
     button.setAttribute("aria-pressed", "false");
+    if (hint) hint.textContent = "";
   };
 }
 
