@@ -1,10 +1,13 @@
 import { afterAll, beforeEach, expect, it, vi } from "vitest";
 
-const scan = vi.hoisted(() => ({ quality: vi.fn(), frame: vi.fn(), action: vi.fn(), photo: vi.fn(), seal: vi.fn() }));
+const scan = vi.hoisted(() => ({ quality: vi.fn(), frame: vi.fn(), action: vi.fn(), photo: vi.fn(), seal: vi.fn(),
+  stack: vi.fn(), rectified: vi.fn() }));
 vi.mock("./pageCaptureQuality.js", () => ({ createPageCaptureGate: () => ({ update: scan.quality }) }));
 vi.mock("./scanQrImage.js", () => ({ createQrFrameScanner: () => scan.frame }));
 vi.mock("./decodePhoto.js", () => ({ qrFrameAction: scan.action, decodePhoto: scan.photo }));
 vi.mock("../qredVerifier.js", () => ({ decodeSeal: scan.seal }));
+vi.mock("./registeredBurst.js", () => ({ stackRegisteredBurst: scan.stack }));
+vi.mock("./rectifiedSealScan.js", () => ({ createRectifiedSealScanner: scan.rectified, prepareCurvedPageScan: () => null }));
 vi.mock("../verifier/photoReadingPixels.js", () => ({ preparePhotoReadingPixels: vi.fn() }));
 const scope = { postMessage: vi.fn() };
 vi.stubGlobal("self", scope);
@@ -18,6 +21,29 @@ beforeEach(() => {
 });
 const image = { data: new Uint8ClampedArray(24), width: 2, height: 3 };
 const capture = () => scope.onmessage({ data: { image, live: true, requirePageQuality: true, returnPayload: true } });
+
+it.each([true, false])("uses a registered burst when supported and retains the original on a miss (%s)", async readable => {
+  const extra = { width: 2, height: 3, close: vi.fn() }, stacked = { ...image, data: image.data.slice() };
+  vi.stubGlobal("createImageBitmap", async () => extra);
+  vi.stubGlobal("OffscreenCanvas", class { getContext() { return { drawImage() {}, getImageData: () => extra }; } });
+  scan.stack.mockImplementation((base, frames) => {
+    expect(base).toBe(image); expect(frames).toEqual([extra]);
+    return stacked;
+  });
+  scan.rectified.mockReturnValue(() => readable ? { seal: "page" } : null);
+  scan.seal.mockReturnValue({ total_chunks: 1 });
+  scan.photo.mockReturnValue({ status: "feedback", message: "original" });
+  await scope.onmessage({ data: { image, returnPayload: true, burst: [new Blob(["another exposure"])] } });
+  expect(scan.stack).toHaveBeenCalledOnce();
+  expect(scan.rectified).toHaveBeenCalledWith(stacked, expect.any(Object));
+  expect(extra.close).toHaveBeenCalledOnce();
+  if (readable) {
+    expect(scan.photo).not.toHaveBeenCalled();
+    expect(scope.postMessage).toHaveBeenLastCalledWith({ action: { status: "found", text: "page" } });
+  } else {
+    expect(scan.photo).toHaveBeenCalledWith(image, expect.objectContaining({ returnPayload: true }));
+  }
+});
 
 it("announces capture before any seal work and recovers from that same image", () => {
   scan.photo.mockImplementation(() => {

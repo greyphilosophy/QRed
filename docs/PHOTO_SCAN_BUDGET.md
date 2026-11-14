@@ -58,11 +58,14 @@ failed, timed-out or undersized photo acquisition stops before seal decoding;
 it prompts the user to retry or choose a photo. Generic QR preview scans use
 their own frame loop.
 
-Native photo acquisition has a separate cancellable five-second total allowance,
-not a five-second delay. Successful photos continue immediately. The previous
-1.8-second cutoff was an application policy, not a browser limit, and could
-abandon a photo that would finish shortly afterwards. Capability lookup, one
-optional-settings retry and bitmap decoding all share the same allowance.
+Native photo acquisition has a separate cancellable five-second total allowance.
+Automatic and manual page scans can request up to two more exposures in the
+1.1 seconds after the first shutter completes, reserving time to open the original.
+The captured notice appears as soon as the last usable exposure is frozen.
+The scanner keeps the first original for OCR, review and saving. In the decoder
+worker, a registered stack has up to 6.5 seconds of the shared scan budget to
+recover a complete watermark. A missed or unregistered stack leaves the
+remaining budget for the normal original-photo decoder.
 The browser API cannot cancel a pending hardware request; late results are
 ignored, and only one native request per track may remain outstanding. If the
 camera never settles, reopening it creates a fresh track.
@@ -78,7 +81,7 @@ the separate session-only review/OCR copy.
 
 Missing or explicitly unsupported optional capability discovery can fall back
 to `takePhoto` without resolution preferences. Rejected advertised dimensions
-can retry once without sizing, keeping flash off. Permission, security and
+can retry once without sizing, preserving the user's light choice. Permission, security and
 camera-operation failures are not retried. Separate advertised width/height
 ranges do not enumerate supported resolution pairs. Browser/device support and
 photo processing vary; using the photo API does not promise a particular sensor

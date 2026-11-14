@@ -106,6 +106,8 @@ export function cameraCaptureFeedback(action, capture) {
     : capture.source === "selected-photo" ? "Selected photo" : "Camera frame";
   const reason = capture.source === "video-frame" ? reasons[capture.reason] : null;
   const details = [];
+  if (Number.isInteger(capture.exposures) && capture.exposures >= 2 && capture.exposures <= 3)
+    details.push(`${capture.exposures} exposures`);
   if (Number.isInteger(capture.sourceWidth) && Number.isInteger(capture.sourceHeight)
     && capture.sourceWidth > 0 && capture.sourceHeight > 0 && capture.sourceWidth * capture.sourceHeight <= 80_000_000
     && (capture.sourceWidth !== capture.width || capture.sourceHeight !== capture.height))
@@ -141,7 +143,7 @@ function readPhotoPixels(photo, canvas, context, source, started) {
     preparationMs: Math.round(performance.now() - started), reason: "captured" } };
 }
 
-export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NATIVE_PHOTO_TIMEOUT_MS, onDiagnostic, onPhotoBlob, onPhotoTaken,
+export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NATIVE_PHOTO_TIMEOUT_MS, onDiagnostic, onPhotoBlob, onPhotoTaken, onBurst,
   requireHighResolution = false } = {}) {
   signal?.throwIfAborted();
   const started = performance.now();
@@ -156,7 +158,7 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
     return null;
   }
   pendingTracks.add(track);
-  let active = true, timer, abort;
+  let active = true, timer, abort, shutterInFlight;
   const attempt = async () => {
     let bitmap, replacingFrame = false;
     try {
@@ -171,7 +173,7 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
       if (!active || signal?.aborted) return fallback("capture-failed");
       const lighting = await stillPhotoLighting(track);
       if (!active || signal?.aborted) return fallback("capture-failed");
-      const settings = { ...lighting };
+      let settings = { ...lighting };
       const width = capabilities?.imageWidth, height = capabilities?.imageHeight;
       if (width?.max > 0 && height?.max > 0) {
         const size = workingPhotoSize(width.max, height.max);
@@ -184,11 +186,32 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
         // Some devices advertise dimensions they reject together. Retry once
         // without optional sizing, preserving the light choice and deadline.
         if (!active || signal?.aborted || !settings.imageWidth || !unsupportedOptions(error)) throw error;
-        blob = await camera.takePhoto(lighting);
+        settings = lighting;
+        blob = await camera.takePhoto(settings);
       }
       if (!active || signal?.aborted) return fallback("capture-failed");
-      // The exposure is over. Opening and validating these bytes can still
-      // take time, but moving the phone can no longer affect this photograph.
+      // Keep the first original for OCR and saving. Additional stills may
+      // help read its seal, but a slow or rejected shutter must not lose it.
+      const extras = [];
+      const burstCapable = blob?.size && onBurst && typeof OffscreenCanvas === "function";
+      if (burstCapable) {
+        const until = Math.min(performance.now() + 1100, started + timeoutMs - 1200);
+        while (extras.length < 2 && active && !signal?.aborted && track.readyState === "live"
+          && video.srcObject?.getVideoTracks?.()[0] === track && performance.now() < until) {
+          let stopWaiting;
+          try {
+            shutterInFlight = camera.takePhoto(settings);
+            const extra = await Promise.race([shutterInFlight, new Promise(resolve => {
+              stopWaiting = setTimeout(() => resolve(null), Math.max(0, until - performance.now()));
+            })]);
+            if (!extra?.size) break;
+            extras.push(extra);
+          } catch { break; }
+          finally { clearTimeout(stopWaiting); }
+        }
+      }
+      if (!active || signal?.aborted) return fallback("capture-failed");
+      // No more exposures will be used after this point.
       if (blob?.size) onPhotoTaken?.();
       bitmap = await createImageBitmap(blob);
       if (!active || signal?.aborted) return fallback("capture-failed");
@@ -200,14 +223,20 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
       const context = canvas.getContext("2d", { willReadFrequently: true });
       if (!context) return fallback("invalid-photo");
       replacingFrame = true;
-      return { ...readPhotoPixels(bitmap, canvas, context, "native-still", started), blob };
+      const captured = readPhotoPixels(bitmap, canvas, context, "native-still", started);
+      if (burstCapable) captured.diagnostic.exposures = 1 + extras.length;
+      return { ...captured, blob, extras };
     } catch (error) {
       // Once replacing the retained canvas begins, a drawing failure must
       // surface instead of pairing old decoder pixels with a different photo.
       if (replacingFrame) throw error;
       // Unsupported/rejected still capture retains the already frozen preview.
       return fallback("capture-failed");
-    } finally { bitmap?.close(); pendingTracks.delete(track); }
+    } finally {
+      bitmap?.close();
+      if (shutterInFlight) Promise.resolve(shutterInFlight).catch(() => {}).then(() => pendingTracks.delete(track));
+      else pendingTracks.delete(track);
+    }
   };
   try {
     const result = await Promise.race([
@@ -221,7 +250,10 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
     ]);
     signal?.throwIfAborted();
     onDiagnostic?.(result.diagnostic);
-    if (result.image) onPhotoBlob?.(result.blob);
+    if (result.image) {
+      onPhotoBlob?.(result.blob);
+      if (result.extras?.length) onBurst(result.extras);
+    }
     return result.image;
   } finally {
     active = false; clearTimeout(timer); signal?.removeEventListener("abort", abort);

@@ -747,9 +747,10 @@
         captureDiagnostic = null;
         var captureContext = file ? {} : cameraCaptureContext(
           { width: video.videoWidth, height: video.videoHeight }, preserveGate, lastQuality);
-        var nativeBlob;
+        var nativeBlob, burst;
         try {
           var options = { signal: controller.signal, requireHighResolution: true, onPhotoTaken: progress.photoReady,
+            onBurst: function(blobs) { burst = blobs; },
             onPhotoBlob: function(blob) { nativeBlob = blob; }, onDiagnostic: function(diagnostic) {
             if (current()) captureDiagnostic = { ...diagnostic, ...captureContext };
           } };
@@ -762,7 +763,7 @@
             return;
           }
           progress.photoReady();
-          var action = await scanPhotoInWorker(still, { returnPayload: true, signal: controller.signal, onStage: progress.stage });
+          var action = await scanPhotoInWorker(still, { returnPayload: true, burst, signal: controller.signal, onStage: progress.stage });
           if (current()) {
             if (action.timedOut) autoPaused = true;
             if (nativeBlob && (action.timedOut || action.status === "feedback")) offerFailedPhoto(nativeBlob);

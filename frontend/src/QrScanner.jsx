@@ -314,7 +314,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
       const controller = new AbortController();
       photoScanRef.current = controller;
       const current = () => photoScanRef.current === controller && !controller.signal.aborted;
-      let image, nativeBlob;
+      let image, nativeBlob, burst;
       try {
         const video = videoRef.current, canvas = canvasRef.current;
         const ready = isCameraFrameReady(video, canvas);
@@ -334,6 +334,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
         captureDiagnostic = cameraFrameDiagnostic(preview);
         const still = canCaptureCameraPhoto(video) ? await captureCameraPhoto(video, canvas, {
           signal: controller.signal, requireHighResolution: autoCapture, onPhotoTaken: attemptProgress.photoReady,
+          onBurst: autoCapture ? blobs => { burst = blobs; } : undefined,
           onPhotoBlob: blob => { nativeBlob = blob; },
           onDiagnostic: diagnostic => {
             if (current()) captureDiagnostic = { ...diagnostic, ...captureContext };
@@ -344,7 +345,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
         let action;
         if (image) {
           attemptProgress.photoReady();
-          action = await scanPhotoInWorker(image, { returnPayload, signal: controller.signal, onStage: attemptProgress.stage });
+          action = await scanPhotoInWorker(image, { returnPayload, burst, signal: controller.signal, onStage: attemptProgress.stage });
           if (!current()) return;
         } else {
           action = cameraPhotoFailure(captureDiagnostic);

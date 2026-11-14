@@ -71,8 +71,8 @@ function runPhotoWorker(image, { signal, onStage, ...request }) {
   });
 }
 
-export function scanPhotoInWorker(image, { signal, onStage, returnPayload = false } = {}) {
-  return runPhotoWorker(image, { signal, onStage, returnPayload });
+export function scanPhotoInWorker(image, { signal, onStage, returnPayload = false, burst } = {}) {
+  return runPhotoWorker(image, { signal, onStage, returnPayload, ...(burst?.length ? { burst } : {}) });
 }
 
 export function preparePhotoReadingInWorker(image, { signal } = {}) {

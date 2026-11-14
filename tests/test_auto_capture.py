@@ -66,7 +66,9 @@ def test_native_still_capture_keeps_more_detail_and_acknowledges_only_after_capt
         # A still photo can take longer than the gate's normal frame-gap limit.
         # The stationary page must not start another exposure after that delay.
         page.wait_for_timeout(2000)
-        assert page.evaluate("stillRequests.length") == 1
+        # The fixture leaves the second shutter pending. The bounded burst
+        # must use the completed original and never start a third or new burst.
+        assert page.evaluate("stillRequests.length") == 2
         if path == "/":
             # Capture, Choose photo, and Check this page must stay inside the
             # same two-row area instead of covering the stationary guide's advice.

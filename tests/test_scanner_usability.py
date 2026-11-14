@@ -312,7 +312,7 @@ def test_live_worker_has_no_backlog_and_capture_can_resume_the_same_camera_offli
         assert state["readsWhileBusy"] == 0
         assert state["decodedVideo"] == 0
         assert state["photos"] == [[2160, 3840]]
-        assert page.evaluate("__syntheticStillRequests.length") == 1
+        assert 1 <= page.evaluate("__syntheticStillRequests.length") <= 3
         page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
         assert page.evaluate("liveTestStream.getTracks().every(track => track.readyState === 'ended')")
         assert page.evaluate("liveTest.pending") == 0

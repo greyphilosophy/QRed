@@ -159,9 +159,10 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
     const attemptProgress = progress.begin(file ? "opening" : "capturing");
     const captureContext = file ? {} : cameraCaptureContext(
       { width: source.videoWidth, height: source.videoHeight }, preserveGate, lastQuality.current);
-    let nativeBlob;
+    let nativeBlob, burst;
     try {
       const options = { signal: controller.signal, requireHighResolution: true, onPhotoTaken: attemptProgress.photoReady,
+        onBurst: separateOriginal ? undefined : blobs => { burst = blobs; },
         onPhotoBlob: blob => { nativeBlob = blob; }, onDiagnostic: diagnostic => {
         if (current()) captureDiagnostic.current = { ...diagnostic, ...captureContext };
       } };
@@ -183,7 +184,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
         await acceptFrame({}, canvas, epoch, controller);
         return;
       }
-      const action = await scanPhotoInWorker(still, { returnPayload: true, signal: controller.signal, onStage: attemptProgress.stage });
+      const action = await scanPhotoInWorker(still, { returnPayload: true, burst, signal: controller.signal, onStage: attemptProgress.stage });
       if (!current()) return;
       if (action.timedOut) autoPaused.current = true;
       if (nativeBlob && (action.timedOut || action.status === "feedback")) setFailedPhoto(nativeBlob);
