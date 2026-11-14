@@ -191,7 +191,9 @@ export function compareLocatedPhotoText(expected, words, dimensions, lines) {
         // Repeating an ambiguous numeral still calls for a visual check of
         // the value. A different reading, even on this line, has no exemption.
         const numeric = /[\p{N}\p{Sc}%]/u.test(difference.expected + difference.observed);
-        difference.review = numeric ? "number" : "sourceOcr";
+        const knownColon = !difference.observed && difference.expected === ":" &&
+          /[\p{L}.]\s*:\s*$/u.test(line.text) && observed.every(w => w.confidence >= OCR_REVIEW_THRESHOLD);
+        difference.review = numeric ? "number" : knownColon ? "sourceSeparator" : "sourceOcr";
         difference.sourceReading = line.sourceReading;
       }
     }

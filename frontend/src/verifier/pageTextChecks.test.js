@@ -62,7 +62,7 @@ it("preserves completed checks across verification of another page and only read
 });
 
 it.each(["opening", "reading"])("discards a late %s result after clear and permits a new session", async stage => {
-  const { checks, reader, open, createUrl } = setup();
+  const { checks, reader, open, createUrl, revokeUrl } = setup();
   const late = deferred();
   if (stage === "opening") open.mockReturnValueOnce(late.promise);
   else reader.read.mockReturnValueOnce(late.promise);
@@ -72,7 +72,8 @@ it.each(["opening", "reading"])("discards a late %s result after clear and permi
   late.resolve(stage === "opening" ? { width: 100, height: 100 } : [word("Friday")]);
   await late.promise;
   expect(checks.getSnapshot().pages).toEqual([]);
-  expect(createUrl).not.toHaveBeenCalled();
+  expect(createUrl).toHaveBeenCalledTimes(stage === "reading" ? 1 : 0);
+  expect(revokeUrl).toHaveBeenCalledTimes(stage === "reading" ? 1 : 0);
   checks.update([page("two", 2)], [photo(2, "two", "Monday")]);
   await vi.waitFor(() => expect(checks.getSnapshot().pages[0].state).toBe("differences"));
   checks.dispose();

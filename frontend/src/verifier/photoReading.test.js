@@ -39,6 +39,18 @@ it("uses the exact pre-seal OCR reading only on its registered line", () => {
   expect(check(signed, "Room nurnber 2017").status).toBe("matches");
 });
 
+it("explains an exact source omission of a trailing label colon without excusing a changed or unreadable value", () => {
+  const recorded = [{ line: 1, observed: "Custom Ref." }];
+  const check = (signed, words, ocrReadings = recorded) => registeredReading(signed, words, [], { reread: false, ocrReadings });
+  const label = [word("Custom", 68, 403), word("Ref.", 150, 403)];
+  expect(check("Custom Ref. :", label)).toMatchObject({ status: "matches", differences: [
+    expect.objectContaining({ review: "sourceSeparator", expected: ":", observed: "" })] });
+  expect(check("Custom Ref. :", label, []).status).toBe("differences");
+  expect(check("Custom Ref. :", [...label, word("1", 200, 403)]).status).toBe("differences");
+  expect(check("Custom Ref. : 7", label).status).toBe("uncertain");
+  expect(check("Custom Ref. :", [{...label[0], confidence: 30}, label[1]]).differences[0].review).toBe("sourceOcr");
+});
+
 it("retains lettering over original artwork for review and reports new text in a blank area", () => {
   const indices = new Uint8Array(20 * 20).fill(15);
   indices.fill(0, 6 * 20 + 4, 6 * 20 + 8);

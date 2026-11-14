@@ -155,6 +155,8 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
   // Give a failed watermark one distinct placement before sacrificing the
   // original page size for a footer. Both candidates must pass every check.
   const triedAlternative = new Set();
+  const firstLayouts = plannedWatermarkLayout?.slice();
+  const strongerGray = 0.87; // Previously used print strength for pages that fail at 10% ink.
   let triedWithoutEntry = false;
   let rendered;
   do {
@@ -185,6 +187,10 @@ export async function renderSealedPdf({ file, pageSealResults, pagesWithText, pa
         plannedWatermarkLayout[index] = entryless[index];
       } else if (alternatives?.[index]) {
         plannedWatermarkLayout[index] = alternatives[index];
+      } else if (plannedWatermarkLayout[index]?.gray !== strongerGray) {
+        // Prefer a verified light placement. Before moving data to another page,
+        // retry the original geometry once with the established darker ink.
+        plannedWatermarkLayout[index] = { ...firstLayouts[index], gray: strongerGray };
       } else if (!fallbackPages.includes(index + 1)) {
         fallbackPages.push(index + 1);
         fallbackReasons[index + 1] = rendered.failureReasons[index + 1] ?? "The watermark did not pass verification.";

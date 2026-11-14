@@ -277,7 +277,7 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
       const x = box.x + (col + 0.5) * box.width / n;
       const y = box.y + box.height - (row + 0.5) * box.height / n;
       const gray = sampleAtPagePoint(image, x, y);
-      expect(Math.abs(gray - 222), `13% black finder module ${row},${col}`).toBeLessThanOrEqual(1);
+      expect(Math.abs(gray - 230), `10% black finder module ${row},${col}`).toBeLessThanOrEqual(1);
     }
   }, 30000);
 

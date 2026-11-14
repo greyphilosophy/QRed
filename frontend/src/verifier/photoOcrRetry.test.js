@@ -102,6 +102,20 @@ it("can recover an omitted column even when the first pass was confident about i
 });
 
 
+it("explains a complete signed ending only when strong earlier words stay in place", () => {
+  const label = word("Balance", 98);
+  const amount = word("0.00", 96, 100, 200);
+  const line = { ...candidate, signedText: "Balance 0.00" };
+  const run = (before, after, crop = line) => applyTextRetries(before, [{ candidate: crop, words: after }]);
+  const completed = run([label], [label, amount]);
+  expect(completed.retryReviews[0].completedLine).toBe(true);
+  expect(comparePageReading(line.signedText, completed, size).status).toBe("matches");
+  expect(run([label], [label, { ...amount, text: "8.00" }]).retryReviews[0].completedLine).toBeUndefined();
+  expect(run([{ ...label, confidence: 47 }], [label, amount]).retryReviews[0].completedLine).toBeUndefined();
+  expect(run([label], [word("Balance", 98, 200), amount]).retryReviews[0].completedLine).toBeUndefined();
+  expect(run([label], [label, amount], candidate).retryReviews[0].completedLine).toBeUndefined();
+});
+
 it("trims retry padding before it clips the edge of the next line", () => {
   const words = [word("Total", 50), word("Following", 98, 127)];
   const comparison = comparePageReading("Total Following", { words }, size);
