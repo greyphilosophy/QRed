@@ -7,6 +7,7 @@ B(0.15, 0.06), and the sRGB parametric transfer curve. Its date is fixed.
 """
 import base64
 import io
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -101,7 +102,10 @@ def max_error(actual, expected):
 @pytest.mark.parametrize("tagged", [False, True], ids=["untagged-srgb", "tagged-display-p3"])
 def test_selected_jpeg_matches_color_managed_browser_pixels(browser, tagged, orientation):
     jpeg, raw, managed, points = synthetic_jpeg(tagged, orientation)
-    source = (Path(__file__).parents[1] / "frontend/src/qr/cameraPhoto.js").read_text()
+    frontend = Path(__file__).parents[1] / "frontend"
+    source = subprocess.check_output([
+        str(frontend / "node_modules/.bin/esbuild"), "src/qr/cameraPhoto.js", "--bundle", "--format=esm",
+    ], cwd=frontend, text=True)
     context = browser.new_context(service_workers="block")
     requests = []
     context.on("request", lambda request: requests.append(request.url))
