@@ -1,6 +1,7 @@
 // Session-only timing checkpoints. Never include pixels, payloads, exception
 // text, camera identifiers or arbitrary decoder strings in these diagnostics.
 const STAGE_LABELS = Object.freeze({
+  "camera-burst": "aligning camera photos",
   "rectified-fast": "finding the page grid",
   "watermark-preview": "checking the watermark",
   "ordinary-qr": "reading conventional QR codes",

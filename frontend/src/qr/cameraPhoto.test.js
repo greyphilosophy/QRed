@@ -345,3 +345,34 @@ it("snapshots only preview dimensions, trigger and an allowlisted guide state", 
   expect(cameraCaptureContext({ width: 0, height: 1 }, true, { state: "private" }))
     .toEqual({ trigger: "automatic" });
 });
+
+it("takes sequential native exposures and retains the first original for review", async () => {
+  vi.stubGlobal("OffscreenCanvas", class {});
+  const frames = [new Blob(["one"]), new Blob(["two"]), new Blob(["three"])];
+  let active = 0, next = 0;
+  camera.takePhoto.mockImplementation(async () => {
+    expect(++active).toBe(1);
+    await Promise.resolve(); active--;
+    return frames[next++];
+  });
+  const onBurst = vi.fn(), onPhotoBlob = vi.fn(), onPhotoTaken = vi.fn(() => expect(next).toBe(3));
+  const result = await captureCameraPhoto(video, canvas, { onBurst, onPhotoBlob, onPhotoTaken });
+  expect(result).toBe(pixels);
+  expect(createImageBitmap).toHaveBeenCalledWith(frames[0]);
+  expect(onPhotoBlob).toHaveBeenCalledWith(frames[0]);
+  expect(onBurst).toHaveBeenCalledWith(frames.slice(1));
+  expect(onPhotoTaken).toHaveBeenCalledTimes(1);
+});
+
+it("keeps the first exposure when a later shutter stalls, and releases the track after it settles", async () => {
+  vi.useFakeTimers(); vi.stubGlobal("OffscreenCanvas", class {});
+  let finish;
+  camera.takePhoto.mockResolvedValueOnce(new Blob(["one"])).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const onBurst = vi.fn(), onPhotoTaken = vi.fn();
+  const shot = captureCameraPhoto(video, canvas, { onBurst, onPhotoTaken });
+  await flush(); await vi.advanceTimersByTimeAsync(1101);
+  expect(await shot).toBe(pixels); expect(onPhotoTaken).toHaveBeenCalledOnce(); expect(onBurst).not.toHaveBeenCalled();
+  expect(await captureCameraPhoto(video, canvas)).toBeNull();
+  finish(new Blob(["late"])); await flush();
+  expect(await captureCameraPhoto(video, canvas)).toBe(pixels);
+});

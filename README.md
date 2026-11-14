@@ -140,6 +140,10 @@ Keep all four page corners visible and avoid glare. Lens selection depends on
 what the browser exposes. In dim light, turn on **Flashlight** to light the page
 while framing and taking the photo. Cameras with only a shutter flash show
 **Photo flash**. Lighting is optional and starts off when you open the scanner.
+Automatic and manual full-page capture can take up to three full-resolution
+exposures. Keep the page framed until the captured notice appears. QRed aligns
+matching exposures to read faint watermarks and keeps the first original for
+text comparison and **Save scan photo**.
 Live scanning uses a background worker with one frame in flight and no queued
 frames. It rotates through bounded attempts and disables lengthy alignment
 refinement so the operator can adjust the camera. Selected images and

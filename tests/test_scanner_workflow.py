@@ -268,7 +268,7 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         decoded = assert_document_preview_not_decoded(page)
         assert len(decoded) == 1, decoded
         assert (decoded[0]["width"], decoded[0]["height"]) == (2400, 3000)
-        assert page.evaluate("__syntheticStillRequests.length") == 1
+        assert 1 <= page.evaluate("__syntheticStillRequests.length") <= 3
         assert page.evaluate("__workflowCamera.captures[0].mode") == clear_mode
         hold_ms = page.evaluate("__workflowCamera.captures[0].at - __workflowCamera.clearAt")
         assert hold_ms >= 300
