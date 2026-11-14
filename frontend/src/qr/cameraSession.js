@@ -107,10 +107,10 @@ export function startCameraSession(options) {
 }
 
 async function openPreview({ video, requestStream = signal => getPreferredCameraStream(undefined, signal),
-  prepareStream = applyCameraQualityControls, lightButton, progress, onStream, onFrame, waitForMetadata = false, interval = 125,
+  prepareStream = applyCameraQualityControls, lightButton, framingSelect, progress, onStream, onFrame, waitForMetadata = false, interval = 125,
   seekingLight, preferPhoneCamera, onProbeFinished, onLightUnavailable, onPhoneCamera },
   signal, onFailure) {
-  let stream = null, animation = null, started = false, stopFrameObserver, detachLight;
+  let stream = null, animation = null, started = false, stopFrameObserver, controls;
   let lastScanAt = -Infinity;
   let timer = setTimeout(() => fail(new Error("Camera access did not finish. Check camera permission and try again."), "access"),
     seekingLight ? LIGHT_LENS_TIMEOUT_MS : CAMERA_ACCESS_TIMEOUT_MS);
@@ -122,7 +122,7 @@ async function openPreview({ video, requestStream = signal => getPreferredCamera
   signal.addEventListener("abort", () => {
     clearTimeout(timer);
     stopFrameObserver?.();
-    detachLight?.();
+    controls?.detach();
     if (animation !== null) cancelAnimationFrame(animation);
     if (video.onloadedmetadata === startFrames) video.onloadedmetadata = null;
     if (stream) {
@@ -175,7 +175,7 @@ async function openPreview({ video, requestStream = signal => getPreferredCamera
   // Some camera drivers wait for playback before applying focus or zoom.
   // These controls are optional and must never gate the preview or frame loop.
   if (!signal.aborted) {
-    detachLight = attachCameraLight(lightButton, stream.getVideoTracks?.()[0], { video, progress,
+    controls = attachCameraLight(lightButton, stream.getVideoTracks?.()[0], { video, progress, framingSelect,
       enableOnPlayback: seekingLight, preferPhoneCamera, onPhoneCamera, onLightUnavailable,
       onProbeFinished: enabled => { seekingLight = false; onProbeFinished(enabled); },
     });
@@ -183,6 +183,7 @@ async function openPreview({ video, requestStream = signal => getPreferredCamera
     // zoom preferences. A concurrent second request could reset its light.
     if (!seekingLight) {
       try { await prepareStream?.(stream); } catch { /* The preview can continue. */ }
+      if (!signal.aborted) controls?.refresh();
     }
   }
 }

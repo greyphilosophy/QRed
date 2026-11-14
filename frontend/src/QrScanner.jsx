@@ -200,6 +200,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
   const progressSnapshot = useSyncExternalStore(progress.subscribe, progress.getSnapshot, progress.getSnapshot);
   const videoRef = useRef(null);
   const lightButton = useRef(null);
+  const framingSelect = useRef(null);
   const lightHint = useId();
   const canvasRef = useRef(null);
   const guideAreaRef = useRef(null);
@@ -409,6 +410,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
     camera = startCameraSession({
       video: videoRef.current,
       lightButton: lightButton.current,
+      framingSelect: framingSelect.current,
       onPhonePhoto: file => capturePhoto(false, file),
       progress,
       onStream: stream => {
@@ -485,6 +487,8 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
       quality?.state === "hold" && !feedback ? React.createElement("progress", { className: "capture-readiness", max: 1,
         value: quality.progress, "aria-label": "Steady hold before automatic capture" }) : null) : null,
     React.createElement("div", { className: "ar-camera-tools" },
+      React.createElement("select", { ref: framingSelect, className: "ar-framing", hidden: true,
+        "aria-label": "Camera framing", "aria-describedby": lightHint }),
       React.createElement("button", { type: "button", className: "ar-light", ref: lightButton, hidden: true,
         "aria-describedby": lightHint }, "Flashlight off"),
       React.createElement("button", { className: "ar-close", onClick: onClose }, "Close"))

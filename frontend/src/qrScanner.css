@@ -75,9 +75,10 @@
   z-index: 5;
   display: flex;
   gap: .5rem;
+  max-width: calc(100% - 2rem);
 }
 .ar-camera-tools .ar-close { position: static; }
-.ar-camera-tools button {
+.ar-camera-tools :is(button, select) {
   background: rgba(15, 23, 42, .85);
   color: white;
   border: 1px solid rgba(255, 255, 255, .3);
@@ -85,15 +86,20 @@
   min-height: 44px;
   padding: .6rem .9rem;
 }
+.ar-camera-tools select { width: 6.3rem; min-width: 0; font: inherit; font-size: .875rem; padding-inline: .5rem; }
 .ar-camera-tools button[aria-pressed="true"] { background: #f8fafc; color: #0f172a; }
 .ar-camera > .camera-light-hint { margin: 0; }
 .ar-camera > .camera-light-hint:not(:empty) ~ .ar-camera-advice { display: none; }
-.ar-display-scanning:has(.ar-light:not([hidden])) .ar-collection-progress { right: 14rem; }
+.ar-display-scanning:has(.ar-framing:not([hidden])) .ar-collection-progress { right: 21rem; }
 .ar-collection-progress:empty { display: none; }
 
 @media (max-width: 640px) {
   .ar-display-scanning { min-height: calc(100dvh - 1rem); }
   .ar-camera { --camera-bottom: 17rem; }
+  .ar-camera-tools { left: .6rem; right: .6rem; max-width: none; justify-content: flex-end; gap: .3rem; }
+  .ar-camera-tools button { padding-inline: .6rem; }
+  .ar-display-scanning:has(.ar-collection-progress:not(:empty)) .ar-camera { --camera-top: 8rem; }
+  .ar-display-scanning:has(.ar-framing:not([hidden])) .ar-collection-progress { top: 4.25rem; left: .75rem; right: .75rem; padding: .4rem .6rem; }
   .ar-camera > .photo-scan-progress { bottom: calc(clamp(1rem, 3vw, 2rem) + 8.5rem); }
   /* Keep the feedback's reserved two-row control area after a page is
      collected: primary action above the two secondary choices. */
@@ -106,7 +112,9 @@
   /* Use the full video height for an upright page in a short landscape
      window. Keep feedback to its left and camera controls to its right. */
   .ar-camera { --camera-top: .5rem; --camera-bottom: .5rem; --camera-sides: 10.5rem; }
-  .ar-display-scanning .ar-collection-progress { left: .75rem; right: auto; width: 8.75rem; }
+  .ar-display-scanning:has(.ar-framing:not([hidden])) .ar-collection-progress { left: .75rem; right: auto; width: 8.75rem; }
+  .ar-camera-tools { flex-direction: column; width: 8.5rem; }
+  .ar-camera-tools select { width: 100%; }
   .ar-display-scanning .ar-controls {
     left: auto;
     right: 1rem;

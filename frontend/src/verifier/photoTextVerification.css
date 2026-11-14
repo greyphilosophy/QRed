@@ -30,6 +30,7 @@
 .photo-check select, .photo-check input[type=file] { box-sizing: border-box; width: 100%; min-height: 44px; padding: .5rem; border: 1px solid #94a3b8; border-radius: 5px; background: #fff; color: #172033; font: inherit; }
 .photo-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; margin: .75rem 0; }
 .photo-check .photo-actions button { margin: 0; font-size: .9rem; }
+.photo-check .photo-actions select { width: auto; }
 .photo-check button { margin: 0; min-height: 44px; padding: .6rem .8rem; background: #334155; color: #fff; border: 0; border-radius: 6px; font: inherit; cursor: pointer; }
 .photo-check summary { min-height: 44px; padding: .7rem 0; cursor: pointer; }
 .photo-check button:disabled { opacity: .5; cursor: default; }

@@ -7,6 +7,22 @@ import { captureCameraPhoto } from "./cameraPhoto.js";
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 
+it("offers native phone framing when the driver refuses or silently ignores the requested zoom", async () => {
+  for (const reject of [false, true]) {
+    const button = document.createElement("button"), select = document.createElement("select"), hint = document.createElement("p");
+    hint.id = "framing-hint"; button.setAttribute("aria-describedby", hint.id); document.body.replaceChildren(button, select, hint);
+    const track = { getCapabilities: () => ({ zoom: { min: 1, max: 3 } }), getSettings: () => ({ zoom: 1 }),
+      applyConstraints: async () => { if (reject) throw new DOMException("Unsupported", "OverconstrainedError"); } };
+    const onPhoneCamera = vi.fn(), { detach } = attachCameraLight(button, track, { framingSelect: select, onPhoneCamera });
+    select.value = "1.7"; select.dispatchEvent(new Event("change")); await flush();
+    expect(hint.textContent).toContain("For 1×");
+    expect([...select.options].map(option => option.value)).toEqual(["", "phone"]);
+    select.value = "phone"; select.dispatchEvent(new Event("change"));
+    expect(onPhoneCamera).toHaveBeenCalledOnce();
+    detach();
+  }
+});
+
 function setup({ modes = [false, true], flash = [], report = true, apply, photoCaps, ...controls } = {}) {
   let torch = false;
   const canReport = typeof report === "function" ? report : () => report;
@@ -24,7 +40,7 @@ function setup({ modes = [false, true], flash = [], report = true, apply, photoC
   document.body.replaceChildren(button, hint);
   const video = document.createElement("video"), progress = createPhotoScanProgress();
   video.srcObject = { getVideoTracks: () => [track] };
-  const detach = attachCameraLight(button, track, { video, progress, ...controls });
+  const { detach } = attachCameraLight(button, track, { video, progress, ...controls });
   const canvas = { width: 1, height: 1, getContext: () => ({ drawImage() {}, getImageData: () => ({ width: 4000, height: 3000 }) }) };
   return { track, video, progress, button, hint, takePhoto, detach, capture: () => captureCameraPhoto(video, canvas) };
 }

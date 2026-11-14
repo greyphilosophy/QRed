@@ -340,6 +340,7 @@
       <div class="controls">
         <button class="btn btn-primary" id="btnScan">Check document</button>
         <button class="btn btn-primary" id="btnCapture" hidden>Capture now</button>
+        <select class="btn btn-secondary" id="cameraFraming" aria-label="Camera framing" aria-describedby="cameraLightHint" hidden></select>
         <button class="btn btn-secondary" id="btnCameraLight" hidden aria-describedby="cameraLightHint">Flashlight off</button>
         <button class="btn btn-secondary" id="btnChoosePhoto">Choose photo</button>
         <button class="btn btn-secondary" id="btnSavePhoto" hidden>Save scan photo</button>
@@ -791,6 +792,7 @@
       state.camera = startCameraSession({
         video: video,
         lightButton: document.getElementById("btnCameraLight"),
+        framingSelect: document.getElementById("cameraFraming"),
         onPhonePhoto: file => acquirePhoto({ file }),
         onStream: stream => { if (!stream && active() && !state.photoScan && !processingCapture) liveScan.reset(); },
         progress: photoScanProgress,

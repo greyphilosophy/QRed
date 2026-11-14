@@ -5,7 +5,7 @@ Current payload recovery reads ordinary QR byte segments. Retired hidden-padding
 images require re-sealing; references to hidden recovery in the historical audit
 below do not describe supported transport.
 
-As of November 2026, both scanner pages prefer the rear main camera at 1× with a 3840×2880 ideal preview. The scanner offers an optional flashlight or still-photo flash when the active camera exposes it. Full-page watermarks need the entire frame.
+Both scanners and page retakes prefer the main rear camera and request a 3840×2880 preview. Camera framing uses 1× on a combined 0.6–1× range, or an approximate standard view on a labeled ultrawide. A numbered lens starts at its native view. Choosing the tighter crop adjusts the active track and keeps its flashlight setting. A manual framing choice is remembered for that camera while the verifier tab stays open. The Framing menu also opens the phone camera for devices that handle zoom there. Full-page watermarks need all four corners.
 
 Both live camera views decode in a background worker with one frame in flight and no queued frames. The submitted canvas stays unchanged until every recovered seal has been collected with its original photo. Closing the scanner terminates the worker; capturing a still photo first discards any pending live result. The public worker code is prepared for offline use through the existing service worker; photographs stay on the device. Physical lens selection still needs testing on supported phones because camera labels and controls vary by browser.
 
