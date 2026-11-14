@@ -121,10 +121,12 @@ function expectGraphicPreserved(original, printed, box, { pageAligned, gray = WA
   }
   // A page-filling watermark also crosses the logo. Each channel stays
   // within the range allowed by the watermark's multiply blend.
+  // The PDF rasterizer quantizes the ink and then the multiplied channel to bytes.
+  const darkestInk = Math.floor(255 * gray) / 255;
   let invalid = 0;
   for (let i = 0; i < before.length; i++) {
     if (i % 4 === 3) invalid += Number(after[i] !== before[i]);
-    else invalid += Number(after[i] > before[i] + 1 || after[i] < before[i] * gray - 1);
+    else invalid += Number(after[i] > before[i] + 1 || after[i] < Math.floor(before[i] * darkestInk) - 1);
   }
   expect(invalid).toBe(0);
 }
