@@ -9,7 +9,7 @@ import { createQRedSeals } from "../qredSealer.js";
 import { createQRedQrSymbol } from "../qredQr.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { planWatermarks } from "../pdf/watermarkPlacement.js";
-import { stampWatermarks } from "../pdf/watermark.js";
+import { stampWatermarks, WATERMARK_GRAY } from "../pdf/watermark.js";
 import { renderPdfPage, withPdfDocument } from "../pdf/readPdfText.js";
 import { scanPdfPage } from "../verifier/scanPdf.js";
 import { decodePhoto } from "./decodePhoto.js";
@@ -51,7 +51,7 @@ function printAndPhotograph(seals, {
   width = 690, height = 900, ink = [65, 120, 235],
   tilted = true, finderBlocked = true, text = true,
   backdrop = [43, 43, 47], patternedBackdrop = false, shadowed = false,
-  printGray = 0.85, paperBase = 246, printerScale = 1,
+  printGray = WATERMARK_GRAY, paperBase = 246, printerScale = 1,
   pageFormat = pageSize, legacyMargins = false, printerWarp = 0,
   lightTint = null, marginPoints = margin,
 } = {}) {
@@ -276,7 +276,8 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
       expect(qr.modules.get(row, col)).toBeTruthy();
       const x = box.x + (col + 0.5) * box.width / n;
       const y = box.y + box.height - (row + 0.5) * box.height / n;
-      expect(sampleAtPagePoint(image, x, y), `finder module ${row},${col}`).toBeLessThan(239);
+      const gray = sampleAtPagePoint(image, x, y);
+      expect(Math.abs(gray - 222), `13% black finder module ${row},${col}`).toBeLessThanOrEqual(1);
     }
   }, 30000);
 
@@ -480,7 +481,7 @@ describe("watermark readability acceptance contract (requirements WM-01..08)", (
     const { seals } = await signed(content);
     expect(seals).toHaveLength(1);
     const photo = printAndPhotograph(seals, {
-      legacyMargins: true, finderBlocked: false, text: false,
+      legacyMargins: true, printGray: 0.85, finderBlocked: false, text: false,
     });
     expect(scanPageAlignedImage(photo).map(item => item.seal)).toContain(seals[0]);
   }, 60000);

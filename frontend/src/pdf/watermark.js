@@ -13,9 +13,8 @@ export { ENTRY_URL, ENTRY_QR_SIZE, createEntryQrSymbol } from "./navigationQr.js
 import { ENTRY_URL, ENTRY_QR_SIZE, createEntryQrSymbol } from "./navigationQr.js";
 import { drawQrSymbol } from "./qrDrawing.js";
 
-// Fifteen-percent black survives more printer gray-tone loss than the old 6%.
-// Keep it pale enough to preserve the readability of underlying black text.
-export const WATERMARK_GRAY = 0.85;
+// Thirteen-percent black on white paper. Multiply blending preserves black text.
+export const WATERMARK_GRAY = 0.87;
 const MARGIN = DEFAULT_WATERMARK_MARGIN_POINTS;
 const ENTRY_WIDTH = 70, ENTRY_HEIGHT = 52;
 
