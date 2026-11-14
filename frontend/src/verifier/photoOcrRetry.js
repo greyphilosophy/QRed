@@ -67,7 +67,8 @@ export function planTextRetries(words, comparison, signedLines, { width, height 
     }
     const priority = indices.some(index => disputedNumbers.has(index)) ? 0 : missing ? 1
       : indices.some(index => comparison.words.find(w => w.sourceIndex === index)?.agrees === false) ? 2 : 3;
-    candidates.push({ bbox: box, indices, priority, signedLine: Boolean(group.text) });
+    const sameLine = group.text && indices.length === group.wordIndices.length && indices.every(i => group.wordIndices.includes(i));
+    candidates.push({ bbox: box, indices, priority, signedLine: Boolean(group.text), signedText: sameLine ? group.text : undefined });
   }
   const selected = [];
   for (const candidate of candidates.sort((a, b) => a.priority - b.priority)) {
@@ -136,8 +137,19 @@ export function applyTextRetries(words, replacements) {
       }
     }
     if (!preferTextRetry(before, reading)) continue;
-    if (changed && !candidate.dateField)
-      retryReviews.push({ original, observed, boxes: [candidate.bbox] });
+    if (changed && !candidate.dateField) {
+      // A closer pass can complete a cut-off row. Check only after independent
+      // recognition, and only when earlier whole words still occupy the same
+      // places. Editing a digit, dropping a sign or losing a word is a conflict.
+      const completedLine = candidate.signedText?.normalize("NFC") === observed.normalize("NFC") &&
+        before.length < reading.length && reading.every(w => w.confidence >= OCR_REVIEW_THRESHOLD) &&
+        before.every((w, i) => {
+          const b = reading[i].bbox, a = w.bbox;
+          return a && w.text === reading[i].text && w.confidence >= OCR_REVIEW_THRESHOLD &&
+            Math.min(a.x1, b.x1) > Math.max(a.x0, b.x0) && Math.min(a.y1, b.y1) > Math.max(a.y0, b.y0);
+        });
+      retryReviews.push({ original, observed, boxes: [candidate.bbox], ...(completedLine ? { completedLine: true } : {}) });
+    }
     candidate.indices.forEach(index => removed.add(index));
     if (candidate.indices.length) inserts.set(Math.min(...candidate.indices), reading);
     else extra.push(...reading);

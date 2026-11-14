@@ -13,8 +13,8 @@ export { ENTRY_URL, ENTRY_QR_SIZE, createEntryQrSymbol } from "./navigationQr.js
 import { ENTRY_URL, ENTRY_QR_SIZE, createEntryQrSymbol } from "./navigationQr.js";
 import { drawQrSymbol } from "./qrDrawing.js";
 
-// Thirteen-percent black on white paper. Multiply blending preserves black text.
-export const WATERMARK_GRAY = 0.87;
+// Ten-percent black on white paper. Multiply blending preserves black text.
+export const WATERMARK_GRAY = 0.90;
 const MARGIN = DEFAULT_WATERMARK_MARGIN_POINTS;
 const ENTRY_WIDTH = 70, ENTRY_HEIGHT = 52;
 
@@ -168,7 +168,7 @@ export async function stampWatermarks(pdf, layouts, pageSealResults) {
   for (let index = 0; index < layouts.length; index++) {
     if (!layouts[index]) continue;
     pageSealResults[index].seals.forEach((value, part) => {
-      drawQrSymbol(pdf.getPage(index), createQRedQrSymbol(value), layouts[index].boxes[part], WATERMARK_GRAY, true,
+      drawQrSymbol(pdf.getPage(index), createQRedQrSymbol(value), layouts[index].boxes[part], layouts[index].gray ?? WATERMARK_GRAY, true,
         Boolean(layouts[index].pageAligned));
     });
   }

@@ -114,13 +114,18 @@ def main():
                         .some(s => n.classList.contains(s)));} """, timeout=90000)
                     result["collection_and_text_ms"] = round((time.monotonic() - collection_started) * 1000)
                     result["pages"] = []
-                    buttons = page.locator(".page-check-list button")
-                    for i in range(buttons.count()):
-                        buttons.nth(i).click()
+                    controls = page.get_by_role("navigation", name="Page checks")
+                    chooser = controls.get_by_role("combobox")
+                    buttons = controls.get_by_role("button")
+                    for i in range(controls.locator(".page-check-status").count()):
+                        if chooser.count():
+                            chooser.select_option(index=i)
+                        else:
+                            buttons.nth(i).click()
                         result["pages"].append(page.locator('section[aria-label^="Review "]').evaluate("""n => ({
                           state:n.querySelector('.photo-summary').className.split(' ').at(-1),
                           counts:[...n.querySelectorAll('.photo-legend li')].map(x => Number(x.textContent.match(/\\d+/)?.[0])),
-                          contentDifferences:n.querySelectorAll('.photo-differences > ol > li').length,
+                          contentDifferences:Number(n.querySelector('.photo-differences')?.dataset.count || 0),
                           firstReadingDifferences:n.querySelectorAll('.photo-original-reading > ol > li').length,
                           rereads:n.querySelectorAll('.photo-retries > ol > li').length})"""))
                     page.get_by_role("button", name="Finish & clear", exact=True).click()

@@ -85,7 +85,7 @@ watermark cannot be placed or recovered. Footer layouts can also be selected dir
 Watermarks preserve the original paper
 dimensions, text size, rotation, and crop on pages where watermarks are readable. An optional half-inch conventional QR opens
 `https://qred.org/` from a clear area on the first page; pale QR watermarks carry
-each page's signed data. The watermark uses 13% black with multiply blending to
+each page's signed data. The watermark uses 10% black by default. A page that fails the lighter placements can use the previous 13% ink after passing the same checks. Both use multiply blending to
 keep the pattern pale and document text intact. Use QRed's camera or image picker
 to read the watermarks.
 The navigation code contains no document data and is ignored during verification.
@@ -246,6 +246,13 @@ partial collection without requiring the rest of the document. Other pages remai
 explicitly unchecked. Page buttons retain their individual results, and the first
 reading that needs review opens automatically. A valid seal is labelled **Seal
 authenticated**, separately from the printed-text result.
+
+The photographed page appears above the detailed readings. Use the page buttons
+to move through a document and select a marked word or step through differences.
+The photo fits the screen initially. Zoom in to pan around fine print.
+The explained readings include repeated omissions of trailing field colons and
+confident line rereads that recover the signed ending while retaining every earlier
+word in place. Conflicting amounts, dates and added wording still need review.
 
 Differences show the signed wording, the independently recognized wording, and a
 magnified photo region where a reliable location is available. Red highlights mark

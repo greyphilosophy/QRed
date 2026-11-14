@@ -113,7 +113,7 @@ async function scanPrintedPage(image) {
     scale: 2, bounds: { x: 0, y: 0, width: image.width / 2, height: image.height / 2 } })).seals;
 }
 
-function expectGraphicPreserved(original, printed, box, pageAligned) {
+function expectGraphicPreserved(original, printed, box, { pageAligned, gray = WATERMARK_GRAY }) {
   const before = crop(original, box).data, after = crop(printed, box).data;
   if (!pageAligned) {
     expect(after).toEqual(before);
@@ -121,10 +121,12 @@ function expectGraphicPreserved(original, printed, box, pageAligned) {
   }
   // A page-filling watermark also crosses the logo. Each channel stays
   // within the range allowed by the watermark's multiply blend.
+  // The PDF rasterizer quantizes the ink and then the multiplied channel to bytes.
+  const darkestInk = Math.floor(255 * gray) / 255;
   let invalid = 0;
   for (let i = 0; i < before.length; i++) {
     if (i % 4 === 3) invalid += Number(after[i] !== before[i]);
-    else invalid += Number(after[i] > before[i] + 1 || after[i] < before[i] * WATERMARK_GRAY - 1);
+    else invalid += Number(after[i] > before[i] + 1 || after[i] < Math.floor(before[i] * darkestInk) - 1);
   }
   expect(invalid).toBe(0);
 }
@@ -203,7 +205,7 @@ describe("experimental PDF watermarks", () => {
       expect(payload, `Page ${index + 1} must scan without cropping`).toBe(result.pageSealStrings[index][0]);
       await expect(verifyQRedSeals([payload], publicKey)).resolves.toMatchObject({ status: "VALID", page_number: index + 1 });
       const original = render(await file.arrayBuffer(), index + 1);
-      expectGraphicPreserved(original, printed, positions[index], result.watermarkLayout[index].pageAligned);
+      expectGraphicPreserved(original, printed, positions[index], result.watermarkLayout[index]);
     }
   }, 120000);
 
@@ -243,7 +245,7 @@ describe("experimental PDF watermarks", () => {
       expect(verified).toMatchObject({ status: "VALID", page_number: index + 1, page_count: 2 });
       expect(verified.content).toBe(result.pageSealResults[index].evidence.text);
       const logoBox = { x: 246, y: 702, width: 120, height: 60 };
-      expectGraphicPreserved(original, printed, logoBox, result.watermarkLayout[index].pageAligned);
+      expectGraphicPreserved(original, printed, logoBox, result.watermarkLayout[index]);
       let blackPixels = 0, changed = 0;
       for (let i = 0; i < original.data.length; i += 4) if (original.data[i] < 8) {
         blackPixels++;

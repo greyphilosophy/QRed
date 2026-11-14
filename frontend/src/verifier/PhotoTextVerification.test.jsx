@@ -126,6 +126,39 @@ it("checks all captured pages without extra clicks and opens page 2's changed wo
   expect(ocr.read).toHaveBeenCalledTimes(2);
 });
 
+it("fits the page first, links its missing regions and words to difference cards, and resets on a page change", async () => {
+  const content = "Top\nHeader\nRoom No\nEnd";
+  const evidence = { width: 200, height: 100, text: content, layout: { mode: 3,
+    lines: [.05, .3, .55, .8].map(y => ({ x: .05, y, width: .85, height: .14 })) } };
+  const at = (text, y, x = 12) => ({ text, confidence: 99, bbox: { x0: x, x1: x + 28, y0: y, y1: y + 9 } });
+  ocr.read.mockImplementation(async c => c.text === "second" ? [word("Friday")] : ({
+    words: [at("Top", 6), at("Wrong", 56), at("No", 56, 70), at("End", 81)],
+    corners: [{x:0,y:0},{x:200,y:0},{x:200,y:100},{x:0,y:100}],
+  }));
+  const view = render(<PhotoTextVerification results={[other, { ...page, content, evidence }]}
+    scanPhotos={[capture(2, "second", "second"), capture(1, "first", "first")]} />);
+  const first = await screen.findByRole("region", { name: "Review Page 1 of 2" });
+  const photo = await within(first).findByRole("img", { name: "Page photo being compared with signed text" });
+  expect(await within(first).findByText("Difference 1 of 2")).toBeTruthy();
+  expect(photo.compareDocumentPosition(first.querySelector(".photo-differences")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(first.querySelector(".photo-differences > ol").textContent).toContain("Header");
+  fireEvent.click(within(first).getByRole("button", { name: "Next difference" }));
+  expect(first.querySelector(".photo-differences > ol").textContent).toContain("Wrong");
+  expect(within(first).getByRole("button", { name: "Next difference" }).disabled).toBe(true);
+  fireEvent.keyDown(within(first).getByRole("button", { name: "Difference 1: Header" }), { key: "Enter" });
+  expect(first.querySelector(".photo-differences > ol").textContent).toContain("Header");
+  fireEvent.click(within(first).getByRole("button", { name: "Different or extra text: Wrong" }));
+  expect(within(first).getByText("Difference 2 of 2")).toBeTruthy();
+  fireEvent.change(within(first).getByRole("combobox", { name: "Zoom" }), { target: { value: "2" } });
+  fireEvent.click(screen.getByRole("button", { name: /Page 2 of 2 · Seal authenticated/ }));
+  const second = screen.getByRole("region", { name: "Review Page 2 of 2" });
+  expect(within(second).getByRole("combobox", { name: "Zoom" }).value).toBe("1");
+  expect(within(second).queryByText("Difference 2 of 2")).toBeNull();
+  expect(view.container.querySelector(".photo-scroll.zoomed")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /Page 1 of 2 · Seal authenticated/ }));
+  expect(screen.getByText("Difference 1 of 2")).toBeTruthy();
+});
+
 it("shows reported processing progress without claiming completion before the comparison", async () => {
   let report, finish;
   ocr.read.mockImplementation((_, onProgress) => {

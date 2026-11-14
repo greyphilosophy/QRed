@@ -167,7 +167,8 @@ function qualifyPhotoReadings(comparison, layout, visual, reread, originalWords)
     }
   }
   if (comparison.status === "differences" && comparison.differences.every(d => d.review || d.typography || d.spacing)) {
-    comparison.status = "uncertain";
+    comparison.status = !comparison.uncertainCount && comparison.differences.every(d => d.review === "sourceSeparator")
+      ? "matches" : "uncertain";
   }
 }
 
@@ -190,7 +191,7 @@ export function comparePageReading(expected, reading, dimensions, evidence, opti
   const markings = groups.map(indices => ({ observed: indices.map(index => words[index].text).join(" "),
     boxes: indices.map(index => words[index].bbox) }));
   qualifyPhotoReadings(comparison, layout, evidence?.visual, contrastAssisted || Boolean(originalReading), originalReading);
-  if (comparison.status === "matches" && (contrastAssisted || originalReading || markings.length || retryReviews.length)) comparison.status = "uncertain";
+  if (comparison.status === "matches" && (contrastAssisted || originalReading || markings.length || retryReviews.some(r => !r.completedLine))) comparison.status = "uncertain";
   const originalComparison = originalReading ? comparePageReading(expected,
     { words: originalReading, codes, corners }, dimensions, evidence, options) : null;
   return { ...comparison, contrastAssisted, markings, retryReviews, originalComparison };

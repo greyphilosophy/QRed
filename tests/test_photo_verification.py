@@ -124,16 +124,31 @@ def test_changed_and_erased_digits_on_a_curled_dated_form(browser, dated_form_ph
                 review.get_by_label("Show matching words too").check()
                 expect(review.get_by_role("button", name="Matching text: 03-14-27", exact=True)).to_have_count(1)
             else:
-                diff = review.locator(".photo-differences > ol")
-                expect(diff).to_contain_text("03-14-27")
-                observed = diff.locator("li > div").filter(has_text=re.compile("^Photo reading:"))
+                cards = review_differences(review)
+                assert any("03-14-27" in card for card in cards)
                 printed_date = "03-14-29" if kind == "changed" else "03-14-2"
-                expect(observed.filter(has_text=re.compile(r"\b" + printed_date + r"\b"))).to_have_count(1)
-                expect(diff).to_contain_text("twice" if kind == "changed" else "29.50")
+                assert sum(bool(re.search(r"Photo reading: [^\n]*\b" + printed_date + r"\b", card)) for card in cards) == 1
+                assert any(("twice" if kind == "changed" else "29.50") in card for card in cards)
                 expect(review.locator(".photo-summary")).to_contain_text("Differences found")
             guard.assert_quiet()
     finally:
         context.close()
+
+
+def review_differences(review):
+    """Walk the same difference cards the verifier sees, including the last one."""
+    cards = []
+    forward = review.get_by_role("button", name="Next difference", exact=True)
+    position = review.locator(".photo-finding-controls strong")
+    current = review.locator(".photo-differences > ol > li")
+    expect(current).to_be_visible(timeout=60000)
+    total = int(review.locator(".photo-differences").get_attribute("data-count"))
+    for index in range(total):
+        expect(position).to_have_text(f"Difference {index + 1} of {total}")
+        cards.append(current.inner_text())
+        if index + 1 < total:
+            forward.click()
+    return cards
 
 
 def prepare_reader(page):
@@ -229,8 +244,9 @@ def test_scaled_table_recovers_numeric_columns_and_keeps_swapped_amounts_visible
             expect(review).to_be_visible(timeout=30000)
             expect(page.locator(".page-check-status.queued, .page-check-status.reading")).to_have_count(0, timeout=60000)
             if swapped:
-                expect(review.locator(".photo-differences")).to_contain_text("100.50")
-                expect(review.locator(".photo-differences")).to_contain_text("111.50")
+                cards = review_differences(review)
+                assert any("100.50" in card for card in cards)
+                assert any("111.50" in card for card in cards)
                 expect(review.locator(".photo-summary")).to_contain_text("Differences found")
             else:
                 differences = review.locator(".photo-differences").inner_text()
@@ -494,9 +510,9 @@ def test_real_stamped_pages_separate_markings_and_detect_edits(browser, tmp_path
                 expect(first.locator(".photo-summary")).to_have_text(
                     re.compile("Recognized text matches the signed text|Some readings need review"))
             elif variant == "changed":
-                expect(review.locator(".photo-differences")).to_contain_text("Friday")
-                expect(review.locator(".photo-differences")).to_contain_text("Monday")
-                expect(review.locator(".photo-differences")).to_contain_text("Paid")
+                cards = review_differences(review)
+                for wording in ["Friday", "Monday", "Paid"]:
+                    assert any(wording in card for card in cards)
             else:
                 # A contrast fallback must never turn an unreadable light addition
                 # into an unqualified agreement. It needs explicit visual review.
@@ -525,9 +541,12 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
         review = page.get_by_role("region", name="Review Page 2 of 2", exact=True)
         expect(review.locator(".photo-differences")).to_contain_text("Monday", timeout=60000)
         expect(review.get_by_role("heading", name=re.compile("Page 2"))).to_be_focused()
+        overview = review.get_by_role("img", name="Page photo being compared with signed text").bounding_box()
+        assert overview["y"] >= 0 and overview["y"] + overview["height"] < 844, overview
         crop = review.get_by_role("img", name="Magnified photo difference").first.bounding_box()
-        assert crop["y"] >= 0 and crop["y"] + crop["height"] < 844, crop
+        assert crop["y"] >= overview["y"] + overview["height"]
+        assert review.locator(".photo-differences > ol").evaluate("e => e.scrollHeight === e.clientHeight")
         expect(page.get_by_text("Other pages have not been checked.", exact=False)).to_be_visible()
-        page.screenshot(path=str(tmp_path / "difference-first.png"))
+        page.screenshot(path=str(tmp_path / "page-first.png"))
     finally:
         context.close()
