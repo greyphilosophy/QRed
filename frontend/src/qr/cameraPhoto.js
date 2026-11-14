@@ -1,5 +1,6 @@
 // Still capture stays inside the browser. ImageCapture returns a Blob; it
 // does not hand off to the phone camera app or save to the photo library.
+import { stillPhotoLighting } from "./cameraLight.js";
 export const NATIVE_PHOTO_TIMEOUT_MS = 5000;
 export const MIN_DOCUMENT_PHOTO_PIXELS = 4_000_000;
 export const MIN_DOCUMENT_PHOTO_LONG_SIDE = 2560;
@@ -168,7 +169,9 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
         if (!unsupportedOptions(error)) throw error;
       }
       if (!active || signal?.aborted) return fallback("capture-failed");
-      const settings = { fillLightMode: "off" };
+      const lighting = await stillPhotoLighting(track);
+      if (!active || signal?.aborted) return fallback("capture-failed");
+      const settings = { ...lighting };
       const width = capabilities?.imageWidth, height = capabilities?.imageHeight;
       if (width?.max > 0 && height?.max > 0) {
         const size = workingPhotoSize(width.max, height.max);
@@ -179,9 +182,9 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
       try { blob = await camera.takePhoto(settings); }
       catch (error) {
         // Some devices advertise dimensions they reject together. Retry once
-        // without optional sizing, still with flash off, inside the SAME timer.
+        // without optional sizing, preserving the light choice and deadline.
         if (!active || signal?.aborted || !settings.imageWidth || !unsupportedOptions(error)) throw error;
-        blob = await camera.takePhoto({ fillLightMode: "off" });
+        blob = await camera.takePhoto(lighting);
       }
       if (!active || signal?.aborted) return fallback("capture-failed");
       // The exposure is over. Opening and validating these bytes can still

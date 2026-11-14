@@ -9,7 +9,7 @@ from browser_helpers import show_seal_details, show_file_inputs, prepare_text_fo
 
 
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
-def test_main_camera_at_one_times_zoom_without_flashlight(browser, path):
+def test_main_camera_at_one_times_zoom_with_optional_flashlight(browser, path):
     context = browser.new_context(service_workers="block", viewport={"width": 393, "height": 873})
     try:
         page = context.new_page()
@@ -23,10 +23,15 @@ def test_main_camera_at_one_times_zoom_without_flashlight(browser, path):
                 const stream = canvas.captureStream(10), [track] = stream.getVideoTracks();
                 activeTrack = track;
                 Object.defineProperty(track, 'label', { value: label });
-                track.getSettings = () => ({ deviceId: id });
+                let torch = false;
+                track.getSettings = () => ({ deviceId: id, torch });
                 track.getCapabilities = () => ({ focusMode: ['continuous'], zoom: { min: 1, max: 5 }, torch: true });
                 track.applyConstraints = constraints => {
                     cameraTest.controls.push({ id, constraints });
+                    if (constraints.torch) {
+                        torch = constraints.torch.exact;
+                        return Promise.resolve();
+                    }
                     return new Promise(() => {}); // Driver never acknowledges autofocus.
                 };
                 const stop = track.stop.bind(track);
@@ -63,7 +68,12 @@ def test_main_camera_at_one_times_zoom_without_flashlight(browser, path):
             {"focusMode": "continuous"}, {"zoom": 1},
         ]}}]
         assert state["stopped"] == ["tele"]
-        expect(page.get_by_role("button", name="Flashlight", exact=False)).to_have_count(0)
+        light = page.get_by_role("button", name="Flashlight off")
+        expect(light).to_be_visible()
+        light.click()
+        expect(page.get_by_role("button", name="Flashlight on")).to_have_attribute("aria-pressed", "true")
+        assert page.evaluate("cameraTest.controls.at(-1)") == {"id": "main", "constraints": {
+            "torch": {"exact": True}, "advanced": [{"focusMode": "continuous"}, {"zoom": 1}]}}
         assert page.locator("video").evaluate("video => getComputedStyle(video).objectFit") == "contain"
         expect(page.locator(".ar-scan-feedback, #pageGuideHint").first).to_be_visible()
         # The same camera stays open while the phone rotates or its viewport
@@ -123,7 +133,8 @@ def test_main_camera_at_one_times_zoom_without_flashlight(browser, path):
         assert page.locator("video").evaluate("video => video.srcObject === null")
         assert page.evaluate("cameraTest.stopped") == ["tele", "main"]
         page.evaluate("setCameraTestHidden(false)")
-        page.wait_for_function("document.querySelector('video').readyState >= 2 && cameraTest.controls.length === 2")
+        page.wait_for_function("document.querySelector('video').readyState >= 2 && cameraTest.controls.length === 3")
+        expect(page.get_by_role("button", name="Flashlight off")).to_have_attribute("aria-pressed", "false")
         page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
         expect(page.locator(".page-scan-guide")).not_to_be_visible()
         page.evaluate("() => { setCameraTestHidden(true); setCameraTestHidden(false); }")

@@ -1,4 +1,5 @@
 import { applyCameraQualityControls, getPreferredCameraStream } from "./cameraControls.js";
+import { attachCameraLight } from "./cameraLight.js";
 import { observeCameraFrames } from "./cameraPhoto.js";
 
 const CAMERA_ACCESS_TIMEOUT_MS = 30000;
@@ -38,9 +39,9 @@ export function startCameraSession(options) {
 }
 
 async function openPreview({ video, requestStream = signal => getPreferredCameraStream(undefined, signal),
-  prepareStream = applyCameraQualityControls, onStream, onFrame, waitForMetadata = false, interval = 125 },
+  prepareStream = applyCameraQualityControls, lightButton, onStream, onFrame, waitForMetadata = false, interval = 125 },
   signal, onFailure) {
-  let stream = null, animation = null, started = false, stopFrameObserver;
+  let stream = null, animation = null, started = false, stopFrameObserver, detachLight;
   let lastScanAt = -Infinity;
   let timer = setTimeout(() => fail(new Error("Camera access did not finish. Check camera permission and try again."), "access"),
     CAMERA_ACCESS_TIMEOUT_MS);
@@ -52,6 +53,7 @@ async function openPreview({ video, requestStream = signal => getPreferredCamera
   signal.addEventListener("abort", () => {
     clearTimeout(timer);
     stopFrameObserver?.();
+    detachLight?.();
     if (animation !== null) cancelAnimationFrame(animation);
     if (video.onloadedmetadata === startFrames) video.onloadedmetadata = null;
     if (stream) {
@@ -104,6 +106,7 @@ async function openPreview({ video, requestStream = signal => getPreferredCamera
   // Some camera drivers wait for playback before applying focus or zoom.
   // These controls are optional and must never gate the preview or frame loop.
   if (!signal.aborted) {
+    detachLight = attachCameraLight(lightButton, stream.getVideoTracks?.()[0]);
     try { await prepareStream?.(stream); } catch { /* The preview can continue. */ }
   }
 }
