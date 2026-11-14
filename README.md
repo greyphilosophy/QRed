@@ -346,6 +346,12 @@ active replacements and records JPEG provenance. Real print/camera validation
 still needs a documented physical capture; simulated JPEG compression is tested
 separately.
 
+[Print and camera simulation](docs/PRINT_CAMERA_SIMULATION.md) adds printer-dot
+screening, independent sensor sampling, perspective/backgrounds, lighting, and
+camera artifacts around complete production-sealed PDFs. Its browser acceptance
+job reports exact seal recovery separately from OCR false alarms and saves each
+synthetic photograph with a replayable parameter manifest, including on failure.
+
 ## Shared workflow modules
 
 - `sealFormat.js` defines binary envelope sizes; `sealBudget.js` owns QR capacity
