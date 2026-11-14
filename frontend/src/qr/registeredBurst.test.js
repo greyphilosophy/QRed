@@ -30,7 +30,7 @@ it("aligns separate exposures before averaging, reducing noise without moving do
   };
   expect(merged).not.toBe(first);
   expect(error(merged)).toBeLessThan(.6 * error(first));
-  expect(Buffer.compare(Buffer.from(original), Buffer.from(first.data))).toBe(0);
+  expect(first.data.every((v, index) => v === original[index])).toBe(true);
 });
 
 it("keeps a single original for repeated frames, different pages and excessive motion", () => {
