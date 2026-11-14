@@ -84,7 +84,7 @@ export function filterWatermark(data, width, height, radius = 3, normalized = nu
   white++;
   const textThreshold = white * 0.7;
   const textCoreThreshold = white * 0.3;
-  // Normalize against nearby paper, then look for the pale 15%-black ink.
+  // Normalize against nearby paper, then look for pale watermark ink.
   // A single document-wide ink histogram was easily confused by printed text
   // and the camera's exposure gradient, especially on long full-page QR codes.
   const paperThreshold = white * 0.94;

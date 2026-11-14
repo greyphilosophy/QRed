@@ -15,7 +15,7 @@ import { scanQrImage, createQrFrameScanner } from "./qr/scanQrImage.js";
 import { qredPayloadFromScanResult, isQRedEntryLink } from "./qr/qrPayload.js";
 import { verifyQRedSeals } from "./qredVerifier.js";
 import { scanPdfPage } from "./verifier/scanPdf.js";
-import { ENTRY_URL, ENTRY_QR_SIZE, createEntryQrSymbol, planPdfWatermarks } from "./pdf/watermark.js";
+import { ENTRY_URL, ENTRY_QR_SIZE, WATERMARK_GRAY, createEntryQrSymbol, planPdfWatermarks } from "./pdf/watermark.js";
 import { planFooterLayout } from "./pdf/qrLayout.js";
 import { renderPdfPage, withPdfDocument } from "./pdf/readPdfText.js";
 
@@ -119,12 +119,12 @@ function expectGraphicPreserved(original, printed, box, pageAligned) {
     expect(after).toEqual(before);
     return;
   }
-  // A page-filling pale watermark also crosses the logo. Multiply may
-  // darken a channel by up to 15%, but must never cover or lighten it.
+  // A page-filling watermark also crosses the logo. Each channel stays
+  // within the range allowed by the watermark's multiply blend.
   let invalid = 0;
   for (let i = 0; i < before.length; i++) {
     if (i % 4 === 3) invalid += Number(after[i] !== before[i]);
-    else invalid += Number(after[i] > before[i] + 1 || after[i] < before[i] * 0.85 - 1);
+    else invalid += Number(after[i] > before[i] + 1 || after[i] < before[i] * WATERMARK_GRAY - 1);
   }
   expect(invalid).toBe(0);
 }
