@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { scanQrImage } from "./qr/scanQrImage.js";
 import { decodeSeal } from "./qredVerifier.js";
 import { decodePhoto, qrFrameAction } from "./qr/decodePhoto.js";
@@ -200,6 +200,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
   const progressSnapshot = useSyncExternalStore(progress.subscribe, progress.getSnapshot, progress.getSnapshot);
   const videoRef = useRef(null);
   const lightButton = useRef(null);
+  const lightHint = useId();
   const canvasRef = useRef(null);
   const guideAreaRef = useRef(null);
   const guideRef = useRef(null);
@@ -405,6 +406,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
     camera = startCameraSession({
       video: videoRef.current,
       lightButton: lightButton.current,
+      progress,
       onStream: stream => {
         if (stream) return;
         markCameraReady(false);
@@ -478,8 +480,9 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
         value: quality.progress, "aria-label": "Steady hold before automatic capture" }) : null) : null,
     React.createElement("div", { className: "ar-camera-tools" },
       React.createElement("button", { type: "button", className: "ar-light", ref: lightButton, hidden: true,
-        disabled: Boolean(progressSnapshot) || undefined }, "Flashlight off"),
-      React.createElement("button", { className: "ar-close", onClick: onClose }, "Close"))
+        "aria-describedby": lightHint }, "Flashlight off"),
+      React.createElement("button", { className: "ar-close", onClick: onClose }, "Close"),
+      React.createElement("p", { id: lightHint, className: "camera-light-hint", role: "status" }))
   );
 }
 

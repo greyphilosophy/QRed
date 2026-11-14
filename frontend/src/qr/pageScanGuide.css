@@ -1,4 +1,5 @@
 .page-scan-guide-area[hidden], .capture-readiness[hidden], #btnCapture[hidden], #btnSavePhoto[hidden] { display: none; }
+.camera-light-hint:empty { display: none; }
 
 .page-scan-guide-area {
   position: absolute;
