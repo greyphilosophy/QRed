@@ -186,7 +186,13 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
             light = page.get_by_role("button", name="Flashlight unavailable")
             expect(light).to_be_visible()
             expect(light).to_have_attribute("aria-pressed", "false")
-            expect(page.get_by_text("For flash, take a photo in your phone’s Camera app, then select Choose photo.")).to_be_visible()
+            help_text = page.get_by_text("For flash, take a photo in your phone’s Camera app, then select Choose photo.")
+            expect(help_text).to_be_visible()
+            paper = page.locator(".page-scan-guide").bounding_box()
+            help_box = help_text.bounding_box()
+            assert paper and help_box and help_box["y"] >= paper["y"] + paper["height"]
+            light.click()
+            expect(help_text).not_to_be_visible()
             expect(page.get_by_role("button", name="Capture now")).to_be_enabled()
             with page.expect_file_chooser():
                 page.get_by_role("button", name="Choose photo").click()

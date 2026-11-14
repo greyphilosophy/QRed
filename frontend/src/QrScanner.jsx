@@ -470,7 +470,9 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
     React.createElement("canvas", { ref: canvasRef, style: { display: "none" } }),
     !cameraReady && !progressSnapshot ? React.createElement(CameraLoadingIndicator, { message: feedback || "Starting camera…" }) : null,
     React.createElement(PhotoScanProgress, { progress }),
-    cameraReady && !progressSnapshot ? React.createElement("div", { className: "ar-scan-feedback", role: "status", "aria-live": "polite" },
+    React.createElement("p", { id: lightHint, className: "ar-light-feedback camera-light-hint", role: "status",
+      hidden: Boolean(progressSnapshot) }),
+    cameraReady && !progressSnapshot ? React.createElement("div", { className: "ar-scan-feedback ar-camera-advice", role: "status", "aria-live": "polite" },
       quality && !feedback ? React.createElement("span", null, quality.message) : null,
       feedback ? React.createElement("span", null, feedback) : null,
       failedPhoto ? React.createElement("button", { type: "button", className: "save-scan-photo",
@@ -481,8 +483,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
     React.createElement("div", { className: "ar-camera-tools" },
       React.createElement("button", { type: "button", className: "ar-light", ref: lightButton, hidden: true,
         "aria-describedby": lightHint }, "Flashlight off"),
-      React.createElement("button", { className: "ar-close", onClick: onClose }, "Close"),
-      React.createElement("p", { id: lightHint, className: "camera-light-hint", role: "status" }))
+      React.createElement("button", { className: "ar-close", onClick: onClose }, "Close"))
   );
 }
 

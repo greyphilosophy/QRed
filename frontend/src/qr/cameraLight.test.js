@@ -67,6 +67,8 @@ it("keeps an unsupported light visible, with Camera app guidance on tap", async 
   expect(hint.textContent).toMatch(/Camera app.*Choose photo/);
   expect(track.applyConstraints).not.toHaveBeenCalled();
   expect(await stillPhotoLighting(track)).toEqual({ fillLightMode: "off" });
+  button.click();
+  expect(hint.textContent).toBe("");
   detach();
   expect(button.hidden).toBe(true);
   expect(hint.textContent).toBe("");

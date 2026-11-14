@@ -19,6 +19,7 @@ export function attachCameraLight(button, track, { video, progress } = {}) {
   const hint = button.ownerDocument.getElementById(button.getAttribute("aria-describedby"));
   const state = { mode: "off", pending: null };
   let capabilities, torch, flash = false, detached = false, torchFailed = false;
+  let showHelp = false;
   const reportedTorch = () => {
     try { return track.getSettings?.().torch; } catch { return undefined; }
   };
@@ -33,7 +34,7 @@ export function attachCameraLight(button, track, { video, progress } = {}) {
     else if (typeof modes === "boolean") torch = modes;
     else if (modes?.length) torch = modes.includes(true);
     else torch = typeof actual === "boolean" ? true : undefined;
-    if (torch === true && previous !== true) torchFailed = false;
+    if (torch === true && previous !== true) { torchFailed = false; showHelp = false; }
     if (actual === true) state.mode = "torch";
   }
   function render() {
@@ -48,7 +49,7 @@ export function attachCameraLight(button, track, { video, progress } = {}) {
     button.disabled = Boolean(state.pending || progress?.getSnapshot());
     button.setAttribute("aria-pressed", String(on));
     if (button.textContent !== label) button.textContent = label;
-    const message = unavailable && torchFailed ? flashHelp : "";
+    const message = unavailable && showHelp ? flashHelp : "";
     if (hint && hint.textContent !== message) hint.textContent = message;
   }
   async function discoverFlash() {
@@ -56,7 +57,7 @@ export function attachCameraLight(button, track, { video, progress } = {}) {
     try {
       const caps = await new ImageCapture(track).getPhotoCapabilities?.();
       if (detached) return;
-      flash ||= Boolean(caps?.fillLightMode?.includes("flash"));
+      if (caps?.fillLightMode?.includes("flash")) { flash = true; showHelp = false; }
       refreshTorch();
       render();
     } catch { /* The track may only support a preview torch. */ }
@@ -93,7 +94,7 @@ export function attachCameraLight(button, track, { video, progress } = {}) {
     if (state.mode === "flash") { state.mode = "off"; return; }
     const on = state.mode !== "torch";
     if (!on || (torch !== false && !prefersPhotoFlash())) {
-      if (await setTorch(on)) { state.mode = on ? "torch" : "off"; torchFailed = false; return; }
+      if (await setTorch(on)) { state.mode = on ? "torch" : "off"; torchFailed = false; showHelp = false; return; }
       if (detached || !on) return; // Keep the off switch if the light is still on.
     }
     if (!flash) {
@@ -103,9 +104,11 @@ export function attachCameraLight(button, track, { video, progress } = {}) {
     if (detached) return;
     torchFailed = true;
     if (flash) state.mode = "flash";
+    else showHelp = true;
   }
   function toggle() {
     if (state.pending || detached || progress?.getSnapshot()) return;
+    if (showHelp) { showHelp = false; render(); return; }
     state.pending = change().finally(() => { state.pending = null; render(); });
     render();
   }

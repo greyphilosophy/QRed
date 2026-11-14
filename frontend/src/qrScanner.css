@@ -27,7 +27,7 @@
   width: calc(100% - 2 * var(--camera-sides));
   height: calc(100% - var(--camera-top) - var(--camera-bottom));
 }
-.ar-display-scanning .ar-scan-feedback { width: min(86vw, 560px); }
+.ar-display-scanning :is(.ar-scan-feedback, .ar-light-feedback) { width: min(86vw, 560px); }
 .ar-scan-feedback .save-scan-photo {
   display: block;
   margin: .25rem auto 0;
@@ -86,18 +86,8 @@
   padding: .6rem .9rem;
 }
 .ar-camera-tools button[aria-pressed="true"] { background: #f8fafc; color: #0f172a; }
-.ar-camera-tools .camera-light-hint {
-  position: absolute;
-  top: calc(100% + .4rem);
-  right: 0;
-  width: min(18rem, 80vw);
-  margin: 0;
-  padding: .6rem .8rem;
-  border-radius: .6rem;
-  background: #0f172a;
-  color: #fff;
-  line-height: 1.4;
-}
+.ar-camera > .camera-light-hint { margin: 0; }
+.ar-camera > .camera-light-hint:not(:empty) ~ .ar-camera-advice { display: none; }
 .ar-display-scanning:has(.ar-light:not([hidden])) .ar-collection-progress { right: 14rem; }
 .ar-collection-progress:empty { display: none; }
 
@@ -126,7 +116,7 @@
     flex-direction: column;
     border-radius: 24px;
   }
-  .ar-display-scanning .ar-scan-feedback,
+  .ar-display-scanning :is(.ar-scan-feedback, .ar-light-feedback),
   .ar-camera > .photo-scan-progress {
     bottom: 1rem;
     left: .75rem;
