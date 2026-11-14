@@ -138,15 +138,17 @@ def test_changed_and_erased_digits_on_a_curled_dated_form(browser, dated_form_ph
 def review_differences(review):
     """Walk the same difference cards the verifier sees, including the last one."""
     cards = []
-    current = review.locator(".photo-differences > ol > li")
-    if not current.count():
-        return cards
     forward = review.get_by_role("button", name="Next difference", exact=True)
-    while True:
+    position = review.locator(".photo-finding-controls strong")
+    current = review.locator(".photo-differences > ol > li")
+    expect(current).to_be_visible(timeout=60000)
+    total = int(review.locator(".photo-differences").get_attribute("data-count"))
+    for index in range(total):
+        expect(position).to_have_text(f"Difference {index + 1} of {total}")
         cards.append(current.inner_text())
-        if not forward.count() or forward.is_disabled():
-            return cards
-        forward.click()
+        if index + 1 < total:
+            forward.click()
+    return cards
 
 
 def prepare_reader(page):
