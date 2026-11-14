@@ -7,7 +7,7 @@ import { captureCameraPhoto } from "./cameraPhoto.js";
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 
-function setup({ modes = [false, true], flash = [], report = true, apply, photoCaps } = {}) {
+function setup({ modes = [false, true], flash = [], report = true, apply, photoCaps, ...controls } = {}) {
   let torch = false;
   const canReport = typeof report === "function" ? report : () => report;
   const track = { kind: "video", readyState: "live", getCapabilities: () => ({ torch: modes, exposureMode: ["continuous"] }),
@@ -24,7 +24,7 @@ function setup({ modes = [false, true], flash = [], report = true, apply, photoC
   document.body.replaceChildren(button, hint);
   const video = document.createElement("video"), progress = createPhotoScanProgress();
   video.srcObject = { getVideoTracks: () => [track] };
-  const detach = attachCameraLight(button, track, { video, progress });
+  const detach = attachCameraLight(button, track, { video, progress, ...controls });
   const canvas = { width: 1, height: 1, getContext: () => ({ drawImage() {}, getImageData: () => ({ width: 4000, height: 3000 }) }) };
   return { track, video, progress, button, hint, takePhoto, detach, capture: () => captureCameraPhoto(video, canvas) };
 }
@@ -64,7 +64,7 @@ it("keeps an unsupported light visible, with Camera app guidance on tap", async 
   expect(button.hidden).toBe(false);
   expect(button.textContent).toBe("Flashlight unavailable");
   button.click(); await flush();
-  expect(hint.textContent).toMatch(/Camera app.*Choose photo/);
+  expect(hint.textContent).toMatch(/Camera app.*photo/);
   expect(track.applyConstraints).not.toHaveBeenCalled();
   expect(await stillPhotoLighting(track)).toEqual({ fillLightMode: "off" });
   button.click();
@@ -80,6 +80,17 @@ it("ignores late results after the camera closes", async () => {
   button.click(); detach(); finish(); await flush();
   expect(button.hidden).toBe(true);
   expect(await stillPhotoLighting(track)).toEqual({ fillLightMode: "off" });
+});
+
+it("offers the native camera on the next user gesture and never launches it during discovery", async () => {
+  const onPhoneCamera = vi.fn(), search = vi.fn();
+  const { button } = setup({ modes: [], report: false, apply: async () => {}, onPhoneCamera, onLightUnavailable: search });
+  button.click(); await flush();
+  expect(search).toHaveBeenCalledTimes(1);
+  expect(button.textContent).toBe("Use phone camera");
+  expect(onPhoneCamera).not.toHaveBeenCalled();
+  button.click();
+  expect(onPhoneCamera).toHaveBeenCalledTimes(1);
 });
 
 it("rechecks the preview torch and photo flash when playback starts", async () => {
@@ -139,6 +150,6 @@ it("releases the shutter and explains the fallback if the camera never answers a
   await vi.advanceTimersByTimeAsync(1600);
   expect(await lighting).toEqual({ fillLightMode: "off" });
   expect(button.textContent).toBe("Flashlight unavailable");
-  expect(hint.textContent).toMatch(/Choose photo/);
+  expect(hint.textContent).toMatch(/Camera app/);
   expect(button.disabled).toBe(false);
 });

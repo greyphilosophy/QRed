@@ -68,9 +68,11 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
         }
       }, onError: cause => { if (epoch !== generation.current) return; liveProgress.current?.stop(); busyRef.current = false; setBusy(false); setError(cause.message); } });
     camera.current = startCameraSession({ video: video.current, lightButton: lightButton.current, progress,
+      onPhonePhoto: file => capture({ file }),
       onStream: stream => {
         if (stream || epoch !== generation.current) return;
         cameraAvailable.current = false; setReady(false);
+        if (!busyRef.current) live.current.reset();
       },
       onFrame: () => {
         const source = video.current;

@@ -27,6 +27,31 @@ it("releases a delayed camera grant after stop without attaching it or restartin
   expect(test.onFrame).not.toHaveBeenCalled();
 });
 
+it("stops exactly once and releases a late alternate lens after closing during a flashlight search", async () => {
+  const grant = deferred(), initial = makeStream(), late = makeStream();
+  const track = { getSettings: () => ({ deviceId: "first" }), getCapabilities: () => ({ torch: false }) };
+  initial.getVideoTracks = () => [track];
+  const mediaDevices = {
+    enumerateDevices: async () => [{ kind: "videoinput", deviceId: "second", label: "Back Camera" }],
+    getUserMedia: vi.fn(() => grant.promise),
+  };
+  vi.stubGlobal("navigator", { mediaDevices });
+  const button = Object.assign(new EventTarget(), {
+    ownerDocument: { getElementById: () => null }, setAttribute() {}, getAttribute: () => null,
+  });
+  const { camera, video, onError } = setup({ requestStream: async () => initial, lightButton: button });
+  await flush();
+  button.dispatchEvent(new Event("click"));
+  await vi.waitFor(() => expect(mediaDevices.getUserMedia).toHaveBeenCalledTimes(1));
+  expect(initial.stop).toHaveBeenCalledTimes(1);
+  camera.stop();
+  grant.resolve(late); await flush();
+  expect(late.stop).toHaveBeenCalledTimes(1);
+  expect(video.srcObject).toBeNull();
+  expect(button.hidden).toBe(true);
+  expect(onError).not.toHaveBeenCalled();
+});
+
 it("plays and scans while camera controls are pending and leaves a replacement session untouched", async () => {
   const controls = deferred();
   const first = setup({ prepareStream: () => controls.promise });

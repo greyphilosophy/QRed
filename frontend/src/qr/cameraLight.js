@@ -3,7 +3,7 @@
 import { cameraQualityPreferences } from "./cameraControls.js";
 
 const lights = new WeakMap();
-const flashHelp = "For flash, take a photo in your phone’s Camera app, then select Choose photo.";
+const flashHelp = "Use the flash in your phone’s Camera app. QRed will read the photo when you return.";
 
 async function waitForLight(request) {
   let timer;
@@ -14,12 +14,13 @@ async function waitForLight(request) {
   } finally { clearTimeout(timer); }
 }
 
-export function attachCameraLight(button, track, { video, progress } = {}) {
+export function attachCameraLight(button, track, { video, progress, enableOnPlayback = false, preferPhoneCamera = false,
+  onLightUnavailable, onProbeFinished, onPhoneCamera } = {}) {
   if (!button || !track) return;
   const hint = button.ownerDocument.getElementById(button.getAttribute("aria-describedby"));
   const state = { mode: "off", pending: null };
   let capabilities, torch, flash = false, detached = false, torchFailed = false;
-  let showHelp = false;
+  let showHelp = preferPhoneCamera, enableWhenReady = enableOnPlayback;
   const reportedTorch = () => {
     try { return track.getSettings?.().torch; } catch { return undefined; }
   };
@@ -34,22 +35,24 @@ export function attachCameraLight(button, track, { video, progress } = {}) {
     else if (typeof modes === "boolean") torch = modes;
     else if (modes?.length) torch = modes.includes(true);
     else torch = typeof actual === "boolean" ? true : undefined;
-    if (torch === true && previous !== true) { torchFailed = false; showHelp = false; }
+    if (torch === true && previous !== true && !preferPhoneCamera) { torchFailed = false; showHelp = false; }
     if (actual === true) state.mode = "torch";
   }
   function render() {
     if (detached) return;
     const on = state.mode !== "off";
-    const unavailable = !on && !flash && (torchFailed || torch === false);
     let label = "Try flashlight";
-    if (unavailable) label = "Flashlight unavailable";
+    if (enableWhenReady || (state.pending && !on)) label = "Checking light…";
+    else if (showHelp && !on) label = onPhoneCamera ? "Use phone camera" : "Flashlight unavailable";
     else if (state.mode === "flash" || (!on && prefersPhotoFlash())) label = `Photo flash ${on ? "on" : "off"}`;
     else if (on || torch === true) label = `Flashlight ${on ? "on" : "off"}`;
+    else if ((torch === false && !onLightUnavailable) || torchFailed) label = "Flashlight unavailable";
     button.hidden = false;
-    button.disabled = Boolean(state.pending || progress?.getSnapshot());
-    button.setAttribute("aria-pressed", String(on));
+    button.disabled = Boolean(enableWhenReady || state.pending || progress?.getSnapshot());
+    if (label === "Use phone camera") button.removeAttribute("aria-pressed");
+    else button.setAttribute("aria-pressed", String(on));
     if (button.textContent !== label) button.textContent = label;
-    const message = unavailable && showHelp ? flashHelp : "";
+    const message = showHelp && !on ? flashHelp : "";
     if (hint && hint.textContent !== message) hint.textContent = message;
   }
   async function discoverFlash() {
@@ -62,11 +65,20 @@ export function attachCameraLight(button, track, { video, progress } = {}) {
       render();
     } catch { /* The track may only support a preview torch. */ }
   }
+  async function checkPhotoFlash() {
+    // A slow shutter capability query must not hold up an ordinary capture.
+    try { await waitForLight(discoverFlash()); } catch { /* A later report can still enable photo flash. */ }
+  }
   function onPlaying() {
     if (detached) return;
     refreshTorch();
     render();
     void discoverFlash();
+    if (enableWhenReady && video?.readyState >= 2) {
+      enableWhenReady = false;
+      if (state.mode === "torch") { onProbeFinished?.(true); render(); }
+      else startChange();
+    }
   }
   function prefersPhotoFlash() {
     return flash && (torch !== true || torchFailed);
@@ -93,24 +105,37 @@ export function attachCameraLight(button, track, { video, progress } = {}) {
     refreshTorch();
     if (state.mode === "flash") { state.mode = "off"; return; }
     const on = state.mode !== "torch";
+    if (on && torch !== true && !flash) await checkPhotoFlash();
+    if (detached) return;
     if (!on || (torch !== false && !prefersPhotoFlash())) {
-      if (await setTorch(on)) { state.mode = on ? "torch" : "off"; torchFailed = false; showHelp = false; return; }
+      if (await setTorch(on)) {
+        if (detached) return;
+        state.mode = on ? "torch" : "off"; torchFailed = false; showHelp = false;
+        if (on) onProbeFinished?.(true);
+        return;
+      }
       if (detached || !on) return; // Keep the off switch if the light is still on.
     }
-    if (!flash) {
-      // A slow shutter capability query must not hold up an ordinary capture.
-      try { await waitForLight(discoverFlash()); } catch { /* A later report can still enable photo flash. */ }
-    }
+    if (!flash && torch === true) await checkPhotoFlash();
     if (detached) return;
     torchFailed = true;
-    if (flash) state.mode = "flash";
-    else showHelp = true;
+    if (flash) { state.mode = "flash"; onProbeFinished?.(true); return; }
+    const offerPhone = await onLightUnavailable?.(track);
+    if (!detached && offerPhone !== false) showHelp = true;
+    else if (!detached) { torchFailed = false; onProbeFinished?.(false); }
+  }
+  function startChange() {
+    state.pending = change().finally(() => { state.pending = null; render(); });
+    render();
   }
   function toggle() {
     if (state.pending || detached || progress?.getSnapshot()) return;
-    if (showHelp) { showHelp = false; render(); return; }
-    state.pending = change().finally(() => { state.pending = null; render(); });
-    render();
+    if (showHelp) {
+      if (onPhoneCamera) onPhoneCamera();
+      else { showHelp = false; render(); }
+      return;
+    }
+    startChange();
   }
 
   lights.set(track, state);

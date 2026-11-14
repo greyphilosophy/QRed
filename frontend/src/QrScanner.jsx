@@ -9,7 +9,7 @@ export { qrScanAction } from "./qr/decodePhoto.js";
 import { startCameraSession } from "./qr/cameraSession.js";
 import { observePageScanGuide } from "./qr/pageScanGuide.js";
 import { CameraCaptureNotice, PhotoScanProgress, usePhotoScanProgress } from "./qr/PhotoScanProgress.jsx";
-import { readCameraFrame, canCaptureCameraPhoto, captureCameraPhoto, cameraFrameDiagnostic, cameraCaptureFeedback, cameraPhotoFailure, cameraCaptureContext, downloadCameraPhoto } from "./qr/cameraPhoto.js";
+import { readCameraFrame, canCaptureCameraPhoto, captureCameraPhoto, readCameraPhotoFile, cameraFrameDiagnostic, cameraCaptureFeedback, cameraPhotoFailure, cameraCaptureContext, downloadCameraPhoto } from "./qr/cameraPhoto.js";
 import "./qrScanner.css";
 
 /**
@@ -302,7 +302,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
       return false;
     };
 
-    async function capturePhoto(preserveGate = false) {
+    async function capturePhoto(preserveGate = false, file) {
       if (photoScanRef.current) return;
       setFailedPhoto(null);
       // A queued live result must never be attached to the new still photo.
@@ -310,7 +310,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
       captureDiagnostic = null;
       autoPaused = false;
       activeProgress?.stop();
-      const attemptProgress = progress.begin("capturing");
+      const attemptProgress = progress.begin(file ? "opening" : "capturing");
       activeProgress = attemptProgress;
       const controller = new AbortController();
       photoScanRef.current = controller;
@@ -320,27 +320,30 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
         const video = videoRef.current, canvas = canvasRef.current;
         const ready = isCameraFrameReady(video, canvas);
         // Only the general QR reader can decode a preview if the still fails.
-        const fallbackFrame = ready && !autoCapture ? captureCameraFrame(video, canvas) : null;
-        if (!ready || (!autoCapture && !fallbackFrame)) {
+        const fallbackFrame = !file && ready && !autoCapture ? captureCameraFrame(video, canvas) : null;
+        if (!file && (!ready || (!autoCapture && !fallbackFrame))) {
           handleScanActionRef.current({ status: "pending", message: "Camera is preparing the photo. Hold steady…" });
           return;
         }
         pendingManualCaptureRef.current = false;
         pendingManualCaptureStartedAtRef.current = null;
-        markCameraReady(true);
+        if (!file) markCameraReady(true);
         onReadingPhoto(true);
         setFeedback(null);
         const preview = { width: video.videoWidth, height: video.videoHeight };
-        const captureContext = cameraCaptureContext(preview, preserveGate, lastQuality);
-        captureDiagnostic = cameraFrameDiagnostic(preview);
-        const still = canCaptureCameraPhoto(video) ? await captureCameraPhoto(video, canvas, {
+        const captureContext = file ? {} : cameraCaptureContext(preview, preserveGate, lastQuality);
+        captureDiagnostic = file ? null : cameraFrameDiagnostic(preview);
+        const options = {
           signal: controller.signal, requireHighResolution: autoCapture, onPhotoTaken: attemptProgress.photoReady,
           onBurst: autoCapture ? blobs => { burst = blobs; } : undefined,
           onPhotoBlob: blob => { nativeBlob = blob; },
           onDiagnostic: diagnostic => {
             if (current()) captureDiagnostic = { ...diagnostic, ...captureContext };
           },
-        }) : null;
+        };
+        let still;
+        if (file) still = await readCameraPhotoFile(file, canvas, options);
+        else if (canCaptureCameraPhoto(video)) still = await captureCameraPhoto(video, canvas, options);
         if (!current()) return;
         image = still || fallbackFrame;
         let action;
@@ -406,11 +409,12 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
     camera = startCameraSession({
       video: videoRef.current,
       lightButton: lightButton.current,
+      onPhonePhoto: file => capturePhoto(false, file),
       progress,
       onStream: stream => {
         if (stream) return;
         markCameraReady(false);
-        if (!photoScanRef.current && !processingCapture && !captureReported) liveScan.reset();
+        if (!photoScanRef.current && !processingCapture) liveScan.reset();
       },
       onFrame: scanFrame,
       onError: (error, stage) => {
