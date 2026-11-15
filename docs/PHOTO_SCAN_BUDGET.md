@@ -120,9 +120,10 @@ guidance state before the photo. This records what the gate last reported; it
 does not infer a camera fault or claim the later live preview matches the
 captured photo. Explicitly selected files do not inherit camera guidance.
 
-After an unsuccessful native still read, **Save scan photo** downloads the original
-camera file on request. QRed holds the compressed file in memory until the next
-attempt or the end of the camera session. The download works offline.
+After an unsuccessful native still read, **Save scan photo** downloads a ZIP of
+all completed camera exposures in capture order, including a single exposure
+when the burst ends early. QRed retains the original files until the next attempt
+or the end of the camera session. The ZIP is created on request and works offline.
 
 On a seal-reader timeout, a fixed-name checkpoint identifies the last reported
 decoder step and when it began relative to decoding. The timeout also includes
