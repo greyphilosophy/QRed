@@ -149,7 +149,9 @@ Automatic and manual full-page capture can take up to three full-resolution
 exposures. Keep the page framed until the captured notice appears. QRed aligns
 matching exposures to read faint watermarks and keeps the first original for
 text comparison. After an unsuccessful scan, **Save scan photo** downloads a ZIP
-with every captured exposure, numbered in capture order.
+with every captured exposure, numbered in capture order. To retry that scan,
+use **Browse files** and select the ZIP in Downloads. QRed reads the exposures
+together as one page, on your device. **Choose photo** opens the photo picker.
 Live scanning uses a background worker with one frame in flight and no queued
 frames. It rotates through bounded attempts and disables lengthy alignment
 refinement so the operator can adjust the camera. Selected images and

@@ -134,11 +134,12 @@ export function SealVerification({ verification }) {
     try {
       canvas = document.createElement("canvas");
       let captureDiagnostic = null;
-      // The homepage camera's Choose photo button uses this same input. Keep
-      // its working pixels bounded like standalone/retake file selection,
-      // without imposing a full-page resolution floor on ordinary QR images.
+      let burst;
+      // The gallery and Downloads share a decoder. Ordinary QR images also
+      // use this input and can be smaller than a full-page camera capture.
       const pixels = await readCameraPhotoFile(file, canvas, {
         signal: controller.signal, requireHighResolution: false,
+        onBurst: photos => { burst = photos; },
         onDiagnostic: diagnostic => { captureDiagnostic = diagnostic; },
       });
       if (request !== imageRead.current) return;
@@ -148,7 +149,7 @@ export function SealVerification({ verification }) {
       // chunks. Recover them all without asking the user to upload the same
       // image four times. Keep the page photo once for later comparison.
       const action = cameraCaptureFeedback(
-        await scanPhotoInWorker(pixels, { returnPayload: true, signal: controller.signal, onStage: progress.stage }), captureDiagnostic);
+        await scanPhotoInWorker(pixels, { returnPayload: true, burst, signal: controller.signal, onStage: progress.stage }), captureDiagnostic);
       if (request !== imageRead.current) return;
       if (action.status === "found-multiple") action.texts.forEach((seal, index) => addSeal(seal, index === 0 ? canvas : null));
       else if (action.status === "found") addSeal(action.text, canvas);
@@ -201,6 +202,7 @@ export function SealVerification({ verification }) {
     </details>
     <label htmlFor="qr-image">Choose QR image</label>
     <input id="qr-image" type="file" accept="image/*" onChange={readImage} />
+    <input id="qr-scan-file" type="file" aria-label="Browse for a photo or scan ZIP" hidden onChange={readImage} />
     <PdfSealInput onSeal={addSeal} session={verification.session} />
     </details>
     <details className="verification-details"><summary>Seal details and recovered text</summary>

@@ -343,11 +343,12 @@
         <select class="btn btn-secondary" id="cameraFraming" aria-label="Camera framing" aria-describedby="cameraLightHint" hidden></select>
         <button class="btn btn-secondary" id="btnCameraLight" hidden aria-describedby="cameraLightHint">Flashlight off</button>
         <button class="btn btn-secondary" id="btnChoosePhoto">Choose photo</button>
+        <button class="btn btn-secondary" id="btnBrowseFiles">Browse files</button>
         <button class="btn btn-secondary" id="btnSavePhoto" hidden>Save scan photo</button>
         <input id="pagePhotoInput" type="file" accept="image/*" aria-label="Choose a high-resolution page photo" hidden>
       </div>
       <p id="cameraLightHint" class="page-scan-hint camera-light-hint" role="status"></p>
-      <p class="page-scan-hint">Camera photos stay on this device. Save scan photo downloads the original exposures in a ZIP.</p>
+      <p class="page-scan-hint">Camera photos stay on this device. Use Browse files to open a photo or scan ZIP from Downloads.</p>
       <p id="clearNotice" role="status"></p>
 
       <div class="status-bar" id="statusBar">
@@ -515,7 +516,7 @@
       }
     };
 
-    btnChoosePhoto.onclick = function() {
+    function choosePhoto(browseFiles) {
       var pickerGeneration = ++state.photoPickerGeneration;
       var sessionGeneration = state.startGeneration;
       var camera = state.camera, cancel = state.cancelPhoto;
@@ -528,8 +529,11 @@
         if (camera && state.isScanning && state.startGeneration === sessionGeneration
           && state.camera === camera && state.cancelPhoto === cancel) cancel({ resumeCamera: true });
       };
+      pagePhotoInput.accept = browseFiles ? "" : "image/*";
       pagePhotoInput.click();
-    };
+    }
+    btnChoosePhoto.onclick = function() { choosePhoto(false); };
+    document.getElementById("btnBrowseFiles").onclick = function() { choosePhoto(true); };
     pagePhotoInput.onchange = function(event) {
       var file = event.target.files?.[0]; event.target.value = "";
       if (!file) { pagePhotoInput.oncancel?.(); return; }

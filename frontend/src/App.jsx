@@ -43,8 +43,8 @@ function App() {
         beforeScan={() => { verification.setNotice(""); return verification.textChecks.prepare(); }}
         completionNotice={verification.notice === "Check cleared. Camera off." ? verification.notice : ""}
         onScanningChange={verification.setScanning}
-        onChoosePhoto={() => {
-          const picker = document.getElementById("qr-image");
+        onChoosePhoto={browseFiles => {
+          const picker = document.getElementById(browseFiles ? "qr-scan-file" : "qr-image");
           picker?.closest("details")?.setAttribute("open", "");
           picker?.click();
           document.getElementById("document-check")?.scrollIntoView?.({ behavior: "smooth" });

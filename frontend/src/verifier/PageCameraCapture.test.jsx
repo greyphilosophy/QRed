@@ -289,15 +289,18 @@ it("cancels a native retake before its uncancellable camera operation finishes",
   expect(context.drawImage).toHaveBeenCalledTimes(1); // Only the pre-capture quality preview.
 });
 
-it("resumes capture-only guidance after dismissing the retake photo picker", async () => {
+it.each([["Choose photo", "image/*"], ["Browse files", ""]])("resumes guidance after dismissing %s on a retake", async (button, accept) => {
   const { pixels, context } = canvasPixels();
   camera.scan.mockResolvedValue({ status: "feedback", message: "Native photo decoded." });
   render(<PageCameraCapture pageLabel="Page 2" seals={signed.seals} onCapture={vi.fn()} onClose={vi.fn()} />);
   ready();
-  fireEvent.click(screen.getByRole("button", { name: "Choose photo" }));
+  fireEvent.click(screen.getByRole("button", { name: button }));
+  const picker = screen.getByLabelText("Choose a high-resolution page photo");
+  expect(picker.accept).toBe(accept);
+  expect(picker.hasAttribute("capture")).toBe(false);
   act(() => camera.options.onFrame());
   expect(camera.liveScan).toHaveBeenCalledTimes(1);
-  fireEvent(screen.getByLabelText("Choose a high-resolution page photo"), new Event("cancel"));
+  fireEvent(picker, new Event("cancel"));
   expect(screen.getByText(/hold steady for automatic capture/, { selector: '[role="status"]' })).toBeTruthy();
   expect(screen.queryByText("Photo captured. You can move your phone.")).toBeNull();
   expect(camera.reset).toHaveBeenCalledTimes(1);

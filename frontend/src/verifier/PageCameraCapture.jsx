@@ -140,10 +140,11 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
     setError("");
     setQuality({ state: "framing", progress: 0, message: "Show all four page corners and hold steady for automatic capture." });
   }
-  function choosePhoto() {
+  function choosePhoto(browseFiles) {
     cancelAttempt();
     pickerSession.current = { epoch: generation.current, camera: camera.current, live: live.current,
       opening: progress.begin("opening") };
+    photoInput.current.accept = browseFiles ? "" : "image/*";
     photoInput.current.click();
   }
   function close() {
@@ -232,7 +233,8 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
     <div className="photo-actions"><button type="button" disabled={!ready || busy} onClick={capture}>Capture now</button>
       <select ref={framingSelect} aria-label="Camera framing" aria-describedby={lightHint} hidden />
       <button type="button" ref={lightButton} hidden aria-describedby={lightHint}>Flashlight off</button>
-      <button type="button" onClick={choosePhoto}>Choose photo</button>
+      <button type="button" onClick={() => choosePhoto(false)}>Choose photo</button>
+      <button type="button" onClick={() => choosePhoto(true)}>Browse files</button>
       {failedPhotos && <button type="button" onClick={() => downloadCameraPhoto(failedPhotos, setError)}>Save scan photo</button>}
       <input ref={photoInput} type="file" accept="image/*" aria-label="Choose a high-resolution page photo" hidden onChange={event => {
         const file = event.target.files?.[0]; event.target.value = "";
@@ -241,6 +243,6 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
       }} />
       <button type="button" onClick={close}>Cancel retake</button></div>
     <p id={lightHint} className="camera-light-hint" role="status" />
-    <p className="photo-note">Camera photos stay on this device. Save scan photo downloads the original exposures in a ZIP.</p>
+    <p className="photo-note">Camera photos stay on this device. Use Browse files to open a photo or scan ZIP from Downloads.</p>
   </section></div>;
 }
