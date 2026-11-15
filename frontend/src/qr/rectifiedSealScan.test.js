@@ -95,9 +95,12 @@ it.each([false, true])("authenticates a shaded overprinted watermark (opaque pan
     expect(exposed).toBeGreaterThanOrEqual(0);
     if (opaquePanel) {
       expect(recover.mock.results[exposed].value).toBeNull();
-      const shadow = recover.mock.calls.findIndex(([, , , options]) => options?.rankedOutliers);
-      expect(shadow).toBeGreaterThan(exposed);
-      expect(recover.mock.results[shadow].value?.seal).toBe(seal);
+      const shadowReads = recover.mock.calls.flatMap(([, , , options], index) =>
+        options?.rankedOutliers ? [index] : []);
+      expect(shadowReads).toHaveLength(2);
+      expect(shadowReads[0]).toBeGreaterThan(exposed);
+      expect(recover.mock.results[shadowReads[0]].value).toBeNull();
+      expect(recover.mock.results[shadowReads[1]].value?.seal).toBe(seal);
     } else {
       expect(recover.mock.results[exposed].value?.seal).toBe(seal);
     }

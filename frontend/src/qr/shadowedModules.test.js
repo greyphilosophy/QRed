@@ -1,13 +1,13 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import QRCode from "qrcode";
 import { createQRedQrData } from "../qredQr.js";
 import { createQRedSeals } from "../qredSealer.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { recoverSampledQrMatrix } from "./pageAlignedRecovery.js";
-import { classifyShadowedModules } from "./shadowedModules.js";
-import { refineShadowGrid, sampleGrid } from "./shadowedGrid.js";
+import { classifyShadowedModules, recoverShadowedGrid } from "./shadowedModules.js";
+import * as shadowGrid from "./shadowedGrid.js";
 
-it("reads a signed pale watermark across a shadow and an opaque print panel", async () => {
+async function shadowedPrint() {
   const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
   const { seals } = await createQRedSeals({
     privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey,
@@ -28,17 +28,34 @@ it("reads a signed pale watermark across a shadow and an opaque print panel", as
     const at = (y * side + x) * 4;
     image.data[at] = image.data[at + 1] = image.data[at + 2] = gray;
   }
+  return { image, pitch, size, version, publicKey, seal: seals[0] };
+}
+
+it("reads the measured grid without refitting cells that already recover the signed payload", async () => {
+  const { image, pitch, version, publicKey, seal } = await shadowedPrint();
+  const measured = (col, row) => ({ x: 6 + pitch * col, y: 6 + pitch * row });
+  const refine = vi.spyOn(shadowGrid, "refineShadowGrid");
+  try {
+    const result = recoverShadowedGrid(image, measured, version, () => true);
+    expect(refine).not.toHaveBeenCalled();
+    expect(result?.seal).toBe(seal);
+    await expect(verifyQRedSeals([result.seal], publicKey)).resolves.toMatchObject({ status: "VALID", signature_valid: true });
+  } finally { refine.mockRestore(); }
+});
+
+it("reads a signed pale watermark across a shadow and an opaque print panel", async () => {
+  const { image, pitch, size, version, publicKey, seal } = await shadowedPrint();
   const guess = (col, row) => ({
     x: 6 + pitch * col + 2.5 * Math.sin(row / size * Math.PI),
     y: 6 + pitch * row + 2 * Math.sin(col / size * Math.PI),
   });
-  expect(refineShadowGrid(image, guess, version, () => false)).toBeNull();
-  const map = refineShadowGrid(image, guess, version, () => true);
+  expect(shadowGrid.refineShadowGrid(image, guess, version, () => false)).toBeNull();
+  const map = shadowGrid.refineShadowGrid(image, guess, version, () => true);
   expect(map).toBeTypeOf("function");
-  const pixels = sampleGrid(image, map, size, () => true);
+  const pixels = shadowGrid.sampleGrid(image, map, size, () => true);
   const observed = classifyShadowedModules(pixels, size, () => true);
   const result = recoverSampledQrMatrix(observed, map, version, { bitReliability: observed.reliability, rankedOutliers: true });
-  expect(result?.seal).toBe(seals[0]);
+  expect(result?.seal).toBe(seal);
   await expect(verifyQRedSeals([result.seal], publicKey)).resolves.toMatchObject({ status: "VALID", signature_valid: true });
   expect(classifyShadowedModules(pixels.fill(180), size, () => true)).toBeNull();
 }, 20000);

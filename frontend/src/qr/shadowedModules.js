@@ -1,7 +1,8 @@
 // Read pale print across a shadow boundary. Neighboring modules share a
 // physical edge, so their relative brightness can survive a local change in
 // illumination that makes absolute paper/ink levels ambiguous.
-import { SAMPLES, smoothGrid } from "./shadowedGrid.js";
+import { recoverSampledQrMatrix } from "./pageAlignedRecovery.js";
+import { refineShadowGrid, sampleGrid, SAMPLES, smoothGrid } from "./shadowedGrid.js";
 
 const clamp = (x, low, high) => Math.max(low, Math.min(high, x));
 
@@ -149,4 +150,26 @@ export function classifyShadowedModules(pixels, size, shouldContinue) {
     unknown[i] = 1; // The parity decoder ranks these bounded, per-block observations.
   }
   return { size, bits, unknown, reliability };
+}
+
+function readShadowedGrid(pixels, map, version, shouldContinue) {
+  const observed = classifyShadowedModules(pixels, 17 + 4 * version, shouldContinue);
+  if (!observed || !shouldContinue()) return null;
+  return recoverSampledQrMatrix(observed, map, version, {
+    bitReliability: observed.reliability, rankedOutliers: true, shouldContinue,
+  });
+}
+
+export function recoverShadowedGrid(image, initialMap, version, shouldContinue) {
+  if (!initialMap || !shouldContinue()) return null;
+  const size = 17 + 4 * version;
+  const pixels = sampleGrid(image, initialMap, size, shouldContinue);
+  if (!pixels || !shouldContinue()) return null;
+  // A grid fitted to the printed markers can already be accurate. A second
+  // fit to blurred edges can move readable cells onto their neighbors.
+  const result = readShadowedGrid(pixels, initialMap, version, shouldContinue);
+  if (result || !shouldContinue()) return result;
+  const refined = refineShadowGrid(image, initialMap, version, shouldContinue, pixels);
+  if (!refined || !shouldContinue()) return null;
+  return readShadowedGrid(sampleGrid(image, refined, size, shouldContinue), refined, version, shouldContinue);
 }

@@ -1,8 +1,7 @@
 // A bounded working copy makes rectangular printed QR modules square before
 // locating their own public patterns. The retained photo is never modified.
 import { locatePaper, pageHomography, pageWatermarkRegions } from "./pageAlignedScan.js";
-import { refineShadowGrid, sampleGrid } from "./shadowedGrid.js";
-import { classifyShadowedModules } from "./shadowedModules.js";
+import { recoverShadowedGrid } from "./shadowedModules.js";
 import { bentModuleGrid } from "./bentModuleGrid.js";
 import { curvedPaperMapping } from "./curvedPaper.js";
 import { estimatePaperColor } from "./paperColor.js";
@@ -123,18 +122,6 @@ function recoverExposed(image, moduleMap, version, shouldContinue, inner = false
   return recoverSampledQrMatrix(exposed, moduleMap, version, { bitReliability: exposed.reliability, shouldContinue });
 }
 
-function recoverShadowedGrid(image, initialMap, version, shouldContinue) {
-  if (!initialMap || !shouldContinue()) return null;
-  const map = refineShadowGrid(image, initialMap, version, shouldContinue);
-  if (!map || !shouldContinue()) return null;
-  const size = 17 + 4 * version;
-  const observed = classifyShadowedModules(sampleGrid(image, map, size, shouldContinue), size, shouldContinue);
-  if (!observed || !shouldContinue()) return null;
-  return recoverSampledQrMatrix(observed, map, version, {
-    bitReliability: observed.reliability, rankedOutliers: true, shouldContinue,
-  });
-}
-
 // Share only measured preparation within one frozen photo request. The wider
 // retry must not rebuild the same page warp, normalized pixels and finder
 // observations after the earlier narrow search has already paid for them.
@@ -226,8 +213,8 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
                 candidate.bentRadius = searchRadius;
               }
             }
-            // Even perfectly aligned QR marks can cross a deep shadow. Refit
-            // the measured grid on the native samples once for this layout.
+            // Even correctly located markers can cross a deep shadow. Try
+            // its edge-based contrast reader once for this page layout.
             if (candidate.triedShadow || !shouldContinue()) return null;
             const recovered = recoverShadowedGrid(image, photoMap, version, shouldContinue);
             if (!recovered && shouldContinue()) candidate.triedShadow = true;
