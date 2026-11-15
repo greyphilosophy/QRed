@@ -416,15 +416,13 @@ function setupStandaloneCapture(overrides = {}) {
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context);
   return { live, scan, pixels, context, get callbacks() { return callbacks; }, get camera() { return camera; } };
 }
-it("offers the failed exposure stack only on request and releases it on a new attempt", async () => {
+it("offers the failed scan photo only on request and releases it on a new attempt", async () => {
   const original = new Blob(["original camera bytes"], { type: "image/jpeg" });
-  const extra = new Blob(["second camera exposure"], { type: "image/jpeg" });
   const download = vi.fn();
   const setup = setupStandaloneCapture({
     downloadCameraPhoto: download,
-    captureCameraPhoto: async (_video, _canvas, { onPhotoBlob, onBurst }) => {
+    captureCameraPhoto: async (_video, _canvas, { onPhotoBlob }) => {
       onPhotoBlob(original);
-      onBurst([extra]);
       return setup.pixels;
     },
   });
@@ -440,7 +438,7 @@ it("offers the failed exposure stack only on request and releases it on a new at
   expect(setup.live.scan).not.toHaveBeenCalled();
   expect(download).not.toHaveBeenCalled();
   fireEvent.click(save);
-  expect(download.mock.calls[0][0]).toEqual([original, extra]);
+  expect(download.mock.calls[0][0]).toBe(original);
   fireEvent.click(capture);
   expect(save.hidden).toBe(true);
   expect(save.onclick).toBeNull();

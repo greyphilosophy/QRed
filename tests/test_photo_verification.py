@@ -159,13 +159,14 @@ def prepare_reader(page):
 
 
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
-def test_browse_files_reads_a_saved_stack_as_one_page_offline(browser, dated_form_photos, path):
+@pytest.mark.parametrize("legacy", [False, True], ids=["single-photo", "older-burst"])
+def test_browse_files_reads_one_original_offline(browser, dated_form_photos, path, legacy):
     first = dated_form_photos["original"]["buffer"]
-    second = io.BytesIO()
-    Image.open(io.BytesIO(first)).save(second, format="JPEG", quality=85)
     archive = io.BytesIO()
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as saved:
-        saved.writestr("exposure-02.jpg", second.getvalue())
+    compression = zipfile.ZIP_DEFLATED if legacy else zipfile.ZIP_STORED
+    with zipfile.ZipFile(archive, "w", compression) as saved:
+        if legacy:
+            saved.write(ROOT / "tests" / "qr_test_plain.png", "exposure-02.png")
         saved.writestr("exposure-01.jpg", first)
     context = browser.new_context(is_mobile=True, has_touch=True, viewport={"width": 360, "height": 800},
                                   service_workers="allow")
@@ -182,10 +183,10 @@ def test_browse_files_reads_a_saved_stack_as_one_page_offline(browser, dated_for
         wait_for_offline_resources(page, photo=True)
         guard.block()
         page.evaluate("""() => {
-            window.bursts = [];
+            window.scanHasExtras = [];
             window.Worker = class extends Worker {
                 postMessage(data, ...args) {
-                    if (data.image && !data.prepareReading) bursts.push((data.burst || []).map(b => b.size));
+                    if (data.image && !data.prepareReading) scanHasExtras.push("burst" in data);
                     return super.postMessage(data, ...args);
                 }
             };
@@ -201,7 +202,7 @@ def test_browse_files_reads_a_saved_stack_as_one_page_offline(browser, dated_for
                 expect(page.get_by_text("This ZIP could not be opened.", exact=False)).to_be_visible()
         review = page.get_by_role("region", name="Review Page 1 of 1", exact=True)
         expect(review.get_by_role("heading", name=re.compile("Seal authenticated"))).to_be_visible(timeout=30000)
-        assert page.evaluate("bursts") == [[len(second.getvalue())]]
+        assert page.evaluate("scanHasExtras") == [False]
         guard.assert_quiet()
     finally:
         context.close()

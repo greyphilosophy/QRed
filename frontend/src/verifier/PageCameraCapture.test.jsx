@@ -116,15 +116,14 @@ it("keeps automatic capture paused after a timeout and leaves Capture now availa
   expect(screen.getByRole("button", { name: "Capture now" }).disabled).toBe(false);
 });
 
-it("retains every retake exposure for saving and reports the native dimensions on timeout", async () => {
+it("retains the original retake photo for saving and reports the native dimensions on timeout", async () => {
   const pixels = { width: 2000, height: 3000, data: new Uint8ClampedArray(4) };
   const bitmap = { width: 2000, height: 3000, close: vi.fn() };
   const context = { drawImage: vi.fn(), getImageData: vi.fn(() => pixels) };
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context);
-  const originals = ["first", "second", "third"].map(bytes => new Blob([bytes], { type: "image/jpeg" }));
-  const shutter = [...originals];
-  vi.stubGlobal("OffscreenCanvas", class {});
-  vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: async () => shutter.shift() }; }));
+  const original = new Blob(["original photo"], { type: "image/jpeg" });
+  const takePhoto = vi.fn().mockResolvedValue(original);
+  vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto }; }));
   const download = vi.spyOn(cameraPhoto, "downloadCameraPhoto").mockResolvedValue();
   vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
   camera.scan.mockResolvedValue(photoScanTimeoutAction(null, { stage: "ordinary-qr", elapsedMs: 4100 }));
@@ -142,10 +141,10 @@ it("retains every retake exposure for saving and reports the native dimensions o
   expect(screen.getByRole("alert").textContent).toContain("manual capture, 800 × 1000 preview, last guide: page edges soft");
   expect(capture).not.toHaveBeenCalled();
   expect(camera.reset).toHaveBeenCalledTimes(1);
-  expect(camera.scan.mock.calls[0][1].burst).toEqual(originals.slice(1));
+  expect(takePhoto).toHaveBeenCalledOnce();
   expect(download).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Save scan photo" }));
-  expect(download.mock.calls[0][0]).toEqual(originals);
+  expect(download.mock.calls[0][0]).toBe(original);
   camera.liveScan.mockClear();
   act(() => camera.options.onFrame());
   expect(camera.liveScan).not.toHaveBeenCalled();

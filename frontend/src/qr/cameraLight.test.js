@@ -45,15 +45,14 @@ function setup({ modes = [false, true], flash = [], report = true, apply, photoC
   return { track, video, progress, button, hint, takePhoto, detach, resumeTorch, capture: options => captureCameraPhoto(video, canvas, options) };
 }
 
-it("lights every exposure, pauses before reading the photo, and relights only for the next preview", async () => {
+it("lights the single capture, pauses before reading the photo, and relights only for the next preview", async () => {
   const { button, track, progress, takePhoto, capture, resumeTorch } = setup();
-  vi.stubGlobal("OffscreenCanvas", class {});
   const shots = [];
   takePhoto.mockImplementation(async () => { shots.push(track.getSettings().torch); return new Blob(["photo"]); });
   button.click(); await flush();
   const attempt = progress.begin("capturing");
-  await capture({ onBurst: vi.fn(), onPhotoTaken: attempt.photoReady });
-  expect(shots).toEqual([true, true, true]);
+  await capture({ onPhotoTaken: attempt.photoReady });
+  expect(shots).toEqual([true]);
   expect(track.getSettings().torch).toBe(false);
   expect(button.getAttribute("aria-pressed")).toBe("false");
   expect(await stillPhotoLighting(track)).toEqual({ fillLightMode: "off" });

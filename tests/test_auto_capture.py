@@ -72,9 +72,7 @@ def test_native_still_capture_keeps_more_detail_and_acknowledges_only_after_capt
         # A still photo can take longer than the gate's normal frame-gap limit.
         # The stationary page must not start another exposure after that delay.
         page.wait_for_timeout(2000)
-        # The fixture leaves the second shutter pending. The bounded burst
-        # must use the completed original and never start a third or new burst.
-        assert page.evaluate("stillRequests.length") == 2
+        assert page.evaluate("stillRequests.length") == 1
         if path == "/":
             # Capture, Choose photo, and Check this page must stay inside the
             # same two-row area instead of covering the stationary guide's advice.
@@ -275,7 +273,7 @@ def test_document_capture_failure_never_decodes_video_and_can_retry(browser, sea
         context.close()
 
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
-def test_save_scan_photo_downloads_current_exposures_in_order_offline(browser, path):
+def test_save_scan_photo_downloads_one_original_per_capture_offline(browser, path):
     context = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="allow")
     try:
         guard = OfflineNetworkGuard(context)
@@ -286,12 +284,13 @@ def test_save_scan_photo_downloads_current_exposures_in_order_offline(browser, p
         guard.block()
         camera_paper(page, "", None, border=False)
         # Only the decoder verdict is forced. Both screens use the production
-        # capture, burst collection and browser download code.
+        # still capture and ZIP download code.
         page.evaluate("""() => {
+            window.shutterCount = 0;
             window.ImageCapture = class {
                 async takePhoto() {
-                    if (!window.exposures.length) throw new Error("Extra shutter unavailable");
-                    return window.exposures.shift();
+                    window.shutterCount++;
+                    return window.shutterPhoto;
                 }
             };
             window.Worker = class extends Worker {
@@ -307,28 +306,26 @@ def test_save_scan_photo_downloads_current_exposures_in_order_offline(browser, p
         save = page.get_by_role("button", name="Save scan photo", exact=True)
         downloads = []
         page.on("download", lambda download: downloads.append(download))
-        for count in (3, 2, 1):
-            originals, expected, inputs = [], [], []
-            for number in range(1, count + 1):
-                fmt = "png" if number == 2 else "jpeg"
-                stream = io.BytesIO()
-                exif = Image.Exif()
-                exif[270] = f"Synthetic burst of {count}, exposure {number}"
-                Image.new("RGB", (1600, 2560), (count * 40, number * 50, 128)).save(stream, fmt, exif=exif)
-                originals.append(stream.getvalue())
-                expected.append(f"exposure-{number:02}.{'png' if fmt == 'png' else 'jpg'}")
-                inputs.append({"type": "image/" + fmt, "bytes": base64.b64encode(originals[-1]).decode()})
-            page.evaluate("""files => { window.exposures = files.map(file => new Blob(
-                [Uint8Array.from(atob(file.bytes), c => c.charCodeAt(0))], {type:file.type})); }""", inputs)
+        for index, (fmt, extension) in enumerate([("jpeg", "jpg"), ("png", "png")]):
+            stream = io.BytesIO()
+            exif = Image.Exif()
+            exif[270] = f"Synthetic scan {index}"
+            Image.new("RGB", (1600, 2560), (70, index * 80, 128)).save(stream, fmt, exif=exif)
+            original = stream.getvalue()
+            page.evaluate("""file => { window.shutterPhoto = new Blob(
+                [Uint8Array.from(atob(file.bytes), c => c.charCodeAt(0))], {type:file.type}); }""",
+                          {"type": "image/" + fmt, "bytes": base64.b64encode(original).decode()})
             page.get_by_role("button", name="Capture now", exact=True).click()
             expect(save).to_be_visible()
-            assert len(downloads) == 3 - count
+            assert page.evaluate("shutterCount") == index + 1
+            assert len(downloads) == index
             with page.expect_download() as download:
                 save.click()
             assert download.value.suggested_filename == "QRed-scan-photo.zip"
             with zipfile.ZipFile(download.value.path()) as archive:
-                assert archive.namelist() == expected
-                assert [archive.read(name) for name in expected] == originals
+                name = f"exposure-01.{extension}"
+                assert archive.namelist() == [name]
+                assert archive.read(name) == original
         guard.assert_quiet()
     finally:
         context.close()

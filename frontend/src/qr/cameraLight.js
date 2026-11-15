@@ -171,8 +171,7 @@ export function attachCameraLight(button, track, { video, progress, enableOnPlay
     return state.pending;
   }
   function onProgress() {
-    // The capturing phase includes every exposure of a burst. All subsequent
-    // phases work from saved pixels and no longer need the preview torch.
+    // Once the shutter returns, processing uses the saved photo and the torch can pause.
     if (!detached && state.mode === "torch" && !state.pending && !state.paused && processingPhoto()) {
       state.paused = true;
       startChange(async () => {
