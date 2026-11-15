@@ -113,10 +113,10 @@ function alignCellEdges(pixels, map, size) {
   };
 }
 
-export function refineShadowGrid(image, initialMap, version, shouldContinue) {
+export function refineShadowGrid(image, initialMap, version, shouldContinue, initialPixels) {
   const size = 17 + 4 * version, centers = alignmentCenters(version), width = size * SAMPLES;
-  const pixels = sampleGrid(image, initialMap, size, shouldContinue);
-  if (!pixels) return null;
+  const pixels = initialPixels ?? sampleGrid(image, initialMap, size, shouldContinue);
+  if (!pixels || !shouldContinue()) return null;
   // Suppress grain before taking the brightest exposed part of each small patch.
   const local = smoothGrid(pixels, width, 1.25, 3), exposed = new Float32Array(local.length);
   for (let y = 1; y < width - 1; y++) for (let x = 1; x < width - 1; x++) {
