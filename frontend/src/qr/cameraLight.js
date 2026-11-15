@@ -16,16 +16,20 @@ async function waitForLight(request) {
 }
 
 export function attachCameraLight(button, track, { video, progress, enableOnPlayback = false, preferPhoneCamera = false,
-  framingSelect, onLightUnavailable, onProbeFinished, onPhoneCamera } = {}) {
+  framingSelect, onLightUnavailable, onTorchStuck, onProbeFinished, onPhoneCamera } = {}) {
   if (!button || !track) return;
   const hint = button.ownerDocument.getElementById(button.getAttribute("aria-describedby"));
-  const state = { mode: "off", pending: null };
+  const state = { mode: "off", pending: null, paused: false, resumeTorch };
   let capabilities, torch, flash = false, detached = false, torchFailed = false;
   let showHelp = preferPhoneCamera, enableWhenReady = enableOnPlayback;
   let framing, lastZoom, zoomFailed = false;
   const reportedTorch = () => {
     try { return track.getSettings?.().torch; } catch { return undefined; }
   };
+  function processingPhoto() {
+    const snapshot = progress?.getSnapshot();
+    return Boolean(snapshot && snapshot.phase !== "capturing");
+  }
   function refreshTorch() {
     const previous = torch;
     try { capabilities = track.getCapabilities?.(); } catch { capabilities = undefined; }
@@ -74,15 +78,16 @@ export function attachCameraLight(button, track, { video, progress, enableOnPlay
   }
   function render() {
     if (detached) return;
-    const on = state.mode !== "off";
+    const on = state.mode !== "off" && !state.paused;
     let label = "Try flashlight";
-    if (enableWhenReady || (state.pending && !on)) label = "Checking light…";
+    if (state.paused) label = "Flashlight paused";
+    else if (enableWhenReady || (state.pending && !on)) label = "Checking light…";
     else if (showHelp && !on) label = onPhoneCamera ? "Use phone camera" : "Flashlight unavailable";
     else if (state.mode === "flash" || (!on && prefersPhotoFlash())) label = `Photo flash ${on ? "on" : "off"}`;
     else if (on || torch === true) label = `Flashlight ${on ? "on" : "off"}`;
     else if ((torch === false && !onLightUnavailable) || torchFailed) label = "Flashlight unavailable";
     button.hidden = false;
-    button.disabled = Boolean(enableWhenReady || state.pending || progress?.getSnapshot());
+    button.disabled = Boolean(enableWhenReady || state.pending || state.paused || progress?.getSnapshot());
     if (framingSelect) framingSelect.disabled = button.disabled;
     refreshFraming();
     if (label === "Use phone camera") button.removeAttribute("aria-pressed");
@@ -108,12 +113,12 @@ export function attachCameraLight(button, track, { video, progress, enableOnPlay
   function onPlaying() {
     if (detached) return;
     refreshTorch();
-    render();
+    onProgress();
     void discoverFlash();
-    if (enableWhenReady && video?.readyState >= 2) {
+    if (enableWhenReady && video?.readyState >= 2 && !processingPhoto()) {
       enableWhenReady = false;
       if (state.mode === "torch") { onProbeFinished?.(true); render(); }
-      else startChange();
+      else startChange(change);
     }
   }
   function prefersPhotoFlash() {
@@ -160,34 +165,55 @@ export function attachCameraLight(button, track, { video, progress, enableOnPlay
     if (!detached && offerPhone !== false) showHelp = true;
     else if (!detached) { torchFailed = false; onProbeFinished?.(false); }
   }
-  function startChange() {
-    state.pending = change().finally(() => { state.pending = null; render(); });
+  function startChange(operation) {
+    state.pending = operation().finally(() => { state.pending = null; onProgress(); });
     render();
+    return state.pending;
+  }
+  function onProgress() {
+    // The capturing phase includes every exposure of a burst. All subsequent
+    // phases work from saved pixels and no longer need the preview torch.
+    if (!detached && state.mode === "torch" && !state.pending && !state.paused && processingPhoto()) {
+      state.paused = true;
+      startChange(async () => {
+        const switchedOff = await setTorch(false);
+        if ((!switchedOff || reportedTorch() !== false) && !detached && processingPhoto()) onTorchStuck?.(track);
+      });
+    } else render();
+  }
+  function resumeTorch() {
+    if ((!state.paused && !enableWhenReady) || detached || state.pending || processingPhoto() || track.readyState === "ended") return;
+    if (enableWhenReady) { onPlaying(); return state.pending; }
+    return startChange(async () => {
+      const enabled = await setTorch(true);
+      if (detached) return;
+      state.paused = false;
+      if (!enabled) state.mode = "off";
+    });
   }
   function toggle() {
-    if (state.pending || detached || progress?.getSnapshot()) return;
+    if (state.pending || state.paused || detached || progress?.getSnapshot()) return;
     if (showHelp) {
       if (onPhoneCamera) onPhoneCamera();
       else { showHelp = false; render(); }
       return;
     }
-    startChange();
+    startChange(change);
   }
   function selectFraming() {
-    if (state.pending || detached || enableWhenReady || progress?.getSnapshot()) { render(); return; }
+    if (state.pending || state.paused || detached || enableWhenReady || progress?.getSnapshot()) { render(); return; }
     const value = framingSelect.value;
     if (value === "phone") { refreshFraming(); onPhoneCamera?.(); return; }
     const zoom = framing?.choices?.find(choice => String(choice.value) === value)?.value;
     if (zoom === undefined) return;
-    state.pending = changeFraming(zoom).finally(() => { state.pending = null; render(); });
-    render();
+    startChange(() => changeFraming(zoom));
   }
 
   lights.set(track, state);
   button.addEventListener("click", toggle);
   framingSelect?.addEventListener("change", selectFraming);
   video?.addEventListener?.("playing", onPlaying, { once: true });
-  const unsubscribe = progress?.subscribe(render);
+  const unsubscribe = progress?.subscribe(onProgress);
   onPlaying();
   function detach() {
     detached = true;
@@ -202,12 +228,19 @@ export function attachCameraLight(button, track, { video, progress, enableOnPlay
     button.setAttribute("aria-pressed", "false");
     if (hint) hint.textContent = "";
   }
-  return { detach, refresh: () => { if (!detached) { refreshTorch(); render(); } } };
+  return { detach, resumeTorch, refresh: () => { if (!detached) { refreshTorch(); onProgress(); } } };
+}
+
+export function hasPausedTorch(track) {
+  return lights.get(track)?.paused === true;
 }
 
 export async function stillPhotoLighting(track) {
   const state = lights.get(track);
-  if (state?.pending) await state.pending;
-  if (state?.mode === "torch") return {}; // The preview light is already on.
-  return { fillLightMode: state?.mode === "flash" ? "flash" : "off" };
+  while (state?.pending) await state.pending;
+  // A manual capture can beat the next preview frame after a cancelled read.
+  await state?.resumeTorch();
+  const current = lights.get(track);
+  if (current?.mode === "torch" && !current.paused) return {};
+  return { fillLightMode: current?.mode === "flash" ? "flash" : "off" };
 }

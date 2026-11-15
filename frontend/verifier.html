@@ -516,9 +516,11 @@
       var sessionGeneration = state.startGeneration;
       var camera = state.camera, cancel = state.cancelPhoto;
       cancel?.();
+      var choosing = camera && photoScanProgress.begin("opening");
       pagePhotoInput.oncancel = function() {
         if (state.photoPickerGeneration !== pickerGeneration) return;
         state.photoPickerGeneration++; pagePhotoInput.oncancel = null;
+        choosing?.stop();
         if (camera && state.isScanning && state.startGeneration === sessionGeneration
           && state.camera === camera && state.cancelPhoto === cancel) cancel({ resumeCamera: true });
       };

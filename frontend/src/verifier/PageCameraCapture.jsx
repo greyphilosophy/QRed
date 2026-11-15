@@ -125,6 +125,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
   function resumePhotoPicker() {
     const pending = pickerSession.current;
     pickerSession.current = null;
+    pending?.opening.stop();
     // Dismissal resumes only the live camera that opened this picker. A late
     // cancel event must not reset a replacement file, closed dialog or error.
     if (!pending || pending.epoch !== generation.current || pending.camera !== camera.current
@@ -141,7 +142,8 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
   }
   function choosePhoto() {
     cancelAttempt();
-    pickerSession.current = { epoch: generation.current, camera: camera.current, live: live.current };
+    pickerSession.current = { epoch: generation.current, camera: camera.current, live: live.current,
+      opening: progress.begin("opening") };
     photoInput.current.click();
   }
   function close() {

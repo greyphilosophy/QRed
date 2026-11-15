@@ -158,11 +158,28 @@ def test_capture_notice_keeps_the_photo_when_the_camera_moves(browser, sealed_te
         page.evaluate("""message => {
             window.__moveOnCapture = true;
             window.__captureNotices = 0;
+            // Both live previews start with an enabled torch. Record the
+            // applied hardware settings at capture and through the retake.
+            const open = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+            window.__torchChanges = []; window.__torchAtNotice = [];
+            navigator.mediaDevices.getUserMedia = async (...args) => {
+                const stream = await open(...args), [track] = stream.getVideoTracks();
+                const changes = []; __torchChanges.push(changes);
+                let torch = true;
+                track.getCapabilities = () => ({torch: true});
+                track.getSettings = () => ({torch});
+                track.applyConstraints = async request => {
+                    const value = request.torch?.exact ?? request.advanced?.find(entry => 'torch' in entry)?.torch;
+                    if (typeof value === 'boolean') { torch = value; changes.push(value); }
+                };
+                return stream;
+            };
             new MutationObserver(() => {
                 if (!window.__moveOnCapture) return;
                 const statuses = document.querySelectorAll('.camera-capture-notice[role="status"]');
                 if (![...statuses].some(node => node.textContent === message)) return;
                 window.__moveOnCapture = false;
+                __torchAtNotice.push(__cameraTracks.at(-1).getSettings().torch);
                 if (!window.__captureNotices) window.__noticeBeforeSeal = !document.querySelector('.page-check-list button');
                 window.__captureNotices++;
                 // Move the paper completely out of view as soon as capture is
@@ -180,6 +197,9 @@ def test_capture_notice_keeps_the_photo_when_the_camera_moves(browser, sealed_te
         page.wait_for_function("window.__captureNotices === 1")
         assert page.evaluate("window.__noticeBeforeSeal")
         expect(page.locator(".page-check-list button")).to_have_count(1, timeout=15000)
+        expect(page.get_by_role("button", name="Flashlight on", exact=True)).to_be_enabled()
+        assert page.evaluate("__torchAtNotice") == [False]
+        assert page.evaluate("__torchChanges") == [[False, True]]
         page.get_by_role("button", name="Check this page now", exact=True).click()
         review = page.get_by_role("region", name="Review Page 2 of 2", exact=True)
         expect(review.locator(".photo-differences")).to_contain_text("Monday", timeout=15000)
@@ -189,6 +209,8 @@ def test_capture_notice_keeps_the_photo_when_the_camera_moves(browser, sealed_te
         review.get_by_role("button", name="Retake this page", exact=True).click()
         page.wait_for_function("window.__captureNotices === 2")
         expect(page.get_by_role("dialog")).to_have_count(0, timeout=15000)
+        assert page.evaluate("__torchAtNotice") == [False, False]
+        assert page.evaluate("__torchChanges") == [[False, True], [False]]
         expect(review.locator(".photo-summary")).to_have_text("Recognized text matches the signed text", timeout=15000)
         page.screenshot(path=str(tmp_path / "captured-before-processing.png"), full_page=True)
         page.get_by_role("button", name="Finish & clear", exact=True).click()

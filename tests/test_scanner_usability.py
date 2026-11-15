@@ -258,8 +258,14 @@ def test_same_lens_framing_reaches_the_still_and_survives_flash_and_reopen(brows
     try:
         page = context.new_page()
         page.goto(BASE_URL + path, wait_until="networkidle")
-        page.evaluate("""() => {
+        page.evaluate("""async () => {
             window.lenses = []; window.shutters = [];
+            const photo = await new Promise(resolve => document.createElement('canvas').toBlob(resolve));
+            const decode = window.createImageBitmap.bind(window);
+            window.createImageBitmap = async (source, ...args) => {
+                if (source === photo) await new Promise(resolve => { window.finishPhoto = resolve; });
+                return decode(source, ...args);
+            };
             navigator.mediaDevices.enumerateDevices = async () => [
                 {kind:'videoinput', deviceId:'numbered', label:'Camera 2, facing back'},
             ];
@@ -282,7 +288,7 @@ def test_same_lens_framing_reaches_the_still_and_survives_flash_and_reopen(brows
                 async getPhotoCapabilities() { return {}; }
                 async takePhoto() {
                     shutters.push(this.track.getSettings());
-                    throw new DOMException('End the simulated capture', 'NotReadableError');
+                    return photo;
                 }
             };
         }""")
@@ -295,8 +301,20 @@ def test_same_lens_framing_reaches_the_still_and_survives_flash_and_reopen(brows
         page.get_by_role("button", name="Flashlight on").click()
         page.get_by_role("button", name="Flashlight off").click()
         page.get_by_role("button", name="Capture now", exact=True).click()
-        page.wait_for_function("shutters.length > 0")
-        assert page.evaluate("shutters[0]") == {"deviceId": "numbered", "torch": True, "zoom": 1.7}
+        page.wait_for_function("typeof window.finishPhoto === 'function'")
+        shots = page.evaluate("shutters")
+        assert shots and all(shot == {"deviceId": "numbered", "torch": True, "zoom": 1.7} for shot in shots)
+        expect(page.get_by_role("button", name="Flashlight paused")).to_be_disabled()
+        assert page.evaluate("lenses[0].getSettings()") == {"deviceId": "numbered", "torch": False, "zoom": 1.7}
+        if path == "/verify.htm":
+            with page.expect_file_chooser() as picker:
+                page.get_by_role("button", name="Choose photo").click()
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            assert not page.evaluate("lenses[0].getSettings().torch")
+            picker.value.element.dispatch_event("cancel")
+        page.evaluate("finishPhoto()")
+        expect(page.get_by_role("button", name="Flashlight on")).to_be_enabled()
+        assert page.evaluate("lenses[0].getSettings().torch")
         assert page.evaluate("lenses.length") == 1
         page.evaluate("""() => {
             for (const hidden of [true, false]) {
