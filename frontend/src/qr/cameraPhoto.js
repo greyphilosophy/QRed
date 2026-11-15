@@ -1,6 +1,7 @@
 // Still capture stays inside the browser. ImageCapture returns a Blob; it
 // does not hand off to the phone camera app or save to the photo library.
-import { downloadZip } from "client-zip";
+import { isScanPhotoZip, readScanPhotoZip } from "./scanPhotoArchive.js";
+export { downloadCameraPhoto } from "./scanPhotoArchive.js";
 import { stillPhotoLighting } from "./cameraLight.js";
 export const NATIVE_PHOTO_TIMEOUT_MS = 5000;
 export const MIN_DOCUMENT_PHOTO_PIXELS = 4_000_000;
@@ -261,40 +262,6 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
   }
 }
 
-const photoExtensions = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
-  "image/avif": ".avif", "image/heic": ".heic", "image/heif": ".heif" };
-const pendingDownloads = new WeakSet();
-
-// Store the original files in shutter order, including frames rejected during
-// alignment. Build the ZIP only on request and preserve the camera metadata.
-export async function downloadCameraPhoto(photos, onError) {
-  if (pendingDownloads.has(photos)) return;
-  pendingDownloads.add(photos);
-  try {
-    const originals = Array.isArray(photos) ? photos : [photos];
-    const entries = originals.map((photo, index) => ({
-      name: `exposure-${String(index + 1).padStart(2, "0")}${photoExtensions[photo.type] || ".bin"}`,
-      input: photo,
-    }));
-    const archive = await downloadZip(entries).blob();
-    const url = URL.createObjectURL(archive), link = document.createElement("a");
-    try {
-      link.href = url;
-      link.download = "QRed-scan-photo.zip";
-      document.body.appendChild(link);
-      link.click();
-    } finally {
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }
-  } catch (error) {
-    if (!onError) throw error;
-    onError("The scan ZIP could not be saved. Choose Save scan photo to try again.");
-  } finally {
-    pendingDownloads.delete(photos);
-  }
-}
-
 // An operational floor for a full-page photograph, not a readability verdict.
 // The smallest successful measured full-page replay was 2560 on its long side;
 // the area floor also excludes narrow crops. The capture target remains 12 MP.
@@ -320,10 +287,12 @@ export function cameraPhotoFailure(diagnostic) {
 
 // Explicit local photo selection is the compatibility path. It does not open
 // the phone's camera app automatically, persist the file or send it anywhere.
-export async function readCameraPhotoFile(file, canvas, { signal, onDiagnostic, requireHighResolution = true } = {}) {
+export async function readCameraPhotoFile(file, canvas, { signal, onDiagnostic, onBurst, requireHighResolution = true } = {}) {
   signal?.throwIfAborted();
   const started = performance.now();
-  const photo = new Image(), url = URL.createObjectURL(file);
+  const originals = isScanPhotoZip(file) ? await readScanPhotoZip(file, signal) : null;
+  signal?.throwIfAborted();
+  const photo = new Image(), url = URL.createObjectURL(originals?.[0] ?? file);
   let abort;
   const failure = reason => {
     onDiagnostic?.({ source: "selected-photo", width: photo.naturalWidth, height: photo.naturalHeight, reason });
@@ -339,6 +308,8 @@ export async function readCameraPhotoFile(file, canvas, { signal, onDiagnostic, 
       })]);
     } catch {
       signal?.throwIfAborted();
+      if (originals) throw new Error("The first exposure in this ZIP could not be read as a photo.");
+      if (file.name && file.type && !file.type.startsWith("image/")) throw new Error("Choose an image or a saved QRed scan ZIP.");
       return failure("invalid-photo");
     }
     signal?.throwIfAborted();
@@ -349,7 +320,9 @@ export async function readCameraPhotoFile(file, canvas, { signal, onDiagnostic, 
     if (!context) return failure("invalid-photo");
     // As with native capture, do not fall back to old pixels if drawing fails.
     const { image, diagnostic } = readPhotoPixels(photo, canvas, context, "selected-photo", started);
+    if (originals) diagnostic.exposures = originals.length;
     onDiagnostic?.(diagnostic);
+    if (originals?.length > 1) onBurst?.(originals.slice(1));
     return image;
   } finally {
     signal?.removeEventListener("abort", abort);

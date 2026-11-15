@@ -101,10 +101,9 @@
   .ar-display-scanning:has(.ar-collection-progress:not(:empty)) .ar-camera { --camera-top: 8rem; }
   .ar-display-scanning:has(.ar-framing:not([hidden])) .ar-collection-progress { top: 4.25rem; left: .75rem; right: .75rem; padding: .4rem .6rem; }
   .ar-camera > .photo-scan-progress { bottom: calc(clamp(1rem, 3vw, 2rem) + 8.5rem); }
-  /* Keep the feedback's reserved two-row control area after a page is
-     collected: primary action above the two secondary choices. */
+  /* Keep the camera controls within two rows, including the page review action. */
   .ar-display-scanning .ar-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .ar-display-scanning .ar-controls > :first-child,
+  .ar-display-scanning .ar-controls:not(:has(> :nth-child(4))) > :first-child,
   .ar-display-scanning .ar-controls > :nth-child(2):last-child { grid-column: 1 / -1; }
 }
 

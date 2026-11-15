@@ -56,6 +56,12 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
   const captureLabel = readingPhoto ? "Cancel and resume camera" : cameraFailed ? "Retry camera" : "Capture now";
   const scanButtonLabel = preparing ? "Preparing check…" : mode === "scanning" ? captureLabel
     : mode === "result" ? "Scan more pages" : "Check document";
+  function chooseSavedPhoto(browseFiles) {
+    startGeneration.current++;
+    setPreparing(false);
+    setMode("idle");
+    onChoosePhoto(browseFiles);
+  }
   const controls = React.createElement("div", { className: "ar-controls" },
     React.createElement("button", {
       className: "ar-button ar-button-primary",
@@ -86,15 +92,15 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
         setMode("scanning");
       },
     }, scanButtonLabel),
-    mode === "scanning" && onChoosePhoto ? React.createElement("button", {
-      className: "ar-button ar-button-secondary", onClick: () => { setMode("idle"); onChoosePhoto(); },
-    }, "Choose photo") : null,
     mode === "scanning" && collectSeals && collectionProgress?.pagesCollected > 0 ? React.createElement("button", {
       className: "ar-button ar-button-secondary", onClick: () => {
         setMode("result");
         document.getElementById("document-check")?.scrollIntoView({ behavior: "smooth" });
       },
     }, collectionProgress?.pagesCollected > 1 ? "Check captured pages now" : "Check this page now") : null,
+    mode === "scanning" && onChoosePhoto ? React.createElement("button", {
+      className: "ar-button ar-button-secondary", onClick: () => chooseSavedPhoto(false),
+    }, "Choose photo") : null,
     onOpenPdfStampTool && mode !== "scanning" ? React.createElement("button", {
       "aria-label": "Open PDF stamping tool",
       "aria-controls": "pdf-stamp-tool",
@@ -105,7 +111,10 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
     },
       React.createElement("span", { "aria-hidden": "true", className: "stamp-icon" }, "▣"),
       React.createElement("span", null, "Stamp PDF")
-    ) : null
+    ) : null,
+    onChoosePhoto ? React.createElement("button", {
+      className: "ar-button ar-button-secondary", type: "button", onClick: () => chooseSavedPhoto(true),
+    }, "Browse files") : null
   );
 
   if (mode === "result") {
@@ -144,7 +153,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
         React.createElement("p", { className: "eyebrow" }, "QRed AR verifier"),
         React.createElement("h1", null, "Check a printed document"),
         React.createElement("p", null, "Frame the whole page and hold steady. QRed captures automatically and tells you when you can move."),
-        React.createElement("p", { className: "camera-privacy" }, "Camera photos stay on this device. Save scan photo downloads the original exposures in a ZIP."),
+        React.createElement("p", { className: "camera-privacy" }, "Camera photos stay on this device. Use Browse files to open a photo or scan ZIP from Downloads."),
         completionNotice ? React.createElement("p", { id: "check-clear-note", role: "status" }, completionNotice) : null,
         preparationError ? React.createElement("p", { role: "alert" }, preparationError + " Try Check document again while connected.") : null
       )

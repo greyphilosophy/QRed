@@ -9,6 +9,7 @@ import math
 import os
 import re
 import subprocess
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -155,6 +156,55 @@ def prepare_reader(page):
     page.get_by_text("Prepare for offline checking", exact=True).click()
     page.get_by_role("button", name="Prepare offline checking", exact=True).click()
     expect(page.get_by_role("button", name="Offline text checking ready", exact=True)).to_be_visible(timeout=60000)
+
+
+@pytest.mark.parametrize("path", ["/", "/verify.htm"])
+def test_browse_files_reads_a_saved_stack_as_one_page_offline(browser, dated_form_photos, path):
+    first = dated_form_photos["original"]["buffer"]
+    second = io.BytesIO()
+    Image.open(io.BytesIO(first)).save(second, format="JPEG", quality=85)
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as saved:
+        saved.writestr("exposure-02.jpg", second.getvalue())
+        saved.writestr("exposure-01.jpg", first)
+    context = browser.new_context(is_mobile=True, has_touch=True, viewport={"width": 360, "height": 800},
+                                  service_workers="allow")
+    try:
+        base = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
+        guard = OfflineNetworkGuard(context, base)
+        context.route("**/api/keys/default", lambda route: route.fulfill(json={"public_key": PUBLIC_KEY}))
+        page = context.new_page()
+        page.goto(base + path, wait_until="networkidle")
+        if path == "/verify.htm":
+            page.locator("#publicKeyFileInput").set_input_files({
+                "name": "key.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode()})
+        prepare_reader(page)
+        wait_for_offline_resources(page, photo=True)
+        guard.block()
+        page.evaluate("""() => {
+            window.bursts = [];
+            window.Worker = class extends Worker {
+                postMessage(data, ...args) {
+                    if (data.image && !data.prepareReading) bursts.push((data.burst || []).map(b => b.size));
+                    return super.postMessage(data, ...args);
+                }
+            };
+        }""")
+        browse = page.get_by_role("button", name="Browse files", exact=True)
+        for data in [b"incomplete", archive.getvalue()]:
+            with page.expect_file_chooser() as picked:
+                browse.click()
+            chooser = picked.value
+            assert chooser.element.evaluate("e => !e.accept && !e.multiple && !e.hasAttribute('capture')")
+            chooser.set_files({"name": "QRed-scan-photo.ZIP", "mimeType": "application/octet-stream", "buffer": data})
+            if data == b"incomplete":
+                expect(page.get_by_text("This ZIP could not be opened.", exact=False)).to_be_visible()
+        review = page.get_by_role("region", name="Review Page 1 of 1", exact=True)
+        expect(review.get_by_role("heading", name=re.compile("Seal authenticated"))).to_be_visible(timeout=30000)
+        assert page.evaluate("bursts") == [[len(second.getvalue())]]
+        guard.assert_quiet()
+    finally:
+        context.close()
 
 
 @pytest.mark.parametrize("shadowed", [False, True], ids=["clear", "warm-watermark"])

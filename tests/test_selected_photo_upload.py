@@ -2,6 +2,7 @@
 import io
 from pathlib import Path
 
+import pytest
 from PIL import Image
 from playwright.sync_api import expect
 
@@ -51,7 +52,8 @@ def test_homepage_large_selected_photo_is_bounded_before_real_worker(browser):
         context.close()
 
 
-def test_homepage_small_ordinary_qr_remains_readable_offline(browser):
+@pytest.mark.parametrize("use_downloads", [False, True], ids=["gallery", "files"])
+def test_homepage_small_ordinary_qr_remains_readable_offline(browser, use_downloads):
     """The general input must not inherit the 4 MP full-page capture floor."""
     context = browser.new_context(service_workers="allow")
     try:
@@ -61,8 +63,16 @@ def test_homepage_small_ordinary_qr_remains_readable_offline(browser):
         page.goto(BASE_URL, wait_until="networkidle")
         wait_for_offline_resources(page, photo=True)
         guard.block()
-        show_file_inputs(page)
-        page.locator("#qr-image").set_input_files(Path(__file__).with_name("qr_test_plain.png"))
+        photo = Path(__file__).with_name("qr_test_plain.png")
+        if use_downloads:
+            with page.expect_file_chooser() as picked:
+                page.get_by_role("button", name="Browse files", exact=True).click()
+            picked.value.set_files(photo)
+        else:
+            show_file_inputs(page)
+            picker = page.locator("#qr-image")
+            expect(picker).to_have_attribute("accept", "image/*")
+            picker.set_input_files(photo)
         expect(page.get_by_text("Unverified QR content:", exact=False)).to_be_visible(timeout=15000)
         assert page.evaluate("window.__photoSubmissions") == [
             {"width": 290, "height": 290, "bytes": 290 * 290 * 4}]
