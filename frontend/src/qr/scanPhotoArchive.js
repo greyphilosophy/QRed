@@ -7,18 +7,13 @@ const photoTypes = Object.fromEntries(Object.entries(photoExtensions).map(([type
 photoTypes[".jpeg"] = "image/jpeg";
 const pendingDownloads = new WeakSet();
 
-// Store the original files in shutter order, including frames rejected during
-// alignment. Build the ZIP only on request and preserve the camera metadata.
-export async function downloadCameraPhoto(photos, onError) {
-  if (pendingDownloads.has(photos)) return;
-  pendingDownloads.add(photos);
+// Preserve the camera's original bytes and metadata inside the offline download.
+export async function downloadCameraPhoto(photo, onError) {
+  if (pendingDownloads.has(photo)) return;
+  pendingDownloads.add(photo);
   try {
-    const originals = Array.isArray(photos) ? photos : [photos];
-    const entries = originals.map((photo, index) => ({
-      name: `exposure-${String(index + 1).padStart(2, "0")}${photoExtensions[photo.type] || ".bin"}`,
-      input: photo,
-    }));
-    const archive = await downloadZip(entries).blob();
+    const name = `exposure-01${photoExtensions[photo.type] || ".bin"}`;
+    const archive = await downloadZip([{ name, input: photo }]).blob();
     const url = URL.createObjectURL(archive), link = document.createElement("a");
     try {
       link.href = url;
@@ -33,7 +28,7 @@ export async function downloadCameraPhoto(photos, onError) {
     if (!onError) throw error;
     onError("The scan ZIP could not be saved. Choose Save scan photo to try again.");
   } finally {
-    pendingDownloads.delete(photos);
+    pendingDownloads.delete(photo);
   }
 }
 
@@ -78,21 +73,20 @@ export async function readScanPhotoZip(file, signal) {
   // storage needed to inflate a user-repacked archive before opening any entry.
   const inflatedBytes = photos.reduce((sum, { entry }) => sum + (entry.compressionMethod ? entry.size : 0), 0);
   if (inflatedBytes > 320_000_000) throw new Error("This compressed scan is too large. Choose an individual photo.");
-  const originals = [];
+  // Older captures kept up to three originals. Exposure 01 is the photo used for text comparison.
+  const { entry, type } = photos[0];
+  let photo;
   try {
-    for (const { entry, type } of photos) {
-      signal?.throwIfAborted();
-      if (entry.compressionMethod === 0) originals.push(await entry.blob(type));
-      else {
-        const stream = await entry.stream();
-        const body = signal ? stream.pipeThrough(new TransformStream(), { signal }) : stream;
-        originals.push(await new Response(body, { headers: { "Content-Type": type } }).blob());
-      }
+    if (entry.compressionMethod === 0) photo = await entry.blob(type);
+    else {
+      const stream = await entry.stream();
+      const body = signal ? stream.pipeThrough(new TransformStream(), { signal }) : stream;
+      photo = await new Response(body, { headers: { "Content-Type": type } }).blob();
     }
   } catch {
     signal?.throwIfAborted();
-    throw new Error("The photos in this ZIP could not be opened. Choose the original scan ZIP or an individual photo.");
+    throw new Error("The photo in this ZIP could not be opened. Choose the original scan ZIP or an individual photo.");
   }
   signal?.throwIfAborted();
-  return originals;
+  return photo;
 }

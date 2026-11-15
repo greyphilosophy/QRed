@@ -473,10 +473,10 @@
     var btnScan = document.getElementById("btnScan");
     var btnCapture = document.getElementById("btnCapture");
     var btnSavePhoto = document.getElementById("btnSavePhoto");
-    function offerFailedPhotos(photos) {
-      btnSavePhoto.hidden = !photos;
-      btnSavePhoto.onclick = photos ? function save() {
-        downloadCameraPhoto(photos, function(message) {
+    function offerFailedPhoto(photo) {
+      btnSavePhoto.hidden = !photo;
+      btnSavePhoto.onclick = photo ? function save() {
+        downloadCameraPhoto(photo, function(message) {
           if (btnSavePhoto.onclick === save) document.getElementById("pageGuideHint").textContent = message;
         });
       } : null;
@@ -723,7 +723,7 @@
       state.isScanning = true;
       updatePhotoComparison();
       function cancelPhoto({ resumeCamera = false } = {}) {
-        offerFailedPhotos(null);
+        offerFailedPhoto(null);
         photoScanProgress.clear(); liveProgress = null;
         state.photoScan?.abort(); state.photoScan = null;
         processingCapture = false;
@@ -748,7 +748,7 @@
           if (!file) return;
         }
         if (!file && (!video.videoWidth || !video.videoHeight)) { hint.textContent = "Camera is preparing. Try Capture now in a moment, or choose a photo."; return; }
-        offerFailedPhotos(null);
+        offerFailedPhoto(null);
         if (!preserveGate) liveScan.reset();
         acquisitionFailed = false; autoPaused = false;
         var controller = new AbortController(); state.photoScan = controller;
@@ -760,10 +760,9 @@
         captureDiagnostic = null;
         var captureContext = file ? {} : cameraCaptureContext(
           { width: video.videoWidth, height: video.videoHeight }, preserveGate, lastQuality);
-        var nativeBlob, burst = [];
+        var nativeBlob;
         try {
           var options = { signal: controller.signal, requireHighResolution: true, onPhotoTaken: progress.photoReady,
-            onBurst: function(blobs) { burst = blobs; },
             onPhotoBlob: function(blob) { nativeBlob = blob; }, onDiagnostic: function(diagnostic) {
             if (current()) captureDiagnostic = { ...diagnostic, ...captureContext };
           } };
@@ -776,15 +775,15 @@
             return;
           }
           progress.photoReady();
-          var action = await scanPhotoInWorker(still, { returnPayload: true, burst, signal: controller.signal, onStage: progress.stage });
+          var action = await scanPhotoInWorker(still, { returnPayload: true, signal: controller.signal, onStage: progress.stage });
           if (current()) {
             if (action.timedOut) autoPaused = true;
-            if (nativeBlob && (action.timedOut || action.status === "feedback")) offerFailedPhotos([nativeBlob, ...burst]);
+            if (nativeBlob && (action.timedOut || action.status === "feedback")) offerFailedPhoto(nativeBlob);
             collectFrame(action, photoCanvas);
           }
         } catch (error) {
           if (current() && error.name !== "AbortError") {
-            if (nativeBlob) offerFailedPhotos([nativeBlob, ...burst]);
+            if (nativeBlob) offerFailedPhoto(nativeBlob);
             hint.textContent = error.message;
           }
         } finally {
@@ -819,7 +818,7 @@
     }
 
     function stopScanning() {
-      offerFailedPhotos(null);
+      offerFailedPhoto(null);
       photoScanProgress.clear();
       state.isScanning = false;
       state.camera?.stop();

@@ -224,7 +224,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
   const [feedback, setFeedback] = useState(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [quality, setQuality] = useState(null);
-  const [failedPhotos, setFailedPhotos] = useState(null);
+  const [failedPhoto, setFailedPhoto] = useState(null);
 
   function markCameraReady(ready) {
     if (cameraReadyRef.current === ready) return;
@@ -314,7 +314,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
 
     async function capturePhoto(preserveGate = false, file) {
       if (photoScanRef.current) return;
-      setFailedPhotos(null);
+      setFailedPhoto(null);
       // A queued live result must never be attached to the new still photo.
       if (!preserveGate) liveScan.reset();
       captureDiagnostic = null;
@@ -325,7 +325,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
       const controller = new AbortController();
       photoScanRef.current = controller;
       const current = () => photoScanRef.current === controller && !controller.signal.aborted;
-      let image, nativeBlob, burst = [];
+      let image, nativeBlob;
       try {
         const video = videoRef.current, canvas = canvasRef.current;
         const ready = isCameraFrameReady(video, canvas);
@@ -345,7 +345,6 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
         captureDiagnostic = file ? null : cameraFrameDiagnostic(preview);
         const options = {
           signal: controller.signal, requireHighResolution: autoCapture, onPhotoTaken: attemptProgress.photoReady,
-          onBurst: autoCapture ? blobs => { burst = blobs; } : undefined,
           onPhotoBlob: blob => { nativeBlob = blob; },
           onDiagnostic: diagnostic => {
             if (current()) captureDiagnostic = { ...diagnostic, ...captureContext };
@@ -359,17 +358,17 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
         let action;
         if (image) {
           attemptProgress.photoReady();
-          action = await scanPhotoInWorker(image, { returnPayload, burst, signal: controller.signal, onStage: attemptProgress.stage });
+          action = await scanPhotoInWorker(image, { returnPayload, signal: controller.signal, onStage: attemptProgress.stage });
           if (!current()) return;
         } else {
           action = cameraPhotoFailure(captureDiagnostic);
         }
-        if (nativeBlob && (action.timedOut || action.status === "feedback")) setFailedPhotos([nativeBlob, ...burst]);
+        if (nativeBlob && (action.timedOut || action.status === "feedback")) setFailedPhoto(nativeBlob);
         autoPaused = autoCapture && (action.timedOut || (!preserveGate && action.captureFailed));
         handleScanActionRef.current(action);
       } catch (error) {
         if (!current() || error.name === "AbortError") return;
-        if (nativeBlob) setFailedPhotos([nativeBlob, ...burst]);
+        if (nativeBlob) setFailedPhoto(nativeBlob);
         pendingManualCaptureRef.current = false;
         pendingManualCaptureStartedAtRef.current = null;
         autoPaused = autoCapture && !preserveGate;
@@ -490,8 +489,8 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
     cameraReady && !progressSnapshot ? React.createElement("div", { className: "ar-scan-feedback ar-camera-advice", role: "status", "aria-live": "polite" },
       quality && !feedback ? React.createElement("span", null, quality.message) : null,
       feedback ? React.createElement("span", null, feedback) : null,
-      failedPhotos ? React.createElement("button", { type: "button", className: "save-scan-photo",
-        onClick: () => downloadCameraPhoto(failedPhotos, setFeedback) }, "Save scan photo") : null,
+      failedPhoto ? React.createElement("button", { type: "button", className: "save-scan-photo",
+        onClick: () => downloadCameraPhoto(failedPhoto, setFeedback) }, "Save scan photo") : null,
       !quality && !feedback ? "Keep all four page corners visible. Avoid glare." : null,
       quality?.state === "hold" && !feedback ? React.createElement("progress", { className: "capture-readiness", max: 1,
         value: quality.progress, "aria-label": "Steady hold before automatic capture" }) : null) : null,

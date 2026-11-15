@@ -13,23 +13,26 @@ describe("opening a saved scan", () => {
     expect(isScanPhotoZip({ name: "exposure-01.jpg", type: "image/jpeg" })).toBe(false);
   });
 
-  it("keeps the original bytes in shutter order, including an unknown camera format", async () => {
+  it("reads the first numbered exposure of an older archive regardless of entry order", async () => {
     const entries = [
       ["scan/exposure-03.bin", new Uint8Array([3, 0, 9])],
       ["__MACOSX/scan/._exposure-01.jpg", "metadata"],
       ["scan/exposure-02.PNG", new Uint8Array([2, 0, 8])],
       ["scan/exposure-01.jpg", new Uint8Array([1, 0, 7])],
     ];
-    const photos = await readScanPhotoZip(await zip(entries));
-    expect(photos.map(p => p.type)).toEqual(["image/jpeg", "image/png", "application/octet-stream"]);
-    expect(await Promise.all(photos.map(async p => [...new Uint8Array(await p.arrayBuffer())])))
-      .toEqual([[1, 0, 7], [2, 0, 8], [3, 0, 9]]);
+    const photo = await readScanPhotoZip(await zip(entries));
+    expect(photo.type).toBe("image/jpeg");
+    expect([...new Uint8Array(await photo.arrayBuffer())]).toEqual([1, 0, 7]);
   });
 
-  it("opens an older ZIP containing a single named photo", async () => {
-    const photos = await readScanPhotoZip(await zip([["QRed-scan-photo (9).jpeg", "original"]]));
-    expect(photos).toHaveLength(1);
-    expect(await photos[0].text()).toBe("original");
+  it.each([
+    ["exposure-01.jpg", "image/jpeg"],
+    ["exposure-01.bin", "application/octet-stream"],
+    ["QRed-scan-photo (9).jpeg", "image/jpeg"],
+  ])("opens a single original photo named %s", async (name, type) => {
+    const photo = await readScanPhotoZip(await zip([[name, "original"]]));
+    expect(photo.type).toBe(type);
+    expect(await photo.text()).toBe("original");
   });
 
   it.each([

@@ -59,13 +59,9 @@ it prompts the user to retry or choose a photo. Generic QR preview scans use
 their own frame loop.
 
 Native photo acquisition has a separate cancellable five-second total allowance.
-Automatic and manual page scans can request up to two more exposures in the
-1.1 seconds after the first shutter completes, reserving time to open the original.
-The captured notice appears as soon as the last usable exposure is frozen.
-The scanner keeps the first original for OCR, review and saving. In the decoder
-worker, a registered stack has up to 6.5 seconds of the shared scan budget to
-recover a complete watermark. A missed or unregistered stack leaves the
-remaining budget for the normal original-photo decoder.
+Automatic and manual page scans each take one high-resolution still. The captured
+notice appears as soon as the camera returns the photo. Seal recovery starts with
+the full decoder budget. OCR and review use the same captured image.
 The browser API cannot cancel a pending hardware request; late results are
 ignored, and only one native request per track may remain outstanding. If the
 camera never settles, reopening it creates a fresh track.
@@ -120,10 +116,10 @@ guidance state before the photo. This records what the gate last reported; it
 does not infer a camera fault or claim the later live preview matches the
 captured photo. Explicitly selected files do not inherit camera guidance.
 
-After an unsuccessful native still read, **Save scan photo** downloads a ZIP of
-all completed camera exposures in capture order, including a single exposure
-when the burst ends early. QRed retains the original files until the next attempt
-or the end of the camera session. The ZIP is created on request and works offline.
+After an unsuccessful native still read, **Save scan photo** downloads the
+original camera file in a ZIP. QRed retains the file until the next attempt or
+the end of the camera session. The ZIP is created on request and works offline.
+**Browse files** opens that photo or the first numbered photo of an older scan ZIP.
 
 On a seal-reader timeout, a fixed-name checkpoint identifies the last reported
 decoder step and when it began relative to decoding. The timeout also includes
