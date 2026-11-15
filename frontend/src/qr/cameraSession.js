@@ -1,5 +1,5 @@
 import { alternateLightCameras, applyCameraQualityControls, getPreferredCameraStream, requestCameraById } from "./cameraControls.js";
-import { attachCameraLight } from "./cameraLight.js";
+import { attachCameraLight, hasPausedTorch } from "./cameraLight.js";
 import { observeCameraFrames } from "./cameraPhoto.js";
 
 const CAMERA_ACCESS_TIMEOUT_MS = 30000;
@@ -12,6 +12,7 @@ export function startCameraSession(options) {
   const page = globalThis.document;
   let attempt = null, closePhonePicker = null;
   let stopped = false, paused = false, lightSearch = null, preferPhoneCamera = false, selectedId = null;
+  let restoreLight = false, reopenFrame = null;
 
   function release() {
     attempt?.abort();
@@ -20,10 +21,17 @@ export function startCameraSession(options) {
 
   function stop() {
     stopped = true;
+    unsubscribe?.();
+    if (reopenFrame !== null) cancelAnimationFrame(reopenFrame);
     closePhonePicker?.();
     page?.removeEventListener("visibilitychange", updateVisibility);
     globalThis.removeEventListener?.("pagehide", stop);
     release();
+  }
+
+  function rememberLitCamera(track) {
+    restoreLight = true;
+    try { selectedId = track.getSettings?.().deviceId || selectedId; } catch { /* Use the preferred camera. */ }
   }
 
   async function openPhoneCamera() {
@@ -69,13 +77,22 @@ export function startCameraSession(options) {
     attempt = controller;
     openPreview({ ...options,
       requestStream: deviceId ? () => requestCameraById(deviceId) : options.requestStream,
-      seekingLight, preferPhoneCamera,
+      seekingLight, restoreLight, preferPhoneCamera,
       onPhoneCamera: options.onPhonePhoto ? openPhoneCamera : undefined,
+      // Some drivers ignore torch:false. Ending that stream turns off its
+      // light even when the controls fail. Keep decoding the captured pixels.
+      onTorchStuck: track => {
+        if (controller.signal.aborted) return;
+        rememberLitCamera(track);
+        release();
+      },
       onProbeFinished: enabled => {
+        restoreLight = false;
         if (enabled && seekingLight) selectedId = deviceId;
         lightSearch = null;
       },
       onLightUnavailable: async track => {
+        if (restoreLight) return false;
         if (!lightSearch) {
           const found = await alternateLightCameras(track);
           if (controller.signal.aborted || options.progress?.getSnapshot()) return false;
@@ -89,17 +106,27 @@ export function startCameraSession(options) {
       if (!["NotAllowedError", "SecurityError"].includes(error.name)) {
         if (lightSearch) { nextLightCamera(); return; }
         // An exact device may disappear while the system camera or tab is away.
-        if (deviceId) { selectedId = null; open(); return; }
+        if (deviceId) { selectedId = null; restoreLight = false; open(); return; }
       }
       stop();
       options.onError(error, stage);
     });
   }
   function updateVisibility() {
-    if (page?.hidden) { lightSearch = null; release(); return; }
-    if (!attempt) open(selectedId);
+    if (page?.hidden) {
+      const track = options.video.srcObject?.getVideoTracks?.()[0];
+      if (hasPausedTorch(track)) rememberLitCamera(track);
+      lightSearch = null; release(); return;
+    }
+    if (!attempt && !(restoreLight && options.progress?.getSnapshot())) open(selectedId);
   }
 
+  const unsubscribe = options.progress?.subscribe(() => {
+    if (!restoreLight || attempt || page?.hidden || options.progress.getSnapshot() || reopenFrame !== null) return;
+    // Clearing progress also happens during teardown or photo replacement.
+    // Recheck on the next visible frame before asking for the camera again.
+    reopenFrame = requestAnimationFrame(() => { reopenFrame = null; updateVisibility(); });
+  });
   page?.addEventListener("visibilitychange", updateVisibility);
   globalThis.addEventListener?.("pagehide", stop);
   updateVisibility();
@@ -107,10 +134,11 @@ export function startCameraSession(options) {
 }
 
 async function openPreview({ video, requestStream = signal => getPreferredCameraStream(undefined, signal),
-  prepareStream = applyCameraQualityControls, lightButton, progress, onStream, onFrame, waitForMetadata = false, interval = 125,
-  seekingLight, preferPhoneCamera, onProbeFinished, onLightUnavailable, onPhoneCamera },
+  prepareStream = applyCameraQualityControls, lightButton, framingSelect, progress, onStream, onFrame, waitForMetadata = false, interval = 125,
+  seekingLight, restoreLight, preferPhoneCamera, onProbeFinished, onLightUnavailable, onTorchStuck, onPhoneCamera },
   signal, onFailure) {
-  let stream = null, animation = null, started = false, stopFrameObserver, detachLight;
+  let stream = null, animation = null, started = false, stopFrameObserver, controls;
+  let waitingForLight = seekingLight || restoreLight;
   let lastScanAt = -Infinity;
   let timer = setTimeout(() => fail(new Error("Camera access did not finish. Check camera permission and try again."), "access"),
     seekingLight ? LIGHT_LENS_TIMEOUT_MS : CAMERA_ACCESS_TIMEOUT_MS);
@@ -122,7 +150,7 @@ async function openPreview({ video, requestStream = signal => getPreferredCamera
   signal.addEventListener("abort", () => {
     clearTimeout(timer);
     stopFrameObserver?.();
-    detachLight?.();
+    controls?.detach();
     if (animation !== null) cancelAnimationFrame(animation);
     if (video.onloadedmetadata === startFrames) video.onloadedmetadata = null;
     if (stream) {
@@ -135,11 +163,11 @@ async function openPreview({ video, requestStream = signal => getPreferredCamera
 
   function tick() {
     if (signal.aborted) return;
-    if (timer !== null && video.readyState >= 2 && video.videoWidth && video.videoHeight) {
-      clearTimeout(timer);
-      timer = null;
+    if (video.readyState >= 2 && video.videoWidth && video.videoHeight) {
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      if (!progress?.getSnapshot()) controls?.resumeTorch();
     }
-    if (!seekingLight && performance.now() - lastScanAt >= interval) {
+    if (!waitingForLight && performance.now() - lastScanAt >= interval) {
       try { onFrame(); } catch (error) { fail(error, "frame"); return; }
       // Count from completion so expensive decoding still yields to input.
       lastScanAt = performance.now();
@@ -175,14 +203,15 @@ async function openPreview({ video, requestStream = signal => getPreferredCamera
   // Some camera drivers wait for playback before applying focus or zoom.
   // These controls are optional and must never gate the preview or frame loop.
   if (!signal.aborted) {
-    detachLight = attachCameraLight(lightButton, stream.getVideoTracks?.()[0], { video, progress,
-      enableOnPlayback: seekingLight, preferPhoneCamera, onPhoneCamera, onLightUnavailable,
-      onProbeFinished: enabled => { seekingLight = false; onProbeFinished(enabled); },
+    controls = attachCameraLight(lightButton, stream.getVideoTracks?.()[0], { video, progress, framingSelect,
+      enableOnPlayback: waitingForLight, preferPhoneCamera, onPhoneCamera, onLightUnavailable, onTorchStuck,
+      onProbeFinished: enabled => { waitingForLight = false; onProbeFinished(enabled); },
     });
     // The alternate's torch constraints include the same focus, exposure and
     // zoom preferences. A concurrent second request could reset its light.
-    if (!seekingLight) {
+    if (!seekingLight && !restoreLight) {
       try { await prepareStream?.(stream); } catch { /* The preview can continue. */ }
+      if (!signal.aborted) controls?.refresh();
     }
   }
 }

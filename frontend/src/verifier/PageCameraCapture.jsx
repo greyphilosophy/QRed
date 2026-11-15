@@ -22,6 +22,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
   const title = separateOriginal ? `Photograph original ${pageLabel.toLowerCase()}` : `Retake ${pageLabel}`;
   const video = useRef(null), camera = useRef(null), generation = useRef(0);
   const lightButton = useRef(null);
+  const framingSelect = useRef(null);
   const lightHint = useId();
   const scan = useRef(null), captureDiagnostic = useRef(null), photoInput = useRef(null);
   const lastQuality = useRef(null);
@@ -67,7 +68,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
           if (action.message) setError(action.message);
         }
       }, onError: cause => { if (epoch !== generation.current) return; liveProgress.current?.stop(); busyRef.current = false; setBusy(false); setError(cause.message); } });
-    camera.current = startCameraSession({ video: video.current, lightButton: lightButton.current, progress,
+    camera.current = startCameraSession({ video: video.current, lightButton: lightButton.current, framingSelect: framingSelect.current, progress,
       onPhonePhoto: file => capture({ file }),
       onStream: stream => {
         if (stream || epoch !== generation.current) return;
@@ -124,6 +125,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
   function resumePhotoPicker() {
     const pending = pickerSession.current;
     pickerSession.current = null;
+    pending?.opening.stop();
     // Dismissal resumes only the live camera that opened this picker. A late
     // cancel event must not reset a replacement file, closed dialog or error.
     if (!pending || pending.epoch !== generation.current || pending.camera !== camera.current
@@ -140,7 +142,8 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
   }
   function choosePhoto() {
     cancelAttempt();
-    pickerSession.current = { epoch: generation.current, camera: camera.current, live: live.current };
+    pickerSession.current = { epoch: generation.current, camera: camera.current, live: live.current,
+      opening: progress.begin("opening") };
     photoInput.current.click();
   }
   function close() {
@@ -227,6 +230,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
     <PhotoScanProgress progress={progress} />
     {error && <p role="alert">{error}</p>}
     <div className="photo-actions"><button type="button" disabled={!ready || busy} onClick={capture}>Capture now</button>
+      <select ref={framingSelect} aria-label="Camera framing" aria-describedby={lightHint} hidden />
       <button type="button" ref={lightButton} hidden aria-describedby={lightHint}>Flashlight off</button>
       <button type="button" onClick={choosePhoto}>Choose photo</button>
       {failedPhoto && <button type="button" onClick={() => downloadCameraPhoto(failedPhoto)}>Save scan photo</button>}

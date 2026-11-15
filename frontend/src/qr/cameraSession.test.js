@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { startCameraSession } from "./cameraSession.js";
+import { createPhotoScanProgress } from "./photoScanProgress.js";
 
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
@@ -96,6 +97,46 @@ it("releases a hidden tab's stream and reopens only while the scanner is still o
   hide(true); hide(false);
   expect(second.stop).toHaveBeenCalledTimes(1);
   expect(requestStream).toHaveBeenCalledTimes(2);
+});
+
+it.each(["resume", "close"])("releases a torch that ignores off and respects %s after processing", async outcome => {
+  const page = Object.assign(new EventTarget(), { hidden: false });
+  vi.stubGlobal("document", page);
+  const button = Object.assign(new EventTarget(), {
+    ownerDocument: { getElementById: () => null }, setAttribute() {}, getAttribute: () => null,
+  });
+  const makeCamera = () => {
+    const stream = makeStream();
+    let lit = false;
+    stream.stop.mockImplementation(() => { lit = false; });
+    const track = { getSettings: () => ({ deviceId: "rear", torch: lit }), getCapabilities: () => ({ torch: true }),
+      applyConstraints: async request => { if (request.torch?.exact) lit = true; } };
+    stream.getVideoTracks = () => [track];
+    return stream;
+  };
+  const first = makeCamera(), next = makeCamera();
+  const getUserMedia = vi.fn(async () => next);
+  vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+  const progress = createPhotoScanProgress();
+  const { camera, video } = setup({ requestStream: async () => first, lightButton: button, progress });
+  await flush();
+  button.dispatchEvent(new Event("click"));
+  await vi.waitFor(() => expect(button.textContent).toBe("Flashlight on"));
+  const capture = progress.begin("captured");
+  await vi.waitFor(() => expect(first.stop).toHaveBeenCalledOnce());
+  expect(first.getVideoTracks()[0].getSettings().torch).toBe(false);
+  for (const hidden of [true, false]) { page.hidden = hidden; page.dispatchEvent(new Event("visibilitychange")); }
+  expect(video.srcObject).toBeNull();
+  expect(getUserMedia).not.toHaveBeenCalled();
+  capture.stop();
+  const reopen = requestAnimationFrame.mock.lastCall[0];
+  if (outcome === "close") camera.stop();
+  reopen(); await flush();
+  if (outcome === "resume") {
+    expect(getUserMedia.mock.calls[0][0].video.deviceId).toEqual({ exact: "rear" });
+    expect(next.getVideoTracks()[0].getSettings().torch).toBe(true);
+  } else expect(getUserMedia).not.toHaveBeenCalled();
+  camera.stop();
 });
 
 it("ignores a stale grant after switching back to a newer preview", async () => {

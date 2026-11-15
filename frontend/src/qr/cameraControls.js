@@ -1,3 +1,5 @@
+import { cameraWithChosenFraming, cameraZoomRange } from "./cameraFraming.js";
+
 export const QR_CAMERA_CONSTRAINTS = {
   video: {
     facingMode: { ideal: "environment" },
@@ -84,7 +86,8 @@ export async function getPreferredCameraStream(mediaDevices = navigator.mediaDev
     signal?.throwIfAborted();
     const [track] = stream.getVideoTracks?.() || [];
     const initialId = track?.getSettings?.().deviceId;
-    const preferred = findPreferredMainCamera(await listCameraDevices(mediaDevices), initialId);
+    const devices = await listCameraDevices(mediaDevices);
+    const preferred = cameraWithChosenFraming(devices) || findPreferredMainCamera(devices, initialId);
     signal?.throwIfAborted();
     if (!preferred?.deviceId || preferred.deviceId === initialId ||
         (!initialId && preferred.label && track?.label === preferred.label)) return stream;
@@ -109,23 +112,20 @@ export async function getPreferredCameraStream(mediaDevices = navigator.mediaDev
   } finally { signal?.removeEventListener("abort", release); }
 }
 
-export function cameraQualityPreferences(capabilities = {}) {
+export function cameraQualityPreferences(capabilities = {}, track) {
   const advanced = [];
   for (const name of ["focusMode", "exposureMode", "whiteBalanceMode"]) {
     if (capabilities[name]?.includes?.("continuous")) advanced.push({ [name]: "continuous" });
   }
-  if (Number.isFinite(capabilities.zoom?.max)) {
-    const min = Number.isFinite(capabilities.zoom.min) ? capabilities.zoom.min : 1;
-    // Explicitly reset a retained zoom setting, even when 1x is the minimum.
-    advanced.push({ zoom: Math.max(min, Math.min(1, capabilities.zoom.max)) });
-  }
+  const zoom = cameraZoomRange(track, capabilities.zoom);
+  if (zoom) advanced.push({ zoom: zoom.preferred });
   return advanced;
 }
 
 export async function applyCameraQualityControls(stream) {
   const [track] = stream?.getVideoTracks?.() || [];
   if (!track || typeof track.applyConstraints !== "function") return;
-  const advanced = cameraQualityPreferences(track.getCapabilities?.());
+  const advanced = cameraQualityPreferences(track.getCapabilities?.(), track);
   if (advanced.length) {
     try { await track.applyConstraints({ advanced }); }
     catch { /* Keep the working rear camera if advertised controls are rejected. */ }

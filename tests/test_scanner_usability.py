@@ -252,6 +252,89 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
         context.close()
 
 
+@pytest.mark.parametrize("path", ["/", "/verify.htm"])
+def test_same_lens_framing_reaches_the_still_and_survives_flash_and_reopen(browser, path):
+    context = browser.new_context(viewport={"width": 360, "height": 800})
+    try:
+        page = context.new_page()
+        page.goto(BASE_URL + path, wait_until="networkidle")
+        page.evaluate("""async () => {
+            window.lenses = []; window.shutters = [];
+            const photo = await new Promise(resolve => document.createElement('canvas').toBlob(resolve));
+            const decode = window.createImageBitmap.bind(window);
+            window.createImageBitmap = async (source, ...args) => {
+                if (source === photo) await new Promise(resolve => { window.finishPhoto = resolve; });
+                return decode(source, ...args);
+            };
+            navigator.mediaDevices.enumerateDevices = async () => [
+                {kind:'videoinput', deviceId:'numbered', label:'Camera 2, facing back'},
+            ];
+            navigator.mediaDevices.getUserMedia = async () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = 360; canvas.height = 480;
+                canvas.getContext('2d').fillRect(0, 0, 360, 480);
+                const stream = canvas.captureStream(10), [track] = stream.getVideoTracks();
+                const settings = {deviceId:'numbered', torch:false, zoom:1};
+                track.getSettings = () => ({...settings});
+                track.getCapabilities = () => ({torch:true, zoom:{min:1, max:4, step:0.1}});
+                track.applyConstraints = async request => {
+                    settings.torch = request.torch?.exact ?? request.advanced?.find(c => 'torch' in c)?.torch ?? false;
+                    settings.zoom = request.zoom?.exact ?? request.advanced?.find(c => 'zoom' in c)?.zoom ?? 1;
+                };
+                lenses.push(track); return stream;
+            };
+            window.ImageCapture = class {
+                constructor(track) { this.track = track; }
+                async getPhotoCapabilities() { return {}; }
+                async takePhoto() {
+                    shutters.push(this.track.getSettings());
+                    return photo;
+                }
+            };
+        }""")
+        page.get_by_role("button", name="Check document", exact=True).click()
+        framing = page.get_by_role("combobox", name="Camera framing")
+        expect(framing).to_have_value("1")
+        page.get_by_role("button", name="Flashlight off").click()
+        framing.select_option(label="1.7× crop")
+        expect(framing).to_have_value("1.7")
+        page.get_by_role("button", name="Flashlight on").click()
+        page.get_by_role("button", name="Flashlight off").click()
+        page.get_by_role("button", name="Capture now", exact=True).click()
+        page.wait_for_function("typeof window.finishPhoto === 'function'")
+        shots = page.evaluate("shutters")
+        assert shots and all(shot == {"deviceId": "numbered", "torch": True, "zoom": 1.7} for shot in shots)
+        expect(page.get_by_role("button", name="Flashlight paused")).to_be_disabled()
+        assert page.evaluate("lenses[0].getSettings()") == {"deviceId": "numbered", "torch": False, "zoom": 1.7}
+        if path == "/verify.htm":
+            with page.expect_file_chooser() as picker:
+                page.get_by_role("button", name="Choose photo").click()
+            page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+            assert not page.evaluate("lenses[0].getSettings().torch")
+            picker.value.element.dispatch_event("cancel")
+        page.evaluate("finishPhoto()")
+        expect(page.get_by_role("button", name="Flashlight on")).to_be_enabled()
+        assert page.evaluate("lenses[0].getSettings().torch")
+        assert page.evaluate("lenses.length") == 1
+        page.evaluate("""() => {
+            for (const hidden of [true, false]) {
+                Object.defineProperty(document, 'hidden', {configurable:true, value:hidden});
+                document.dispatchEvent(new Event('visibilitychange'));
+            }
+        }""")
+        page.wait_for_function("lenses.length === 2 && lenses[1].getSettings().zoom === 1.7")
+        framing.select_option(label="Full view")
+        expect(framing).to_have_value("1")
+        with page.expect_file_chooser() as native:
+            framing.select_option(value="phone")
+        assert native.value.element.get_attribute("capture") == "environment"
+        assert page.evaluate("lenses.every(track => track.readyState === 'ended')")
+        native.value.element.dispatch_event("cancel")
+        expect(framing).to_have_value("1")
+    finally:
+        context.close()
+
+
 def test_large_photo_can_be_cancelled_then_another_seal_verified_offline(browser):
     # A synthetic 12 MP page with no seal exercises the real exhaustive decoder.
     # The private printer/phone trial photographs are deliberately not fixtures.

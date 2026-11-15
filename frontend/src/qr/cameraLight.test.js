@@ -7,6 +7,22 @@ import { captureCameraPhoto } from "./cameraPhoto.js";
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); document.body.replaceChildren(); });
 
+it("offers native phone framing when the driver refuses or silently ignores the requested zoom", async () => {
+  for (const reject of [false, true]) {
+    const button = document.createElement("button"), select = document.createElement("select"), hint = document.createElement("p");
+    hint.id = "framing-hint"; button.setAttribute("aria-describedby", hint.id); document.body.replaceChildren(button, select, hint);
+    const track = { getCapabilities: () => ({ zoom: { min: 1, max: 3 } }), getSettings: () => ({ zoom: 1 }),
+      applyConstraints: async () => { if (reject) throw new DOMException("Unsupported", "OverconstrainedError"); } };
+    const onPhoneCamera = vi.fn(), { detach } = attachCameraLight(button, track, { framingSelect: select, onPhoneCamera });
+    select.value = "1.7"; select.dispatchEvent(new Event("change")); await flush();
+    expect(hint.textContent).toContain("For 1×");
+    expect([...select.options].map(option => option.value)).toEqual(["", "phone"]);
+    select.value = "phone"; select.dispatchEvent(new Event("change"));
+    expect(onPhoneCamera).toHaveBeenCalledOnce();
+    detach();
+  }
+});
+
 function setup({ modes = [false, true], flash = [], report = true, apply, photoCaps, ...controls } = {}) {
   let torch = false;
   const canReport = typeof report === "function" ? report : () => report;
@@ -24,10 +40,59 @@ function setup({ modes = [false, true], flash = [], report = true, apply, photoC
   document.body.replaceChildren(button, hint);
   const video = document.createElement("video"), progress = createPhotoScanProgress();
   video.srcObject = { getVideoTracks: () => [track] };
-  const detach = attachCameraLight(button, track, { video, progress, ...controls });
+  const { detach, resumeTorch } = attachCameraLight(button, track, { video, progress, ...controls });
   const canvas = { width: 1, height: 1, getContext: () => ({ drawImage() {}, getImageData: () => ({ width: 4000, height: 3000 }) }) };
-  return { track, video, progress, button, hint, takePhoto, detach, capture: () => captureCameraPhoto(video, canvas) };
+  return { track, video, progress, button, hint, takePhoto, detach, resumeTorch, capture: options => captureCameraPhoto(video, canvas, options) };
 }
+
+it("lights every exposure, pauses before reading the photo, and relights only for the next preview", async () => {
+  const { button, track, progress, takePhoto, capture, resumeTorch } = setup();
+  vi.stubGlobal("OffscreenCanvas", class {});
+  const shots = [];
+  takePhoto.mockImplementation(async () => { shots.push(track.getSettings().torch); return new Blob(["photo"]); });
+  button.click(); await flush();
+  const attempt = progress.begin("capturing");
+  await capture({ onBurst: vi.fn(), onPhotoTaken: attempt.photoReady });
+  expect(shots).toEqual([true, true, true]);
+  expect(track.getSettings().torch).toBe(false);
+  expect(button.getAttribute("aria-pressed")).toBe("false");
+  expect(await stillPhotoLighting(track)).toEqual({ fillLightMode: "off" });
+  attempt.stage({ stage: "footer", elapsedMs: 500 });
+  resumeTorch();
+  expect(track.getSettings().torch).toBe(false);
+  attempt.stop();
+  expect(track.getSettings().torch).toBe(false);
+  await resumeTorch();
+  expect(track.getSettings().torch).toBe(true);
+  expect(track.applyConstraints.mock.calls.map(([request]) => request.torch.exact)).toEqual([true, false, true]);
+});
+
+it.each(["off", "flash"])("leaves the user's %s choice alone between photos", async mode => {
+  const { button, track, progress, resumeTorch } = setup({ modes: mode === "off", flash: ["flash"] });
+  await flush();
+  if (mode === "flash") { button.click(); await flush(); }
+  const capture = progress.begin("captured");
+  capture.stop();
+  await resumeTorch();
+  expect(track.applyConstraints).not.toHaveBeenCalled();
+  expect(await stillPhotoLighting(track)).toEqual({ fillLightMode: mode });
+});
+
+it("waits for a slow pause before lighting an immediate second shutter and ignores a stale scan", async () => {
+  const { track, button, progress } = setup();
+  button.click(); await flush();
+  let finish;
+  const apply = track.applyConstraints.getMockImplementation();
+  track.applyConstraints.mockImplementationOnce(request => new Promise(resolve => { finish = () => resolve(apply(request)); }));
+  const first = progress.begin("captured");
+  const second = progress.begin("capturing");
+  first.stop(); first.photoReady();
+  const lighting = stillPhotoLighting(track);
+  finish();
+  expect(await lighting).toEqual({});
+  expect(track.getSettings().torch).toBe(true);
+  second.stop();
+});
 
 it.each(["torch", "flash"])("holds the chosen %s through a native shutter and dimension retry", async mode => {
   const { button, track, takePhoto, capture } = setup({ modes: mode === "torch", flash: ["off", "flash"] });
