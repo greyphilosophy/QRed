@@ -144,7 +144,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
         React.createElement("p", { className: "eyebrow" }, "QRed AR verifier"),
         React.createElement("h1", null, "Check a printed document"),
         React.createElement("p", null, "Frame the whole page and hold steady. QRed captures automatically and tells you when you can move."),
-        React.createElement("p", { className: "camera-privacy" }, "Camera photos stay on this device. QRed only saves a copy when you choose Save scan photo."),
+        React.createElement("p", { className: "camera-privacy" }, "Camera photos stay on this device. Save scan photo downloads the original exposures in a ZIP."),
         completionNotice ? React.createElement("p", { id: "check-clear-note", role: "status" }, completionNotice) : null,
         preparationError ? React.createElement("p", { role: "alert" }, preparationError + " Try Check document again while connected.") : null
       )
@@ -215,7 +215,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
   const [feedback, setFeedback] = useState(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [quality, setQuality] = useState(null);
-  const [failedPhoto, setFailedPhoto] = useState(null);
+  const [failedPhotos, setFailedPhotos] = useState(null);
 
   function markCameraReady(ready) {
     if (cameraReadyRef.current === ready) return;
@@ -305,7 +305,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
 
     async function capturePhoto(preserveGate = false, file) {
       if (photoScanRef.current) return;
-      setFailedPhoto(null);
+      setFailedPhotos(null);
       // A queued live result must never be attached to the new still photo.
       if (!preserveGate) liveScan.reset();
       captureDiagnostic = null;
@@ -316,7 +316,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
       const controller = new AbortController();
       photoScanRef.current = controller;
       const current = () => photoScanRef.current === controller && !controller.signal.aborted;
-      let image, nativeBlob, burst;
+      let image, nativeBlob, burst = [];
       try {
         const video = videoRef.current, canvas = canvasRef.current;
         const ready = isCameraFrameReady(video, canvas);
@@ -355,12 +355,12 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
         } else {
           action = cameraPhotoFailure(captureDiagnostic);
         }
-        if (nativeBlob && (action.timedOut || action.status === "feedback")) setFailedPhoto(nativeBlob);
+        if (nativeBlob && (action.timedOut || action.status === "feedback")) setFailedPhotos([nativeBlob, ...burst]);
         autoPaused = autoCapture && (action.timedOut || (!preserveGate && action.captureFailed));
         handleScanActionRef.current(action);
       } catch (error) {
         if (!current() || error.name === "AbortError") return;
-        if (nativeBlob) setFailedPhoto(nativeBlob);
+        if (nativeBlob) setFailedPhotos([nativeBlob, ...burst]);
         pendingManualCaptureRef.current = false;
         pendingManualCaptureStartedAtRef.current = null;
         autoPaused = autoCapture && !preserveGate;
@@ -481,8 +481,8 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
     cameraReady && !progressSnapshot ? React.createElement("div", { className: "ar-scan-feedback ar-camera-advice", role: "status", "aria-live": "polite" },
       quality && !feedback ? React.createElement("span", null, quality.message) : null,
       feedback ? React.createElement("span", null, feedback) : null,
-      failedPhoto ? React.createElement("button", { type: "button", className: "save-scan-photo",
-        onClick: () => downloadCameraPhoto(failedPhoto) }, "Save scan photo") : null,
+      failedPhotos ? React.createElement("button", { type: "button", className: "save-scan-photo",
+        onClick: () => downloadCameraPhoto(failedPhotos, setFeedback) }, "Save scan photo") : null,
       !quality && !feedback ? "Keep all four page corners visible. Avoid glare." : null,
       quality?.state === "hold" && !feedback ? React.createElement("progress", { className: "capture-readiness", max: 1,
         value: quality.progress, "aria-label": "Steady hold before automatic capture" }) : null) : null,

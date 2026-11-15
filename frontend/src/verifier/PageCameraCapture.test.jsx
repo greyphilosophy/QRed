@@ -8,6 +8,7 @@ import { qrPayloadBytes, sealString } from "../sealFormat.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { PageCameraCapture, confirmsPageSeal } from "./PageCameraCapture.jsx";
 import { photoScanTimeoutAction } from "../qr/photoScanBudget.js";
+import * as cameraPhoto from "../qr/cameraPhoto.js";
 
 const camera = vi.hoisted(() => ({ stop: vi.fn(), options: null, snapshot: vi.fn(), scan: vi.fn(), reset: vi.fn(), liveOptions: null, liveScan: vi.fn() }));
 vi.mock("../qr/cameraSession.js", () => ({ startCameraSession: options => { camera.options = options; return { stop: camera.stop }; } }));
@@ -115,12 +116,16 @@ it("keeps automatic capture paused after a timeout and leaves Capture now availa
   expect(screen.getByRole("button", { name: "Capture now" }).disabled).toBe(false);
 });
 
-it("sends native still pixels to retake decoding and preserves their dimensions in timeout guidance", async () => {
+it("retains every retake exposure for saving and reports the native dimensions on timeout", async () => {
   const pixels = { width: 2000, height: 3000, data: new Uint8ClampedArray(4) };
   const bitmap = { width: 2000, height: 3000, close: vi.fn() };
   const context = { drawImage: vi.fn(), getImageData: vi.fn(() => pixels) };
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context);
-  vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: () => Promise.resolve(new Blob()) }; }));
+  const originals = ["first", "second", "third"].map(bytes => new Blob([bytes], { type: "image/jpeg" }));
+  const shutter = [...originals];
+  vi.stubGlobal("OffscreenCanvas", class {});
+  vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: async () => shutter.shift() }; }));
+  const download = vi.spyOn(cameraPhoto, "downloadCameraPhoto").mockResolvedValue();
   vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
   camera.scan.mockResolvedValue(photoScanTimeoutAction(null, { stage: "ordinary-qr", elapsedMs: 4100 }));
   const capture = vi.fn();
@@ -137,7 +142,10 @@ it("sends native still pixels to retake decoding and preserves their dimensions 
   expect(screen.getByRole("alert").textContent).toContain("manual capture, 800 × 1000 preview, last guide: page edges soft");
   expect(capture).not.toHaveBeenCalled();
   expect(camera.reset).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("button", { name: "Save scan photo" })).toBeTruthy();
+  expect(camera.scan.mock.calls[0][1].burst).toEqual(originals.slice(1));
+  expect(download).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Save scan photo" }));
+  expect(download.mock.calls[0][0]).toEqual(originals);
   camera.liveScan.mockClear();
   act(() => camera.options.onFrame());
   expect(camera.liveScan).not.toHaveBeenCalled();

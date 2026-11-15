@@ -1,9 +1,15 @@
 """Hands-free whole-page capture with native still photos, real QR decoding, and OCR."""
+import base64
+import io
 import os
+import zipfile
+
 import pytest
+from PIL import Image
 from playwright.sync_api import expect
-from browser_helpers import (NATIVE_PHOTO_CAMERA_SCRIPT, observe_document_scan_requests,
-                             assert_document_preview_not_decoded)
+from browser_helpers import (BASE_URL, NATIVE_PHOTO_CAMERA_SCRIPT, OfflineNetworkGuard,
+                             assert_document_preview_not_decoded, observe_document_scan_requests,
+                             wait_for_offline_resources)
 from test_photo_verification import sealed_text, camera_paper, TEXT, PUBLIC_KEY, persistent_state, prepare_reader
 
 CAPTURED_NOTICE = "Photo captured. You can move your phone."
@@ -265,5 +271,64 @@ def test_document_capture_failure_never_decodes_video_and_can_retry(browser, sea
         decoded = assert_document_preview_not_decoded(page)
         assert len(decoded) == 1
         assert decoded[0]["width"] == 2400 and decoded[0]["height"] == 3200
+    finally:
+        context.close()
+
+@pytest.mark.parametrize("path", ["/", "/verify.htm"])
+def test_save_scan_photo_downloads_current_exposures_in_order_offline(browser, path):
+    context = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="allow")
+    try:
+        guard = OfflineNetworkGuard(context)
+        page = context.new_page()
+        page.goto(BASE_URL + path, wait_until="networkidle")
+        prepare_reader(page)
+        wait_for_offline_resources(page, photo=True)
+        guard.block()
+        camera_paper(page, "", None, border=False)
+        # Only the decoder verdict is forced. Both screens use the production
+        # capture, burst collection and browser download code.
+        page.evaluate("""() => {
+            window.ImageCapture = class {
+                async takePhoto() {
+                    if (!window.exposures.length) throw new Error("Extra shutter unavailable");
+                    return window.exposures.shift();
+                }
+            };
+            window.Worker = class extends Worker {
+                postMessage(message, options) {
+                    if (!message.image || message.live || message.prepareReading) return super.postMessage(message, options);
+                    const data = {action:{status:"feedback", timedOut:true, message:"Synthetic scan timed out."}};
+                    queueMicrotask(() => this.dispatchEvent(new MessageEvent("message", {data})));
+                }
+            };
+        }""")
+        page.get_by_role("button", name="Check document", exact=True).click()
+        page.wait_for_function("document.querySelector('video')?.videoWidth > 0")
+        save = page.get_by_role("button", name="Save scan photo", exact=True)
+        downloads = []
+        page.on("download", lambda download: downloads.append(download))
+        for count in (3, 2, 1):
+            originals, expected, inputs = [], [], []
+            for number in range(1, count + 1):
+                fmt = "png" if number == 2 else "jpeg"
+                stream = io.BytesIO()
+                exif = Image.Exif()
+                exif[270] = f"Synthetic burst of {count}, exposure {number}"
+                Image.new("RGB", (1600, 2560), (count * 40, number * 50, 128)).save(stream, fmt, exif=exif)
+                originals.append(stream.getvalue())
+                expected.append(f"exposure-{number:02}.{'png' if fmt == 'png' else 'jpg'}")
+                inputs.append({"type": "image/" + fmt, "bytes": base64.b64encode(originals[-1]).decode()})
+            page.evaluate("""files => { window.exposures = files.map(file => new Blob(
+                [Uint8Array.from(atob(file.bytes), c => c.charCodeAt(0))], {type:file.type})); }""", inputs)
+            page.get_by_role("button", name="Capture now", exact=True).click()
+            expect(save).to_be_visible()
+            assert len(downloads) == 3 - count
+            with page.expect_download() as download:
+                save.click()
+            assert download.value.suggested_filename == "QRed-scan-photo.zip"
+            with zipfile.ZipFile(download.value.path()) as archive:
+                assert archive.namelist() == expected
+                assert [archive.read(name) for name in expected] == originals
+        guard.assert_quiet()
     finally:
         context.close()

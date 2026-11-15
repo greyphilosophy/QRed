@@ -31,7 +31,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
   const dialog = useRef(null);
   const guideArea = useRef(null), guide = useRef(null), live = useRef(null), busyRef = useRef(false);
   const [ready, setReady] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState("");
-  const [failedPhoto, setFailedPhoto] = useState(null);
+  const [failedPhotos, setFailedPhotos] = useState(null);
   const [quality, setQuality] = useState(null);
   const progress = usePhotoScanProgress();
   const liveProgress = useRef(null);
@@ -115,7 +115,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
     finally { if (current()) { busyRef.current = false; setBusy(false); } }
   }
   function cancelAttempt() {
-    setFailedPhoto(null);
+    setFailedPhotos(null);
     pickerSession.current = null;
     progress.clear(); liveProgress.current = null;
     scan.current?.abort(); scan.current = null;
@@ -165,7 +165,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
     const attemptProgress = progress.begin(file ? "opening" : "capturing");
     const captureContext = file ? {} : cameraCaptureContext(
       { width: source.videoWidth, height: source.videoHeight }, preserveGate, lastQuality.current);
-    let nativeBlob, burst;
+    let nativeBlob, burst = [];
     try {
       const options = { signal: controller.signal, requireHighResolution: true, onPhotoTaken: attemptProgress.photoReady,
         onBurst: separateOriginal ? undefined : blobs => { burst = blobs; },
@@ -193,11 +193,11 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
       const action = await scanPhotoInWorker(still, { returnPayload: true, burst, signal: controller.signal, onStage: attemptProgress.stage });
       if (!current()) return;
       if (action.timedOut) autoPaused.current = true;
-      if (nativeBlob && (action.timedOut || action.status === "feedback")) setFailedPhoto(nativeBlob);
+      if (nativeBlob && (action.timedOut || action.status === "feedback")) setFailedPhotos([nativeBlob, ...burst]);
       await acceptFrame(cameraCaptureFeedback(action, captureDiagnostic.current), canvas, epoch, controller);
     } catch (cause) {
       if (current() && cause.name !== "AbortError") {
-        if (nativeBlob) setFailedPhoto(nativeBlob);
+        if (nativeBlob) setFailedPhotos([nativeBlob, ...burst]);
         setError(cause.message);
       }
     }
@@ -233,7 +233,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
       <select ref={framingSelect} aria-label="Camera framing" aria-describedby={lightHint} hidden />
       <button type="button" ref={lightButton} hidden aria-describedby={lightHint}>Flashlight off</button>
       <button type="button" onClick={choosePhoto}>Choose photo</button>
-      {failedPhoto && <button type="button" onClick={() => downloadCameraPhoto(failedPhoto)}>Save scan photo</button>}
+      {failedPhotos && <button type="button" onClick={() => downloadCameraPhoto(failedPhotos, setError)}>Save scan photo</button>}
       <input ref={photoInput} type="file" accept="image/*" aria-label="Choose a high-resolution page photo" hidden onChange={event => {
         const file = event.target.files?.[0]; event.target.value = "";
         if (file) capture({ file });
@@ -241,6 +241,6 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
       }} />
       <button type="button" onClick={close}>Cancel retake</button></div>
     <p id={lightHint} className="camera-light-hint" role="status" />
-    <p className="photo-note">Camera photos stay on this device. QRed only saves a copy when you choose Save scan photo.</p>
+    <p className="photo-note">Camera photos stay on this device. Save scan photo downloads the original exposures in a ZIP.</p>
   </section></div>;
 }

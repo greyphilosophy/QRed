@@ -347,7 +347,7 @@
         <input id="pagePhotoInput" type="file" accept="image/*" aria-label="Choose a high-resolution page photo" hidden>
       </div>
       <p id="cameraLightHint" class="page-scan-hint camera-light-hint" role="status"></p>
-      <p class="page-scan-hint">Camera photos stay on this device. QRed only saves a copy when you choose Save scan photo.</p>
+      <p class="page-scan-hint">Camera photos stay on this device. Save scan photo downloads the original exposures in a ZIP.</p>
       <p id="clearNotice" role="status"></p>
 
       <div class="status-bar" id="statusBar">
@@ -472,9 +472,13 @@
     var btnScan = document.getElementById("btnScan");
     var btnCapture = document.getElementById("btnCapture");
     var btnSavePhoto = document.getElementById("btnSavePhoto");
-    function offerFailedPhoto(blob) {
-      btnSavePhoto.hidden = !blob;
-      btnSavePhoto.onclick = blob ? function() { downloadCameraPhoto(blob); } : null;
+    function offerFailedPhotos(photos) {
+      btnSavePhoto.hidden = !photos;
+      btnSavePhoto.onclick = photos ? function save() {
+        downloadCameraPhoto(photos, function(message) {
+          if (btnSavePhoto.onclick === save) document.getElementById("pageGuideHint").textContent = message;
+        });
+      } : null;
     }
     var btnNewScan = document.getElementById("btnNewScan");
     var btnChoosePhoto = document.getElementById("btnChoosePhoto");
@@ -715,7 +719,7 @@
       state.isScanning = true;
       updatePhotoComparison();
       function cancelPhoto({ resumeCamera = false } = {}) {
-        offerFailedPhoto(null);
+        offerFailedPhotos(null);
         photoScanProgress.clear(); liveProgress = null;
         state.photoScan?.abort(); state.photoScan = null;
         processingCapture = false;
@@ -740,7 +744,7 @@
           if (!file) return;
         }
         if (!file && (!video.videoWidth || !video.videoHeight)) { hint.textContent = "Camera is preparing. Try Capture now in a moment, or choose a photo."; return; }
-        offerFailedPhoto(null);
+        offerFailedPhotos(null);
         if (!preserveGate) liveScan.reset();
         acquisitionFailed = false; autoPaused = false;
         var controller = new AbortController(); state.photoScan = controller;
@@ -752,7 +756,7 @@
         captureDiagnostic = null;
         var captureContext = file ? {} : cameraCaptureContext(
           { width: video.videoWidth, height: video.videoHeight }, preserveGate, lastQuality);
-        var nativeBlob, burst;
+        var nativeBlob, burst = [];
         try {
           var options = { signal: controller.signal, requireHighResolution: true, onPhotoTaken: progress.photoReady,
             onBurst: function(blobs) { burst = blobs; },
@@ -771,12 +775,12 @@
           var action = await scanPhotoInWorker(still, { returnPayload: true, burst, signal: controller.signal, onStage: progress.stage });
           if (current()) {
             if (action.timedOut) autoPaused = true;
-            if (nativeBlob && (action.timedOut || action.status === "feedback")) offerFailedPhoto(nativeBlob);
+            if (nativeBlob && (action.timedOut || action.status === "feedback")) offerFailedPhotos([nativeBlob, ...burst]);
             collectFrame(action, photoCanvas);
           }
         } catch (error) {
           if (current() && error.name !== "AbortError") {
-            if (nativeBlob) offerFailedPhoto(nativeBlob);
+            if (nativeBlob) offerFailedPhotos([nativeBlob, ...burst]);
             hint.textContent = error.message;
           }
         } finally {
@@ -811,7 +815,7 @@
     }
 
     function stopScanning() {
-      offerFailedPhoto(null);
+      offerFailedPhotos(null);
       photoScanProgress.clear();
       state.isScanning = false;
       state.camera?.stop();

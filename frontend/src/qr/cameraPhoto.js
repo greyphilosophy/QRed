@@ -1,5 +1,6 @@
 // Still capture stays inside the browser. ImageCapture returns a Blob; it
 // does not hand off to the phone camera app or save to the photo library.
+import { downloadZip } from "client-zip";
 import { stillPhotoLighting } from "./cameraLight.js";
 export const NATIVE_PHOTO_TIMEOUT_MS = 5000;
 export const MIN_DOCUMENT_PHOTO_PIXELS = 4_000_000;
@@ -190,8 +191,8 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
         blob = await camera.takePhoto(settings);
       }
       if (!active || signal?.aborted) return fallback("capture-failed");
-      // Keep the first original for OCR and saving. Additional stills may
-      // help read its seal, but a slow or rejected shutter must not lose it.
+      // Keep the first original for OCR and every completed exposure for saving.
+      // A slow or rejected extra shutter must not lose the completed photos.
       const extras = [];
       const burstCapable = blob?.size && onBurst && typeof OffscreenCanvas === "function";
       if (burstCapable) {
@@ -260,17 +261,38 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
   }
 }
 
-// The user can keep the exact camera file after a failed read. Creating the
-// download only on a click keeps the photo in memory until the user chooses.
-export function downloadCameraPhoto(blob) {
-  const extensions = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
-    "image/avif": ".avif", "image/heic": ".heic", "image/heif": ".heif" };
-  const url = URL.createObjectURL(blob), link = document.createElement("a");
-  link.href = url;
-  link.download = "QRed-scan-photo" + (extensions[blob.type] || "");
-  document.body.appendChild(link);
-  try { link.click(); }
-  finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+const photoExtensions = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+  "image/avif": ".avif", "image/heic": ".heic", "image/heif": ".heif" };
+const pendingDownloads = new WeakSet();
+
+// Store the original files in shutter order, including frames rejected during
+// alignment. Build the ZIP only on request and preserve the camera metadata.
+export async function downloadCameraPhoto(photos, onError) {
+  if (pendingDownloads.has(photos)) return;
+  pendingDownloads.add(photos);
+  try {
+    const originals = Array.isArray(photos) ? photos : [photos];
+    const entries = originals.map((photo, index) => ({
+      name: `exposure-${String(index + 1).padStart(2, "0")}${photoExtensions[photo.type] || ".bin"}`,
+      input: photo,
+    }));
+    const archive = await downloadZip(entries).blob();
+    const url = URL.createObjectURL(archive), link = document.createElement("a");
+    try {
+      link.href = url;
+      link.download = "QRed-scan-photo.zip";
+      document.body.appendChild(link);
+      link.click();
+    } finally {
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+  } catch (error) {
+    if (!onError) throw error;
+    onError("The scan ZIP could not be saved. Choose Save scan photo to try again.");
+  } finally {
+    pendingDownloads.delete(photos);
+  }
 }
 
 // An operational floor for a full-page photograph, not a readability verdict.
