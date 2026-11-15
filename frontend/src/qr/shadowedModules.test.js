@@ -3,7 +3,6 @@ import QRCode from "qrcode";
 import { createQRedQrData } from "../qredQr.js";
 import { createQRedSeals } from "../qredSealer.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
-import { recoverSampledQrMatrix } from "./pageAlignedRecovery.js";
 import { classifyShadowedModules, recoverShadowedGrid } from "./shadowedModules.js";
 import * as shadowGrid from "./shadowedGrid.js";
 
@@ -43,19 +42,20 @@ it("reads the measured grid without refitting cells that already recover the sig
   } finally { refine.mockRestore(); }
 });
 
-it("reads a signed pale watermark across a shadow and an opaque print panel", async () => {
+it("refits a displaced grid to recover a signed watermark across a shadow and an opaque panel", async () => {
   const { image, pitch, size, version, publicKey, seal } = await shadowedPrint();
   const guess = (col, row) => ({
-    x: 6 + pitch * col + 2.5 * Math.sin(row / size * Math.PI),
-    y: 6 + pitch * row + 2 * Math.sin(col / size * Math.PI),
+    x: 6 + pitch * col + .5 * pitch * Math.sin(row / size * Math.PI),
+    y: 6 + pitch * row + .4 * pitch * Math.sin(col / size * Math.PI),
   });
   expect(shadowGrid.refineShadowGrid(image, guess, version, () => false)).toBeNull();
-  const map = shadowGrid.refineShadowGrid(image, guess, version, () => true);
-  expect(map).toBeTypeOf("function");
-  const pixels = shadowGrid.sampleGrid(image, map, size, () => true);
-  const observed = classifyShadowedModules(pixels, size, () => true);
-  const result = recoverSampledQrMatrix(observed, map, version, { bitReliability: observed.reliability, rankedOutliers: true });
-  expect(result?.seal).toBe(seal);
-  await expect(verifyQRedSeals([result.seal], publicKey)).resolves.toMatchObject({ status: "VALID", signature_valid: true });
-  expect(classifyShadowedModules(pixels.fill(180), size, () => true)).toBeNull();
+  const refine = vi.spyOn(shadowGrid, "refineShadowGrid");
+  try {
+    const result = recoverShadowedGrid(image, guess, version, () => true);
+    expect(refine).toHaveBeenCalledOnce();
+    expect(result?.seal).toBe(seal);
+    await expect(verifyQRedSeals([result.seal], publicKey)).resolves.toMatchObject({ status: "VALID", signature_valid: true });
+  } finally { refine.mockRestore(); }
+  const flat = new Float32Array((size * shadowGrid.SAMPLES) ** 2).fill(180);
+  expect(classifyShadowedModules(flat, size, () => true)).toBeNull();
 }, 20000);

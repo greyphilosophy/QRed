@@ -17,7 +17,7 @@ const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q";
 // part of the sheet, making a high-percentile paper estimate brighter than
 // the exposed white modules. One global threshold then confuses them with
 // pale ink elsewhere. The decoder receives only these camera-like pixels.
-function shadowedPrint(symbol, grain, { bow = 0, overprint = false, cornerBend = 0, opaquePanel = false } = {}) {
+function shadowedPrint(symbol, grain, { bow = 0, overprint = false, cornerBend = 0, panelSize = 0 } = {}) {
   const scale = overprint ? 2 : 1;
   const width = 1000 * scale, height = 1300 * scale, data = new Uint8ClampedArray(width * height * 4);
   const paper = { x: 50 * scale, y: 50 * scale, width: 900 * scale, height: 1165 * scale };
@@ -38,7 +38,7 @@ function shadowedPrint(symbol, grain, { bow = 0, overprint = false, cornerBend =
       value = illumination * (dark ? 0.87 - 0.12 * v : 1) + noise * (2 + grain * v);
       if (inside && row > 15 && row < 125 && row % 19 === 0 && col % 4 !== 0) value = 40;
       if (overprint && inside) {
-        if (opaquePanel && col >= 63 && col < 98 && row >= 33 && row < 68)
+        if (col >= 63 && col < 63 + panelSize && row >= 33 && row < 33 + panelSize)
           value = illumination * (col % 3 === 1 && row % 3 === 1 ? .2 : 1);
         const moduleY = (v - region.y) / region.height * symbol.modules.size;
         if (row > 14 && row < 125 && row % 12 === 4 && col % 7 < 4 && moduleY - row < .7) value = 45;
@@ -74,7 +74,7 @@ it("authenticates a bowed warm-lit print against a ridged background from pixels
   });
 }, 20000);
 
-async function overprintedWatermark(opaquePanel) {
+async function overprintedWatermark(panelSize) {
   const { seals } = await createQRedSeals({
     privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey,
     content: "Synthetic overprinted watermark. ".repeat(30), encodingStrategy: "plaintext",
@@ -82,25 +82,24 @@ async function overprintedWatermark(opaquePanel) {
   });
   const { payloadBytes } = createQRedQrData(seals[0]);
   const symbol = QRCode.create([{ data: payloadBytes, mode: "byte" }], { version: 31, errorCorrectionLevel: "L" });
-  return { image: shadowedPrint(symbol, 8, { overprint: true, opaquePanel }), seal: seals[0] };
+  return { image: shadowedPrint(symbol, 8, { overprint: true, panelSize }), seal: seals[0] };
 }
 
-it.each([false, true])("authenticates a shaded overprinted watermark (opaque panel %s)", async opaquePanel => {
-  const { image, seal } = await overprintedWatermark(opaquePanel);
+it.each([0, 25, 35])("authenticates a shaded overprinted watermark (opaque panel width %i)", async panelSize => {
+  const { image, seal } = await overprintedWatermark(panelSize);
   const recover = vi.spyOn(recovery, "recoverSampledQrMatrix");
   let result;
   try {
     result = scanRectifiedSeal(image, { searchRadius: 12 });
     const exposed = recover.mock.calls.findIndex(([, , , options]) => options?.bitReliability);
     expect(exposed).toBeGreaterThanOrEqual(0);
-    if (opaquePanel) {
+    if (panelSize) {
       expect(recover.mock.results[exposed].value).toBeNull();
       const shadowReads = recover.mock.calls.flatMap(([, , , options], index) =>
         options?.rankedOutliers ? [index] : []);
-      expect(shadowReads).toHaveLength(2);
+      expect(shadowReads).toHaveLength(1);
       expect(shadowReads[0]).toBeGreaterThan(exposed);
-      expect(recover.mock.results[shadowReads[0]].value).toBeNull();
-      expect(recover.mock.results[shadowReads[1]].value?.seal).toBe(seal);
+      expect(recover.mock.results[shadowReads[0]].value?.seal).toBe(seal);
     } else {
       expect(recover.mock.results[exposed].value?.seal).toBe(seal);
     }
@@ -112,9 +111,11 @@ it.each([false, true])("authenticates a shaded overprinted watermark (opaque pan
 }, 20000);
 
 it("retries an interrupted shadow read and skips a completed miss for the same page layout", async () => {
-  const { image } = await overprintedWatermark(true);
+  const { image } = await overprintedWatermark(35);
   const scan = createRectifiedSealScanner(image);
   let running = true;
+  // Exercise the interruption and cache behavior even on a now-readable print.
+  const miss = vi.spyOn(recovery, "recoverSampledQrMatrix").mockReturnValue(null);
   const refine = vi.spyOn(shadowGrid, "refineShadowGrid").mockReturnValue(null)
     .mockImplementationOnce(() => { running = false; return null; });
   const collect = moduleSamples.collectModuleSamples;
@@ -128,7 +129,7 @@ it("retries an interrupted shadow read and skips a completed miss for the same p
       expect(scan({ searchRadius, shouldContinue: () => running })).toBeNull();
       expect(refine).toHaveBeenCalledTimes(calls);
     }
-  } finally { samples.mockRestore(); refine.mockRestore(); }
+  } finally { samples.mockRestore(); refine.mockRestore(); miss.mockRestore(); }
 }, 20000);
 
 it("authenticates an overprinted seal when one corner of the paper bends inward", async () => {

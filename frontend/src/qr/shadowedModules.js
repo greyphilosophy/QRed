@@ -90,7 +90,9 @@ export function classifyShadowedModules(pixels, size, shouldContinue) {
     const level = normalized[i] = 1 + (high[i] - paper[i]) / inkDepth;
     const spread = (high[i] - low[i]) / inkDepth;
     coverage[i] = clamp(spread - .42, 0, 5);
-    prior[i] = .45 * clamp(2 * level - 1, -1, 1) * Math.exp(-coverage[i] - Math.max(0, -level));
+    // A table rule can look like a module boundary. Give a clearly exposed
+    // center about as much weight as one edge. Dark overprint still weakens it.
+    prior[i] = 2 * clamp(2 * level - 1, -1, 1) * Math.exp(-coverage[i] - Math.max(0, -level));
     ink[i] = Number(Math.abs(level) < .44 && spread < .9);
   }
   const texture = smoothGrid(ink, size, 1.5);
@@ -103,7 +105,8 @@ export function classifyShadowedModules(pixels, size, shouldContinue) {
     for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++)
       exposed += ink[(y + dy) * size + x + dx];
     if (exposed > 2) continue;
-    for (let dy = -2; dy <= 2; dy++) missing.fill(1, (y + dy) * size + x - 2, (y + dy) * size + x + 3);
+    // The whole observed 7-by-7 patch can be the opaque white backing.
+    for (let dy = -3; dy <= 3; dy++) missing.fill(1, (y + dy) * size + x - 3, (y + dy) * size + x + 4);
   }
   const edges = [
     measureEdges(pixels, size, levels, true), measureEdges(pixels, size, levels, false),
