@@ -1,0 +1,32 @@
+{
+  "statement-1": {
+    "page": 1,
+    "pages": 2,
+    "parts": 1,
+    "pageHash": "f8ad16e8ddc4d7703b605685af8fd224dc065c463c2002b28655a896c0d33634",
+    "sealDigests": [
+      "18ad32d70a3bc201e752ed07a1caf04f30c34b0c4674444346fc3625335e2ab5"
+    ]
+  },
+  "statement-2": {
+    "page": 2,
+    "pages": 2,
+    "parts": 1,
+    "pageHash": "3327a31426ba0c5086595afd9c7d191b1c9b901763b4f498a32be63933a68fe5",
+    "sealDigests": [
+      "6ac2f4bebe35aba4282a2f0f205572f2a7f8ba9f35961d114bab5b89b701fdbe"
+    ]
+  },
+  "lot-register": {
+    "page": 1,
+    "pages": 1,
+    "parts": 4,
+    "pageHash": "a3c1273962c2920d38113ff0cd822c56ff64d26a6d72b50eec5e2b8774c63429",
+    "sealDigests": [
+      "0ada811e38a1611550c0b344b6a34cdf8574da70c02bf0ae5d1028f5320c26ba",
+      "510a97596c562069d9b1fa310df15431a396df9b7720c5ca71172d5bd2c3512f",
+      "84435c90140ec23d4d8f182acc146119177e4d3e13740a4649f84c87b0337744",
+      "93728de3bd71aa87e52d051148c85fc6b06daa7c0e338ef0dcf97500db4cb01a"
+    ]
+  }
+}
