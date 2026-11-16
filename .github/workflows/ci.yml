@@ -214,3 +214,22 @@ jobs:
         env:
           QRED_BASE_URL: "http://localhost:3000"
         run: pytest -v --tb=short --durations=10 ${{ matrix.pytest_args }}
+      - name: Report strict workshop photo results
+        if: matrix.shard == 'deployment-scanning-and-new-tests'
+        continue-on-error: true
+        env:
+          QRED_BASE_URL: "http://localhost:3000"
+          QRED_WORKSHOP_STRICT: "1"
+        run: |
+          report="$RUNNER_TEMP/workshop-strict.txt"
+          result=0
+          pytest -q -rA --tb=no tests/test_workshop_photos.py > "$report" || result=$?
+          cat "$report"
+          {
+            echo '### Workshop seal and OCR challenges'
+            echo
+            echo '```text'
+            cat "$report"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$result"
