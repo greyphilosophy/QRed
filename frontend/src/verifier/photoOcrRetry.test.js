@@ -101,6 +101,31 @@ it("can recover an omitted column even when the first pass was confident about i
   expect(preferTextRetry([word("Room", 98)], [word("Room extra", 70)])).toBe(false);
 });
 
+it("retains an independently read numeric column when a noisy row label prevents replacing the row", () => {
+  const anchor = word("year", 96, 100, 170);
+  const original = [word("Nextinspction", 34), anchor];
+  const line = { indices: [0, 1], signedLine: true, signedText: "Next inspection year 2037",
+    bbox: { x0: 10, y0: 90, x1: 750, y1: 140 } };
+  const retry = [word("Next", 52), word("inspction", 28, 100, 55), anchor];
+  for (const value of ["2037", "2032"]) {
+    const number = word(value, 95, 100, 580);
+    expect(applyTextRetries(original, [{ candidate: line, words: [...retry, number] }]).words)
+      .toEqual([...original, number]);
+  }
+  const number = word("2037", 95, 100, 580);
+  const conflicting = [...original, word("2032", 94, 100, 580)];
+  expect(applyTextRetries(conflicting, [{ candidate: { ...line, indices: [0, 1, 2] },
+    words: [...retry, number] }]).words).toEqual(conflicting);
+  for (const after of [[...retry, { ...number, confidence: 66 }],
+    [...retry, word("-", 90, 100, 470), number], [...retry.slice(0, 2), number],
+    [...retry, word("2037", 95, 126, 580)]]) {
+    expect(applyTextRetries(original, [{ candidate: line, words: after }]).words).toEqual(original);
+  }
+  const partial = applyTextRetries([anchor], [{ candidate: { ...line, indices: [0], signedText: "year 2037" },
+    words: [anchor, word("extra", 30, 100, 300), number] }]);
+  expect(partial.words).toEqual([anchor, number]);
+  expect(partial.retryReviews[0].completedLine).toBeUndefined();
+});
 
 it("explains a complete signed ending only when strong earlier words stay in place", () => {
   const label = word("Balance", 98);
