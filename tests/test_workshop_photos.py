@@ -94,22 +94,14 @@ def check_printed_year(review, *, changed):
     expect(review.locator(".page-check-status.queued, .page-check-status.reading")).to_have_count(0, timeout=90000)
     review.get_by_label("Show matching words too").check()
     matched = review.get_by_role("button", name="Matching text: 2037", exact=True)
-    if not changed and matched.count():
+    if not changed:
+        expect(matched).to_have_count(1)
         return
-    if not changed and STRICT:
-        pytest.fail("The untouched inspection year 2037 was not recognized as a match")
     expect(matched).to_have_count(0)
-    # Another OCR difference elsewhere on the page must never satisfy this test.
-    cards = review_differences(review)
     year_readings = []
-    for card in cards:
+    for card in review_differences(review):
         signed, observed, *_ = card.splitlines()
         if re.search(r"\b2037\b", signed):
             year_readings.append(observed)
-    assert year_readings, "The verifier neither matched the signed year nor flagged it for review"
-    if changed:
-        assert all(not re.search(r"\b2037\b", reading) for reading in year_readings)
-        if STRICT:
-            assert any(re.search(r"\b2032\b", reading) for reading in year_readings), year_readings
-    else:
-        assert all(not re.search(r"\b2032\b", reading) for reading in year_readings)
+    assert any(re.search(r"\b2032\b", reading) for reading in year_readings), year_readings
+    assert all(not re.search(r"\b2037\b", reading) for reading in year_readings)

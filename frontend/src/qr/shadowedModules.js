@@ -79,20 +79,22 @@ function measureEdges(pixels, size, levels, vertical) {
   return { change, weight };
 }
 
-export function classifyShadowedModules(pixels, size, shouldContinue) {
+export function classifyShadowedModules(pixels, size, shouldContinue, { favorEdges = false } = {}) {
   if (!pixels || !shouldContinue()) return null;
   const levels = readLevels(pixels, size);
   if (!levels || !shouldContinue()) return null;
   const { high, low, paper, inkDepth } = levels;
   const count = size * size, prior = new Float32Array(count), coverage = new Float32Array(count);
   const ink = new Float32Array(count), normalized = new Float32Array(count);
+  const centerWeight = favorEdges ? .45 : 2;
+  const coverRadius = favorEdges ? 2 : 3;
   for (let i = 0; i < count; i++) {
     const level = normalized[i] = 1 + (high[i] - paper[i]) / inkDepth;
     const spread = (high[i] - low[i]) / inkDepth;
     coverage[i] = clamp(spread - .42, 0, 5);
     // A table rule can look like a module boundary. Give a clearly exposed
     // center about as much weight as one edge. Dark overprint still weakens it.
-    prior[i] = 2 * clamp(2 * level - 1, -1, 1) * Math.exp(-coverage[i] - Math.max(0, -level));
+    prior[i] = centerWeight * clamp(2 * level - 1, -1, 1) * Math.exp(-coverage[i] - Math.max(0, -level));
     ink[i] = Number(Math.abs(level) < .44 && spread < .9);
   }
   const texture = smoothGrid(ink, size, 1.5);
@@ -105,8 +107,10 @@ export function classifyShadowedModules(pixels, size, shouldContinue) {
     for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++)
       exposed += ink[(y + dy) * size + x + dx];
     if (exposed > 2) continue;
-    // The whole observed 7-by-7 patch can be the opaque white backing.
-    for (let dy = -3; dy <= 3; dy++) missing.fill(1, (y + dy) * size + x - 3, (y + dy) * size + x + 4);
+    for (let dy = -coverRadius; dy <= coverRadius; dy++) {
+      const row = (y + dy) * size + x;
+      missing.fill(1, row - coverRadius, row + coverRadius + 1);
+    }
   }
   const edges = [
     measureEdges(pixels, size, levels, true), measureEdges(pixels, size, levels, false),
@@ -155,8 +159,7 @@ export function classifyShadowedModules(pixels, size, shouldContinue) {
   return { size, bits, unknown, reliability };
 }
 
-function readShadowedGrid(pixels, map, version, shouldContinue) {
-  const observed = classifyShadowedModules(pixels, 17 + 4 * version, shouldContinue);
+function recoverObservations(observed, map, version, shouldContinue) {
   if (!observed || !shouldContinue()) return null;
   return recoverSampledQrMatrix(observed, map, version, {
     bitReliability: observed.reliability, rankedOutliers: true, shouldContinue,
@@ -170,9 +173,31 @@ export function recoverShadowedGrid(image, initialMap, version, shouldContinue) 
   if (!pixels || !shouldContinue()) return null;
   // A grid fitted to the printed markers can already be accurate. A second
   // fit to blurred edges can move readable cells onto their neighbors.
-  const result = readShadowedGrid(pixels, initialMap, version, shouldContinue);
+  const initial = classifyShadowedModules(pixels, size, shouldContinue);
+  const result = recoverObservations(initial, initialMap, version, shouldContinue);
   if (result || !shouldContinue()) return result;
   const refined = refineShadowGrid(image, initialMap, version, shouldContinue, pixels);
   if (!refined || !shouldContinue()) return null;
-  return readShadowedGrid(sampleGrid(image, refined, size, shouldContinue), refined, version, shouldContinue);
+  const refinedPixels = sampleGrid(image, refined, size, shouldContinue);
+  const observed = classifyShadowedModules(refinedPixels, size, shouldContinue);
+  const refinedResult = recoverObservations(observed, refined, version, shouldContinue);
+  if (refinedResult || !observed || !shouldContinue()) return refinedResult;
+
+  // Both fits index the same modules in this photo. Where they disagree,
+  // keep the stronger reading and subtract the evidence for the other bit.
+  // Near-ties then rank first for QR erasure correction.
+  if (initial) {
+    for (let i = 0; i < observed.bits.length; i++) {
+      const a = initial.reliability[i], b = observed.reliability[i];
+      const agree = initial.bits[i] === observed.bits[i];
+      if (a > b) observed.bits[i] = initial.bits[i];
+      observed.reliability[i] = (agree ? a + b : Math.abs(a - b)) / 2;
+    }
+    const combined = recoverObservations(observed, refined, version, shouldContinue);
+    if (combined || !shouldContinue()) return combined;
+  }
+  // An unevenly shaded page can preserve module edges better than centers.
+  // Reuse its native samples and keep the rim of a possible cover visible.
+  const edges = classifyShadowedModules(refinedPixels, size, shouldContinue, { favorEdges: true });
+  return recoverObservations(edges, refined, version, shouldContinue);
 }

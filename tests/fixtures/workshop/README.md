@@ -29,6 +29,6 @@ pytest -v tests/test_workshop_photos.py
 QRED_WORKSHOP_STRICT=1 pytest -v tests/test_workshop_photos.py
 ```
 
-The first command is part of normal CI. It checks the one-digit edit in the PDFs and four offline browser uploads. Each upload must authenticate the intended page and recover the exact signed payloads pinned in `expected.json`. On the altered statement, the year itself must be flagged for review. A warning about an unrelated word cannot satisfy this check.
+The first command is part of normal CI. It checks the one-digit edit in the PDFs and four offline browser uploads. Each upload must authenticate the intended page and recover the exact signed payloads pinned in `expected.json`. The unchanged inspection year must match. The changed page must show the signed year 2037 and photographed year 2032 together in the same difference.
 
-The second command also requires seal recovery for the front page and the oblique lot register. It requires the unchanged year to match and the correct signed and photographed years to appear in the same difference on the edited page. CI publishes these strict results in the workflow summary as an advisory check. These expectations can also be run individually with pytest's `-k` option. On release `00df766e`, both additional seal cases fail and OCR reports the year missing on both statements.
+The second command also requires seal recovery for the small pale seal on the front page and the oblique lot register. CI publishes those two additional cases in the workflow summary as advisory checks. Each case can also be run individually with pytest's `-k` option.

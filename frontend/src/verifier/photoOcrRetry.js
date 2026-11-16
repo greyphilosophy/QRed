@@ -118,12 +118,35 @@ export function preferTextRetry(before, after) {
     && (!before.length || moreComplete || nextQuality.confidence >= oldQuality.confidence + 3);
 }
 
+// A noisy label can disqualify a whole-row reread while a separate numeric
+// column is clear. Anchor the row in both readings and keep the original
+// words. Neither the signed value nor similarity to it selects the number.
+function omittedNumericFields(before, reading, candidate) {
+  if (!candidate.signedLine || !before.length || before.some(word => !word.bbox) || reading.length > 120 ||
+      reading.some(word => !word.bbox)) return [];
+  const anchors = before.filter(a => a.confidence >= OCR_REVIEW_THRESHOLD &&
+    reading.some(b => b.confidence >= OCR_REVIEW_THRESHOLD && b.text === a.text &&
+      a.bbox.x0 < b.bbox.x1 && a.bbox.x1 > b.bbox.x0 && a.bbox.y0 < b.bbox.y1 && a.bbox.y1 > b.bbox.y0));
+  if (!anchors.length) return [];
+  return reading.filter(word => {
+    const b = word.bbox, crop = candidate.bbox;
+    if (!(word.confidence >= OCR_REVIEW_THRESHOLD) || !/^[-+]?\d+(?:[.,/-]\d+)*%?$/u.test(word.text) ||
+        b.x0 < crop.x0 || b.y0 < crop.y0 || b.x1 > crop.x1 || b.y1 > crop.y1 ||
+        !anchors.some(a => b.y0 < a.bbox.y1 && b.y1 > a.bbox.y0)) return false;
+    const gap = Math.max(4, b.y1 - b.y0);
+    const neighbors = [...before, ...reading.filter(other => other !== word)];
+    return !neighbors.some(other => b.y0 < other.bbox.y1 && b.y1 > other.bbox.y0 &&
+      b.x0 < other.bbox.x1 + gap && b.x1 > other.bbox.x0 - gap);
+  });
+}
+
 export function applyTextRetries(words, replacements) {
   const removed = new Set(), inserts = new Map(), extra = [], retryReviews = [];
-  for (const { candidate, words: reading } of replacements) {
+  for (const { candidate, words: retry } of replacements) {
+    let reading = retry;
     const before = candidate.indices.map(index => words[index]);
     const original = before.map(word => word.text).join(" ");
-    const observed = reading.map(word => word.text).join(" ");
+    let observed = reading.map(word => word.text).join(" ");
     const changed = original && original.normalize("NFC") !== observed.normalize("NFC");
     if (candidate.dateField) {
       if (reading.length !== 1 || !isDateReading(observed)) continue;
@@ -136,12 +159,19 @@ export function applyTextRetries(words, replacements) {
           original.replace(/\D/gu, "").length !== observed.replace(/\D/gu, "").length) continue;
       }
     }
-    if (!preferTextRetry(before, reading)) continue;
+    const wholeRowAccepted = preferTextRetry(before, reading);
+    if (!wholeRowAccepted) {
+      if (candidate.dateField) continue;
+      const additions = omittedNumericFields(before, reading, candidate);
+      if (!additions.length) continue;
+      reading = [...before, ...additions].sort((a, b) => a.bbox.x0 - b.bbox.x0);
+      observed = reading.map(word => word.text).join(" ");
+    }
     if (changed && !candidate.dateField) {
       // A closer pass can complete a cut-off row. Check only after independent
       // recognition, and only when earlier whole words still occupy the same
       // places. Editing a digit, dropping a sign or losing a word is a conflict.
-      const completedLine = candidate.signedText?.normalize("NFC") === observed.normalize("NFC") &&
+      const completedLine = wholeRowAccepted && candidate.signedText?.normalize("NFC") === observed.normalize("NFC") &&
         before.length < reading.length && reading.every(w => w.confidence >= OCR_REVIEW_THRESHOLD) &&
         before.every((w, i) => {
           const b = reading[i].bbox, a = w.bbox;
