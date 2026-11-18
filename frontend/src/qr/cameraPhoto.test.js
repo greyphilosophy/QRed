@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { canCaptureCameraPhoto, captureCameraPhoto, cameraCaptureFeedback, cameraFrameDiagnostic, cameraPhotoFailure, observeCameraFrames, readCameraFrame, readCameraPhotoFile, NATIVE_PHOTO_TIMEOUT_MS, cameraCaptureContext } from "./cameraPhoto.js";
+import { getScanPhotoMetadata } from "./scanPhotoMetadata.js";
 
 const track = { kind: "video", readyState: "live" };
 const video = { srcObject: { getVideoTracks: () => [track] } };
@@ -54,6 +55,28 @@ beforeEach(() => {
   vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
 });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it("retains the successful shutter's reported settings before the light is turned off", async () => {
+  const reported = { zoom: 1, torch: true, width: 1920, height: 1080, deviceId: "private" };
+  const liveTrack = { ...track, getSettings: () => reported };
+  const original = new Blob(["native"]);
+  camera.takePhoto.mockImplementationOnce(async () => {
+    reported.zoom = 1.5;
+    throw new DOMException("Unsupported dimensions", "OverconstrainedError");
+  }).mockImplementationOnce(async () => original);
+  const onPhotoBlob = vi.fn();
+  await captureCameraPhoto({ srcObject: { getVideoTracks: () => [liveTrack] } }, canvas, {
+    onPhotoBlob, onPhotoTaken: () => { reported.torch = false; reported.zoom = 3; },
+    captureContext: { trigger: "automatic", previewWidth: 1920, previewHeight: 1080, guideState: "ready" },
+  });
+  expect(onPhotoBlob).toHaveBeenCalledWith(original);
+  const saved = getScanPhotoMetadata(original);
+  expect(saved.capture).toMatchObject({ trigger: "automatic", preview: { width: 1920, height: 1080 }, guideState: "ready",
+    trackSettings: { zoom: 1.5, torch: true }, photoSettings: { imageWidth: null, imageHeight: null, fillLightMode: "off" } });
+  expect(saved.image.decodedSize).toEqual({ width: 4000, height: 3000 });
+  expect(saved.processing.decoderInput).toEqual({ width: 4000, height: 3000 });
+  expect(JSON.stringify(saved)).not.toContain("private");
+});
 
 it("uses still-photo detail with flash off and retains exactly the pixels sent to decoding", async () => {
   expect(canCaptureCameraPhoto(video)).toBe(true);

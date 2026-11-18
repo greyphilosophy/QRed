@@ -1,8 +1,10 @@
 """Hands-free whole-page capture with native still photos, real QR decoding, and OCR."""
 import base64
 import io
+import json
 import os
 import zipfile
+import xml.etree.ElementTree as ET
 
 import pytest
 from PIL import Image
@@ -273,7 +275,7 @@ def test_document_capture_failure_never_decodes_video_and_can_retry(browser, sea
         context.close()
 
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
-def test_save_scan_photo_downloads_one_original_per_capture_offline(browser, path):
+def test_save_scan_photo_preserves_pixels_and_capture_metadata_offline(browser, path):
     context = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="allow")
     try:
         guard = OfflineNetworkGuard(context)
@@ -324,8 +326,30 @@ def test_save_scan_photo_downloads_one_original_per_capture_offline(browser, pat
             assert download.value.suggested_filename == "QRed-scan-photo.zip"
             with zipfile.ZipFile(download.value.path()) as archive:
                 name = f"exposure-01.{extension}"
-                assert archive.namelist() == [name]
-                assert archive.read(name) == original
+                assert archive.namelist() == [name, "qred-scan.json"]
+                saved = archive.read(name)
+                manifest = json.loads(archive.read("qred-scan.json"))
+                record = manifest["photos"][0]
+                assert record["name"] == name
+                metadata = record["metadata"]
+                assert metadata["schema"] == "qred-scan-capture"
+                assert metadata["capture"]["trigger"] == "manual"
+                assert metadata["image"]["decodedSize"] == {"width": 1600, "height": 2560}
+                assert metadata["processing"]["qredLensCorrection"] == "not-applied"
+                assert metadata["calibration"] is None
+                assert "deviceId" not in metadata["capture"]["trackSettings"]
+                if fmt == "jpeg":
+                    assert record["embeddedXmp"] is True
+                    saved_image = Image.open(io.BytesIO(saved))
+                    assert saved_image.tobytes() == Image.open(io.BytesIO(original)).tobytes()
+                    assert saved_image.getexif()[270] == f"Synthetic scan {index}"
+                    packet = next(data[29:] for marker, data in saved_image.applist
+                                  if marker == "APP1" and data.startswith(b"http://ns.adobe.com/xap/1.0/\0"))
+                    embedded = ET.fromstring(packet).find(".//{https://qred.org/ns/scan/1.0/}Capture")
+                    assert json.loads(embedded.text) == metadata
+                else:
+                    assert record["embeddedXmp"] is False
+                    assert saved == original
         guard.assert_quiet()
     finally:
         context.close()
