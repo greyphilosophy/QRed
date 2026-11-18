@@ -148,7 +148,15 @@ is optional and starts off when you open the scanner.
 Automatic and manual full-page scans each take one high-resolution photo. Keep
 the page framed until the captured notice appears. QRed reads the seal and
 compares the printed text from that same photo. After an unsuccessful scan,
-**Save scan photo** downloads the original camera file in a ZIP. Use
+**Save scan photo** downloads the camera photo in a ZIP without recompressing its
+image data. It includes `qred-scan.json` with the settings reported immediately
+before the shutter request, requested photo settings, source/working dimensions,
+capture guidance and QRed build revision. Supported JPEGs also carry that record
+in XMP, so an extracted image keeps its capture context. Existing camera metadata
+is preserved. Non-JPEG and compound HDR/motion-photo files retain their original
+bytes and use the JSON record. Unreported settings and unmeasured lens calibration
+remain unknown; saving metadata does not itself correct distortion. See the
+[scan metadata format](docs/SCAN_PHOTO_METADATA.md). Use
 **Browse files** to reopen it from Downloads. Older scan ZIPs open their first
 numbered photo. **Choose photo** opens the photo picker.
 Live scanning uses a background worker with one frame in flight and no queued

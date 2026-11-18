@@ -168,7 +168,7 @@ export function PageCameraCapture({ pageLabel, seals = [], separateOriginal = fa
       { width: source.videoWidth, height: source.videoHeight }, preserveGate, lastQuality.current);
     let nativeBlob;
     try {
-      const options = { signal: controller.signal, requireHighResolution: true, onPhotoTaken: attemptProgress.photoReady,
+      const options = { captureContext, signal: controller.signal, requireHighResolution: true, onPhotoTaken: attemptProgress.photoReady,
         onPhotoBlob: blob => { nativeBlob = blob; }, onDiagnostic: diagnostic => {
         if (current()) captureDiagnostic.current = { ...diagnostic, ...captureContext };
       } };

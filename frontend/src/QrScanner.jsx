@@ -344,6 +344,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
         const captureContext = file ? {} : cameraCaptureContext(preview, preserveGate, lastQuality);
         captureDiagnostic = file ? null : cameraFrameDiagnostic(preview);
         const options = {
+          captureContext,
           signal: controller.signal, requireHighResolution: autoCapture, onPhotoTaken: attemptProgress.photoReady,
           onPhotoBlob: blob => { nativeBlob = blob; },
           onDiagnostic: diagnostic => {

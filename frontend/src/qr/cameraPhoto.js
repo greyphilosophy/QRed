@@ -3,6 +3,8 @@
 import { isScanPhotoZip, readScanPhotoZip } from "./scanPhotoArchive.js";
 export { downloadCameraPhoto } from "./scanPhotoArchive.js";
 import { stillPhotoLighting } from "./cameraLight.js";
+import { createCaptureMetadata, getScanPhotoMetadata, rememberScanMetadata, snapshotPhotoSettings } from "./scanPhotoMetadata.js";
+import { readScanPhotoXmp } from "./scanPhotoXmp.js";
 export const NATIVE_PHOTO_TIMEOUT_MS = 5000;
 export const MIN_DOCUMENT_PHOTO_PIXELS = 4_000_000;
 export const MIN_DOCUMENT_PHOTO_LONG_SIDE = 2560;
@@ -144,7 +146,7 @@ function readPhotoPixels(photo, canvas, context, source, started) {
 }
 
 export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NATIVE_PHOTO_TIMEOUT_MS, onDiagnostic, onPhotoBlob, onPhotoTaken,
-  requireHighResolution = false } = {}) {
+  requireHighResolution = false, captureContext = {} } = {}) {
   signal?.throwIfAborted();
   const started = performance.now();
   const fallback = reason => ({ image: null, diagnostic: cameraFrameDiagnostic(canvas, reason) });
@@ -180,12 +182,16 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
         settings.imageWidth = Math.max(width.min || 1, size.width);
         settings.imageHeight = Math.max(height.min || 1, size.height);
       }
-      let blob;
-      try { blob = await camera.takePhoto(settings); }
+      let blob, snapshot;
+      try {
+        snapshot = snapshotPhotoSettings(track, settings);
+        blob = await camera.takePhoto(settings);
+      }
       catch (error) {
         // Some devices advertise dimensions they reject together. Retry once
         // without optional sizing, preserving the light choice and deadline.
         if (!active || signal?.aborted || !settings.imageWidth || !unsupportedOptions(error)) throw error;
+        snapshot = snapshotPhotoSettings(track, lighting);
         blob = await camera.takePhoto(lighting);
       }
       if (!active || signal?.aborted) return fallback("capture-failed");
@@ -200,7 +206,7 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
       const context = canvas.getContext("2d", { willReadFrequently: true });
       if (!context) return fallback("invalid-photo");
       replacingFrame = true;
-      return { ...readPhotoPixels(bitmap, canvas, context, "native-still", started), blob };
+      return { ...readPhotoPixels(bitmap, canvas, context, "native-still", started), blob, snapshot };
     } catch (error) {
       // Once replacing the retained canvas begins, a drawing failure must
       // surface instead of pairing old decoder pixels with a different photo.
@@ -224,7 +230,10 @@ export async function captureCameraPhoto(video, canvas, { signal, timeoutMs = NA
     ]);
     signal?.throwIfAborted();
     onDiagnostic?.(result.diagnostic);
-    if (result.image) onPhotoBlob?.(result.blob);
+    if (result.image) {
+      rememberScanMetadata(result.blob, createCaptureMetadata(result.snapshot, result.diagnostic, captureContext));
+      onPhotoBlob?.(result.blob);
+    }
     return result.image;
   } finally {
     active = false; clearTimeout(timer); signal?.removeEventListener("abort", abort);
@@ -256,13 +265,16 @@ export function cameraPhotoFailure(diagnostic) {
 
 // Explicit local photo selection is the compatibility path. It does not open
 // the phone's camera app automatically, persist the file or send it anywhere.
-export async function readCameraPhotoFile(file, canvas, { signal, onDiagnostic, requireHighResolution = true } = {}) {
+export async function readCameraPhotoFile(file, canvas, { signal, onDiagnostic, onPhotoBlob, requireHighResolution = true } = {}) {
   signal?.throwIfAborted();
   const started = performance.now();
   const archivedPhoto = isScanPhotoZip(file) ? await readScanPhotoZip(file, signal) : null;
   signal?.throwIfAborted();
-  const photo = new Image(), url = URL.createObjectURL(archivedPhoto ?? file);
-  let abort;
+  const original = archivedPhoto ?? file;
+  const retainedMetadata = getScanPhotoMetadata(original);
+  const metadataRead = retainedMetadata ? Promise.resolve(retainedMetadata) : readScanPhotoXmp(original);
+  const photo = new Image(), url = URL.createObjectURL(original);
+  let abort, importedMetadata;
   const failure = reason => {
     onDiagnostic?.({ source: "selected-photo", width: photo.naturalWidth, height: photo.naturalHeight, reason });
     return null;
@@ -270,11 +282,12 @@ export async function readCameraPhotoFile(file, canvas, { signal, onDiagnostic, 
   try {
     photo.src = url;
     try {
-      await Promise.race([photo.decode(), new Promise((_, reject) => {
+      const opened = await Promise.race([Promise.all([photo.decode(), metadataRead]), new Promise((_, reject) => {
         abort = () => reject(new DOMException("Photo selection cancelled", "AbortError"));
         signal?.addEventListener("abort", abort, { once: true });
         if (signal?.aborted) abort();
       })]);
+      importedMetadata = opened[1];
     } catch {
       signal?.throwIfAborted();
       if (archivedPhoto) throw new Error("The photo in this ZIP could not be opened.");
@@ -289,7 +302,9 @@ export async function readCameraPhotoFile(file, canvas, { signal, onDiagnostic, 
     if (!context) return failure("invalid-photo");
     // As with native capture, do not fall back to old pixels if drawing fails.
     const { image, diagnostic } = readPhotoPixels(photo, canvas, context, "selected-photo", started);
+    rememberScanMetadata(original, importedMetadata);
     onDiagnostic?.(diagnostic);
+    onPhotoBlob?.(original);
     return image;
   } finally {
     signal?.removeEventListener("abort", abort);
