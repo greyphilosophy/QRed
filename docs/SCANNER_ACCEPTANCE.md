@@ -47,6 +47,10 @@ never the framing decision, recovered seal, authenticated result, or OCR text.
 - Decoder acceptance and unit tests remain necessary for perspective, colored
   text, illumination, multipart recovery, corruption, deadlines, and signature
   failures. They complement the camera gate; they cannot replace it.
+- Protect handoffs with a case that requires the connected methods to cooperate.
+  Confirm a deliberate disconnection or negative control fails to complete the
+  workflow; success through another path is not coverage of that connection.
+  See `SCANNER_INTEGRATION_COVERAGE.md` for the current checks and remaining cases.
 
 Example local run after installing the repository's Python/browser dependencies:
 
