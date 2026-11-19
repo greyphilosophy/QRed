@@ -134,7 +134,9 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
     // whole-page finder triple. Reserve the wider fallbacks' time and stop
     // once every collected original-page transport is complete. This is still
     // only recovery: the caller authenticates the actual bytes normally.
-    const regionDeadline = Math.min(deadline, performance.now() + maxDurationMs / 4);
+    const regionStarted = performance.now();
+    const regionDeadline = Math.min(deadline, regionStarted +
+      Math.min(maxDurationMs / 4, (deadline - regionStarted) / 2));
     const regional = shouldContinue() ? attempt("watermark-regions", () => scanWatermarkRegions(image, {
       pageMapping: straightMapping, onSeal: keepPartial,
       shouldContinue: () => performance.now() < regionDeadline && !haveAllChunks(),

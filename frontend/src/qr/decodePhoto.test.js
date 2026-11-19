@@ -390,13 +390,15 @@ it("does not let the ordinary allowance extend the overall photo deadline", () =
   expect(scanRectifiedSeal).toHaveBeenCalledTimes(1);
 });
 
-it("leaves wider recovery time after the region pass reaches its allowance", () => {
+it.each([[0, 15000], [45000, 52500]])(
+  "leaves wider recovery time after a region pass starting at %i ms reaches its allowance", (start, end) => {
   let now = 0;
   vi.spyOn(performance, "now").mockImplementation(() => now);
+  scanFooterSeals.mockImplementation(() => { now = start; return []; });
   scanWatermarkRegions.mockImplementation((_image, { shouldContinue, onSeal }) => {
     expect(shouldContinue()).toBe(true);
     onSeal(multiple[0]);
-    now = 15000;
+    now = end;
     expect(shouldContinue()).toBe(false);
     return [{ seal: multiple[0] }];
   });
