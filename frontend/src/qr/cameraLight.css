@@ -1,0 +1,34 @@
+/* Decorative shapes leave the button's name, size and hit area unchanged.
+   A brief twinkle draws attention to an available light, then settles. */
+button[data-light-discoverable="true"] { position: relative; }
+button[data-light-discoverable="true"]::before,
+button[data-light-discoverable="true"]::after {
+  content: "";
+  position: absolute;
+  width: .5rem;
+  height: .5rem;
+  pointer-events: none;
+  background: #fde68a;
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+  opacity: 0;
+  animation: camera-light-sparkle 3.6s ease-in-out 1;
+}
+button[data-light-discoverable="true"]::before { top: .15rem; right: .45rem; }
+button[data-light-discoverable="true"]::after {
+  bottom: .15rem;
+  left: .45rem;
+  width: .35rem;
+  height: .35rem;
+  animation-delay: .45s;
+}
+@keyframes camera-light-sparkle {
+  0%, 40%, 100% { opacity: 0; transform: scale(.6) rotate(-15deg); }
+  18%, 65% { opacity: .95; transform: scale(1) rotate(15deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  button[data-light-discoverable="true"]::before,
+  button[data-light-discoverable="true"]::after {
+    animation: none;
+    opacity: .65;
+  }
+}

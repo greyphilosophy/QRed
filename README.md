@@ -143,7 +143,9 @@ or flashlight toggle, and keeps the light off. Discovery is bounded and restores
 the best working camera if another lens is slow, unavailable, or no better.
 Keep all four page corners visible and avoid glare. Lens selection depends on
 what the browser exposes. In dim light, turn on **Flashlight** to light the page
-while framing and taking the photo. Cameras with only a shutter flash show
+while framing and taking the photo. An available light button briefly sparkles
+to make it easier to find; reduced-motion settings use static accents instead.
+Cameras with only a shutter flash show
 **Photo flash**. If the camera has yet to report a light, **Try flashlight**
 checks it directly. On request, QRed also checks other available rear document
 cameras for a working light. A camera confirmed by the light or framing control

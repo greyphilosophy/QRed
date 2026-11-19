@@ -70,8 +70,14 @@ def test_main_camera_at_one_times_zoom_with_optional_flashlight(browser, path):
         assert state["stopped"] == ["tele"]
         light = page.get_by_role("button", name="Flashlight off")
         expect(light).to_be_visible()
+        expect(light).to_have_attribute("data-light-discoverable", "true")
+        assert light.evaluate("button => getComputedStyle(button, '::before').animationName") == "camera-light-sparkle"
+        page.emulate_media(reduced_motion="reduce")
+        assert light.evaluate("button => getComputedStyle(button, '::before').animationName") == "none"
+        page.emulate_media(reduced_motion="no-preference")
         light.click()
         expect(page.get_by_role("button", name="Flashlight on")).to_have_attribute("aria-pressed", "true")
+        expect(page.get_by_role("button", name="Flashlight on")).to_have_attribute("data-light-discoverable", "false")
         assert page.evaluate("cameraTest.controls.at(-1)") == {"id": "main", "constraints": {
             "torch": {"exact": True}, "advanced": [{"focusMode": "continuous"}, {"zoom": 1}]}}
         assert page.locator("video").evaluate("video => getComputedStyle(video).objectFit") == "contain"

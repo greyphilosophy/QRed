@@ -11,6 +11,7 @@ import { observePageScanGuide } from "./qr/pageScanGuide.js";
 import { CameraCaptureNotice, PhotoScanProgress, usePhotoScanProgress } from "./qr/PhotoScanProgress.jsx";
 import { readCameraFrame, canCaptureCameraPhoto, captureCameraPhoto, readCameraPhotoFile, cameraFrameDiagnostic, cameraCaptureFeedback, cameraPhotoFailure, cameraCaptureContext, downloadCameraPhoto } from "./qr/cameraPhoto.js";
 import "./qrScanner.css";
+import "./qr/cameraLight.css";
 
 /**
  * QrScanner — Camera-based QR code scanner that can scan ANY QR code and
