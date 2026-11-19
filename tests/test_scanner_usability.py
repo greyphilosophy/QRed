@@ -138,8 +138,11 @@ def test_main_camera_at_one_times_zoom_with_optional_flashlight(browser, path):
         page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
         expect(page.locator(".page-scan-guide")).not_to_be_visible()
         page.evaluate("() => { setCameraTestHidden(true); setCameraTestHidden(false); }")
-        assert page.evaluate("cameraTest.stopped") == ["tele", "main", "tele", "main"]
-        assert page.evaluate("cameraTest.requests.length") == 4
+        # The confirmed camera reopens directly; do not briefly reopen the
+        # browser's telephoto default when returning to the tab.
+        assert page.evaluate("cameraTest.stopped") == ["tele", "main", "main"]
+        assert page.evaluate("cameraTest.requests.length") == 3
+        assert page.evaluate("cameraTest.requests.at(-1).video.deviceId") == {"exact": "main"}
     finally:
         context.close()
 
@@ -155,7 +158,7 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
         page.goto(BASE_URL + path, wait_until="networkidle")
         if path != "/":
             page.locator("#publicKeyFileInput").set_input_files({"name": "key.txt", "mimeType": "text/plain", "buffer": key.encode()})
-        page.evaluate("""mode => {
+        camera_script = """mode => {
             const multi = ['other-lens', 'other-flash', 'no-lit-lens'].includes(mode);
             navigator.mediaDevices.enumerateDevices = async () => multi ? [
                 {kind:'videoinput', deviceId:'original', label:'Camera 2, facing back'},
@@ -194,7 +197,8 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
                 };
                 return stream;
             };
-        }""", mode)
+        }"""
+        page.evaluate(camera_script, mode)
         page.get_by_role("button", name="Check document", exact=True).click()
         label = {"late-torch": "Flashlight off", "shutter-only": "Photo flash off"}.get(mode, "Try flashlight")
         light = page.get_by_role("button", name=label, exact=True)
@@ -248,6 +252,28 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
             expect(page.get_by_role("button", name=on_name.replace(" on", " off"), exact=True)).to_have_attribute("aria-pressed", "false")
             page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
             assert page.evaluate("lensTracks.every(t => t.readyState === 'ended')")
+            if mode in ("other-lens", "other-flash"):
+                off_name = on_name.replace(" on", " off")
+                light_requests = page.evaluate("lightRequests.length")
+                page.get_by_role("button", name="Check document", exact=True).click()
+                expect(page.get_by_role("button", name=off_name, exact=True)).to_have_attribute("aria-pressed", "false")
+                assert page.evaluate("lensRequests") == ["original", "main", "main"]
+                assert page.evaluate("lightRequests.length") == light_requests
+                page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
+                assert page.evaluate("lensTracks.every(t => t.readyState === 'ended')")
+
+                # A fresh page must remember the successful lens too, with no
+                # probe or light activation needed to rediscover it.
+                page.reload(wait_until="networkidle")
+                if path != "/":
+                    page.locator("#publicKeyFileInput").set_input_files({"name": "key.txt", "mimeType": "text/plain", "buffer": key.encode()})
+                page.evaluate(camera_script, mode)
+                page.get_by_role("button", name="Check document", exact=True).click()
+                expect(page.get_by_role("button", name=off_name, exact=True)).to_have_attribute("aria-pressed", "false")
+                assert page.evaluate("lensRequests") == ["main"]
+                assert page.evaluate("lightRequests") == []
+                page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
+                assert page.evaluate("lensTracks.every(t => t.readyState === 'ended')")
     finally:
         context.close()
 
