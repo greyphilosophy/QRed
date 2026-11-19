@@ -1,4 +1,5 @@
-import { cameraWithChosenFraming, cameraZoomRange } from "./cameraFraming.js";
+import { cameraZoomRange } from "./cameraFraming.js";
+import { forgetPreferredCamera, preferredCameraId } from "./cameraPreference.js";
 
 export const QR_CAMERA_CONSTRAINTS = {
   video: {
@@ -32,10 +33,15 @@ export function findPreferredMainCamera(devices = [], activeId) {
   const rear = documentCameras(devices);
   // Some Android browsers expose only numbered rear cameras. Prefer a lens
   // with autofocus or a light. On a tie, keep the browser's working lens.
-  const preferred = rear.find(item => /main|primary|\b1(?:\.0+)?x\b/i.test(item.label))
-    || rear.find(item => /wide/i.test(item.label)) || rear.find(item => item.autofocus && item.light)
-    || rear.find(item => item.autofocus) || rear.find(item => item.light)
-    || rear.find(item => item.device.deviceId === activeId) || rear[0];
+  let preferred, bestScore = -1;
+  for (const item of rear) {
+    const score = /main|primary|\b1(?:\.0+)?x\b/i.test(item.label) ? 5
+      : item.autofocus && item.light ? 4 : item.autofocus ? 3 : item.light ? 2
+        : /wide/i.test(item.label) ? 1 : 0;
+    if (score > bestScore || (score === bestScore && item.device.deviceId === activeId)) {
+      preferred = item; bestScore = score;
+    }
+  }
   return preferred?.device || null;
 }
 
@@ -82,12 +88,27 @@ export async function getPreferredCameraStream(mediaDevices = navigator.mediaDev
   signal?.addEventListener("abort", release, { once: true });
   try {
     signal?.throwIfAborted();
+    const remembered = preferredCameraId();
+    if (remembered) {
+      try {
+        // Open the known working lens directly, without briefly opening the
+        // browser's default lens or enabling a light to discover it again.
+        stream = await requestCameraById(remembered, mediaDevices);
+        signal?.throwIfAborted();
+        return stream;
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (error.name === "NotAllowedError" || error.name === "SecurityError") throw error;
+        forgetPreferredCamera(remembered);
+      }
+    }
     stream = await mediaDevices.getUserMedia(QR_CAMERA_CONSTRAINTS);
     signal?.throwIfAborted();
     const [track] = stream.getVideoTracks?.() || [];
-    const initialId = track?.getSettings?.().deviceId;
+    let initialId;
+    try { initialId = track?.getSettings?.().deviceId; } catch { /* Optional device readback. */ }
     const devices = await listCameraDevices(mediaDevices);
-    const preferred = cameraWithChosenFraming(devices) || findPreferredMainCamera(devices, initialId);
+    const preferred = findPreferredMainCamera(devices, initialId);
     signal?.throwIfAborted();
     if (!preferred?.deviceId || preferred.deviceId === initialId ||
         (!initialId && preferred.label && track?.label === preferred.label)) return stream;

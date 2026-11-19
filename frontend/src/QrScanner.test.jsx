@@ -236,6 +236,16 @@ describe("QrScanner camera controls", () => {
     expect(findPreferredMainCamera([{ ...second, label: "", getCapabilities: () => ({ facingMode: ["user"] }) }])).toBeNull();
   });
 
+  it("prefers reported focus and lighting over a generic wide label and keeps the active lens on a tie", () => {
+    const wide = { kind: "videoinput", deviceId: "wide", label: "Back Wide Camera" };
+    const main = { kind: "videoinput", deviceId: "main", label: "camera2 0, facing back",
+      getCapabilities: () => ({ focusMode: ["continuous"], torch: [false, true] }) };
+    const other = { ...main, deviceId: "other" };
+    expect(findPreferredMainCamera([wide, main], wide.deviceId)).toBe(main);
+    expect(findPreferredMainCamera([wide, other, main], main.deviceId)).toBe(main);
+    expect(findPreferredMainCamera([wide, main, other], other.deviceId)).toBe(other);
+  });
+
   it("keeps the current main camera without reopening it", async () => {
     const stream = { getVideoTracks: () => [{ getSettings: () => ({ deviceId: "main" }) }] };
     const mediaDevices = {
