@@ -16,7 +16,7 @@ function setup(options = {}) {
 }
 afterEach(() => { forgetPreferredCamera(preferredCameraId()); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-it("keeps the camera found by the flashlight when switched off and reopens it with lighting off", async () => {
+it("starts on the better live camera before the flashlight is used and reopens it with lighting off", async () => {
   const makeCamera = (deviceId, supportsTorch) => {
     const stream = makeStream();
     let torch = false;
@@ -43,9 +43,12 @@ it("keeps the camera found by the flashlight when switched off and reopens it wi
   });
   const firstSession = setup({ requestStream: undefined, lightButton: button });
   try {
-    await vi.waitFor(() => expect(firstSession.video.srcObject).toBe(first));
+    await vi.waitFor(() => expect(firstSession.video.srcObject).toBe(better));
     expect(preferredCameraId()).toBeNull();
     expect(first.getVideoTracks()[0].applyConstraints).not.toHaveBeenCalled();
+    expect(better.getVideoTracks()[0].applyConstraints).not.toHaveBeenCalled();
+    expect(button.textContent).toBe("Flashlight off");
+    expect(mediaDevices.getUserMedia).toHaveBeenCalledTimes(2);
     button.dispatchEvent(new Event("click"));
     await vi.waitFor(() => expect(button.textContent).toBe("Flashlight on"));
     expect(firstSession.video.srcObject).toBe(better);
@@ -66,7 +69,7 @@ it("keeps the camera found by the flashlight when switched off and reopens it wi
     expect(reopened.getVideoTracks()[0].applyConstraints).not.toHaveBeenCalled();
     expect(mediaDevices.getUserMedia).toHaveBeenCalledTimes(3);
     expect(mediaDevices.getUserMedia.mock.calls[2][0].video.deviceId).toEqual({ exact: "main" });
-    expect(mediaDevices.enumerateDevices).toHaveBeenCalledTimes(2);
+    expect(mediaDevices.enumerateDevices).toHaveBeenCalledTimes(1);
   } finally { nextSession.camera.stop(); }
 });
 

@@ -187,8 +187,10 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
                 const stream = canvas.captureStream(10), [track] = stream.getVideoTracks();
                 lensTracks.push(track);
                 let torch = false;
-                const advertisesTorch = () => (mode === 'late-torch' || mode === 'other-lens' && id === 'main')
-                    && document.querySelector('video')?.readyState >= 2;
+                // Device listings omit torch support; the live main track
+                // reveals it without requiring a flashlight activation.
+                const advertisesTorch = () => mode === 'other-lens' && id === 'main'
+                    || mode === 'late-torch' && document.querySelector('video')?.readyState >= 2;
                 track.getSettings = () => ({deviceId:id, ...(advertisesTorch() ? {torch} : {})});
                 track.getCapabilities = () => advertisesTorch() ? {torch: [false, true]} : {};
                 track.applyConstraints = async request => {
@@ -200,10 +202,29 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
         }"""
         page.evaluate(camera_script, mode)
         page.get_by_role("button", name="Check document", exact=True).click()
-        label = {"late-torch": "Flashlight off", "shutter-only": "Photo flash off"}.get(mode, "Try flashlight")
+        label = {"late-torch": "Flashlight off", "other-lens": "Flashlight off", "shutter-only": "Photo flash off"}.get(mode, "Try flashlight")
         light = page.get_by_role("button", name=label, exact=True)
         expect(light).to_be_visible()
         assert page.evaluate("lightRequests") == []
+        initial_lenses = ["original", "main", "original"] if mode in ("other-flash", "no-lit-lens") else (
+            ["original", "main"] if mode == "other-lens" else ["original"])
+        assert page.evaluate("lensRequests") == initial_lenses
+        if mode == "other-lens":
+            # No training step or persisted choice: a fresh visit already
+            # shows the main camera, with no request to turn its light on.
+            assert page.locator("video").evaluate("video => video.srcObject.getVideoTracks()[0].getSettings().deviceId") == "main"
+            assert page.evaluate("localStorage.getItem('qred.document-camera.v1')") is None
+            page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
+            assert page.evaluate("lensTracks.every(t => t.readyState === 'ended')")
+            page.reload(wait_until="networkidle")
+            if path != "/":
+                page.locator("#publicKeyFileInput").set_input_files({"name": "key.txt", "mimeType": "text/plain", "buffer": key.encode()})
+            page.evaluate(camera_script, mode)
+            page.get_by_role("button", name="Check document", exact=True).click()
+            expect(light).to_be_visible()
+            assert page.evaluate("lensRequests") == ["original", "main"]
+            assert page.evaluate("lightRequests") == []
+            assert page.evaluate("localStorage.getItem('qred.document-camera.v1')") is None
         light.click()
         if mode in ("ignored", "no-lit-lens"):
             light = page.get_by_role("button", name="Use phone camera")
@@ -214,7 +235,7 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
             paper = page.locator(".page-scan-guide").bounding_box()
             help_box = help_text.bounding_box()
             assert paper and help_box and help_box["y"] >= paper["y"] + paper["height"]
-            assert page.evaluate("lensRequests") == (["original", "main", "original"] if mode == "no-lit-lens" else ["original"])
+            assert page.evaluate("lensRequests") == (initial_lenses + ["main", "original"] if mode == "no-lit-lens" else initial_lenses)
             with page.expect_file_chooser() as camera:
                 light.click()
             assert camera.value.element.get_attribute("capture") == "environment"
@@ -247,7 +268,8 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
             on = page.get_by_role("button", name=on_name, exact=True)
             expect(on).to_have_attribute("aria-pressed", "true")
             if mode in ("other-lens", "other-flash"):
-                assert page.evaluate("lensRequests") == ["original", "main"]
+                chosen_lenses = initial_lenses + (["main"] if mode == "other-flash" else [])
+                assert page.evaluate("lensRequests") == chosen_lenses
             on.click()
             expect(page.get_by_role("button", name=on_name.replace(" on", " off"), exact=True)).to_have_attribute("aria-pressed", "false")
             page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
@@ -257,7 +279,7 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
                 light_requests = page.evaluate("lightRequests.length")
                 page.get_by_role("button", name="Check document", exact=True).click()
                 expect(page.get_by_role("button", name=off_name, exact=True)).to_have_attribute("aria-pressed", "false")
-                assert page.evaluate("lensRequests") == ["original", "main", "main"]
+                assert page.evaluate("lensRequests") == chosen_lenses + ["main"]
                 assert page.evaluate("lightRequests.length") == light_requests
                 page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
                 assert page.evaluate("lensTracks.every(t => t.readyState === 'ended')")

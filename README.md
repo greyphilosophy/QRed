@@ -136,6 +136,11 @@ largest grid. If balancing cannot reduce it, the original split is retained
 so a smaller final code does not grow unnecessarily. Printed sizes stay the same.
 
 Both camera views prefer the rear main camera at 1× and show a page-shaped guide.
+When camera names and listed capabilities are inconclusive, startup briefly
+checks the live rear lenses for continuous focus and light support before showing
+the selected preview. This works on a first visit without a saved camera choice
+or flashlight toggle, and keeps the light off. Discovery is bounded and restores
+the best working camera if another lens is slow, unavailable, or no better.
 Keep all four page corners visible and avoid glare. Lens selection depends on
 what the browser exposes. In dim light, turn on **Flashlight** to light the page
 while framing and taking the photo. Cameras with only a shutter flash show
