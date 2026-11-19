@@ -32,6 +32,12 @@ reload, the actual worker, file opening, signature checks and OCR all run.
 | Page layout and collection | Real watermark workflows; seal-sheet collection followed by unmarked originals; PDF input with the default layout | One mixed document whose text page has a watermark and whose image page uses an appended seal sheet, scanned out of order. Check page association and final completeness together. |
 | Optical recovery | Pixel-level bending, shadows, overprint and parity tests; whole-photo curved dispatch; conventional footer dispatch | Broader combinations of physical wrinkles, shadows, printing and blur. Synthetic coverage does not establish printer/phone success rates. |
 
+The strict workshop run also includes a small pale seal and an oblique multipart
+register beyond its blocking cases. That run is currently advisory in CI;
+green required checks do not establish that those two cases pass. Keep their
+results visible and promote them to blocking regressions when their failures
+are fixed, rather than treating the overall CI result as their acceptance.
+
 ## Review rule
 
 For a changed handoff, record its real input, downstream consumer, expected

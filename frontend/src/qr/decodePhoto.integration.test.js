@@ -25,8 +25,8 @@ it("carries a real curved-page recovery through photo dispatch and session authe
   // testing the curved helper would miss a disconnected top-level retry.
   const action = decodePhoto(image, { returnPayload: true,
     onStage: ({ stage }) => stages.push(stage) });
-  expect(stages).toEqual(["rectified-fast", "curved-page"]);
   expect(action).toEqual({ status: "found", text: seals[0] });
+  expect(stages).toEqual(["rectified-fast", "curved-page"]);
   expect(hash()).toBe(before);
   const session = createVerificationSession();
   expect(session.add(action.text)).toBe(true);
