@@ -7,11 +7,13 @@ import { PHOTO_SCAN_BUDGET_MS } from "./photoScanBudget.js";
 import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
 import { scanFooterSeals } from "./footerSealScan.js";
+import { scanWatermarkRegions } from "./watermarkRegionScan.js";
 import { scanRectifiedSeal, createRectifiedSealScanner, prepareCurvedPageScan } from "./rectifiedSealScan.js";
 
 vi.mock("./scanQrImage.js", () => ({ scanQrImage: vi.fn(), scanWatermarkPreview: vi.fn() }));
 vi.mock("./pageAlignedScan.js", () => ({ scanPageAlignedImage: vi.fn() }));
 vi.mock("./footerSealScan.js", () => ({ scanFooterSeals: vi.fn() }));
+vi.mock("./watermarkRegionScan.js", () => ({ scanWatermarkRegions: vi.fn() }));
 vi.mock("./rectifiedSealScan.js", () => ({
   scanRectifiedSeal: vi.fn(), createRectifiedSealScanner: vi.fn(), prepareCurvedPageScan: vi.fn(),
 }));
@@ -36,6 +38,7 @@ beforeAll(async () => {
 beforeEach(() => {
   createRectifiedSealScanner.mockReset().mockImplementation(image => options => scanRectifiedSeal(image, options));
   scanFooterSeals.mockReset().mockReturnValue([]);
+  scanWatermarkRegions.mockReset().mockReturnValue([]);
   scanWatermarkPreview.mockReset().mockReturnValue(null);
   scanPageAlignedImage.mockReset().mockReturnValue([]);
   scanRectifiedSeal.mockReset().mockReturnValue(null);
@@ -301,6 +304,7 @@ it("reports only fixed stage names and relative elapsed times before actual atte
     { stage: "watermark-preview", elapsedMs: 100 },
     { stage: "ordinary-qr", elapsedMs: 120 },
     { stage: "footer", elapsedMs: 150 },
+    { stage: "watermark-regions", elapsedMs: 190 },
     { stage: "curved-page", elapsedMs: 190 },
     { stage: "rectified-wide", elapsedMs: 190 },
     { stage: "page-aligned", elapsedMs: 290 },
@@ -384,4 +388,42 @@ it("does not let the ordinary allowance extend the overall photo deadline", () =
   expect(decodePhoto(image, { returnPayload: true }).status).toBe("feedback");
   expect(scanFooterSeals).not.toHaveBeenCalled();
   expect(scanRectifiedSeal).toHaveBeenCalledTimes(1);
+});
+
+it.each([[0, 15000], [45000, 52500]])(
+  "leaves wider recovery time after a region pass starting at %i ms reaches its allowance", (start, end) => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  scanFooterSeals.mockImplementation(() => { now = start; return []; });
+  scanWatermarkRegions.mockImplementation((_image, { shouldContinue, onSeal }) => {
+    expect(shouldContinue()).toBe(true);
+    onSeal(multiple[0]);
+    now = end;
+    expect(shouldContinue()).toBe(false);
+    return [{ seal: multiple[0] }];
+  });
+  scanPageAlignedImage.mockImplementation((_image, { shouldContinue }) => {
+    expect(shouldContinue()).toBe(true);
+    return multiple.slice(1).map(seal => ({ seal }));
+  });
+  const progress = vi.fn();
+  const result = decodePhoto(image, { returnPayload: true, onProgress: progress });
+  expect(progress).toHaveBeenCalledWith({ status: "found-multiple", texts: [multiple[0]] });
+  expect(result.texts.sort()).toEqual([...multiple].sort());
+});
+
+it("stops region attempts when their real collection is complete, without skipping signature checks", async () => {
+  scanWatermarkRegions.mockImplementation((_image, { shouldContinue, onSeal }) => {
+    for (const seal of multiple) {
+      expect(shouldContinue()).toBe(true);
+      onSeal(seal);
+    }
+    expect(shouldContinue()).toBe(false);
+    return multiple.map(seal => ({ seal }));
+  });
+  const result = decodePhoto(image, { returnPayload: true });
+  expect(result).toEqual({ status: "found-multiple", texts: multiple });
+  expect(scanPageAlignedImage).not.toHaveBeenCalled();
+  expect(scanCurvedPageSeal).not.toHaveBeenCalled();
+  await expect(verifyQRedSeals(result.texts, publicKey)).resolves.toMatchObject({ status: "VALID" });
 });

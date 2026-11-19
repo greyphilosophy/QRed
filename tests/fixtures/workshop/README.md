@@ -26,9 +26,8 @@ With the built production frontend served on port 3000 (or `QRED_BASE_URL`), run
 
 ```sh
 pytest -v tests/test_workshop_photos.py
-QRED_WORKSHOP_STRICT=1 pytest -v tests/test_workshop_photos.py
 ```
 
-The first command is part of normal CI. It checks the one-digit edit in the PDFs and four offline browser uploads. Each upload must authenticate the intended page and recover the exact signed payloads pinned in `expected.json`. The unchanged inspection year must match. The changed page must show the signed year 2037 and photographed year 2032 together in the same difference.
+This command is a blocking part of normal CI. It checks the one-digit edit in the PDFs and eight offline browser uploads. Each upload must authenticate the intended page and recover the exact signed payloads pinned in `expected.json`. The unchanged inspection year must match. The changed page must show the signed year 2037 and photographed year 2032 together in the same difference.
 
-The second command also requires seal recovery for the small pale seal on the front page and the oblique lot register. CI publishes those two additional cases in the workflow summary as advisory checks. Each case can also be run individually with pytest's `-k` option.
+The small pale seal on the front page and the oblique lot register each run on both verifier screens. They use the original full photographs, without a supplied crop or geometry. These formerly advisory failures now block the scanner-integration CI check. Each case can also be run individually with pytest's `-k` option.

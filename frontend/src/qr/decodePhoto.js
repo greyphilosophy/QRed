@@ -3,6 +3,7 @@ import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
 import { scanFooterSeals } from "./footerSealScan.js";
 import { createRectifiedSealScanner, prepareCurvedPageScan } from "./rectifiedSealScan.js";
+import { scanWatermarkRegions } from "./watermarkRegionScan.js";
 import { pageScanQualityFeedback } from "./pageCaptureQuality.js";
 import { isQRedEntryLink, qredPayloadFromScanResult } from "./qrPayload.js";
 import { decodeSeal, qredTextFromPhotoScanResult, qredPayloadFromPhotoScanResult,
@@ -59,6 +60,21 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
     // worker watchdog can then stop a slow miss without losing useful data.
     onProgress?.({ status: "found-multiple", texts: [...partials] });
   };
+  let checkedChunks = -1, collectionComplete = false;
+  const haveAllChunks = () => {
+    // This predicate is also a hot-path cancellation check. Reparse only when
+    // a new chunk arrives, not on every row/marker sampled by a pixel reader.
+    if (checkedChunks === partials.size) return collectionComplete;
+    checkedChunks = partials.size;
+    const chunks = [...partials].map(decodeSeal);
+    collectionComplete = chunks.length > 0 && chunks.every(chunk => {
+      const indexes = new Set(chunks.filter(other => other.document_id === chunk.document_id
+        && other.version === chunk.version && other.total_chunks === chunk.total_chunks
+        && other.multipart === chunk.multipart).map(other => other.chunk_number));
+      return indexes.size === chunk.total_chunks;
+    });
+    return collectionComplete;
+  };
   if (returnPayload) {
     // Try the measured whole-page grid before general-purpose QR location.
     // Reserve half the cooperative budget for other layouts if this misses.
@@ -113,12 +129,24 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
     if (chunks.some(chunk => chunk.seal_sheet)) return { status: "found-multiple", texts: [...partials] };
     // This is a collection shortcut, not authentication. The verification
     // session still checks assembled bytes and every signature normally.
-    if (footerTexts.length && chunks.every(chunk => {
-      const indexes = new Set(chunks.filter(other => other.document_id === chunk.document_id
-        && other.version === chunk.version && other.total_chunks === chunk.total_chunks
-        && other.multipart === chunk.multipart).map(other => other.chunk_number));
-      return indexes.size === chunk.total_chunks;
-    })) return { status: "found-multiple", texts: [...partials] };
+    if (footerTexts.length && haveAllChunks()) return { status: "found-multiple", texts: [...partials] };
+    // Compact pale seals and four-piece pages need their own regions, not a
+    // whole-page finder triple. Reserve the wider fallbacks' time and stop
+    // once every collected original-page transport is complete. This is still
+    // only recovery: the caller authenticates the actual bytes normally.
+    const regionStarted = performance.now();
+    const regionDeadline = Math.min(deadline, regionStarted +
+      Math.min(maxDurationMs / 4, (deadline - regionStarted) / 2));
+    const regional = shouldContinue() ? attempt("watermark-regions", () => scanWatermarkRegions(image, {
+      pageMapping: straightMapping, onSeal: keepPartial,
+      shouldContinue: () => performance.now() < regionDeadline && !haveAllChunks(),
+    })) : [];
+    for (const result of regional) keepPartial(result.seal);
+    if (haveAllChunks()) {
+      const texts = [...partials];
+      return texts.length === 1 && singleOriginal(texts[0]) ? { status: "found", text: texts[0] }
+        : { status: "found-multiple", texts };
+    }
     if (curved && !curved.preferred && shouldContinue()) {
       const action = tryCurved(1 / 3);
       if (action) return action;

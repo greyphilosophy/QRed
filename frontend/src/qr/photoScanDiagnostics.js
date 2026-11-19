@@ -5,6 +5,7 @@ const STAGE_LABELS = Object.freeze({
   "watermark-preview": "checking the watermark",
   "ordinary-qr": "reading conventional QR codes",
   footer: "checking footer seals",
+  "watermark-regions": "reading separate watermark regions",
   "curved-page": "following the curved page edges",
   "rectified-wide": "refining the page grid",
   "page-aligned": "checking page layouts",

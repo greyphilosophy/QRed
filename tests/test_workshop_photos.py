@@ -15,18 +15,16 @@ from test_photo_verification import review_differences
 
 FIXTURES = Path(__file__).parent / "fixtures" / "workshop"
 GOLDEN = json.loads((FIXTURES / "expected.json").read_text())
-STRICT = os.environ.get("QRED_WORKSHOP_STRICT") == "1"
 CASES = [
     ("statement-2-straight", "statement-2", "/"),
     ("changed-2-straight", "statement-2", "/verify.htm"),
     ("statement-2-oblique", "statement-2", "/verify.htm"),
     ("lot-register-straight", "lot-register", "/"),
+    ("statement-1-straight", "statement-1", "/"),
+    ("statement-1-straight", "statement-1", "/verify.htm"),
+    ("lot-register-oblique", "lot-register", "/"),
+    ("lot-register-oblique", "lot-register", "/verify.htm"),
 ]
-if STRICT:
-    CASES += [
-        ("statement-1-straight", "statement-1", "/"),
-        ("lot-register-oblique", "lot-register", "/verify.htm"),
-    ]
 
 
 def test_workshop_printed_edit_is_one_digit():
@@ -54,7 +52,8 @@ OBSERVE_SEALS = """() => {
 }"""
 
 
-@pytest.mark.parametrize(("photo", "document_page", "route"), CASES, ids=[c[0] for c in CASES])
+@pytest.mark.parametrize(("photo", "document_page", "route"), CASES,
+                         ids=[c[0] + ("-standalone" if c[2] != "/" else "-home") for c in CASES])
 def test_workshop_photo(browser, photo, document_page, route):
     base = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
     key = FIXTURES / "demo-public-key.txt"
