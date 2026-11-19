@@ -267,6 +267,7 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
             on_name = "Photo flash on" if mode in ("shutter-only", "other-flash") else "Flashlight on"
             on = page.get_by_role("button", name=on_name, exact=True)
             expect(on).to_have_attribute("aria-pressed", "true")
+            assert page.evaluate("localStorage.getItem('qred.document-camera.v1')") is None
             if mode in ("other-lens", "other-flash"):
                 chosen_lenses = initial_lenses + (["main"] if mode == "other-flash" else [])
                 assert page.evaluate("lensRequests") == chosen_lenses
@@ -284,15 +285,17 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
                 page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
                 assert page.evaluate("lensTracks.every(t => t.readyState === 'ended')")
 
-                # A fresh page must remember the successful lens too, with no
-                # probe or light activation needed to rediscover it.
+                # A fresh page selects automatically again. Older saved
+                # preferences are deleted on load, before opening the camera.
+                page.evaluate("localStorage.setItem('qred.document-camera.v1', 'main')")
                 page.reload(wait_until="networkidle")
+                assert page.evaluate("localStorage.getItem('qred.document-camera.v1')") is None
                 if path != "/":
                     page.locator("#publicKeyFileInput").set_input_files({"name": "key.txt", "mimeType": "text/plain", "buffer": key.encode()})
                 page.evaluate(camera_script, mode)
                 page.get_by_role("button", name="Check document", exact=True).click()
-                expect(page.get_by_role("button", name=off_name, exact=True)).to_have_attribute("aria-pressed", "false")
-                assert page.evaluate("lensRequests") == ["main"]
+                expect(page.get_by_role("button", name=label, exact=True)).to_have_attribute("aria-pressed", "false")
+                assert page.evaluate("lensRequests") == initial_lenses
                 assert page.evaluate("lightRequests") == []
                 page.get_by_role("button", name="Close" if path == "/" else "Stop camera", exact=True).click()
                 assert page.evaluate("lensTracks.every(t => t.readyState === 'ended')")

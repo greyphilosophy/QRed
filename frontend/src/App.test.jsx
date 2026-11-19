@@ -59,6 +59,7 @@ describe("App PDF signing keys", () => {
   });
 
   beforeEach(() => {
+    vi.stubGlobal("__qredTestMode", true);
     vi.stubGlobal("crypto", webcrypto);
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -130,6 +131,19 @@ describe("App PDF signing keys", () => {
     expect(screen.getByLabelText("Private Key").type).toBe("password");
     expect(fetch).not.toHaveBeenCalled();
     expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  it("keeps signing keys out of the test global on normal page loads", async () => {
+    vi.stubGlobal("__qredTestMode", undefined);
+    const selectPublicKey = vi.fn();
+    const { unmount } = render(<PdfSealForm onUsePublicKey={selectPublicKey} />);
+    chooseOfflineSealing();
+    const keys = await generateKeys();
+    fireEvent.click(screen.getByRole("button", { name: "Use public key to verify" }));
+    expect(selectPublicKey).toHaveBeenCalledWith(await deriveSigningPublicKey(keys.privateKey));
+    expect(Object.hasOwn(window, "__qredPublicKeys")).toBe(false);
+    unmount();
+    expect(Object.hasOwn(window, "__qredPublicKeys")).toBe(false);
   });
 
   it("defaults to watermark with appended overflow and verifies the generated pair's real signature using the selected public key", async () => {
@@ -275,6 +289,7 @@ describe("App PDF signing keys", () => {
     fireEvent.click(screen.getByRole("button", { name: "Hide private key" }));
     expect(input.type).toBe("password");
     fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+    expect(Object.hasOwn(window, "__qredPublicKeys")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Open PDF stamping tool" }));
     expect(screen.queryByLabelText("Private Key")).toBeNull();
     chooseOfflineSealing();
