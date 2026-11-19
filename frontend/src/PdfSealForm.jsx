@@ -162,9 +162,11 @@ export function PdfSealForm({ onUsePublicKey }) {
     return () => { current = false; };
   }, [privateKey]);
 
-  // Keep legacy global for Python E2E harness compatibility
+  // Expose the key only to explicitly enabled test harnesses, while mounted.
   useEffect(() => {
-    if (typeof window !== "undefined") window.__qredPublicKeys = publicKey;
+    if (typeof window === "undefined" || window.__qredTestMode !== true) return;
+    window.__qredPublicKeys = publicKey;
+    return () => { delete window.__qredPublicKeys; };
   }, [publicKey]);
 
   function reportKeyStatus(text, error = false) {

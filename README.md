@@ -147,8 +147,10 @@ while framing and taking the photo. Cameras with only a shutter flash show
 **Photo flash**. If the camera has yet to report a light, **Try flashlight**
 checks it directly. On request, QRed also checks other available rear document
 cameras for a working light. A camera confirmed by the light or framing control
-is remembered in this browser and opened directly on later visits, with lighting
-initially off. Turning the light off keeps that camera. If a remembered camera
+is remembered only while this page stays open and reopened with lighting
+initially off. Reloading chooses automatically again; camera preferences are
+not saved in browser storage, and previously saved preferences are removed.
+Turning the light off keeps that camera. If a remembered camera
 is no longer available, QRed falls back to normal rear-camera selection. On a
 first visit, reported focus and light capabilities take priority over a generic
 “wide” label. If the browser exposes no usable light, select
