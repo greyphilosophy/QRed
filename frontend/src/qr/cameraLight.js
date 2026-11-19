@@ -88,6 +88,8 @@ export function attachCameraLight(button, track, { video, progress, enableOnPlay
     else if ((torch === false && !onLightUnavailable) || torchFailed) label = "Flashlight unavailable";
     button.hidden = false;
     button.disabled = Boolean(enableWhenReady || state.pending || state.paused || progress?.getSnapshot());
+    button.setAttribute("data-light-discoverable", String(!button.disabled &&
+      ["Try flashlight", "Flashlight off", "Photo flash off"].includes(label)));
     if (framingSelect) framingSelect.disabled = button.disabled;
     refreshFraming();
     if (label === "Use phone camera") button.removeAttribute("aria-pressed");

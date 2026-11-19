@@ -208,7 +208,11 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
             if (grid.bendAnchors && candidate.bentRadius !== searchRadius) {
               const bent = bentModuleGrid(grid.bendAnchors, working.toPhoto, 17 + 4 * version, shouldContinue);
               if (bent && shouldContinue()) {
-                const recovered = recoverExposed(image, bent, version, shouldContinue, true);
+                // A curved sheet can also have uneven illumination. Keep the
+                // measured bend for the shadow reader instead of falling back
+                // to the less accurate, locally interpolated grid below.
+                const recovered = recoverExposed(image, bent, version, shouldContinue, true)
+                  || recoverShadowedGrid(image, bent, version, shouldContinue);
                 if (recovered || !shouldContinue()) return recovered;
                 candidate.bentRadius = searchRadius;
               }

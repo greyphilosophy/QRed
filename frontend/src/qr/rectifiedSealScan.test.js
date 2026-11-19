@@ -74,6 +74,29 @@ it("authenticates a bowed warm-lit print against a ridged background from pixels
   });
 }, 20000);
 
+it("recovers a bowed, shaded print when optional grid remeasurement is unavailable", async () => {
+  const { seals } = await createQRedSeals({
+    privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey,
+    content: "Synthetic soft-surface print. ".repeat(40), encodingStrategy: "plaintext",
+    timestamp: "2026-11-18T12:00:00Z",
+  });
+  const { payloadBytes } = createQRedQrData(seals[0]);
+  const symbol = QRCode.create([{ data: payloadBytes, mode: "byte" }], { version: 33, errorCorrectionLevel: "L" });
+  const image = shadowedPrint(symbol, 20, { bow: .018, cornerBend: .065, overprint: true, panelSize: 35 });
+  // Initial public-pattern measurements already describe the bend. Further
+  // remeasurement can fail on covered marks; keep the actual pixel readers,
+  // parity recovery and signature verification, but make that refit unavailable.
+  const refit = vi.spyOn(shadowGrid, "refineShadowGrid").mockReturnValue(null);
+  let result;
+  try {
+    result = prepareCurvedPageScan(image, null, () => true)?.scan({ searchRadius: 12 });
+  } finally { refit.mockRestore(); }
+  expect(result?.seal).toBe(seals[0]);
+  await expect(verifyQRedSeals([result.seal], publicKey)).resolves.toMatchObject({
+    status: "VALID", signature_valid: true,
+  });
+}, 20000);
+
 async function overprintedWatermark(panelSize) {
   const { seals } = await createQRedSeals({
     privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey,
