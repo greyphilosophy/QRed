@@ -13,6 +13,7 @@ real pixel readers, transport reconstruction, signature verification and the UI.
 | Worker checkpoint → watchdog → collection → later photo | Stop a real worker after its first decoded chunk. The normal watchdog delivers that chunk; a photo containing only the complementary chunk completes authentication. Clearing removes the first chunk. | `tests/test_scan_recovery_integration.py` on both routes |
 | Lost checkpoint → incomplete collection | Suppress that same real message as a negative control. A later photo alone must remain incomplete, with no authenticated result. | The lost-checkpoint variant of the same browser test |
 | Native photo → saved XMP/ZIP → reopened file → seal and text comparison | Save a synthetic EXIF-rotated JPEG through the capture UI after a controlled worker stall. Reload offline and open only the downloaded ZIP. Preserve portrait coordinates and report the photographed changed date after authenticating the seal. | `tests/test_scan_recovery_integration.py::test_saved_rotated_native_photo_reopens_with_its_digit_difference` on both routes |
+| Region discovery → compact/quadrant reading → collection and authentication | Recover the exact seals from the original small-pale and oblique four-part workshop photos, without caller-supplied crops. Keep all partial chunks, reject a wrong key, and leave source pixels intact. | `frontend/src/qr/decodePhoto.regions.test.js` and `tests/test_workshop_photos.py` on both routes |
 
 The curved fixture uses a stronger bow than the existing helper-level fixture:
 the older example also succeeds through the straight reader. During development,
@@ -36,11 +37,13 @@ offline navigation immediately after the very first visit.
 | Offline preparation and startup | Offline processing in an open tab; saved-file reopening after the app is cached | First-visit offline restart, if that becomes a supported promise. The initial navigation precedes service-worker installation and is not automatically cached. |
 | Optical recovery | Pixel-level bending, shadows, overprint and parity tests; whole-photo curved dispatch; conventional footer dispatch | Broader combinations of physical wrinkles, shadows, printing and blur. Synthetic coverage does not establish printer/phone success rates. |
 
-The strict workshop run also includes a small pale seal and an oblique multipart
-register beyond its blocking cases. That run is currently advisory in CI;
-green required checks do not establish that those two cases pass. Keep their
-results visible and promote them to blocking regressions when their failures
-are fixed, rather than treating the overall CI result as their acceptance.
+All workshop fixtures now run in the blocking scanner-integration CI check.
+This includes the formerly advisory small pale seal and oblique multipart
+register on both verifier routes. Their fixed full photos and expected payload
+digests have not changed. A separate relocated-seal regression checks that
+region discovery does not depend on the small seal's original page position.
+Deliberately disabling the region pass makes both unchanged-photo integration
+tests fail with no recovered seals; restoring it recovers every pinned payload.
 
 ## Review rule
 

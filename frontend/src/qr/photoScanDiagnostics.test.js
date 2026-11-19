@@ -35,7 +35,7 @@ it("identifies the loaded scanner from its public asset hash without logging URL
   expect(photoScanTimeoutAction(null, null, "/src/photoScan.worker.js").message).not.toContain("Scanner build");
 });
 
-it.each(["curved-page", "qr-full-detail", "qr-rescaled", "qr-filtered", "qr-modules"])(
+it.each(["curved-page", "watermark-regions", "qr-full-detail", "qr-rescaled", "qr-filtered", "qr-modules"])(
   "keeps the %s checkpoint for progress and timeout feedback", stage => {
     const input = { stage, elapsedMs: 1200 };
     expect(scanStageDiagnostic(input)).toEqual(input);

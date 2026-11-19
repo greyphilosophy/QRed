@@ -126,21 +126,21 @@ function recoverExposed(image, moduleMap, version, shouldContinue, inner = false
 // retry must not rebuild the same page warp, normalized pixels and finder
 // observations after the earlier narrow search has already paid for them.
 // This closure is never retained across photographs or camera frames.
-export function createRectifiedSealScanner(source, { pageMapping = null, onMapping } = {}) {
+export function createRectifiedSealScanner(source, { pageMapping = null, onMapping, regions } = {}) {
   let image = null, mapping = pageMapping;
   let originalGray = null, sharpenedGray = null;
   const prepared = new Map();
-  const profiles = [{ marginPoints: 54 }, { marginPoints: 36 }, { legacy: true }];
+  const candidates = regions ?? [{ marginPoints: 54 }, { marginPoints: 36 }, { legacy: true }]
+    .map(profile => pageWatermarkRegions(1, undefined, profile)[0]);
 
-  function prepare(profile) {
-    if (prepared.has(profile)) return prepared.get(profile);
-    const region = pageWatermarkRegions(1, undefined, profile)[0];
+  function prepare(region) {
+    if (prepared.has(region)) return prepared.get(region);
     const working = rectifiedImage(image, mapping, region);
     const gray = normalizeWatermarkLuminance(working.data, SIDE, SIDE), corners = findCorners(gray);
     const strong = corners.filter(p => p.score >= .8).length;
-    if (strong < 1 || corners.some(p => p.score < .70)) { prepared.set(profile, null); return null; }
+    if (strong < 1 || corners.some(p => p.score < .70)) { prepared.set(region, null); return null; }
     const version = readRectifiedQrVersion(gray, SIDE, corners);
-    if (!version) { prepared.set(profile, null); return null; }
+    if (!version) { prepared.set(region, null); return null; }
     const size = 17 + 4 * version, [tl, tr, bl] = corners;
     const gridMap = (u, v) => ({
       x: tl.x + (u * size - 3.5) * (tr.x - tl.x) / (size - 7) + (v * size - 3.5) * (bl.x - tl.x) / (size - 7),
@@ -149,12 +149,12 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
     // A partly covered third finder still needs consistent module spacing
     // and a BCH-readable version before it can propose a grid.
     if (strong < 3 && corners.some(p => Math.abs(p.pitch * size / (SIDE * INTERIOR) - 1) > .15)) {
-      prepared.set(profile, null); return null;
+      prepared.set(region, null); return null;
     }
     const thresholds = [...new Set([230, measuredThreshold(gray, corners)])];
     const candidate = { working, gray, version, gridMap, thresholds, weakFinder: strong < 3,
       needsAlignmentEvidence: strong < 2, triedExposed: false, triedShadow: false, bentRadius: null };
-    prepared.set(profile, candidate);
+    prepared.set(region, candidate);
     return candidate;
   }
 
@@ -170,9 +170,9 @@ export function createRectifiedSealScanner(source, { pageMapping = null, onMappi
       onMapping?.(mapping);
     }
     if (!mapping) return null;
-    for (const profile of profiles) {
+    for (const region of candidates) {
       if (!shouldContinue()) break;
-      const candidate = prepare(profile);
+      const candidate = prepare(region);
       if (!candidate) continue;
       const { working, gray, version, gridMap, thresholds } = candidate;
       for (const foregroundRobust of [true, false]) {

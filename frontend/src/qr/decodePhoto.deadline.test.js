@@ -9,6 +9,7 @@ vi.mock("./scanQrImage.js", async importOriginal => ({
 }));
 vi.mock("./rectifiedSealScan.js", () => ({ createRectifiedSealScanner: vi.fn(), prepareCurvedPageScan: vi.fn(() => ({ preferred: false, scan: () => null })) }));
 vi.mock("./footerSealScan.js", () => ({ scanFooterSeals: vi.fn(() => []) }));
+vi.mock("./watermarkRegionScan.js", () => ({ scanWatermarkRegions: vi.fn(() => []) }));
 vi.mock("./pageAlignedScan.js", () => ({ scanPageAlignedImage: vi.fn(() => []) }));
 afterEach(() => vi.restoreAllMocks());
 
@@ -34,7 +35,7 @@ it("lets later recovery run after real jsQR cancels inside a 12 MP photo's ordin
     onStage: stage => stages.push(stage.stage) });
   expect(now).toBeGreaterThanOrEqual(2000);
   expect(now).toBeLessThan(2100);
-  expect(stages).toEqual(["rectified-fast", "watermark-preview", "ordinary-qr", "footer", "curved-page", "rectified-wide"]);
+  expect(stages).toEqual(["rectified-fast", "watermark-preview", "ordinary-qr", "footer", "watermark-regions", "curved-page", "rectified-wide"]);
   expect(scan).toHaveBeenCalledTimes(2);
   expect(result).toEqual({ status: "found", text: seals[0] });
   vi.restoreAllMocks();
