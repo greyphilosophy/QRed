@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { startCameraSession } from "./cameraSession.js";
 import { createPhotoScanProgress } from "./photoScanProgress.js";
+import { forgetPreferredCamera, preferredCameraId } from "./cameraPreference.js";
 
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
@@ -13,7 +14,61 @@ function setup(options = {}) {
   const camera = startCameraSession({ video, requestStream: async () => stream, onFrame, onError, ...options });
   return { camera, video, stream, onFrame, onError };
 }
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { forgetPreferredCamera(preferredCameraId()); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it("keeps the camera found by the flashlight when switched off and reopens it with lighting off", async () => {
+  const makeCamera = (deviceId, supportsTorch) => {
+    const stream = makeStream();
+    let torch = false;
+    stream.stop.mockImplementation(() => { torch = false; });
+    const track = { getSettings: () => ({ deviceId, torch, facingMode: "environment" }),
+      getCapabilities: () => ({ torch: supportsTorch }),
+      applyConstraints: vi.fn(async request => {
+        if (supportsTorch) torch = request.torch?.exact ?? request.advanced?.find(entry => "torch" in entry)?.torch ?? torch;
+      }) };
+    stream.getVideoTracks = () => [track];
+    return stream;
+  };
+  const first = makeCamera("wide", false), better = makeCamera("main", true), reopened = makeCamera("main", true);
+  const mediaDevices = {
+    getUserMedia: vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(better).mockResolvedValueOnce(reopened),
+    // Like some Android phones, the device listing reports no light/focus capabilities.
+    enumerateDevices: vi.fn(async () => ["wide", "main"].map((deviceId, index) => ({
+      kind: "videoinput", deviceId, label: `camera2 ${index}, facing back`,
+    }))),
+  };
+  vi.stubGlobal("navigator", { mediaDevices });
+  const button = Object.assign(new EventTarget(), {
+    ownerDocument: { getElementById: () => null }, setAttribute() {}, getAttribute: () => null,
+  });
+  const firstSession = setup({ requestStream: undefined, lightButton: button });
+  try {
+    await vi.waitFor(() => expect(firstSession.video.srcObject).toBe(first));
+    expect(preferredCameraId()).toBeNull();
+    expect(first.getVideoTracks()[0].applyConstraints).not.toHaveBeenCalled();
+    button.dispatchEvent(new Event("click"));
+    await vi.waitFor(() => expect(button.textContent).toBe("Flashlight on"));
+    expect(firstSession.video.srcObject).toBe(better);
+    expect(first.stop).toHaveBeenCalledOnce();
+    expect(preferredCameraId()).toBe("main");
+    button.dispatchEvent(new Event("click"));
+    await vi.waitFor(() => expect(button.textContent).toBe("Flashlight off"));
+    expect(firstSession.video.srcObject).toBe(better);
+    expect(better.getVideoTracks()[0].getSettings().torch).toBe(false);
+    expect(mediaDevices.getUserMedia).toHaveBeenCalledTimes(2);
+    expect(preferredCameraId()).toBe("main");
+  } finally { firstSession.camera.stop(); }
+
+  const nextSession = setup({ requestStream: undefined, lightButton: button });
+  try {
+    await vi.waitFor(() => expect(nextSession.video.srcObject).toBe(reopened));
+    expect(button.textContent).toBe("Flashlight off");
+    expect(reopened.getVideoTracks()[0].applyConstraints).not.toHaveBeenCalled();
+    expect(mediaDevices.getUserMedia).toHaveBeenCalledTimes(3);
+    expect(mediaDevices.getUserMedia.mock.calls[2][0].video.deviceId).toEqual({ exact: "main" });
+    expect(mediaDevices.enumerateDevices).toHaveBeenCalledTimes(2);
+  } finally { nextSession.camera.stop(); }
+});
 
 it("releases a delayed camera grant after stop without attaching it or restarting decoding", async () => {
   const pending = deferred();
@@ -51,6 +106,7 @@ it("stops exactly once and releases a late alternate lens after closing during a
   expect(video.srcObject).toBeNull();
   expect(button.hidden).toBe(true);
   expect(onError).not.toHaveBeenCalled();
+  expect(preferredCameraId()).toBeNull();
 });
 
 it("plays and scans while camera controls are pending and leaves a replacement session untouched", async () => {

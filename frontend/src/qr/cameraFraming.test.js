@@ -1,8 +1,10 @@
-import { expect, it } from "vitest";
-import { cameraWithChosenFraming, cameraZoomRange, rememberCameraZoom } from "./cameraFraming.js";
+import { afterEach, expect, it } from "vitest";
+import { cameraZoomRange, rememberCameraZoom } from "./cameraFraming.js";
+import { forgetPreferredCamera, preferredCameraId } from "./cameraPreference.js";
 import { cameraQualityPreferences } from "./cameraControls.js";
 
 const trackFor = (label, deviceId) => ({ label, getSettings: () => ({ deviceId }) });
+afterEach(() => forgetPreferredCamera(preferredCameraId()));
 
 it("uses the phone's 1× setting on a combined rear camera and the reciprocal on a labeled physical lens", () => {
   const track = trackFor("Back 0.6×", "combined-or-physical");
@@ -23,7 +25,5 @@ it("changes an anonymous lens only on request and reuses its own framing when th
   rememberCameraZoom(track, 1.7);
   expect(cameraQualityPreferences({ zoom: range }, trackFor(track.label, "numbered"))).toEqual([{ zoom: 1.7 }]);
   expect(cameraZoomRange(trackFor(track.label, "other"), range).preferred).toBe(1);
-  const devices = ["other", "numbered"].map(deviceId => ({ kind: "videoinput", deviceId }));
-  expect(cameraWithChosenFraming(devices)).toBe(devices[1]);
-  expect(cameraWithChosenFraming(devices.slice(0, 1))).toBeUndefined();
+  expect(preferredCameraId()).toBe("numbered");
 });

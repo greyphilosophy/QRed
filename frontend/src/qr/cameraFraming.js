@@ -1,15 +1,12 @@
 // Browser zoom is relative to the camera track. Some rear cameras expose a
 // phone-wide 0.6–1× range; a physical ultrawide can instead start at 1.
+import { rememberPreferredCamera } from "./cameraPreference.js";
+
 const zoomByDevice = new Map();
 const zoomByTrack = new WeakMap();
-let selectedCameraId;
 
 function deviceId(track) {
   try { return track?.getSettings?.().deviceId; } catch { return undefined; }
-}
-
-export function cameraWithChosenFraming(devices) {
-  return selectedCameraId && devices.find(device => device.kind === "videoinput" && device.deviceId === selectedCameraId);
 }
 
 export function cameraZoomRange(track, range) {
@@ -43,6 +40,6 @@ export function cameraZoomRange(track, range) {
 
 export function rememberCameraZoom(track, zoom) {
   zoomByTrack.set(track, zoom);
-  const id = deviceId(track);
-  if (id) { selectedCameraId = id; zoomByDevice.set(id, zoom); }
+  const id = rememberPreferredCamera(track);
+  if (id) zoomByDevice.set(id, zoom);
 }

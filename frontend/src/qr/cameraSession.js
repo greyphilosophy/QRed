@@ -1,6 +1,7 @@
 import { alternateLightCameras, applyCameraQualityControls, getPreferredCameraStream, requestCameraById } from "./cameraControls.js";
 import { attachCameraLight, hasPausedTorch } from "./cameraLight.js";
 import { observeCameraFrames } from "./cameraPhoto.js";
+import { forgetPreferredCamera, rememberPreferredCamera } from "./cameraPreference.js";
 
 const CAMERA_ACCESS_TIMEOUT_MS = 30000;
 const FIRST_FRAME_TIMEOUT_MS = 10000;
@@ -86,9 +87,10 @@ export function startCameraSession(options) {
         rememberLitCamera(track);
         release();
       },
-      onProbeFinished: enabled => {
+      onProbeFinished: (enabled, track) => {
+        if (controller.signal.aborted) return;
         restoreLight = false;
-        if (enabled && seekingLight) selectedId = deviceId;
+        if (enabled) selectedId = rememberPreferredCamera(track) || (seekingLight ? deviceId : selectedId);
         lightSearch = null;
       },
       onLightUnavailable: async track => {
@@ -106,7 +108,10 @@ export function startCameraSession(options) {
       if (!["NotAllowedError", "SecurityError"].includes(error.name)) {
         if (lightSearch) { nextLightCamera(); return; }
         // An exact device may disappear while the system camera or tab is away.
-        if (deviceId) { selectedId = null; restoreLight = false; open(); return; }
+        if (deviceId) {
+          forgetPreferredCamera(deviceId);
+          selectedId = null; restoreLight = false; open(); return;
+        }
       }
       stop();
       options.onError(error, stage);
@@ -205,7 +210,7 @@ async function openPreview({ video, requestStream = signal => getPreferredCamera
   if (!signal.aborted) {
     controls = attachCameraLight(lightButton, stream.getVideoTracks?.()[0], { video, progress, framingSelect,
       enableOnPlayback: waitingForLight, preferPhoneCamera, onPhoneCamera, onLightUnavailable, onTorchStuck,
-      onProbeFinished: enabled => { waitingForLight = false; onProbeFinished(enabled); },
+      onProbeFinished: enabled => { waitingForLight = false; onProbeFinished(enabled, stream?.getVideoTracks?.()[0]); },
     });
     // The alternate's torch constraints include the same focus, exposure and
     // zoom preferences. A concurrent second request could reset its light.
