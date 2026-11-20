@@ -253,16 +253,16 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         expect(words).to_have_count(len(expected_words))
         assert words.evaluate_all("nodes => nodes.map(node => node.getAttribute('aria-label'))") == [
             "Matching text: " + word for word in expected_words]
-        assert review.locator(".photo-differences").inner_text() == ""
-        expect(review.locator(".photo-legend .matched")).to_have_text(f"Matching: {len(expected_words)}")
-        expect(review.locator(".photo-legend .different")).to_have_text("Different or extra: 0")
-        expect(review.locator(".photo-legend .uncertain")).to_have_text("Uncertain: 0")
+        assert review.locator(".photo-differences").get_attribute("data-content-count") == "0"
+        expect(review.locator(".photo-legend .matched")).to_have_text(f"OCR matches: {len(expected_words)}")
+        expect(review.locator(".photo-legend .different")).to_have_text("OCR differences: 0")
+        expect(review.locator(".photo-legend .uncertain")).to_have_text("OCR uncertain: 0")
         expect(review.locator(".reading-caution, .photo-retries")).to_have_count(0)
         if review.locator(".photo-summary").inner_text() == "Some readings need review":
             expect(review.locator(".photo-markings")).to_be_visible()
             expect(review.locator(".photo-markings")).to_contain_text("Verify")
         else:
-            expect(review.locator(".photo-summary")).to_have_text("Recognized text matches the signed text")
+            expect(review.locator(".photo-summary")).to_contain_text("Recognized text matches the signed text")
         previews = page.evaluate("__documentScanRequests.filter(request => request.live)")
         assert previews and all((request["width"], request["height"]) == guidance_size for request in previews)
         decoded = assert_document_preview_not_decoded(page)

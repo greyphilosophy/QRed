@@ -5,6 +5,8 @@ import { PageCameraCapture } from "./PageCameraCapture.jsx";
 import { createPageTextChecks } from "./pageTextChecks.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { photoProcessingMessage } from "./photoStatus.js";
+import { createReviewItems, currentReview, reviewCounts } from "./reviewFindings.js";
+import { DifferenceCrop, ReadingViewer, ReviewReading } from "./ReviewReading.jsx";
 import "./photoTextVerification.css";
 
 const EMPTY = [];
@@ -13,7 +15,7 @@ const labels = {
   queued: "Printed text waiting to be checked",
   reading: "Reading printed text…",
   matches: "Recognized text matches the signed text",
-  differences: "Differences found — review the marked text",
+  differences: "Review needed — compare the marked text",
   uncertain: "Some readings need review",
   unreadable: "No text could be read — retake this page",
   error: "Text check could not finish — retry or retake",
@@ -29,17 +31,32 @@ export function PhotoTextVerification({ session = 0, ...props }) {
 }
 
 function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captureNotice = "", scanning = false, verifying = false,
-  checks: providedChecks, onReplacePhoto, collectionProgress, session }) {
+  checks: providedChecks, onReplacePhoto, onFinish, collectionProgress, session }) {
   const [checks] = useState(() => providedChecks || createPageTextChecks());
   const snapshot = useSyncExternalStore(checks.subscribe, checks.getSnapshot);
   const [selected, setSelected] = useState(""), [retake, setRetake] = useState(null);
-  const [activeFinding, setActiveFinding] = useState(0);
+  const [reviews, setReviews] = useState({}), [showSummary, setShowSummary] = useState(false), [viewer, setViewer] = useState(null);
+  const summaryHeading = useRef(null), focusFinding = useRef(false);
   const selectedByUser = useRef(false), openedPriority = useRef(0), heading = useRef(null), focusPage = useRef(null);
   const findingHeading = useRef(null), overviewHeading = useRef(null);
   useEffect(() => { checks.update(results, scanPhotos, { scanning, verifying }); }, [checks, results, scanPhotos, scanning, verifying]);
   useEffect(() => () => { if (!providedChecks) checks.dispose(); }, [checks, providedChecks]);
   const pages = useMemo(() => [...snapshot.pages].sort((a, b) => (a.page.page_number ?? 0) - (b.page.page_number ?? 0)), [snapshot.pages]);
   const page = pages.find(item => item.id === selected) || pages[0];
+  const queues = useMemo(() => new Map(pages.map(item => [item.id, createReviewItems(item.comparison)])), [pages]);
+  const items = queues.get(page?.id) || EMPTY;
+  const review = page ? currentReview(reviews[page.id], page) : { index: 0, decisions: {} };
+  const activeFinding = Math.min(review.index, Math.max(0, items.length - 1));
+  const counts = reviewCounts(items, review.decisions);
+  useEffect(() => {
+    setReviews(previous => {
+      const kept = Object.fromEntries(Object.entries(previous).filter(([id, saved]) => {
+        const current = pages.find(item => item.id === id);
+        return current && currentReview(saved, current) === saved;
+      }));
+      return Object.keys(kept).length === Object.keys(previous).length ? previous : kept;
+    });
+  }, [pages]);
   useEffect(() => {
     if (selectedByUser.current || scanning || verifying) return;
     const priority = item => item.state === "differences" ? 4 : ["unreadable", "error"].includes(item.state) ? 3
@@ -58,40 +75,74 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
     focusPage.current = null;
     heading.current.focus({ preventScroll: true });
     heading.current.closest(".photo-result")?.scrollIntoView?.({ block: "start" });
-  }, [page?.id, pages]);
-  useEffect(() => { setActiveFinding(0); }, [page?.id, page?.captureId]);
+  }, [page?.id, pages, showSummary]);
+  useEffect(() => {
+    if (!focusFinding.current || !findingHeading.current || showSummary) return;
+    focusFinding.current = false;
+    findingHeading.current.focus({ preventScroll: true });
+    findingHeading.current.scrollIntoView?.({ block: "start" });
+  }, [activeFinding, page?.id, showSummary]);
+  useEffect(() => {
+    if (!showSummary) return;
+    summaryHeading.current?.focus({ preventScroll: true });
+    summaryHeading.current?.scrollIntoView?.({ block: "start" });
+  }, [showSummary]);
+  function saveReview(target, changes) {
+    setReviews(previous => ({ ...previous, [target.id]: { ...currentReview(previous[target.id], target),
+      comparison: target.comparison, captureId: target.captureId, reference: target.reference, ...changes } }));
+  }
   function selectPage(id) {
     const next = pages.find(item => item.id === id);
     if (!next) return;
     selectedByUser.current = true;
-    focusPage.current = id; setSelected(id); setActiveFinding(0);
-    if (id === page?.id) {
+    focusPage.current = id; setSelected(id); setShowSummary(false); setViewer(null);
+    if (id === page?.id && !showSummary) {
       heading.current?.focus({ preventScroll: true });
       heading.current?.closest(".photo-result")?.scrollIntoView?.({ block: "start" });
       focusPage.current = null;
     }
   }
-  function selectFinding(index, focus = false) {
-    setActiveFinding(index);
-    // Keep the wording and crop in view after navigating a long difference or
-    // choosing a highlight farther down the page. Do not scroll only the buttons.
-    heading.current?.closest(".photo-result")?.scrollIntoView?.({ block: "start" });
-    if (focus) findingHeading.current?.focus({ preventScroll: true });
+  function selectFinding(index) {
+    if (!page || !items[index]) return;
+    saveReview(page, { index });
+    focusFinding.current = true;
+    if (index === activeFinding) {
+      findingHeading.current?.focus({ preventScroll: true });
+      findingHeading.current?.scrollIntoView?.({ block: "start" });
+      focusFinding.current = false;
+    }
+  }
+  function decide(value) {
+    saveReview(page, { decisions: { ...review.decisions, [items[activeFinding].id]: value } });
+  }
+  function openSummary() { selectedByUser.current = true; setShowSummary(true); setViewer(null); }
+  function openUnreviewed(target) {
+    const nextItems = queues.get(target.id) || [], saved = currentReview(reviews[target.id], target);
+    const pending = nextItems.findIndex(item => !saved.decisions[item.id]);
+    const uncertain = nextItems.findIndex(item => saved.decisions[item.id] === "unsure");
+    saveReview(target, { index: pending >= 0 ? pending : uncertain >= 0 ? uncertain : saved.index });
+    selectPage(target.id);
+  }
+  const orderedOtherPages = page ? [...pages.slice(pages.indexOf(page) + 1), ...pages.slice(0, pages.indexOf(page))] : [];
+  const nextPage = orderedOtherPages.find(item => reviewCounts(queues.get(item.id) || [], currentReview(reviews[item.id], item).decisions).pending);
+  function nextReading() {
+    if (activeFinding + 1 < items.length) selectFinding(activeFinding + 1);
+    else if (nextPage) openUnreviewed(nextPage);
+    else openSummary();
   }
   function viewFullPage() {
     overviewHeading.current?.scrollIntoView?.({ block: "start" });
     overviewHeading.current?.focus({ preventScroll: true });
   }
+  function enlarge(mode, opener) { setViewer({ mode, opener, pageId: page.id, comparison: page.comparison }); }
+  function pageProgress(item) {
+    const queue = queues.get(item.id) || [];
+    return queue.length ? `${reviewCounts(queue, currentReview(reviews[item.id], item).decisions).reviewed}/${queue.length} reviewed` : "";
+  }
   const comparison = page?.comparison;
-  const dateReviews = comparison?.retryReviews?.filter(reading => reading.dateField);
-  const lineReviews = comparison?.retryReviews?.filter(reading => !reading.dateField && !reading.completedLine);
   const completions = comparison?.retryReviews?.filter(reading => reading.completedLine) || [];
   const knownSeparators = comparison?.differences.filter(d => d.review === "sourceSeparator") || [];
-  const contentDifferences = comparison?.differences.filter(difference => !difference.typography && !difference.spacing && !difference.review) || [];
-  const numbersToCheck = comparison?.differences.filter(difference => difference.review === "number") || [];
-  const readingsToCheck = comparison?.differences.filter(difference => difference.review && !["number", "sourceSeparator"].includes(difference.review)) || [];
-  const typographyDifferences = comparison?.differences.filter(difference => difference.typography) || [];
-  const spacingDifferences = comparison?.differences.filter(difference => difference.spacing) || [];
+  const contentDifferences = comparison?.differences.filter(d => !d.typography && !d.spacing && !d.review) || [];
   const difficultReading = comparison?.words.length >= 5 && comparison.uncertainCount > comparison.words.length * 0.3;
   const validPages = results.filter(result => result.status === "VALID" && result.signature_valid === true);
   const unscanned = collectionProgress?.pagesTotal
@@ -112,61 +163,52 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
         {result.status === "INCOMPLETE" ? "This page needs more seal pieces. Keep scanning." : "This seal has not been authenticated. Printed text has not been checked."}
       </p>)}
       {unscanned && <p className="photo-summary">Other pages have not been checked. You can review the pages captured so far.</p>}
-      {page && <section className="photo-result" onPointerDown={() => { selectedByUser.current = true; }}
+      {showSummary && <ReviewSummary pages={pages} queues={queues} reviews={reviews} headingRef={summaryHeading}
+        incomplete={unscanned || scanning || Boolean(collectionProgress?.documentWarning) || results.some(result => result.status !== "VALID" || result.signature_valid !== true)}
+        validCount={validPages.length} onSelect={openUnreviewed} onFinish={onFinish} />}
+      {page && !showSummary && <section className="photo-result" onPointerDown={() => { selectedByUser.current = true; }}
         onKeyDown={() => { selectedByUser.current = true; }} aria-label={`Review ${pageName(page.page)}`}>
         <div className="photo-review-header">
-          <h3 ref={heading} tabIndex={-1}>{pageName(page.page)} <span className="photo-note">· Seal authenticated</span></h3>
+          <h3 ref={heading} tabIndex={-1}>{pageName(page.page)} <span className="photo-note">· Seal: authenticated</span></h3>
           <nav aria-label="Page checks" className="page-check-list">
             {pages.length <= 5 ? pages.map(item => <button type="button" key={item.id}
               className={`page-check-status ${item.state}`} title={resultLabel(item)} aria-pressed={page.id === item.id}
-              aria-label={`${pageName(item.page)} · Seal authenticated · ${resultLabel(item)}`}
+              aria-label={`${pageName(item.page)} · Seal authenticated · ${resultLabel(item)}${pageProgress(item) ? ` · ${pageProgress(item)}` : ""}`}
               onClick={() => selectPage(item.id)}>{item.page.page_number ? `Page ${item.page.page_number}` : "Signed text"}
-              <span aria-hidden="true" className="page-state-mark">{pageStateMark[item.state]}</span>
+              <span aria-hidden="true" className="page-state-mark">{queues.get(item.id)?.length
+                ? pageProgress(item) : pageStateMark[item.state]}</span>
               <span className="sr-only"> · {resultLabel(item)}</span></button>)
               : <select aria-label="Choose a page to review" value={page.id} onChange={event => selectPage(event.target.value)}>
-                {pages.map(item => <option key={item.id} value={item.id} className={`page-check-status ${item.state}`}>{pageName(item.page)} · {resultLabel(item)}</option>)}
+                {pages.map(item => <option key={item.id} value={item.id} className={`page-check-status ${item.state}`}>{pageName(item.page)} · {pageProgress(item) || resultLabel(item)}</option>)}
               </select>}
           </nav>
         </div>
         <p className={`photo-summary ${page.state}`} role={page.state === "reading" ? "status" : undefined}>
-          {page.state === "reading" ? photoProcessingMessage(page.progress) : resultLabel(page)}</p>
+          {page.state === "reading" ? photoProcessingMessage(page.progress) : <>{!["missing", "queued"].includes(page.state) && <span className="review-status-label">Printed text: </span>}{items.length && ["matches", "differences", "uncertain"].includes(page.state)
+            ? counts.pending ? `${counts.pending} reading${counts.pending === 1 ? "" : "s"} to review`
+              : counts.unsure ? `${counts.unsure} reading${counts.unsure === 1 ? "" : "s"} still unclear`
+                : counts.differs ? "Your review recorded discrepancies" : "Your review decisions are recorded"
+            : resultLabel(page)}</>}</p>
         {page.state === "reading" && <progress max="1" value={page.progress ?? undefined} aria-label="Printed-text recognition" />}
         {page.error && <p role="alert">{page.error}</p>}
         {comparison && <>
-          <div className="photo-differences" data-count={contentDifferences.length}>
-            {contentDifferences.length > 0 && <FindingPages page={page} items={contentDifferences} index={activeFinding}
-              headingRef={findingHeading} onChange={selectFinding} onViewPage={page.url ? viewFullPage : undefined} />}
-            {spacingDifferences.length > 0 && <details className="photo-typography photo-spacing">
-              <summary>Word spacing to review ({spacingDifferences.length})</summary>
-              <p className="photo-note">The characters agree, but words were split or joined. Check the spacing on the paper.</p>
-              <ol>{spacingDifferences.map((difference, index) => <li key={index}>
-                <div><strong>Signed text:</strong> {difference.expected}</div>
-                <div><strong>Photo reading:</strong> {difference.observed}</div>
-                <DifferenceCrop page={page} difference={difference} />
-              </li>)}</ol>
-            </details>}
-            {typographyDifferences.length > 0 && <details className="photo-typography">
-              <summary>Typography to review ({typographyDifferences.length})</summary>
-              <p className="photo-note">Quotes, dashes, or joined letters were read differently. Check the highlighted photo to confirm the printed characters.</p>
-              <ol>{typographyDifferences.map((difference, index) => <li key={index}>
-                <div><strong>Signed text:</strong> {difference.expected}</div>
-                <div><strong>Photo reading:</strong> {difference.observed}</div>
-                <DifferenceCrop page={page} difference={difference} />
-                {difference.review !== "sourceSeparator" && difference.context && difference.context !== difference.expected && <p className="photo-note">Signed wording nearby: {difference.context}</p>}
-              </li>)}</ol>
-            </details>}
+          <div className="photo-differences" data-count={items.length} data-content-count={contentDifferences.length}>
+            {items.length > 0 && <>
+              <div className="review-progress"><h4 className="photo-finding-heading" ref={findingHeading} tabIndex={-1} aria-live="polite">
+                Reading {activeFinding + 1} of {items.length}</h4><span>{counts.reviewed}/{counts.total} reviewed</span></div>
+              <ol start={activeFinding + 1}><ReviewReading page={page} item={items[activeFinding]}
+                decision={review.decisions[items[activeFinding].id]} onDecision={decide} onEnlarge={enlarge} /></ol>
+              <div className="photo-finding-controls" role="group" aria-label="Reading navigation">
+                <div className="photo-finding-steps">
+                  <button type="button" aria-label="Previous reading" disabled={activeFinding === 0} onClick={() => selectFinding(activeFinding - 1)}>Previous</button>
+                  <button type="button" onClick={nextReading}>{activeFinding + 1 < items.length ? "Next reading" : nextPage ? "Next page to review" : "Review summary"}</button>
+                </div>
+                <div className="review-secondary-actions"><button type="button" className="photo-overview-link" onClick={viewFullPage}>All page highlights</button>
+                  {activeFinding + 1 < items.length || nextPage ? <button type="button" className="photo-overview-link" onClick={openSummary}>Review summary</button> : null}</div>
+              </div>
+            </>}
           </div>
           {difficultReading && <p className="photo-note reading-caution">Many characters could not be read reliably. Inspect the marked text on the paper; recognition errors can look like changes.</p>}
-          <RereadReview page={page} readings={dateReviews} dates />
-          {numbersToCheck.length > 0 && <details className="photo-reading-review photo-number-review" open>
-            <summary>Numbers to check ({numbersToCheck.length})</summary>
-            <ol>{numbersToCheck.map((difference, index) => <PhotoDifference key={index} page={page} difference={difference} />)}</ol>
-          </details>}
-          {readingsToCheck.length > 0 && <details className="photo-reading-review">
-            <summary>Photo readings to check ({readingsToCheck.length})</summary>
-            <ol>{readingsToCheck.map((difference, index) => <PhotoDifference key={index} page={page} difference={difference} />)}</ol>
-          </details>}
-          <RereadReview page={page} readings={lineReviews} />
           {(knownSeparators.length > 0 || completions.length > 0) && <details className="photo-reading-review">
             <summary>Explained readings ({knownSeparators.length + completions.length})</summary>
             <ol>{knownSeparators.map((difference, index) => <PhotoDifference key={index} page={page} difference={difference} />)}
@@ -176,38 +218,30 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
                 <div><strong>Closer reading:</strong> {reading.observed}</div>
                 <DifferenceCrop page={page} difference={{ ...reading, spacing: true }} />
               </li>)}</ol></details>}
-          {comparison.contrastAssisted && <p className="photo-note reading-caution">A contrast-assisted reading was needed. Inspect pale text and marks in the original photo; this reading can miss them.</p>}
-          {comparison.originalComparison && <details className="photo-original-reading">
-            <summary>First reading to review ({comparison.originalComparison.differences.length})</summary>
-            <p className="photo-note">The first reading was less clear. Its differences are kept here so a faint addition cannot disappear from review.</p>
-            <ol>{comparison.originalComparison.differences.map((difference, index) => <li key={index}>
-              <div><strong>Signed text:</strong> {difference.expected || "(no text here)"}</div>
-              <div><strong>First reading:</strong> {difference.observed || "(not read — inspect for missing text)"}</div>
-              <DifferenceCrop page={{ ...page, comparison: comparison.originalComparison }} difference={difference} />
-            </li>)}</ol>
-          </details>}
-          {comparison.markings?.length > 0 && <div className="photo-markings"><h3>QRed markings to inspect</h3>
-            <p className="photo-note">These readings sit beside a QRed code. Check them on the paper; they are not authenticated document text.</p>
-            {comparison.markings.map((marking, index) => <div key={index}><p>{marking.observed}</p>
-              <DifferenceCrop page={page} difference={marking} /></div>)}
-          </div>}
         </>}
         {page.url && <section className="photo-full-page" aria-label="Full page photo">
           <div className="photo-overview-header">
             <h4 ref={overviewHeading} tabIndex={-1}>Full page</h4>
-            {contentDifferences.length > 0 && <button type="button" onClick={() => selectFinding(activeFinding, true)}>Back to difference</button>}
+            {items.length > 0 && <button type="button" onClick={() => selectFinding(activeFinding)}>Back to reading</button>}
           </div>
-          <PagePhoto key={`${page.id}:${page.captureId}`} page={page} contentDifferences={contentDifferences}
-            finding={activeFinding} onFinding={index => selectFinding(index, true)} />
+          <PagePhoto key={`${page.id}:${page.captureId}`} page={page} contentDifferences={items.map(item => ({ ...item.difference,
+            wordIndices: item.source === "current" ? item.difference.wordIndices : [] }))} decisions={items.map(item => review.decisions[item.id])}
+            finding={activeFinding} onFinding={selectFinding} />
         </section>}
         <div className="photo-actions">
           {onReplacePhoto && <button type="button" onClick={() => setRetake(page.page)}>{page.page.seal_sheet
             ? `Photograph original page ${page.page.page_number}` : "Retake this page"}</button>}
           {["error", "unreadable"].includes(page.state) && <button onClick={() => checks.retry(page.id)}>Read page again</button>}
+          {!comparison && <button type="button" onClick={openSummary}>Review summary</button>}
         </div>
+        {comparison && !items.length && <button type="button" onClick={nextPage ? () => openUnreviewed(nextPage) : openSummary}>
+          {nextPage ? "Next page to review" : "Review summary"}</button>}
         {comparison && <p className="photo-note">Text recognition can miss or misread marks. Check important numbers and unmarked areas. Photographs and handwriting need visual review.</p>}
       </section>}
     </>}
+    {viewer && page?.url && viewer.pageId === page.id && viewer.comparison === page.comparison && <ReadingViewer
+      page={page} item={items[activeFinding]} decision={review.decisions[items[activeFinding]?.id]}
+      initialMode={viewer.mode} opener={viewer.opener} onClose={() => setViewer(null)} />}
     {validPages.some(result => result.evidence) && <details open={!pages.length}>
       <summary>Compare the signed visual reference</summary>
       <PageEvidenceVerification results={results} scanPhotos={scanPhotos} session={session} onRetake={onReplacePhoto ? setRetake : undefined} />
@@ -225,29 +259,50 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
   </section>;
 }
 
-function FindingPages({ page, items, index, onChange, headingRef, onViewPage }) {
-  const current = Math.min(index, items.length - 1);
-  return <>
-    <h4 className="photo-finding-heading" ref={headingRef} tabIndex={-1} aria-live="polite">Difference {current + 1} of {items.length}</h4>
-    <ol start={current + 1} aria-live="polite" aria-atomic="true">
-      <PhotoDifference page={page} difference={items[current]} />
-    </ol>
-    <div className="photo-finding-controls" role="group" aria-label="Difference navigation">
-      {items.length > 1 && <div className="photo-finding-steps">
-        <button type="button" aria-label="Previous difference" disabled={current === 0} onClick={() => onChange(current - 1)}>Previous</button>
-        <button type="button" aria-label="Next difference" disabled={current >= items.length - 1} onClick={() => onChange(current + 1)}>Next</button>
-      </div>}
-      {onViewPage && <button type="button" className="photo-overview-link" onClick={onViewPage}>View full page</button>}
-    </div>
-  </>;
+function ReviewSummary({ pages, queues, reviews, headingRef, incomplete, validCount, onSelect, onFinish }) {
+  const rows = pages.map(page => ({ page, counts: reviewCounts(queues.get(page.id) || [], currentReview(reviews[page.id], page).decisions) }));
+  const total = rows.reduce((all, row) => {
+    for (const key of Object.keys(all)) all[key] += row.counts[key];
+    return all;
+  }, { total: 0, reviewed: 0, matches: 0, differs: 0, unsure: 0, pending: 0 });
+  const unfinished = rows.filter(({ page }) => !page.comparison || ["error", "unreadable"].includes(page.state));
+  const title = incomplete || unfinished.length ? "Document check incomplete" : total.pending ? "Review in progress"
+    : !total.total ? "No flagged readings to review" : total.unsure ? "Review finished with unclear readings"
+      : total.differs ? "Review finished — discrepancies recorded" : "All flagged readings reviewed";
+  const next = rows.find(row => row.counts.pending) || rows.find(row => row.counts.unsure) || unfinished[0] || rows.find(row => row.counts.total) || rows[0];
+  return <section className="review-summary" aria-label="Review summary">
+    <h3 ref={headingRef} tabIndex={-1}>Review summary</h3>
+    <p className="review-summary-status" role="status">{title}</p>
+    <p><strong>Seal checks:</strong> {validCount} authenticated page{validCount === 1 ? "" : "s"}.</p>
+    {incomplete && <p className="photo-note">Some pages or seals still need checking. This summary covers the available readings.</p>}
+    {unfinished.length > 0 && <p className="photo-note">Text checking is unfinished on {unfinished.length} page{unfinished.length === 1 ? "" : "s"}.</p>}
+    <h4>Your observations</h4>
+    <p>{total.reviewed} of {total.total} review decisions recorded.</p>
+    <dl className="review-totals">
+      <div><dt>No discrepancy seen</dt><dd>{total.matches}</dd></div>
+      <div><dt>Discrepancy or concern</dt><dd>{total.differs}</dd></div>
+      <div><dt>Can't tell</dt><dd>{total.unsure}</dd></div>
+      <div><dt>No decision yet</dt><dd>{total.pending}</dd></div>
+    </dl>
+    <div className="photo-actions">{next && <button type="button" onClick={() => onSelect(next.page)}>{total.pending || total.unsure || unfinished.length ? "Continue review" : "Revisit readings"}</button>}
+      {onFinish && <button type="button" className="photo-overview-link" onClick={onFinish}>Finish &amp; clear</button>}</div>
+    <ul className="review-page-results">{rows.map(({ page, counts }) => <li key={page.id}>
+      <button type="button" onClick={() => onSelect(page)}><strong>{pageName(page.page)}</strong><span>{counts.total
+        ? `${counts.reviewed}/${counts.total} reviewed · ${counts.pending} undecided · ${counts.unsure} unclear`
+        : resultLabel(page)}</span></button>
+    </li>)}</ul>
+    <p className="photo-note">These decisions are your observations, separate from seal authentication. Text recognition does not check every mark, image, or handwritten addition; inspect the whole page too.</p>
+    <p className="photo-note">Review decisions stay in this session. You can revisit and change them; a new photo needs a new review.</p>
+  </section>;
 }
 
-function PagePhoto({ page, contentDifferences, finding, onFinding }) {
+function PagePhoto({ page, contentDifferences, decisions = [], finding, onFinding }) {
   const { comparison } = page;
   const [showMatches, setShowMatches] = useState(false), [selectedWord, setSelectedWord] = useState(null);
   const [zoom, setZoom] = useState(1);
   const wordToFinding = new Map();
-  contentDifferences.forEach((item, i) => item.wordIndices.forEach(index => wordToFinding.set(index, i)));
+  contentDifferences.forEach((item, i) => (item.wordIndices || []).forEach(index => wordToFinding.set(index, i)));
+  const tone = index => decisions[index] === "differs" ? "different" : decisions[index] === "matches" ? "matched" : "uncertain";
   function selectWord(word) {
     if (wordToFinding.has(word.sourceIndex)) selectRegion(wordToFinding.get(word.sourceIndex));
     else setSelectedWord(word);
@@ -263,14 +318,14 @@ function PagePhoto({ page, contentDifferences, finding, onFinding }) {
       <img src={page.url} alt="Page photo being compared with signed text" />
       {comparison && <svg viewBox={`0 0 ${page.width} ${page.height}`} aria-label="Text comparison highlights">
         {comparison.words.map((word, index) => word.bbox && (showMatches || word.status !== "matched") && <rect key={index}
-          className={`photo-word ${word.status}${wordToFinding.get(word.sourceIndex) === finding ? " current-finding" : ""}`}
+          className={`photo-word ${word.status === "matched" ? "matched" : tone(wordToFinding.get(word.sourceIndex))}${wordToFinding.get(word.sourceIndex) === finding ? " current-finding" : ""}`}
           x={word.bbox.x0} y={word.bbox.y0} width={word.bbox.x1 - word.bbox.x0} height={word.bbox.y1 - word.bbox.y0}
           role="button" tabIndex={0} aria-label={`${wordLabels[word.status]}: ${word.text}`}
           onClick={() => selectWord(word)} onKeyDown={activate(() => selectWord(word))} />)}
         {contentDifferences.map((d, i) => d.boxes?.map((box, j) => <rect key={`missing-${i}-${j}`}
-          className={`photo-word different missing-region${i === finding ? " current-finding" : ""}`}
+          className={`photo-word ${tone(i)} missing-region${i === finding ? " current-finding" : ""}`}
           x={box.x0} y={box.y0} width={box.x1 - box.x0} height={box.y1 - box.y0}
-          role="button" tabIndex={0} aria-label={`Difference ${i + 1}: ${d.expected || d.observed}`}
+          role="button" tabIndex={0} aria-label={`Reading ${i + 1}: ${d.expected || d.observed || "Inspect page"}`}
           onClick={() => selectRegion(i)} onKeyDown={activate(() => selectRegion(i))} />))}
       </svg>}
     </div></div>
@@ -282,26 +337,11 @@ function PagePhoto({ page, contentDifferences, finding, onFinding }) {
     </div>}
     {selectedWord && <p className="photo-selected" role="status">{wordLabels[selectedWord.status]}: <strong>{selectedWord.text}</strong></p>}
     {comparison && <ul className="photo-legend" aria-label="Word counts">
-      <li className="matched">Matching: {comparison.matchedCount}</li>
-      <li className="different">Different or extra: {comparison.differentCount}</li>
-      <li className="uncertain">Uncertain: {comparison.uncertainCount}</li>
+      <li className="matched">OCR matches: {comparison.matchedCount}</li>
+      <li className="different">OCR differences: {comparison.differentCount}</li>
+      <li className="uncertain">OCR uncertain: {comparison.uncertainCount}</li>
     </ul>}
   </>;
-}
-
-function RereadReview({ page, readings, dates = false }) {
-  if (!readings?.length) return null;
-  return <details className={dates ? "photo-reading-review photo-date-reviews" : "photo-typography photo-retries"} open={dates || undefined}>
-    <summary>{dates ? "Dates to check" : "Reread text to review"} ({readings.length})</summary>
-    <p className="photo-note">{dates ? "The two readings disagree. Check the digits in the original photo." :
-      "A closer reading disagreed with the first. Check these regions on the paper."}</p>
-    <ol>{readings.map((reading, index) => <li key={index}>
-      {reading.signedDate && <div><strong>Signed date:</strong> {reading.signedDate}</div>}
-      <div><strong>First reading:</strong> {reading.original}</div>
-      <div><strong>Closer reading:</strong> {reading.observed}{reading.lowConfidence && " (low confidence)"}</div>
-      <DifferenceCrop page={page} difference={{ ...reading, spacing: true }} />
-    </li>)}</ol>
-  </details>;
 }
 
 function PhotoDifference({ page, difference }) {
@@ -316,33 +356,4 @@ function PhotoDifference({ page, difference }) {
     <DifferenceCrop page={page} difference={difference} />
     {difference.review !== "sourceSeparator" && difference.context && difference.context !== difference.expected && <p className="photo-note">Signed wording nearby: {difference.context}</p>}
   </li>;
-}
-
-function DifferenceCrop({ page, difference }) {
-  const boxes = difference.boxes || difference.wordIndices.map(index => page.comparison.words.find(word => word.sourceIndex === index)?.bbox).filter(Boolean);
-  if (!boxes.length) return <p className="photo-note">No reliable photo location. Inspect the signed wording and nearby text on the full page.</p>;
-  const tone = difference.review || difference.typography || difference.spacing ? "uncertain" : "different";
-  const left = Math.max(0, Math.min(...boxes.map(box => box.x0)) - 70);
-  const top = Math.max(0, Math.min(...boxes.map(box => box.y0)) - 24);
-  const width = Math.min(page.width - left, Math.max(...boxes.map(box => box.x1)) - left + 70);
-  const height = Math.min(page.height - top, Math.max(...boxes.map(box => box.y1)) - top + 24);
-  return <div className="difference-visuals">
-    <figure>
-      <svg className="difference-thumbnail" viewBox={`0 0 ${page.width} ${page.height}`} role="img" aria-label="Page thumbnail showing text location">
-        <image href={page.url} width={page.width} height={page.height} />
-        {boxes.map((box, index) => <g key={index}>
-          <rect x={box.x0} y={box.y0} width={box.x1 - box.x0} height={box.y1 - box.y0} className="difference-location-halo" />
-          <rect x={box.x0} y={box.y0} width={box.x1 - box.x0} height={box.y1 - box.y0} className={`difference-location-mark ${tone}`} />
-        </g>)}
-      </svg>
-      <figcaption>On page</figcaption>
-    </figure>
-    <figure>
-      <svg className="difference-crop" viewBox={`${left} ${top} ${width} ${height}`} role="img" aria-label="Magnified photo difference">
-        <image href={page.url} width={page.width} height={page.height} />
-        {boxes.map((box, index) => <rect key={index} x={box.x0} y={box.y0} width={box.x1 - box.x0} height={box.y1 - box.y0} className={`photo-word ${tone}`} />)}
-      </svg>
-      <figcaption>Close-up</figcaption>
-    </figure>
-  </div>;
 }
