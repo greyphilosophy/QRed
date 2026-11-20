@@ -240,7 +240,7 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         review = page.get_by_role("region", name="Review Page 1 of 1", exact=True)
         expect(review).to_be_visible(timeout=15000)
         authenticated = time.monotonic()
-        expect(review.locator("h3").first).to_contain_text("Seal authenticated")
+        expect(review.locator("h3").first).to_contain_text("Seal: authenticated")
         expect(review.locator(".photo-summary.matches, .photo-summary.uncertain")).to_have_count(1, timeout=20000)
         finished = time.monotonic()
         print("Synthetic OCR review: " + review.inner_text())
@@ -249,20 +249,29 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         # Do not turn that conservative result into an unconditional green match.
         review.get_by_label("Show matching words too", exact=True).check()
         expected_words = [word for line in LINES for word in line.split()]
-        words = review.locator('.photo-stage svg[aria-label="Text comparison highlights"] .photo-word')
+        # Queue location markers also use the page overlay; these assertions
+        # check the OCR words themselves, not the extra review navigation boxes.
+        words = review.locator('.photo-stage svg[aria-label="Text comparison highlights"] .photo-word:not(.missing-region)')
         expect(words).to_have_count(len(expected_words))
         assert words.evaluate_all("nodes => nodes.map(node => node.getAttribute('aria-label'))") == [
             "Matching text: " + word for word in expected_words]
-        assert review.locator(".photo-differences").inner_text() == ""
-        expect(review.locator(".photo-legend .matched")).to_have_text(f"Matching: {len(expected_words)}")
-        expect(review.locator(".photo-legend .different")).to_have_text("Different or extra: 0")
-        expect(review.locator(".photo-legend .uncertain")).to_have_text("Uncertain: 0")
+        assert review.locator(".photo-differences").get_attribute("data-content-count") == "0"
+        expect(review.locator(".photo-legend .matched")).to_have_text(f"OCR matches: {len(expected_words)}")
+        expect(review.locator(".photo-legend .different")).to_have_text("OCR differences: 0")
+        expect(review.locator(".photo-legend .uncertain")).to_have_text("OCR uncertain: 0")
         expect(review.locator(".reading-caution, .photo-retries")).to_have_count(0)
-        if review.locator(".photo-summary").inner_text() == "Some readings need review":
-            expect(review.locator(".photo-markings")).to_be_visible()
-            expect(review.locator(".photo-markings")).to_contain_text("Verify")
+        if "to review" in review.locator(".photo-summary").inner_text():
+            expect(review.locator(".review-reason")).to_have_text("QRed marking")
+            markings = []
+            count = int(review.locator(".photo-differences").get_attribute("data-count"))
+            for index in range(count):
+                expect(review.locator(".review-reason")).to_have_text("QRed marking")
+                markings.append(review.locator(".review-reading").inner_text())
+                if index + 1 < count:
+                    review.get_by_role("button", name="Next reading", exact=True).click()
+            assert any("Verify" in marking for marking in markings), markings
         else:
-            expect(review.locator(".photo-summary")).to_have_text("Recognized text matches the signed text")
+            expect(review.locator(".photo-summary")).to_contain_text("Recognized text matches the signed text")
         previews = page.evaluate("__documentScanRequests.filter(request => request.live)")
         assert previews and all((request["width"], request["height"]) == guidance_size for request in previews)
         decoded = assert_document_preview_not_decoded(page)

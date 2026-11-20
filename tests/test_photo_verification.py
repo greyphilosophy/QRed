@@ -119,7 +119,7 @@ def test_changed_and_erased_digits_on_a_curled_dated_form(browser, dated_form_ph
             show_file_inputs(page)
             page.locator("#qr-image" if path == "/" else "#pagePhotoInput").set_input_files(photo)
             review = page.get_by_role("region", name="Review Page 1 of 1", exact=True)
-            expect(review.get_by_role("heading", name=re.compile("Seal authenticated"))).to_be_visible(timeout=30000)
+            expect(review.get_by_role("heading", name=re.compile("Seal: authenticated"))).to_be_visible(timeout=30000)
             expect(page.locator(".page-check-status.queued, .page-check-status.reading")).to_have_count(0, timeout=60000)
             if kind == "original":
                 review.get_by_label("Show matching words too").check()
@@ -130,7 +130,7 @@ def test_changed_and_erased_digits_on_a_curled_dated_form(browser, dated_form_ph
                 printed_date = "03-14-29" if kind == "changed" else "03-14-2"
                 assert sum(bool(re.search(r"Photo reading: [^\n]*\b" + printed_date + r"\b", card)) for card in cards) == 1
                 assert any(("twice" if kind == "changed" else "29.50") in card for card in cards)
-                expect(review.locator(".photo-summary")).to_contain_text("Differences found")
+                expect(review.locator(".photo-summary")).to_contain_text("to review")
             guard.assert_quiet()
     finally:
         context.close()
@@ -139,13 +139,13 @@ def test_changed_and_erased_digits_on_a_curled_dated_form(browser, dated_form_ph
 def review_differences(review):
     """Walk the same difference cards the verifier sees, including the last one."""
     cards = []
-    forward = review.get_by_role("button", name="Next difference", exact=True)
+    forward = review.get_by_role("button", name="Next reading", exact=True)
     position = review.locator(".photo-finding-heading")
     current = review.locator(".photo-differences > ol > li")
     expect(current).to_be_visible(timeout=60000)
     total = int(review.locator(".photo-differences").get_attribute("data-count"))
     for index in range(total):
-        expect(position).to_have_text(f"Difference {index + 1} of {total}")
+        expect(position).to_have_text(f"Reading {index + 1} of {total}")
         cards.append(current.inner_text())
         if index + 1 < total:
             forward.click()
@@ -201,7 +201,7 @@ def test_browse_files_reads_one_original_offline(browser, dated_form_photos, pat
             if data == b"incomplete":
                 expect(page.get_by_text("This ZIP could not be opened.", exact=False)).to_be_visible()
         review = page.get_by_role("region", name="Review Page 1 of 1", exact=True)
-        expect(review.get_by_role("heading", name=re.compile("Seal authenticated"))).to_be_visible(timeout=30000)
+        expect(review.get_by_role("heading", name=re.compile("Seal: authenticated"))).to_be_visible(timeout=30000)
         assert page.evaluate("scanHasExtras") == [False]
         guard.assert_quiet()
     finally:
@@ -298,12 +298,12 @@ def test_scaled_table_recovers_numeric_columns_and_keeps_swapped_amounts_visible
                 cards = review_differences(review)
                 assert any("100.50" in card for card in cards)
                 assert any("111.50" in card for card in cards)
-                expect(review.locator(".photo-summary")).to_contain_text("Differences found")
+                expect(review.locator(".photo-summary")).to_contain_text("to review")
             else:
                 differences = review.locator(".photo-differences").inner_text()
                 assert differences == "", differences + "\n" + review.locator(".photo-legend").inner_text()
                 expect(review.locator(".photo-summary")).to_have_text(
-                    re.compile("Recognized text matches the signed text|Some readings need review"))
+                    re.compile(r"Printed text: (Recognized text matches the signed text|\d+ readings? to review|Some readings need review)"))
     finally:
         context.close()
 
@@ -421,10 +421,21 @@ def test_guided_pages_find_changed_word_and_clear_without_persistence(browser, s
         expect(review.locator(".photo-differences")).to_contain_text("Monday")
         expect(review.get_by_role("button", name="Different or extra text: Monday", exact=True)).to_be_visible()
         expect(review.get_by_role("img", name="Magnified photo difference").first).to_be_visible()
+        review.get_by_role("button", name="Printed text differs", exact=True).click()
+        expect(review.get_by_role("button", name="Printed text differs", exact=True)).to_have_attribute("aria-pressed", "true")
         page.get_by_role("button", name=re.compile("Page 1 of 2.*Recognized text matches")).click()
         expect(page.get_by_role("region", name="Review Page 1 of 2", exact=True)).to_be_visible()
-        page.get_by_role("button", name=re.compile("Page 2 of 2.*Differences found")).click()
+        page.get_by_role("button", name=re.compile("Page 2 of 2.*Review needed")).click()
         expect(review).to_be_visible()
+        expect(review.get_by_role("button", name="Printed text differs", exact=True)).to_have_attribute("aria-pressed", "true")
+        review.get_by_role("button", name="Review summary", exact=True).click()
+        summary = page.get_by_role("region", name="Review summary", exact=True)
+        expect(summary).to_contain_text("Review finished — discrepancies recorded")
+        expect(summary.get_by_role("heading", name="Review summary", exact=True)).to_be_focused()
+        summary.get_by_role("button", name="Revisit readings", exact=True).click()
+        # Revisit may open the clean first page; the page buttons return to the recorded finding.
+        page.get_by_role("button", name=re.compile("Page 2 of 2.*Review needed")).click()
+        expect(review.get_by_role("button", name="Printed text differs", exact=True)).to_have_attribute("aria-pressed", "true")
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         assert page.locator("input[capture]").count() == 0
         assert persistent_state(page) == baseline
@@ -445,17 +456,18 @@ def test_guided_pages_find_changed_word_and_clear_without_persistence(browser, s
         dialog = page.get_by_role("dialog")
         expect(dialog.get_by_role("button", name="Capture now")).to_be_enabled()
         dialog.get_by_role("button", name="Capture now").click()
-        expect(review.locator(".photo-summary")).to_have_text("Recognized text matches the signed text", timeout=60000)
+        expect(review.locator(".photo-summary")).to_contain_text("Recognized text matches the signed text", timeout=60000)
         expect(review.locator(".photo-differences")).not_to_contain_text("Monday")
 
         # A deletion and an unreadable page must never become a matching result.
-        for text, expected in [(TEXT.replace("Payment due Friday", ""), "Differences found"), ("", "No text could be read")]:
+        for text, expected in [(TEXT.replace("Payment due Friday", ""), "to review"), ("", "No text could be read")]:
             camera_paper(page, text, sealed_text[1]["qr"], border=False)
             review.get_by_role("button", name="Retake this page", exact=True).click()
             page.get_by_role("dialog").get_by_role("button", name="Capture now").click()
             expect(review.locator(".photo-summary")).to_contain_text(expected, timeout=60000)
 
-        page.get_by_role("button", name="Finish & clear", exact=True).click()
+        review.get_by_role("button", name="Review summary", exact=True).click()
+        page.get_by_role("region", name="Review summary", exact=True).get_by_role("button", name="Finish & clear", exact=True).click()
         expect(page.locator(".photo-stage img")).to_have_count(0)
         expect(page.locator(".page-check-list button")).to_have_count(0)
         expect(page.locator(".verification-result")).to_have_count(0)
@@ -551,15 +563,15 @@ def test_real_stamped_pages_separate_markings_and_detect_edits(browser, tmp_path
             review = page.get_by_role("region", name="Review Page 2 of 2", exact=True)
             if variant == "unchanged":
                 expect(review.locator(".photo-summary")).not_to_contain_text("No text")
-                assert review.locator(".photo-differences").inner_text() == ""
+                assert review.locator(".photo-differences").get_attribute("data-content-count") == "0"
                 page.locator(".page-check-list button").nth(0).click()
                 first = page.get_by_role("region", name="Review Page 1 of 2", exact=True)
-                assert first.locator(".photo-differences").inner_text() == ""
+                assert first.locator(".photo-differences").get_attribute("data-content-count") == "0"
                 # OCR may skip the small caption altogether. The user-facing
                 # requirement is no false document difference, whether stamp
                 # readings need separate review or no stamp text was returned.
                 expect(first.locator(".photo-summary")).to_have_text(
-                    re.compile("Recognized text matches the signed text|Some readings need review"))
+                    re.compile(r"Printed text: (Recognized text matches the signed text|\d+ readings? to review|Some readings need review)"))
             elif variant == "changed":
                 cards = review_differences(review)
                 for wording in ["Friday", "Monday", "Paid"]:
@@ -567,7 +579,7 @@ def test_real_stamped_pages_separate_markings_and_detect_edits(browser, tmp_path
             else:
                 # A contrast fallback must never turn an unreadable light addition
                 # into an unqualified agreement. It needs explicit visual review.
-                expect(review.locator(".photo-summary")).not_to_have_text("Recognized text matches the signed text")
+                expect(review.locator(".photo-summary")).not_to_contain_text("Recognized text matches the signed text")
             page.screenshot(path=str(tmp_path / (layout + "-" + variant.replace(" ", "-") + ".png")), full_page=True)
     finally:
         context.close()
@@ -598,7 +610,11 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
             crop = review.get_by_role("img", name="Magnified photo difference").first.bounding_box()
             thumbnail = review.get_by_role("img", name="Page thumbnail showing text location").first
             location = thumbnail.bounding_box()
-            navigation = review.get_by_role("group", name="Difference navigation").bounding_box()
+            navigation = review.get_by_role("group", name="Reading navigation").bounding_box()
+            choices = review.get_by_role("group", name="Your decision").bounding_box()
+            assert choices["y"] + choices["height"] <= navigation["y"], (choices, navigation)
+            for choice in review.get_by_role("group", name="Your decision").get_by_role("button").all():
+                assert choice.bounding_box()["height"] >= 44
             # The wording, photo crop, and navigation must be visible together.
             # A visible button alone does not make review usable.
             assert 0 <= card["y"] <= crop["y"], (card, crop)
@@ -621,20 +637,41 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
             assert thumbnail.locator("image").get_attribute("href") == closeup.locator("image").get_attribute("href")
             return regions
         first_location = assert_review_visible()
-        expect(review.get_by_role("button", name="Previous difference", exact=True)).to_be_disabled()
-        review.get_by_role("button", name="Next difference", exact=True).click()
+        expect(review.get_by_role("button", name="Previous reading", exact=True)).to_be_disabled()
+        review.get_by_role("button", name="Next reading", exact=True).click()
         expect(review.locator(".photo-differences > ol")).to_contain_text("Monday")
         assert assert_review_visible() != first_location
-        expect(review.get_by_role("button", name="Next difference", exact=True)).to_be_disabled()
-        review.get_by_role("button", name="Previous difference", exact=True).click()
+        expect(review.get_by_role("button", name="Review summary", exact=True)).to_be_enabled()
+        review.get_by_role("button", name="Previous reading", exact=True).click()
         expect(review.locator(".photo-differences > ol")).to_contain_text("923.45")
         assert assert_review_visible() == first_location
-        review.get_by_role("button", name="View full page", exact=True).click()
+        review.get_by_role("button", name="All page highlights", exact=True).click()
         expect(review.get_by_role("heading", name="Full page", exact=True)).to_be_focused()
         review.get_by_role("button", name="Different or extra text: Monday", exact=True).click()
-        expect(review.get_by_role("heading", name="Difference 2 of 2", exact=True)).to_be_focused()
+        expect(review.get_by_role("heading", name="Reading 2 of 2", exact=True)).to_be_focused()
         assert_review_visible()
         expect(page.get_by_text("Other pages have not been checked.", exact=False)).to_be_visible()
+        # Enlargement must use the same evidence, return to the same reading,
+        # and remain usable without the highlight obscuring a small character.
+        review.get_by_role("button", name="Enlarge close-up", exact=True).click()
+        enlarged = page.get_by_role("dialog", name="Enlarged close-up", exact=True)
+        expect(enlarged).to_be_visible()
+        expect(enlarged.get_by_role("button", name="Back to review", exact=True)).to_be_focused()
+        enlarged.get_by_role("checkbox", name="Show highlight", exact=True).uncheck()
+        expect(enlarged.locator(".difference-location-mark")).to_have_count(0)
+        enlarged.get_by_role("combobox", name="Image zoom", exact=True).select_option("2")
+        enlarged.press("Escape")
+        expect(enlarged).to_have_count(0)
+        expect(review.get_by_role("button", name="Enlarge close-up", exact=True)).to_be_focused()
+        assert_review_visible()
+        review.get_by_role("button", name="Can't tell", exact=True).click()
+        review.get_by_role("button", name="Review summary", exact=True).click()
+        summary = page.get_by_role("region", name="Review summary", exact=True)
+        expect(summary).to_contain_text("Document check incomplete")
+        expect(summary).to_contain_text("1 of 2 review decisions recorded")
+        summary.get_by_role("button", name="Continue review", exact=True).click()
+        expect(review.get_by_role("heading", name="Reading 1 of 2", exact=True)).to_be_visible()
+        expect(review.get_by_role("button", name="Matches signed text", exact=True)).to_have_attribute("aria-pressed", "false")
         page.screenshot(path=str(tmp_path / "difference-first.png"))
     finally:
         context.close()

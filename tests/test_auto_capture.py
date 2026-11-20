@@ -135,7 +135,7 @@ def test_auto_capture_quality_manual_fallback_and_retake(browser, sealed_text, p
         expect(dialog.get_by_role("alert")).to_contain_text("does not match Page 2", timeout=45000)
         camera_paper(page, TEXT, sealed_text[1]["qr"])
         expect(dialog).to_have_count(0, timeout=45000)
-        expect(review.locator(".photo-summary")).to_have_text("Recognized text matches the signed text", timeout=60000)
+        expect(review.locator(".photo-summary")).to_have_text("Printed text: Recognized text matches the signed text", timeout=60000)
         # A sharp photo of missing/unreadable print is still captured and reported.
         camera_paper(page, "", sealed_text[1]["qr"])
         review.get_by_role("button", name="Retake this page", exact=True).click()
@@ -217,7 +217,7 @@ def test_capture_notice_keeps_the_photo_when_the_camera_moves(browser, sealed_te
         expect(page.get_by_role("dialog")).to_have_count(0, timeout=15000)
         assert page.evaluate("__torchAtNotice") == [False, False]
         assert page.evaluate("__torchChanges") == [[False, True], [False]]
-        expect(review.locator(".photo-summary")).to_have_text("Recognized text matches the signed text", timeout=15000)
+        expect(review.locator(".photo-summary")).to_have_text("Printed text: Recognized text matches the signed text", timeout=15000)
         page.screenshot(path=str(tmp_path / "captured-before-processing.png"), full_page=True)
         page.get_by_role("button", name="Finish & clear", exact=True).click()
         assert page.evaluate("window.__cameraTracks.every(track => track.readyState === 'ended')")

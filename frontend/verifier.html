@@ -460,6 +460,9 @@
         verifying: snapshot.busy,
         collectionProgress: snapshot.progress,
         seals: snapshot.seals,
+        onFinish: function() {
+          if (collection.getSnapshot().session === snapshot.session) btnNewScan.onclick();
+        },
         onReplacePhoto: function(id, file) {
           if (collection.getSnapshot().session === snapshot.session) scanPhotos.replacePage(id, file);
         }

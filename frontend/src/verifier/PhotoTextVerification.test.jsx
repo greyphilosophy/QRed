@@ -15,11 +15,22 @@ beforeEach(() => {
   vi.clearAllMocks(); ocr.prepare.mockResolvedValue();
   ocr.read.mockImplementation(async canvas => [word(canvas.text)]);
   ocr.open.mockImplementation(async file => ({ width: 200, height: 100, text: file.text }));
+  HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+  HTMLDialogElement.prototype.close = function () { this.open = false; };
   URL.createObjectURL = vi.fn(() => "blob:page-photo"); URL.revokeObjectURL = vi.fn();
 });
 afterEach(cleanup);
+const currentCard = container => container.querySelector(".photo-differences > ol > li");
+function readAllCards(container) {
+  const total = Number(container.querySelector(".photo-differences").dataset.count), cards = [];
+  for (let index = 0; index < total; index++) {
+    cards.push(currentCard(container).textContent);
+    if (index + 1 < total) fireEvent.click(screen.getByRole("button", { name: "Next reading", exact: true }));
+  }
+  return cards;
+}
 
-it("opens conflicting dates alongside the original photo and keeps other rereads separate", async () => {
+it("includes conflicting dates and other rereads in one navigable queue", async () => {
   const signed = { ...page, content: "03-14-27" };
   const first = word("03-14-29");
   ocr.read.mockResolvedValue({ words: [first], retryReviews: [
@@ -28,17 +39,18 @@ it("opens conflicting dates alongside the original photo and keeps other rereads
     { original: "Tota", observed: "Total", boxes: [first.bbox] },
   ] });
   const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
-  const dates = (await screen.findByText("Dates to check (1)")).closest("details");
-  expect(dates.open).toBe(true);
-  expect(dates.textContent).toContain("Signed date: 03-14-27");
+  await screen.findByText("Conflicting date readings");
+  const dates = currentCard(view.container);
+  expect(dates.textContent).toContain("Signed text: 03-14-27");
   expect(dates.textContent).toContain("First reading: 03-14-29");
-  expect(dates.textContent).toContain("Closer reading: 03-14-27 (low confidence)");
+  expect(dates.textContent).toContain("Closer reading: 03-14-27 (uncertain)");
   expect(dates.querySelector("image").getAttribute("href")).toBe("blob:page-photo");
-  expect(screen.getByText("Reread text to review (1)").closest("details").open).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Next reading", exact: true }));
+  expect(currentCard(view.container).textContent).toContain("Closer reading: Total");
   expect(view.container.querySelector(".photo-summary.differences")).toBeTruthy();
 });
 
-it("opens doubtful numbers for inspection and keeps other weak readings out of the change list", async () => {
+it("prioritizes doubtful numbers and keeps other weak readings reachable", async () => {
   const signed = { ...page, content: "Top\nAmount 17\nStatus Y\nEnd" };
   signed.evidence = { width: 200, height: 100, text: signed.content, layout: { mode: 3,
     lines: [.05, .3, .55, .8].map(y => ({ x: .05, y, width: .85, height: .14 })) } };
@@ -48,14 +60,13 @@ it("opens doubtful numbers for inspection and keeps other weak readings out of t
   const corners = [{x:0,y:0},{x:200,y:0},{x:200,y:100},{x:0,y:100}];
   ocr.read.mockResolvedValue({ words, originalReading: words, corners });
   const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
-  await screen.findByText("Numbers to check (1)");
-  const numeric = view.container.querySelector(".photo-number-review");
-  expect(numeric.open).toBe(true);
+  await screen.findByText("Number or date");
+  const numeric = currentCard(view.container);
   expect(numeric.textContent).toContain("Signed text: 17");
   expect(numeric.textContent).toContain("Photo reading: I7");
   expect(numeric.querySelector("rect.uncertain")).toBeTruthy();
-  expect(view.container.querySelector(".photo-reading-review:not(.photo-number-review)").open).toBe(false);
-  expect(view.container.querySelector(".photo-differences > ol")).toBeNull();
+  const cards = readAllCards(view.container);
+  expect(cards.some(card => card.includes("Photo reading: X"))).toBe(true);
   expect(view.container.querySelector(".photo-summary.uncertain")).toBeTruthy();
 });
 
@@ -63,34 +74,38 @@ it("shows a faint addition from the first reading when contrast-assisted text ag
   ocr.read.mockResolvedValue({ words: [word("Friday")], originalReading: [word("Friday"),
     { ...word("Paid"), confidence: 40, bbox: {x0:10,y0:50,x1:90,y1:70} }], contrastAssisted: true });
   const view = render(<PhotoTextVerification results={[page]} scanPhotos={[capture(1, "first", "unused")]} />);
-  await screen.findByText("First reading to review (1)");
+  await screen.findByText("Possible extra text");
   expect(view.container.querySelector(".photo-summary.uncertain")).toBeTruthy();
-  const original = view.container.querySelector(".photo-original-reading");
+  const original = currentCard(view.container);
   expect(original.textContent).toContain("Paid");
-  expect(within(original).getByRole("img", { name: "Magnified photo difference", hidden: true })).toBeTruthy();
+  expect(within(original).getByRole("img", { name: "Magnified photo difference" })).toBeTruthy();
+  expect(original.textContent).toContain("The first reading found this");
+  fireEvent.click(screen.getByRole("button", { name: "Next reading", exact: true }));
+  expect(currentCard(view.container).textContent).toContain("Pale text and marks");
   expect(view.container.querySelector(".photo-summary.matches")).toBeNull();
 });
 
-it("separates word spacing and conflicting rereads without hiding substantive differences", async () => {
+it("keeps spacing and conflicting rereads in the same queue after substantive changes", async () => {
   const signed = { ...page, content: "Account 123456 Pay 100" };
   ocr.read.mockResolvedValue({ words: [word("Account123456"), word("Pay"), word("900")],
     retryReviews: [{ original: "900", observed: "100", boxes: [{x0:10,y0:10,x1:90,y1:30}] }] });
   const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
-  await screen.findByText("Word spacing to review (1)");
-  expect(view.container.querySelector(".photo-spacing").open).toBe(false);
-  expect(await screen.findByText("Reread text to review (1)")).toBeTruthy();
-  expect(view.container.querySelector(".photo-differences > ol").textContent).toContain("900");
+  await screen.findByText("Number or date");
+  const cards = readAllCards(view.container);
+  expect(cards[0]).toContain("Photo reading: 900");
+  expect(cards.some(card => card.includes("Word spacing"))).toBe(true);
+  expect(cards.some(card => card.includes("Closer reading: 100"))).toBe(true);
 });
 
-it("groups typography readings quietly while keeping a changed number prominent", async () => {
+it("reviews changed numbers before typography without hiding either", async () => {
   const signed = { ...page, content: "‘Pay’ 100" };
   ocr.read.mockResolvedValue([word("'Pay'"), { ...word("900"), bbox: { x0: 100, y0: 10, x1: 150, y1: 30 } }]);
   const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
-  await screen.findByText("Typography to review (2)");
-  const group = view.container.querySelector(".photo-typography");
-  expect(group.open).toBe(false);
+  await screen.findByText("Number or date");
   expect(view.container.querySelectorAll(".photo-differences > ol > li")).toHaveLength(1);
-  expect(view.container.querySelector(".photo-differences > ol").textContent).toContain("900");
+  const cards = readAllCards(view.container);
+  expect(cards[0]).toContain("900");
+  expect(cards.filter(card => card.includes("Typography"))).toHaveLength(2);
   expect(screen.getByRole("button", { name: "Uncertain reading: 'Pay'" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Different or extra text: 900" })).toBeTruthy();
 });
@@ -117,8 +132,8 @@ it("explains an unreliable reading without hiding missing signed wording", async
 it("checks all captured pages without extra clicks and opens page 2's changed word", async () => {
   render(<PhotoTextVerification results={[page, other]} scanPhotos={[capture(2, "second", "Monday"), capture(1, "first", "Friday")]} />);
   const review = await screen.findByRole("region", { name: "Review Page 2 of 2" });
-  expect(within(review).getAllByText("Monday", { exact: false }).length).toBeGreaterThan(0);
-  expect(within(review).getAllByText("Friday", { exact: false }).length).toBeGreaterThan(0);
+  expect(currentCard(review).textContent).toContain("Monday");
+  expect(currentCard(review).textContent).toContain("Friday");
   expect(within(review).getByRole("img", { name: "Magnified photo difference" })).toBeTruthy();
   await waitFor(() => expect(document.activeElement).toBe(within(review).getByRole("heading", { name: /Page 2/ })));
   expect(screen.getByRole("button", { name: /Page 1 of 2.*Recognized text matches/ })).toBeTruthy();
@@ -128,7 +143,7 @@ it("checks all captured pages without extra clicks and opens page 2's changed wo
   expect(ocr.read).toHaveBeenCalledTimes(2);
 });
 
-it("reviews the wording and crop before navigation, links full-page highlights, and resets on a page change", async () => {
+it("reviews the wording and crop before navigation, links full-page highlights, and remembers each page’s position", async () => {
   const content = "Top\nHeader\nRoom No\nEnd";
   const evidence = { width: 200, height: 100, text: content, layout: { mode: 3,
     lines: [.05, .3, .55, .8].map(y => ({ x: .05, y, width: .85, height: .14 })) } };
@@ -141,7 +156,7 @@ it("reviews the wording and crop before navigation, links full-page highlights, 
     scanPhotos={[capture(2, "second", "second"), capture(1, "first", "first")]} />);
   const first = await screen.findByRole("region", { name: "Review Page 1 of 2" });
   const photo = await within(first).findByRole("img", { name: "Page photo being compared with signed text" });
-  expect(await within(first).findByText("Difference 1 of 2")).toBeTruthy();
+  expect(await within(first).findByText("Reading 1 of 2")).toBeTruthy();
   const card = first.querySelector(".photo-differences > ol");
   const thumbnail = within(card).getByRole("img", { name: "Page thumbnail showing text location" });
   const crop = within(card).getByRole("img", { name: "Magnified photo difference" });
@@ -154,38 +169,47 @@ it("reviews the wording and crop before navigation, links full-page highlights, 
   const missingLocation = thumbnailBoxes();
   expect(missingLocation).toHaveLength(1);
   expect(missingLocation).toEqual(cropBoxes());
-  const navigation = within(first).getByRole("group", { name: "Difference navigation" });
+  const navigation = within(first).getByRole("group", { name: "Reading navigation" });
   expect(card.compareDocumentPosition(navigation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(navigation.compareDocumentPosition(photo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(first.querySelector(".photo-differences > ol").textContent).toContain("Header");
-  fireEvent.click(within(first).getByRole("button", { name: "Next difference" }));
+  fireEvent.click(within(first).getByRole("button", { name: "Next reading" }));
   expect(first.querySelector(".photo-differences > ol").textContent).toContain("Wrong");
   expect(thumbnailBoxes()).not.toEqual(missingLocation);
   expect(thumbnailBoxes()).toHaveLength(1);
   expect(thumbnailBoxes()).toEqual(cropBoxes());
-  expect(within(first).getByRole("button", { name: "Next difference" }).disabled).toBe(true);
-  fireEvent.keyDown(within(first).getByRole("button", { name: "Difference 1: Header" }), { key: "Enter" });
+  expect(within(first).getByRole("button", { name: "Review summary" }).disabled).toBe(false);
+  // The replacement word must be the only hit target at its location; a
+  // duplicate region above it intercepts real pointer clicks in the browser.
+  const wordTarget = within(first).getByRole("button", { name: "Different or extra text: Wrong" });
+  const wordBox = boxes(wordTarget.parentElement, 'rect[aria-label="Different or extra text: Wrong"]')[0];
+  expect(boxes(wordTarget.parentElement, 'rect[role="button"]').filter(box =>
+    JSON.stringify(box) === JSON.stringify(wordBox))).toHaveLength(1);
+  fireEvent.keyDown(within(first).getByRole("button", { name: "Reading 1: Header" }), { key: "Enter" });
   expect(first.querySelector(".photo-differences > ol").textContent).toContain("Header");
   expect(thumbnailBoxes()).toEqual(missingLocation);
-  expect(document.activeElement).toBe(within(first).getByRole("heading", { name: "Difference 1 of 2" }));
+  expect(document.activeElement).toBe(within(first).getByRole("heading", { name: "Reading 1 of 2" }));
   fireEvent.click(within(first).getByRole("button", { name: "Different or extra text: Wrong" }));
-  expect(within(first).getByText("Difference 2 of 2")).toBeTruthy();
-  fireEvent.click(within(first).getByRole("button", { name: "Previous difference" }));
+  expect(within(first).getByText("Reading 2 of 2")).toBeTruthy();
+  fireEvent.click(within(first).getByRole("button", { name: "Previous reading" }));
   expect(card.textContent).toContain("Header");
-  fireEvent.click(within(first).getByRole("button", { name: "View full page" }));
+  fireEvent.click(within(first).getByRole("button", { name: "All page highlights" }));
   expect(document.activeElement).toBe(within(first).getByRole("heading", { name: "Full page" }));
-  fireEvent.click(within(first).getByRole("button", { name: "Back to difference" }));
-  expect(document.activeElement).toBe(within(first).getByRole("heading", { name: "Difference 1 of 2" }));
+  fireEvent.click(within(first).getByRole("button", { name: "Back to reading" }));
+  expect(document.activeElement).toBe(within(first).getByRole("heading", { name: "Reading 1 of 2" }));
+  fireEvent.click(within(first).getByRole("button", { name: "Next reading" }));
+  fireEvent.click(within(first).getByRole("button", { name: "Printed text differs" }));
   fireEvent.change(within(first).getByRole("combobox", { name: "Zoom" }), { target: { value: "2" } });
   fireEvent.click(screen.getByRole("button", { name: /Page 2 of 2 · Seal authenticated/ }));
   const second = screen.getByRole("region", { name: "Review Page 2 of 2" });
   expect(within(second).getByRole("combobox", { name: "Zoom" }).value).toBe("1");
-  expect(within(second).queryByText("Difference 2 of 2")).toBeNull();
+  expect(within(second).queryByText("Reading 2 of 2")).toBeNull();
   expect(within(second).queryByRole("img", { name: "Page thumbnail showing text location" })).toBeNull();
   expect(view.container.querySelector(".photo-scroll.zoomed")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: /Page 1 of 2 · Seal authenticated/ }));
-  expect(screen.getByText("Difference 1 of 2")).toBeTruthy();
-  expect(boxes(screen.getByRole("img", { name: "Page thumbnail showing text location" }), ".difference-location-mark")).toEqual(missingLocation);
+  expect(screen.getByText("Reading 2 of 2")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Printed text differs" }).getAttribute("aria-pressed")).toBe("true");
+  expect(boxes(screen.getByRole("img", { name: "Page thumbnail showing text location" }), ".difference-location-mark")).not.toEqual(missingLocation);
 });
 
 it("shows reported processing progress without claiming completion before the comparison", async () => {
@@ -205,14 +229,14 @@ it("shows reported processing progress without claiming completion before the co
   expect(screen.getByRole("progressbar").hasAttribute("value")).toBe(false);
   await act(async () => finish([word("Monday")]));
   expect(screen.queryByRole("progressbar")).toBeNull();
-  expect(screen.getAllByText("Differences found — review the marked text").length).toBeGreaterThan(0);
+  expect(screen.getByText(/1 reading to review/)).toBeTruthy();
 });
 it("opens a later difference ahead of an earlier uncertain reading", async () => {
   ocr.read.mockImplementation(async canvas => [{ ...word(canvas.text), confidence: canvas.text === "Friday" ? 70 : 99 }]);
   render(<PhotoTextVerification results={[page, other]} scanPhotos={[capture(1, "first", "Friday"), capture(2, "second", "Monday")]} />);
   const review = await screen.findByRole("region", { name: "Review Page 2 of 2" });
   await waitFor(() => expect(document.activeElement).toBe(within(review).getByRole("heading", { name: /Page 2/ })));
-  expect(within(review).getAllByText("Monday", { exact: false }).length).toBeGreaterThan(0);
+  expect(currentCard(review).textContent).toContain("Monday");
 });
 it.each(["INVALID", "UNVERIFIED", "INCOMPLETE", "ERROR"])("does not compare %s reference text", status => {
   render(<PhotoTextVerification results={[{ ...page, status }]} scanPhotos={[capture(1, "first", "Friday")]} />);
@@ -240,4 +264,104 @@ it("does not offer a file-capture handoff and makes retakes available without lo
   expect(screen.getByRole("button", { name: "Retake this page" })).toBeTruthy();
   expect(view.container.querySelector("input[capture]")).toBeNull();
   expect(view.container.querySelector("input[type=file]")).toBeNull();
+});
+
+it("tracks decisions across pages, leaves skipped readings pending, and allows corrections from the summary", async () => {
+  const first = { ...page, content: "Pay 100 Due Friday" };
+  ocr.read.mockImplementation(async canvas => canvas.text === "two" ? [word("Pay"), word("900"), word("Due"), word("Monday")] : [word("Monday")]);
+  const view = render(<PhotoTextVerification results={[first, other]}
+    scanPhotos={[capture(1, "first", "two"), capture(2, "second", "one")]} />);
+  await screen.findByText("Reading 1 of 2");
+  fireEvent.click(screen.getByRole("button", { name: "Next reading", exact: true }));
+  expect(view.container.querySelector(".review-progress").textContent).toContain("0/2 reviewed");
+  fireEvent.click(screen.getByRole("button", { name: "Can't tell", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Next page to review", exact: true }));
+  expect(screen.getByRole("region", { name: "Review Page 2 of 2" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Matches signed text", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Review summary", exact: true }));
+  const summary = screen.getByRole("region", { name: "Review summary", exact: true });
+  expect(summary.textContent).toContain("2 of 3 review decisions recorded");
+  expect(summary.textContent).toContain("Review in progress");
+  expect(within(summary).getByText("Can't tell").nextElementSibling.textContent).toBe("1");
+  expect(within(summary).getByText("No decision yet").nextElementSibling.textContent).toBe("1");
+  expect(document.activeElement).toBe(within(summary).getByRole("heading", { name: "Review summary" }));
+  fireEvent.click(within(summary).getByRole("button", { name: "Continue review" }));
+  expect(screen.getByText("Reading 1 of 2")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Printed text differs", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Next reading", exact: true }));
+  expect(screen.getByRole("button", { name: "Can't tell", exact: true }).getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(screen.getByRole("button", { name: "Matches signed text", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Review summary", exact: true }));
+  expect(screen.getByText("Review finished — discrepancies recorded")).toBeTruthy();
+  expect(screen.getByText("3 of 3 review decisions recorded.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /Page 1 of 2.*2\/2 reviewed/ }));
+  expect(screen.getByText("Reading 2 of 2")).toBeTruthy();
+  expect(document.activeElement).toBe(screen.getByRole("heading", { name: /Page 1 of 2/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Previous reading", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Matches signed text", exact: true }));
+  expect(view.container.querySelector(".photo-summary.differences")).toBeTruthy();
+  expect(view.container.querySelector(".page-check-status.differences")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Review summary", exact: true }));
+  expect(screen.getByText("All flagged readings reviewed")).toBeTruthy();
+  expect(screen.queryByText(/document verified/i)).toBeNull();
+});
+
+it("reports unclear decisions and incomplete documents honestly", async () => {
+  const props = { results: [page], scanPhotos: [capture(1, "first", "Monday")] };
+  const view = render(<PhotoTextVerification {...props} />);
+  await screen.findByRole("button", { name: "Can't tell", exact: true });
+  fireEvent.click(screen.getByRole("button", { name: "Can't tell", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Review summary", exact: true }));
+  expect(screen.getByText("Document check incomplete")).toBeTruthy();
+  expect(screen.getByText("1 of 1 review decisions recorded.")).toBeTruthy();
+  view.rerender(<PhotoTextVerification results={[{ ...page, page_count: 1 }]} scanPhotos={props.scanPhotos} />);
+  // The signed contents and photo are unchanged, so the decision survives a
+  // collection metadata refresh. It still cannot become a successful verdict.
+  expect(await screen.findByText("Review finished with unclear readings")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Continue review", exact: true }));
+  expect(screen.getByRole("button", { name: "Can't tell", exact: true }).getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(screen.getByRole("button", { name: "Can't tell", exact: true }));
+  expect(view.container.querySelector(".review-progress").textContent).toContain("0/1 reviewed");
+});
+
+it("clears only the retaken page's decisions and clears all decisions in a new session", async () => {
+  const results = [page, other], firstCapture = capture(1, "first", "Monday"), secondCapture = capture(2, "second", "Monday");
+  const view = render(<PhotoTextVerification results={results} scanPhotos={[firstCapture, secondCapture]} />);
+  await screen.findByRole("button", { name: "Matches signed text", exact: true });
+  fireEvent.click(screen.getByRole("button", { name: "Matches signed text", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: /Page 2 of 2 · Seal authenticated/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Printed text differs", exact: true }));
+  view.rerender(<PhotoTextVerification results={results} scanPhotos={[capture(3, "first", "Saturday"), secondCapture]} />);
+  await waitFor(() => expect(ocr.read).toHaveBeenCalledTimes(3));
+  expect(screen.getByRole("button", { name: "Printed text differs", exact: true }).getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(screen.getByRole("button", { name: /Page 1 of 2 · Seal authenticated/ }));
+  expect(view.container.querySelector(".review-progress").textContent).toContain("0/1 reviewed");
+  expect(currentCard(view.container).textContent).toContain("Saturday");
+  expect(screen.getByRole("button", { name: "Matches signed text", exact: true }).getAttribute("aria-pressed")).toBe("false");
+  view.rerender(<PhotoTextVerification session={1} results={results} scanPhotos={[firstCapture, secondCapture]} />);
+  await screen.findByRole("button", { name: "Matches signed text", exact: true });
+  expect(view.container.querySelector(".review-progress").textContent).toContain("0/1 reviewed");
+});
+
+it("enlarges the current evidence, lets the user hide the marker, and restores focus on Escape", async () => {
+  const view = render(<PhotoTextVerification results={[page]} scanPhotos={[capture(1, "first", "Monday")]} />);
+  const opener = await screen.findByRole("button", { name: "Enlarge close-up", exact: true });
+  const marks = view.container.querySelectorAll(".review-wording mark");
+  expect([...marks].map(mark => mark.textContent).join(" ")).toContain("Mon");
+  fireEvent.click(opener);
+  const dialog = screen.getByRole("dialog", { name: "Enlarged close-up" });
+  expect(dialog.querySelector("image").getAttribute("href")).toBe("blob:page-photo");
+  expect(dialog.querySelectorAll(".difference-location-mark")).toHaveLength(1);
+  fireEvent.click(within(dialog).getByRole("checkbox", { name: "Show highlight" }));
+  expect(dialog.querySelectorAll(".difference-location-mark")).toHaveLength(0);
+  fireEvent.change(within(dialog).getByRole("combobox", { name: "Image zoom" }), { target: { value: "2" } });
+  expect(dialog.querySelector("svg").style.width).toBe("200%");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Show full page" }));
+  expect(dialog.querySelector("svg").getAttribute("viewBox")).toBe("0 0 200 100");
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(document.activeElement).toBe(opener);
+  expect(document.body.style.overflow).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: "Enlarge page location" }));
+  expect(screen.getByRole("dialog", { name: "Page location" }).querySelector("svg").getAttribute("viewBox")).toBe("0 0 200 100");
 });

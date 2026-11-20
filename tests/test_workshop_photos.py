@@ -77,7 +77,7 @@ def test_workshop_photo(browser, photo, document_page, route):
         feedback = page.get_by_text(re.compile(r"That code opens qred\.org|No readable seal found|reached its time limit"))
         expect(review.or_(feedback).first).to_be_visible(timeout=75000)
         assert review.is_visible(), feedback.first.inner_text()
-        expect(review.get_by_role("heading", name=re.compile("Seal authenticated"))).to_be_visible()
+        expect(review.get_by_role("heading", name=re.compile("Seal: authenticated"))).to_be_visible()
         texts = page.evaluate("Array.from(new Set(window.workshopReads))")
         assert sorted(hashlib.sha256(text.encode()).hexdigest() for text in texts) == expected["sealDigests"]
         if photo in ("statement-2-straight", "changed-2-straight"):
@@ -99,7 +99,8 @@ def check_printed_year(review, *, changed):
     expect(matched).to_have_count(0)
     year_readings = []
     for card in review_differences(review):
-        signed, observed, *_ = card.splitlines()
+        signed = next((line for line in card.splitlines() if line.startswith("Signed text:")), "")
+        observed = next((line for line in card.splitlines() if line.startswith("Photo reading:")), "")
         if re.search(r"\b2037\b", signed):
             year_readings.append(observed)
     assert any(re.search(r"\b2032\b", reading) for reading in year_readings), year_readings
