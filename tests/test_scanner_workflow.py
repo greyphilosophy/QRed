@@ -262,7 +262,14 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         expect(review.locator(".reading-caution, .photo-retries")).to_have_count(0)
         if "to review" in review.locator(".photo-summary").inner_text():
             expect(review.locator(".review-reason")).to_have_text("QRed marking")
-            expect(review.locator(".review-reading")).to_contain_text("Verify")
+            markings = []
+            count = int(review.locator(".photo-differences").get_attribute("data-count"))
+            for index in range(count):
+                expect(review.locator(".review-reason")).to_have_text("QRed marking")
+                markings.append(review.locator(".review-reading").inner_text())
+                if index + 1 < count:
+                    review.get_by_role("button", name="Next reading", exact=True).click()
+            assert any("Verify" in marking for marking in markings), markings
         else:
             expect(review.locator(".photo-summary")).to_contain_text("Recognized text matches the signed text")
         previews = page.evaluate("__documentScanRequests.filter(request => request.live)")

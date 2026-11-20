@@ -179,6 +179,12 @@ it("reviews the wording and crop before navigation, links full-page highlights, 
   expect(thumbnailBoxes()).toHaveLength(1);
   expect(thumbnailBoxes()).toEqual(cropBoxes());
   expect(within(first).getByRole("button", { name: "Review summary" }).disabled).toBe(false);
+  // The replacement word must be the only hit target at its location; a
+  // duplicate region above it intercepts real pointer clicks in the browser.
+  const wordTarget = within(first).getByRole("button", { name: "Different or extra text: Wrong" });
+  const wordBox = boxes(wordTarget.parentElement, 'rect[aria-label="Different or extra text: Wrong"]')[0];
+  expect(boxes(wordTarget.parentElement, 'rect[role="button"]').filter(box =>
+    JSON.stringify(box) === JSON.stringify(wordBox))).toHaveLength(1);
   fireEvent.keyDown(within(first).getByRole("button", { name: "Reading 1: Header" }), { key: "Enter" });
   expect(first.querySelector(".photo-differences > ol").textContent).toContain("Header");
   expect(thumbnailBoxes()).toEqual(missingLocation);

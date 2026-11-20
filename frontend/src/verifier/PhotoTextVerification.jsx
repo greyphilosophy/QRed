@@ -302,6 +302,10 @@ function PagePhoto({ page, contentDifferences, decisions = [], finding, onFindin
   const [zoom, setZoom] = useState(1);
   const wordToFinding = new Map();
   contentDifferences.forEach((item, i) => (item.wordIndices || []).forEach(index => wordToFinding.set(index, i)));
+  const visibleWords = comparison?.words.filter(word => word.bbox && (showMatches || word.status !== "matched")) || EMPTY;
+  const regionKey = (box, index) => `${index}:${box.x0}:${box.y0}:${box.x1}:${box.y1}`;
+  const wordRegions = new Set(visibleWords.filter(word => wordToFinding.has(word.sourceIndex))
+    .map(word => regionKey(word.bbox, wordToFinding.get(word.sourceIndex))));
   const tone = index => decisions[index] === "differs" ? "different" : decisions[index] === "matches" ? "matched" : "uncertain";
   function selectWord(word) {
     if (wordToFinding.has(word.sourceIndex)) selectRegion(wordToFinding.get(word.sourceIndex));
@@ -317,12 +321,14 @@ function PagePhoto({ page, contentDifferences, decisions = [], finding, onFindin
       style={{ "--photo-ratio": page.width && page.height ? page.width / page.height : undefined, "--photo-zoom": zoom }}>
       <img src={page.url} alt="Page photo being compared with signed text" />
       {comparison && <svg viewBox={`0 0 ${page.width} ${page.height}`} aria-label="Text comparison highlights">
-        {comparison.words.map((word, index) => word.bbox && (showMatches || word.status !== "matched") && <rect key={index}
+        {visibleWords.map((word, index) => <rect key={index}
           className={`photo-word ${word.status === "matched" ? "matched" : tone(wordToFinding.get(word.sourceIndex))}${wordToFinding.get(word.sourceIndex) === finding ? " current-finding" : ""}`}
           x={word.bbox.x0} y={word.bbox.y0} width={word.bbox.x1 - word.bbox.x0} height={word.bbox.y1 - word.bbox.y0}
           role="button" tabIndex={0} aria-label={`${wordLabels[word.status]}: ${word.text}`}
           onClick={() => selectWord(word)} onKeyDown={activate(() => selectWord(word))} />)}
-        {contentDifferences.map((d, i) => d.boxes?.map((box, j) => <rect key={`missing-${i}-${j}`}
+        {/* A word and its review item share one hit target. Extra region
+            targets are for locations without that clickable OCR word. */}
+        {contentDifferences.map((d, i) => d.boxes?.filter(box => !wordRegions.has(regionKey(box, i))).map((box, j) => <rect key={`missing-${i}-${j}`}
           className={`photo-word ${tone(i)} missing-region${i === finding ? " current-finding" : ""}`}
           x={box.x0} y={box.y0} width={box.x1 - box.x0} height={box.y1 - box.y0}
           role="button" tabIndex={0} aria-label={`Reading ${i + 1}: ${d.expected || d.observed || "Inspect page"}`}
