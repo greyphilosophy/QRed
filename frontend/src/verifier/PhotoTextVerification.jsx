@@ -321,12 +321,28 @@ function PhotoDifference({ page, difference }) {
 function DifferenceCrop({ page, difference }) {
   const boxes = difference.boxes || difference.wordIndices.map(index => page.comparison.words.find(word => word.sourceIndex === index)?.bbox).filter(Boolean);
   if (!boxes.length) return <p className="photo-note">No reliable photo location. Inspect the signed wording and nearby text on the full page.</p>;
+  const tone = difference.review || difference.typography || difference.spacing ? "uncertain" : "different";
   const left = Math.max(0, Math.min(...boxes.map(box => box.x0)) - 70);
   const top = Math.max(0, Math.min(...boxes.map(box => box.y0)) - 24);
   const width = Math.min(page.width - left, Math.max(...boxes.map(box => box.x1)) - left + 70);
   const height = Math.min(page.height - top, Math.max(...boxes.map(box => box.y1)) - top + 24);
-  return <svg className="difference-crop" viewBox={`${left} ${top} ${width} ${height}`} role="img" aria-label="Magnified photo difference">
-    <image href={page.url} width={page.width} height={page.height} />
-    {boxes.map((box, index) => <rect key={index} x={box.x0} y={box.y0} width={box.x1 - box.x0} height={box.y1 - box.y0} className={`photo-word ${difference.review || difference.typography || difference.spacing ? "uncertain" : "different"}`} />)}
-  </svg>;
+  return <div className="difference-visuals">
+    <figure>
+      <svg className="difference-thumbnail" viewBox={`0 0 ${page.width} ${page.height}`} role="img" aria-label="Page thumbnail showing text location">
+        <image href={page.url} width={page.width} height={page.height} />
+        {boxes.map((box, index) => <g key={index}>
+          <rect x={box.x0} y={box.y0} width={box.x1 - box.x0} height={box.y1 - box.y0} className="difference-location-halo" />
+          <rect x={box.x0} y={box.y0} width={box.x1 - box.x0} height={box.y1 - box.y0} className={`difference-location-mark ${tone}`} />
+        </g>)}
+      </svg>
+      <figcaption>On page</figcaption>
+    </figure>
+    <figure>
+      <svg className="difference-crop" viewBox={`${left} ${top} ${width} ${height}`} role="img" aria-label="Magnified photo difference">
+        <image href={page.url} width={page.width} height={page.height} />
+        {boxes.map((box, index) => <rect key={index} x={box.x0} y={box.y0} width={box.x1 - box.x0} height={box.y1 - box.y0} className={`photo-word ${tone}`} />)}
+      </svg>
+      <figcaption>Close-up</figcaption>
+    </figure>
+  </div>;
 }
