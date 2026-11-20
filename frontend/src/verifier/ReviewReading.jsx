@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import { changedCharacters, findingBoxes, REVIEW_DECISIONS } from "./reviewFindings.js";
+import { ImageZoom } from "./ImageZoom.jsx";
 
 const INSPECTION_DECISIONS = { matches: "No discrepancy seen", differs: "Concern found", unsure: "Can't tell" };
 
@@ -113,8 +114,7 @@ export function ReadingViewer({ page, item, decision, initialMode, opener, onClo
     <div className="reading-viewer-tools">
       {boxes.length > 0 && <button type="button" onClick={() => { setMode(mode === "page" ? "detail" : "page"); setZoom(1); }}>
         {mode === "page" ? "Show close-up" : "Show full page"}</button>}
-      <label>Zoom <select aria-label="Image zoom" value={zoom} onChange={event => setZoom(Number(event.target.value))}>
-        <option value="1">Fit</option><option value="2">200%</option><option value="3">300%</option></select></label>
+      <ImageZoom value={zoom} onChange={setZoom} />
       {boxes.length > 0 && <label><input type="checkbox" checked={highlight} onChange={event => setHighlight(event.target.checked)} />Show highlight</label>}
     </div>
     <div ref={scroll} className="reading-viewer-scroll"><svg ref={stage} role="img" aria-label="Original photo for visual review"

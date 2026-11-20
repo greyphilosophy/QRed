@@ -637,17 +637,37 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
             assert thumbnail.locator("image").get_attribute("href") == closeup.locator("image").get_attribute("href")
             return regions
         first_location = assert_review_visible()
+        choices = review.get_by_role("group", name="Your decision").get_by_role("button")
+        before_choices = [choice.bounding_box() for choice in choices.all()]
+        before_navigation = review.get_by_role("group", name="Reading navigation").bounding_box()
+        for label in ["Printed text differs", "Matches signed text", "Can't tell", "Can't tell"]:
+            review.get_by_role("button", name=label, exact=True).tap()
+            assert [choice.bounding_box() for choice in choices.all()] == before_choices
+            assert review.get_by_role("group", name="Reading navigation").bounding_box() == before_navigation
         expect(review.get_by_role("button", name="Previous reading", exact=True)).to_be_disabled()
+        review.get_by_role("button", name="Printed text differs", exact=True).tap()
         review.get_by_role("button", name="Next reading", exact=True).click()
         expect(review.locator(".photo-differences > ol")).to_contain_text("Monday")
         assert assert_review_visible() != first_location
+        # The final decision changes the status banner, which must not move
+        # the active controls when its wording takes a second line.
+        before_choices = [choice.bounding_box() for choice in choices.all()]
+        before_navigation = review.get_by_role("group", name="Reading navigation").bounding_box()
+        for label in ["Printed text differs", "Matches signed text", "Can't tell", "Can't tell"]:
+            review.get_by_role("button", name=label, exact=True).tap()
+            assert [choice.bounding_box() for choice in choices.all()] == before_choices
+            assert review.get_by_role("group", name="Reading navigation").bounding_box() == before_navigation
         expect(review.get_by_role("button", name="Review summary", exact=True)).to_be_enabled()
         review.get_by_role("button", name="Previous reading", exact=True).click()
+        review.get_by_role("button", name="Printed text differs", exact=True).tap()
         expect(review.locator(".photo-differences > ol")).to_contain_text("923.45")
         assert assert_review_visible() == first_location
         review.get_by_role("button", name="All page highlights", exact=True).click()
         expect(review.get_by_role("heading", name="Full page", exact=True)).to_be_focused()
-        review.get_by_role("button", name="Different or extra text: Monday", exact=True).click()
+        # A finger can land beside the thin word outline. The closest marked
+        # word must open, even where two enlarged touch areas overlap.
+        marked = review.get_by_role("button", name="Different or extra text: Monday", exact=True).bounding_box()
+        page.touchscreen.tap(marked["x"] + marked["width"] / 2, marked["y"] + marked["height"] + 16)
         expect(review.get_by_role("heading", name="Reading 2 of 2", exact=True)).to_be_focused()
         assert_review_visible()
         expect(page.get_by_text("Other pages have not been checked.", exact=False)).to_be_visible()
@@ -659,8 +679,13 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
         expect(enlarged.get_by_role("button", name="Back to review", exact=True)).to_be_focused()
         enlarged.get_by_role("checkbox", name="Show highlight", exact=True).uncheck()
         expect(enlarged.locator(".difference-location-mark")).to_have_count(0)
-        enlarged.get_by_role("combobox", name="Image zoom", exact=True).select_option("2")
-        enlarged.press("Escape")
+        zoom = enlarged.get_by_role("group", name="Image zoom", exact=True)
+        for label, selected in [("200%", "200%"), ("300%", "300%"), ("Fit", None)]:
+            zoom.get_by_role("button", name=label, exact=True).tap()
+            expect(zoom.get_by_role("button", name=label, exact=True)).to_have_attribute("aria-pressed", "true")
+            if selected:
+                assert enlarged.locator("svg").evaluate("e => e.style.width") == selected
+        enlarged.get_by_role("button", name="Back to review", exact=True).tap()
         expect(enlarged).to_have_count(0)
         expect(review.get_by_role("button", name="Enlarge close-up", exact=True)).to_be_focused()
         assert_review_visible()
@@ -672,6 +697,19 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
         summary.get_by_role("button", name="Continue review", exact=True).click()
         expect(review.get_by_role("heading", name="Reading 1 of 2", exact=True)).to_be_visible()
         expect(review.get_by_role("button", name="Matches signed text", exact=True)).to_have_attribute("aria-pressed", "false")
+        # Resume via the file picker or camera directly from the partial summary.
+        # The existing undecided/unclear observations must survive either path.
+        review.get_by_role("button", name="Review summary", exact=True).click()
+        remaining_photo = camera_paper(page, TEXT, sealed_text[0]["qr"])
+        if viewport["width"] == 360:
+            with page.expect_file_chooser() as picked:
+                summary.get_by_role("button", name="Choose next page", exact=True).tap()
+            picked.value.set_files(remaining_photo)
+        else:
+            summary.get_by_role("button", name="Scan next page", exact=True).tap()
+        expect(summary).not_to_contain_text("Document check incomplete", timeout=60000)
+        expect(summary).to_contain_text("1 of 2 review decisions recorded")
+        expect(summary.get_by_role("button", name="Choose next page", exact=True)).to_have_count(0)
         page.screenshot(path=str(tmp_path / "difference-first.png"))
     finally:
         context.close()

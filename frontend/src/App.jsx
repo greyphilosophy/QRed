@@ -9,6 +9,7 @@ function App() {
   const [showPdfStampTool, setShowPdfStampTool] = useState(false);
   const stampSection = useRef(null);
   const stampHeading = useRef(null);
+  const scanControls = useRef(null);
   const verification = useSealVerification();
   useEffect(() => {
     if (verification.progress?.finished && !verification.scanning) {
@@ -38,6 +39,7 @@ function App() {
   return (
     <main className="homepage">
       <QrScanner
+        controlsRef={scanControls}
         key={verification.session}
         returnPayload
         beforeScan={() => { verification.setNotice(""); return verification.textChecks.prepare(); }}
@@ -56,7 +58,8 @@ function App() {
         pdfStampToolOpen={showPdfStampTool}
         resultPanel={<div className="ar-result-panel"><h2>Pages captured</h2><p>{verification.progress?.message}</p><button onClick={() => document.getElementById("document-check")?.scrollIntoView({ behavior: "smooth" })}>Review page checks</button></div>}
       />
-      <SealVerification verification={verification} />
+      <SealVerification verification={verification} onScanMore={() => scanControls.current?.start()}
+        onChooseMore={() => scanControls.current?.choosePhoto(true)} />
       {showPdfStampTool && (
         <section className="pdf-stamp-tool" id="pdf-stamp-tool" ref={stampSection} aria-labelledby="pdf-stamp-heading">
           <div className="tool-header">

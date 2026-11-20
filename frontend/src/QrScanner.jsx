@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useId, useImperativeHandle, useRef, useState, useSyncExternalStore } from "react";
 import { scanQrImage } from "./qr/scanQrImage.js";
 import { decodeSeal } from "./qredVerifier.js";
 import { decodePhoto, qrFrameAction } from "./qr/decodePhoto.js";
@@ -23,7 +23,7 @@ import "./qr/cameraLight.css";
  * 3. Result — shows collection progress and can resume scanning
  */
 export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSealDetected, returnPayload = false, resultPanel,
-  collectSeals = false, collectionProgress, beforeScan, onScanningChange, onChoosePhoto, completionNotice = "" }) {
+  collectSeals = false, collectionProgress, beforeScan, onScanningChange, onChoosePhoto, completionNotice = "", controlsRef }) {
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
   const [captureRequest, setCaptureRequest] = useState(0);
@@ -63,6 +63,30 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
     setMode("idle");
     onChoosePhoto(browseFiles);
   }
+  async function startScan() {
+    if (mode === "scanning" || preparing) return;
+    const generation = ++startGeneration.current;
+    if (beforeScan) {
+      setPreparing(true); setPreparationError("");
+      try { await beforeScan(); }
+      catch (error) { if (generation === startGeneration.current) { setPreparing(false); setPreparationError(error.message); } return; }
+      if (generation !== startGeneration.current) return;
+      setPreparing(false);
+    }
+    startingCollection.current = collectionProgress;
+    setScannedText(null);
+    setCaptureRequest(0);
+    setCameraFailed(false);
+    setMode("scanning");
+  }
+  useImperativeHandle(controlsRef, () => ({
+    start() {
+      startButton.current?.closest(".ar-display")?.scrollIntoView?.({ block: "start" });
+      startButton.current?.focus({ preventScroll: true });
+      return startScan();
+    },
+    choosePhoto: chooseSavedPhoto,
+  }));
   const controls = React.createElement("div", { className: "ar-controls" },
     React.createElement("button", {
       className: "ar-button ar-button-primary",
@@ -78,19 +102,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
           } else setCaptureRequest((request) => request + 1);
           return;
         }
-        const generation = ++startGeneration.current;
-        if (beforeScan) {
-          setPreparing(true); setPreparationError("");
-          try { await beforeScan(); }
-          catch (error) { if (generation === startGeneration.current) { setPreparing(false); setPreparationError(error.message); } return; }
-          if (generation !== startGeneration.current) return;
-          setPreparing(false);
-        }
-        startingCollection.current = collectionProgress;
-        setScannedText(null);
-        setCaptureRequest(0);
-        setCameraFailed(false);
-        setMode("scanning");
+        await startScan();
       },
     }, scanButtonLabel),
     mode === "scanning" && collectSeals && collectionProgress?.pagesCollected > 0 ? React.createElement("button", {

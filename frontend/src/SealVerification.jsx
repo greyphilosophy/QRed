@@ -76,7 +76,7 @@ export function useSealVerification() {
     } };
 }
 
-export function SealVerification({ verification }) {
+export function SealVerification({ verification, onScanMore, onChooseMore }) {
   const [openingKey, setOpeningKey] = useState(false);
   const [keyFileStatus, setKeyFileStatus] = useState("");
   const [readingImage, setReadingImage] = useState(false);
@@ -183,6 +183,7 @@ export function SealVerification({ verification }) {
     <PhotoTextVerification results={results} seals={seals} session={verification.session} checks={verification.textChecks}
       scanPhotos={verification.scanImages?.photos} captureNotice={verification.scanImages?.notice}
       collectionProgress={verification.progress}
+      onScanMore={onScanMore} onChooseMore={onChooseMore} addingPage={readingImage}
       scanning={verification.scanning} verifying={busy} onReplacePhoto={verification.replacePhoto} onFinish={verification.clear} />
     {hasLocalSeals && <div>
       <p>This collection includes a seal made with a private key file. Use the issuer’s public key file to verify it.</p>

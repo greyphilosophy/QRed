@@ -7,6 +7,7 @@ import { decodeSeal } from "../qredVerifier.js";
 import { photoProcessingMessage } from "./photoStatus.js";
 import { createReviewItems, currentReview, reviewCounts } from "./reviewFindings.js";
 import { DifferenceCrop, ReadingViewer, ReviewReading } from "./ReviewReading.jsx";
+import { ImageZoom } from "./ImageZoom.jsx";
 import "./photoTextVerification.css";
 
 const EMPTY = [];
@@ -31,7 +32,7 @@ export function PhotoTextVerification({ session = 0, ...props }) {
 }
 
 function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captureNotice = "", scanning = false, verifying = false,
-  checks: providedChecks, onReplacePhoto, onFinish, collectionProgress, session }) {
+  checks: providedChecks, onReplacePhoto, onFinish, onScanMore, onChooseMore, addingPage = false, collectionProgress, session }) {
   const [checks] = useState(() => providedChecks || createPageTextChecks());
   const snapshot = useSyncExternalStore(checks.subscribe, checks.getSnapshot);
   const [selected, setSelected] = useState(""), [retake, setRetake] = useState(null);
@@ -148,6 +149,9 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
   const unscanned = collectionProgress?.pagesTotal
     ? collectionProgress.pagesCollected < collectionProgress.pagesTotal
     : validPages.reduce((max, result) => Math.max(max, result.page_count || 0), 0) > validPages.length;
+  const needsMorePages = unscanned || results.some(result => result.status === "INCOMPLETE");
+  const addPageActions = needsMorePages && <AddPageActions onScan={onScanMore} onChoose={onChooseMore}
+    disabled={addingPage} scanning={scanning} />;
   return <section className="photo-check" aria-label="Document check">
     <h2>Document check</h2>
     {collectionProgress?.documentWarning && !verifying && <p className="photo-summary" role="alert">{collectionProgress.documentWarning}</p>}
@@ -165,7 +169,8 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
       {unscanned && <p className="photo-summary">Other pages have not been checked. You can review the pages captured so far.</p>}
       {showSummary && <ReviewSummary pages={pages} queues={queues} reviews={reviews} headingRef={summaryHeading}
         incomplete={unscanned || scanning || Boolean(collectionProgress?.documentWarning) || results.some(result => result.status !== "VALID" || result.signature_valid !== true)}
-        validCount={validPages.length} onSelect={openUnreviewed} onFinish={onFinish} />}
+        validCount={validPages.length} onSelect={openUnreviewed} onFinish={onFinish} addPageActions={addPageActions} />}
+      {!showSummary && !page && addPageActions}
       {page && !showSummary && <section className="photo-result" onPointerDown={() => { selectedByUser.current = true; }}
         onKeyDown={() => { selectedByUser.current = true; }} aria-label={`Review ${pageName(page.page)}`}>
         <div className="photo-review-header">
@@ -219,6 +224,7 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
                 <DifferenceCrop page={page} difference={{ ...reading, spacing: true }} />
               </li>)}</ol></details>}
         </>}
+        {addPageActions}
         {page.url && <section className="photo-full-page" aria-label="Full page photo">
           <div className="photo-overview-header">
             <h4 ref={overviewHeading} tabIndex={-1}>Full page</h4>
@@ -259,7 +265,15 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
   </section>;
 }
 
-function ReviewSummary({ pages, queues, reviews, headingRef, incomplete, validCount, onSelect, onFinish }) {
+function AddPageActions({ onScan, onChoose, disabled, scanning }) {
+  if (!onScan && !onChoose) return null;
+  return <div className="review-add-page" role="group" aria-label="Add missing pages">
+    {onScan && <button type="button" disabled={disabled} onClick={onScan}>{scanning ? "Return to camera" : "Scan next page"}</button>}
+    {onChoose && <button type="button" disabled={disabled} onClick={onChoose}>Choose next page</button>}
+  </div>;
+}
+
+function ReviewSummary({ pages, queues, reviews, headingRef, incomplete, validCount, onSelect, onFinish, addPageActions }) {
   const rows = pages.map(page => ({ page, counts: reviewCounts(queues.get(page.id) || [], currentReview(reviews[page.id], page).decisions) }));
   const total = rows.reduce((all, row) => {
     for (const key of Object.keys(all)) all[key] += row.counts[key];
@@ -275,6 +289,7 @@ function ReviewSummary({ pages, queues, reviews, headingRef, incomplete, validCo
     <p className="review-summary-status" role="status">{title}</p>
     <p><strong>Seal checks:</strong> {validCount} authenticated page{validCount === 1 ? "" : "s"}.</p>
     {incomplete && <p className="photo-note">Some pages or seals still need checking. This summary covers the available readings.</p>}
+    {addPageActions}
     {unfinished.length > 0 && <p className="photo-note">Text checking is unfinished on {unfinished.length} page{unfinished.length === 1 ? "" : "s"}.</p>}
     <h4>Your observations</h4>
     <p>{total.reviewed} of {total.total} review decisions recorded.</p>
@@ -306,6 +321,8 @@ function PagePhoto({ page, contentDifferences, decisions = [], finding, onFindin
   const regionKey = (box, index) => `${index}:${box.x0}:${box.y0}:${box.x1}:${box.y1}`;
   const wordRegions = new Set(visibleWords.filter(word => wordToFinding.has(word.sourceIndex))
     .map(word => regionKey(word.bbox, wordToFinding.get(word.sourceIndex))));
+  const extraRegions = contentDifferences.flatMap((d, index) => (d.boxes || [])
+    .filter(box => !wordRegions.has(regionKey(box, index))).map(box => ({ box, index })));
   const tone = index => decisions[index] === "differs" ? "different" : decisions[index] === "matches" ? "matched" : "uncertain";
   function selectWord(word) {
     if (wordToFinding.has(word.sourceIndex)) selectRegion(wordToFinding.get(word.sourceIndex));
@@ -316,8 +333,29 @@ function PagePhoto({ page, contentDifferences, decisions = [], finding, onFindin
   const activate = callback => event => {
     if (event.key === "Enter" || event.key === " ") { event.preventDefault(); callback(); }
   };
+  function selectNearby(event) {
+    // Keep the drawn boxes exact. Resolve taps in the surrounding 22 CSS pixels
+    // by distance to the ink, so overlapping touch areas do not steal a reading.
+    const bounds = event.currentTarget.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
+    const sx = bounds.width / page.width, sy = bounds.height / page.height;
+    const x = event.clientX - bounds.left, y = event.clientY - bounds.top;
+    const targets = [
+      ...visibleWords.map(word => ({ box: word.bbox, select: () => selectWord(word) })),
+      ...extraRegions.map(({ box, index }) => ({ box, select: () => selectRegion(index) })),
+    ].map(target => {
+      const { box } = target;
+      const dx = Math.max(box.x0 * sx - x, 0, x - box.x1 * sx);
+      const dy = Math.max(box.y0 * sy - y, 0, y - box.y1 * sy);
+      return { ...target, dx, dy, distance: dx * dx + dy * dy,
+        center: (x - (box.x0 + box.x1) * sx / 2) ** 2 + (y - (box.y0 + box.y1) * sy / 2) ** 2 };
+    }).filter(target => target.dx <= 22 && target.dy <= 22)
+      .sort((a, b) => a.distance - b.distance || a.center - b.center);
+    targets[0]?.select();
+  }
+  const clickTarget = callback => event => { event.stopPropagation(); callback(); };
   return <>
-    <div className={`photo-scroll${zoom > 1 ? " zoomed" : ""}`}><div className="photo-stage"
+    <div className={`photo-scroll${zoom > 1 ? " zoomed" : ""}`}><div className="photo-stage" onClick={selectNearby}
       style={{ "--photo-ratio": page.width && page.height ? page.width / page.height : undefined, "--photo-zoom": zoom }}>
       <img src={page.url} alt="Page photo being compared with signed text" />
       {comparison && <svg viewBox={`0 0 ${page.width} ${page.height}`} aria-label="Text comparison highlights">
@@ -325,22 +363,21 @@ function PagePhoto({ page, contentDifferences, decisions = [], finding, onFindin
           className={`photo-word ${word.status === "matched" ? "matched" : tone(wordToFinding.get(word.sourceIndex))}${wordToFinding.get(word.sourceIndex) === finding ? " current-finding" : ""}`}
           x={word.bbox.x0} y={word.bbox.y0} width={word.bbox.x1 - word.bbox.x0} height={word.bbox.y1 - word.bbox.y0}
           role="button" tabIndex={0} aria-label={`${wordLabels[word.status]}: ${word.text}`}
-          onClick={() => selectWord(word)} onKeyDown={activate(() => selectWord(word))} />)}
+          onClick={clickTarget(() => selectWord(word))} onKeyDown={activate(() => selectWord(word))} />)}
         {/* A word and its review item share one hit target. Extra region
             targets are for locations without that clickable OCR word. */}
-        {contentDifferences.map((d, i) => d.boxes?.filter(box => !wordRegions.has(regionKey(box, i))).map((box, j) => <rect key={`missing-${i}-${j}`}
+        {extraRegions.map(({ box, index: i }, j) => <rect key={`missing-${i}-${j}`}
           className={`photo-word ${tone(i)} missing-region${i === finding ? " current-finding" : ""}`}
           x={box.x0} y={box.y0} width={box.x1 - box.x0} height={box.y1 - box.y0}
-          role="button" tabIndex={0} aria-label={`Reading ${i + 1}: ${d.expected || d.observed || "Inspect page"}`}
-          onClick={() => selectRegion(i)} onKeyDown={activate(() => selectRegion(i))} />))}
+          role="button" tabIndex={0} aria-label={`Reading ${i + 1}: ${contentDifferences[i].expected || contentDifferences[i].observed || "Inspect page"}`}
+          onClick={clickTarget(() => selectRegion(i))} onKeyDown={activate(() => selectRegion(i))} />)}
       </svg>}
     </div></div>
     {comparison && <div className="photo-view-tools">
       <label className="photo-inline"><input type="checkbox" checked={showMatches} onChange={e => setShowMatches(e.target.checked)} />Show matching words too</label>
-      <label className="photo-inline">Zoom <select aria-label="Zoom" value={zoom} onChange={e => setZoom(Number(e.target.value))}>
-        <option value="1">Fit page</option><option value="2">200%</option><option value="3">300%</option>
-      </select></label>
+      <ImageZoom value={zoom} onChange={setZoom} label="Page zoom" />
     </div>}
+    {contentDifferences.length > 0 && <p className="photo-note">Tap a marked area to review it. Zoom in for nearby readings.</p>}
     {selectedWord && <p className="photo-selected" role="status">{wordLabels[selectedWord.status]}: <strong>{selectedWord.text}</strong></p>}
     {comparison && <ul className="photo-legend" aria-label="Word counts">
       <li className="matched">OCR matches: {comparison.matchedCount}</li>
