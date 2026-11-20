@@ -462,6 +462,8 @@
         seals: snapshot.seals,
         onScanMore: async function() {
           if (collection.getSnapshot().session !== snapshot.session) return;
+          // File import keeps the collection running without opening a camera.
+          if (state.isScanning && !state.camera) stopScanning();
           if (!state.isScanning) await btnScan.onclick();
           if (collection.getSnapshot().session !== snapshot.session) return;
           btnScan.scrollIntoView({ block: "center" });

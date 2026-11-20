@@ -579,6 +579,23 @@ it("does not resume a camera when dismissing a picker in a photo-only session", 
   expect(setup.live.scan).not.toHaveBeenCalled();
   expect(capture).not.toHaveBeenCalled();
 });
+it("opens the camera from review after a file-only scan and ignores callbacks from cleared checks", async () => {
+  const update = vi.fn();
+  const setup = setupStandaloneCapture({ mountPhotoTextVerification: () => ({ update, prepare: vi.fn().mockResolvedValue(), clear: vi.fn() }) });
+  selectedStandalonePhoto();
+  fireEvent.change(document.getElementById("pagePhotoInput"), { target: { files: [new File(["synthetic"], "page.jpg")] } });
+  await waitFor(() => expect(setup.scan).toHaveBeenCalledTimes(1));
+  expect(setup.camera).toBeUndefined();
+  const resume = update.mock.calls.at(-1)[4].onScanMore;
+  document.getElementById("btnScan").scrollIntoView = vi.fn();
+  await resume();
+  expect(setup.camera).toBeDefined();
+  expect(document.getElementById("btnCapture").hidden).toBe(false);
+  fireEvent.click(document.getElementById("btnNewScan"));
+  await resume();
+  expect(document.getElementById("btnCapture").hidden).toBe(true);
+  expect(document.getElementById("clearNotice").textContent).toBe("Check cleared. Camera off.");
+});
 it.each(["unsupported", "too small", "rejected"])("never decodes standalone preview pixels when native capture is %s", async failure => {
   if (failure !== "unsupported") {
     vi.stubGlobal("ImageCapture", vi.fn(function () { return { takePhoto: () => failure === "rejected"
