@@ -110,6 +110,8 @@ it("explains an unreliable reading without hiding missing signed wording", async
   await screen.findByText(/Many characters could not be read reliably/);
   expect(view.container.querySelector(".photo-differences").textContent).toContain("Signed text: not");
   expect(view.container.querySelector(".photo-summary.differences")).toBeTruthy();
+  expect(view.container.querySelector(".photo-differences .difference-thumbnail")).toBeNull();
+  expect(view.container.querySelector(".photo-differences").textContent).toContain("No reliable photo location");
 });
 
 it("checks all captured pages without extra clicks and opens page 2's changed word", async () => {
@@ -141,15 +143,30 @@ it("reviews the wording and crop before navigation, links full-page highlights, 
   const photo = await within(first).findByRole("img", { name: "Page photo being compared with signed text" });
   expect(await within(first).findByText("Difference 1 of 2")).toBeTruthy();
   const card = first.querySelector(".photo-differences > ol");
+  const thumbnail = within(card).getByRole("img", { name: "Page thumbnail showing text location" });
+  const crop = within(card).getByRole("img", { name: "Magnified photo difference" });
+  const boxes = (element, selector) => [...element.querySelectorAll(selector)].map(rect =>
+    ["x", "y", "width", "height"].map(attribute => rect.getAttribute(attribute)));
+  const thumbnailBoxes = () => boxes(thumbnail, ".difference-location-mark");
+  const cropBoxes = () => boxes(crop, "rect");
+  expect(thumbnail.getAttribute("viewBox")).toBe("0 0 200 100");
+  expect(thumbnail.querySelector("image").getAttribute("href")).toBe(photo.getAttribute("src"));
+  const missingLocation = thumbnailBoxes();
+  expect(missingLocation).toHaveLength(1);
+  expect(missingLocation).toEqual(cropBoxes());
   const navigation = within(first).getByRole("group", { name: "Difference navigation" });
   expect(card.compareDocumentPosition(navigation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(navigation.compareDocumentPosition(photo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(first.querySelector(".photo-differences > ol").textContent).toContain("Header");
   fireEvent.click(within(first).getByRole("button", { name: "Next difference" }));
   expect(first.querySelector(".photo-differences > ol").textContent).toContain("Wrong");
+  expect(thumbnailBoxes()).not.toEqual(missingLocation);
+  expect(thumbnailBoxes()).toHaveLength(1);
+  expect(thumbnailBoxes()).toEqual(cropBoxes());
   expect(within(first).getByRole("button", { name: "Next difference" }).disabled).toBe(true);
   fireEvent.keyDown(within(first).getByRole("button", { name: "Difference 1: Header" }), { key: "Enter" });
   expect(first.querySelector(".photo-differences > ol").textContent).toContain("Header");
+  expect(thumbnailBoxes()).toEqual(missingLocation);
   expect(document.activeElement).toBe(within(first).getByRole("heading", { name: "Difference 1 of 2" }));
   fireEvent.click(within(first).getByRole("button", { name: "Different or extra text: Wrong" }));
   expect(within(first).getByText("Difference 2 of 2")).toBeTruthy();
@@ -164,9 +181,11 @@ it("reviews the wording and crop before navigation, links full-page highlights, 
   const second = screen.getByRole("region", { name: "Review Page 2 of 2" });
   expect(within(second).getByRole("combobox", { name: "Zoom" }).value).toBe("1");
   expect(within(second).queryByText("Difference 2 of 2")).toBeNull();
+  expect(within(second).queryByRole("img", { name: "Page thumbnail showing text location" })).toBeNull();
   expect(view.container.querySelector(".photo-scroll.zoomed")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: /Page 1 of 2 · Seal authenticated/ }));
   expect(screen.getByText("Difference 1 of 2")).toBeTruthy();
+  expect(boxes(screen.getByRole("img", { name: "Page thumbnail showing text location" }), ".difference-location-mark")).toEqual(missingLocation);
 });
 
 it("shows reported processing progress without claiming completion before the comparison", async () => {

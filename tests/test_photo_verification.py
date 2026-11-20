@@ -596,25 +596,39 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
         def assert_review_visible():
             card = review.locator(".photo-differences > ol").bounding_box()
             crop = review.get_by_role("img", name="Magnified photo difference").first.bounding_box()
+            thumbnail = review.get_by_role("img", name="Page thumbnail showing text location").first
+            location = thumbnail.bounding_box()
             navigation = review.get_by_role("group", name="Difference navigation").bounding_box()
             # The wording, photo crop, and navigation must be visible together.
             # A visible button alone does not make review usable.
             assert 0 <= card["y"] <= crop["y"], (card, crop)
             assert crop["y"] + crop["height"] <= navigation["y"], (crop, navigation)
+            assert 0 <= location["y"] < location["y"] + location["height"] <= navigation["y"], location
+            assert 44 <= location["width"] <= 100 and location["height"] <= 130, location
+            assert location["x"] + location["width"] < crop["x"], (location, crop)
             assert navigation["y"] + navigation["height"] < viewport["height"], navigation
             overview = review.get_by_role("img", name="Page photo being compared with signed text").bounding_box()
             assert overview["y"] > navigation["y"] + navigation["height"]
             assert review.locator(".photo-differences > ol").evaluate("e => e.scrollHeight === e.clientHeight")
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        assert_review_visible()
+            # The locator uses full-photo coordinates, highlights only the
+            # selected finding, and agrees with the magnified crop.
+            regions = thumbnail.locator(".difference-location-mark").evaluate_all(
+                "els => els.map(e => ['x','y','width','height'].map(a => e.getAttribute(a)))")
+            closeup = review.get_by_role("img", name="Magnified photo difference").first
+            assert regions == closeup.locator("rect").evaluate_all(
+                "els => els.map(e => ['x','y','width','height'].map(a => e.getAttribute(a)))")
+            assert thumbnail.locator("image").get_attribute("href") == closeup.locator("image").get_attribute("href")
+            return regions
+        first_location = assert_review_visible()
         expect(review.get_by_role("button", name="Previous difference", exact=True)).to_be_disabled()
         review.get_by_role("button", name="Next difference", exact=True).click()
         expect(review.locator(".photo-differences > ol")).to_contain_text("Monday")
-        assert_review_visible()
+        assert assert_review_visible() != first_location
         expect(review.get_by_role("button", name="Next difference", exact=True)).to_be_disabled()
         review.get_by_role("button", name="Previous difference", exact=True).click()
         expect(review.locator(".photo-differences > ol")).to_contain_text("923.45")
-        assert_review_visible()
+        assert assert_review_visible() == first_location
         review.get_by_role("button", name="View full page", exact=True).click()
         expect(review.get_by_role("heading", name="Full page", exact=True)).to_be_focused()
         review.get_by_role("button", name="Different or extra text: Monday", exact=True).click()
