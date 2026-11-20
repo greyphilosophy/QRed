@@ -460,6 +460,16 @@
         verifying: snapshot.busy,
         collectionProgress: snapshot.progress,
         seals: snapshot.seals,
+        onScanMore: async function() {
+          if (collection.getSnapshot().session !== snapshot.session) return;
+          if (!state.isScanning) await btnScan.onclick();
+          if (collection.getSnapshot().session !== snapshot.session) return;
+          btnScan.scrollIntoView({ block: "center" });
+          btnScan.focus({ preventScroll: true });
+        },
+        onChooseMore: function() {
+          if (collection.getSnapshot().session === snapshot.session) choosePhoto(true);
+        },
         onFinish: function() {
           if (collection.getSnapshot().session === snapshot.session) btnNewScan.onclick();
         },

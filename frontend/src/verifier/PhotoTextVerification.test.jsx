@@ -199,10 +199,10 @@ it("reviews the wording and crop before navigation, links full-page highlights, 
   expect(document.activeElement).toBe(within(first).getByRole("heading", { name: "Reading 1 of 2" }));
   fireEvent.click(within(first).getByRole("button", { name: "Next reading" }));
   fireEvent.click(within(first).getByRole("button", { name: "Printed text differs" }));
-  fireEvent.change(within(first).getByRole("combobox", { name: "Zoom" }), { target: { value: "2" } });
+  fireEvent.click(within(first).getByRole("button", { name: "200%" }));
   fireEvent.click(screen.getByRole("button", { name: /Page 2 of 2 · Seal authenticated/ }));
   const second = screen.getByRole("region", { name: "Review Page 2 of 2" });
-  expect(within(second).getByRole("combobox", { name: "Zoom" }).value).toBe("1");
+  expect(within(second).getByRole("button", { name: "Fit", exact: true }).getAttribute("aria-pressed")).toBe("true");
   expect(within(second).queryByText("Reading 2 of 2")).toBeNull();
   expect(within(second).queryByRole("img", { name: "Page thumbnail showing text location" })).toBeNull();
   expect(view.container.querySelector(".photo-scroll.zoomed")).toBeNull();
@@ -354,7 +354,7 @@ it("enlarges the current evidence, lets the user hide the marker, and restores f
   expect(dialog.querySelectorAll(".difference-location-mark")).toHaveLength(1);
   fireEvent.click(within(dialog).getByRole("checkbox", { name: "Show highlight" }));
   expect(dialog.querySelectorAll(".difference-location-mark")).toHaveLength(0);
-  fireEvent.change(within(dialog).getByRole("combobox", { name: "Image zoom" }), { target: { value: "2" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "200%" }));
   expect(dialog.querySelector("svg").style.width).toBe("200%");
   fireEvent.click(within(dialog).getByRole("button", { name: "Show full page" }));
   expect(dialog.querySelector("svg").getAttribute("viewBox")).toBe("0 0 200 100");
@@ -364,4 +364,47 @@ it("enlarges the current evidence, lets the user hide the marker, and restores f
   expect(document.body.style.overflow).toBe("");
   fireEvent.click(screen.getByRole("button", { name: "Enlarge page location" }));
   expect(screen.getByRole("dialog", { name: "Page location" }).querySelector("svg").getAttribute("viewBox")).toBe("0 0 200 100");
+  fireEvent.click(screen.getByRole("button", { name: "Back to review" }));
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Enlarge page location" }));
+});
+
+it("adds missing pages from review or summary while retaining existing decisions", async () => {
+  const onScanMore = vi.fn(), onChooseMore = vi.fn();
+  const props = { results: [page], scanPhotos: [capture(1, "first", "Monday")], onScanMore, onChooseMore };
+  const view = render(<PhotoTextVerification {...props} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Printed text differs", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Scan next page" }));
+  expect(onScanMore).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Review summary", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Choose next page" }));
+  expect(onChooseMore).toHaveBeenCalledTimes(1);
+  view.rerender(<PhotoTextVerification {...props} results={[page, other]} scanPhotos={[...props.scanPhotos, capture(2, "second", "Friday")]} />);
+  await screen.findByText("Review finished — discrepancies recorded");
+  expect(screen.queryByRole("group", { name: "Add missing pages" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Revisit readings" }));
+  expect(screen.getByRole("button", { name: "Printed text differs", exact: true }).getAttribute("aria-pressed")).toBe("true");
+});
+
+it("opens the nearest reading from beside a small highlight at fit and enlarged sizes", async () => {
+  const signed = { ...page, content: "Friday 100" };
+  ocr.read.mockResolvedValue([word("Monday"), { ...word("900"), bbox: { x0: 100, y0: 40, x1: 140, y1: 50 } }]);
+  const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
+  await screen.findByText("Number or date");
+  const stage = view.container.querySelector(".photo-stage");
+  // At half scale the targets are 40×10 and 20×5 CSS pixels, separated by 5 px.
+  stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 50 });
+  fireEvent.click(stage, { clientX: 51, clientY: 16 });
+  expect(currentCard(view.container).textContent).toContain("900");
+  fireEvent.click(stage, { clientX: 25, clientY: 35 });
+  expect(currentCard(view.container).textContent).toContain("Monday");
+  // Empty space is not a target, even when an item is already selected.
+  fireEvent.click(stage, { clientX: 99, clientY: 49 });
+  expect(currentCard(view.container).textContent).toContain("Monday");
+  fireEvent.click(within(screen.getByRole("group", { name: "Page zoom" })).getByRole("button", { name: "200%" }));
+  stage.getBoundingClientRect = () => ({ left: -100, top: -20, width: 400, height: 200 });
+  fireEvent.click(stage, { clientX: 145, clientY: 100 });
+  expect(currentCard(view.container).textContent).toContain("900");
+  // The exact word stays keyboard accessible, with no duplicate overlay.
+  fireEvent.keyDown(screen.getByRole("button", { name: "Different or extra text: Monday" }), { key: "Enter" });
+  expect(currentCard(view.container).textContent).toContain("Monday");
 });

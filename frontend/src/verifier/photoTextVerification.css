@@ -130,8 +130,8 @@
 .review-decisions { min-width: 0; padding: 0; margin: .65rem 0 0; border: 0; }
 .review-decisions legend { font-size: .85rem; font-weight: 700; padding: 0 0 .35rem; }
 .review-decisions > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .35rem; }
-.photo-check .review-choice { min-height: 54px; padding: .45rem .25rem; border: 2px solid #a8b2be; background: #fff; color: #172033; font-size: .82rem; line-height: 1.3; }
-.photo-check .review-choice[aria-pressed=true] { font-weight: 700; box-shadow: inset 0 0 0 1px currentColor; }
+.photo-check .review-choice { min-height: 54px; padding: .45rem .25rem; border: 2px solid #a8b2be; background: #fff; color: #172033; font-size: .875rem; font-weight: 600; line-height: 1.3; }
+.photo-check .review-choice[aria-pressed=true] { box-shadow: inset 0 0 0 1px currentColor; }
 .photo-check .review-choice.matches[aria-pressed=true] { background: #dcfce7; border-color: #166534; color: #14532d; }
 .photo-check .review-choice.differs[aria-pressed=true] { background: #fee2e2; border-color: #991b1b; color: #7f1d1d; }
 .photo-check .review-choice.unsure[aria-pressed=true] { background: #fef3c7; border-color: #854d0e; color: #713f12; }
@@ -154,7 +154,11 @@
 .photo-check .reading-viewer-header button { font-size: .875rem; }
 .reading-viewer-tools { justify-content: flex-start; padding: .5rem 0; }
 .photo-check .reading-viewer-tools label { display: inline-flex; align-items: center; gap: .3rem; margin: 0; font-size: .875rem; }
-.photo-check .reading-viewer-tools select { width: auto; padding: .3rem; }
+.image-zoom { display: flex; align-items: center; gap: .3rem; font-size: .875rem; }
+.photo-check .image-zoom button { min-width: 44px; min-height: 44px; padding: .4rem .55rem; font-size: .875rem; font-weight: 600; border: 2px solid #94a3b8; background: #fff; color: #213c60; }
+.photo-check .image-zoom button[aria-pressed=true] { background: #213c60; border-color: #213c60; color: #fff; }
+.review-add-page { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
+.photo-check .review-add-page button { flex: 1 1 8rem; background: #f1f5f9; color: #213c60; border: 1px solid #94a3b8; font-size: .875rem; }
 .reading-viewer-scroll { overflow: auto; max-height: 60svh; background: #e2e8f0; overscroll-behavior: contain; }
 .reading-viewer-scroll svg { display: block; height: auto; max-width: none; margin: auto; }
 .reading-viewer-scroll .photo-word { pointer-events: none; }
