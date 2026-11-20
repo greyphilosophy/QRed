@@ -240,7 +240,7 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         review = page.get_by_role("region", name="Review Page 1 of 1", exact=True)
         expect(review).to_be_visible(timeout=15000)
         authenticated = time.monotonic()
-        expect(review.locator("h3").first).to_contain_text("Seal authenticated")
+        expect(review.locator("h3").first).to_contain_text("Seal: authenticated")
         expect(review.locator(".photo-summary.matches, .photo-summary.uncertain")).to_have_count(1, timeout=20000)
         finished = time.monotonic()
         print("Synthetic OCR review: " + review.inner_text())
@@ -258,9 +258,9 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         expect(review.locator(".photo-legend .different")).to_have_text("OCR differences: 0")
         expect(review.locator(".photo-legend .uncertain")).to_have_text("OCR uncertain: 0")
         expect(review.locator(".reading-caution, .photo-retries")).to_have_count(0)
-        if review.locator(".photo-summary").inner_text() == "Some readings need review":
-            expect(review.locator(".photo-markings")).to_be_visible()
-            expect(review.locator(".photo-markings")).to_contain_text("Verify")
+        if "to review" in review.locator(".photo-summary").inner_text():
+            expect(review.locator(".review-reason")).to_have_text("QRed marking")
+            expect(review.locator(".review-reading")).to_contain_text("Verify")
         else:
             expect(review.locator(".photo-summary")).to_contain_text("Recognized text matches the signed text")
         previews = page.evaluate("__documentScanRequests.filter(request => request.live)")

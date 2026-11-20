@@ -204,7 +204,7 @@ def test_saved_rotated_native_photo_reopens_with_its_digit_difference(browser, d
             page.get_by_role("button", name="Browse files", exact=True).click()
         picked.value.set_files(saved_path)
         review = page.get_by_role("region", name="Review Page 1 of 1", exact=True)
-        expect(review.get_by_role("heading", name=re.compile("Seal authenticated"))).to_be_visible(timeout=30000)
+        expect(review.get_by_role("heading", name=re.compile("Seal: authenticated"))).to_be_visible(timeout=30000)
         expect(page.locator(".page-check-status.queued, .page-check-status.reading")).to_have_count(0, timeout=60000)
         assert review.locator(".photo-stage img").evaluate("img => [img.naturalWidth, img.naturalHeight]") == [1920, 2560]
         cards = review_differences(review)

@@ -89,7 +89,7 @@ def test_scan_seal_sheet_then_compare_unmarked_originals(browser, tmp_path, path
         checks = page.get_by_role("navigation", name="Page checks")
         expect(checks.get_by_role("button")).to_have_count(2, timeout=30000)
         expect(checks.get_by_text("Printed text not checked", exact=False)).to_have_count(2)
-        for number, source, expected in [(2, changed, "to review"), (1, output, "Recognized text matches")]:
+        for number, source, expected in [(2, changed, "Review needed"), (1, output, "Recognized text matches")]:
             checks.get_by_role("button", name=f"Page {number} of 2", exact=False).click()
             page.get_by_role("button", name=f"Photograph original page {number}", exact=True).click()
             page.get_by_role("dialog").get_by_label("Choose a high-resolution page photo").set_input_files(

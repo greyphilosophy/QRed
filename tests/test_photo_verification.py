@@ -119,7 +119,7 @@ def test_changed_and_erased_digits_on_a_curled_dated_form(browser, dated_form_ph
             show_file_inputs(page)
             page.locator("#qr-image" if path == "/" else "#pagePhotoInput").set_input_files(photo)
             review = page.get_by_role("region", name="Review Page 1 of 1", exact=True)
-            expect(review.get_by_role("heading", name=re.compile("Seal authenticated"))).to_be_visible(timeout=30000)
+            expect(review.get_by_role("heading", name=re.compile("Seal: authenticated"))).to_be_visible(timeout=30000)
             expect(page.locator(".page-check-status.queued, .page-check-status.reading")).to_have_count(0, timeout=60000)
             if kind == "original":
                 review.get_by_label("Show matching words too").check()
@@ -201,7 +201,7 @@ def test_browse_files_reads_one_original_offline(browser, dated_form_photos, pat
             if data == b"incomplete":
                 expect(page.get_by_text("This ZIP could not be opened.", exact=False)).to_be_visible()
         review = page.get_by_role("region", name="Review Page 1 of 1", exact=True)
-        expect(review.get_by_role("heading", name=re.compile("Seal authenticated"))).to_be_visible(timeout=30000)
+        expect(review.get_by_role("heading", name=re.compile("Seal: authenticated"))).to_be_visible(timeout=30000)
         assert page.evaluate("scanHasExtras") == [False]
         guard.assert_quiet()
     finally:
