@@ -645,11 +645,21 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
             assert [choice.bounding_box() for choice in choices.all()] == before_choices
             assert review.get_by_role("group", name="Reading navigation").bounding_box() == before_navigation
         expect(review.get_by_role("button", name="Previous reading", exact=True)).to_be_disabled()
+        review.get_by_role("button", name="Printed text differs", exact=True).tap()
         review.get_by_role("button", name="Next reading", exact=True).click()
         expect(review.locator(".photo-differences > ol")).to_contain_text("Monday")
         assert assert_review_visible() != first_location
+        # The final decision changes the status banner, which must not move
+        # the active controls when its wording takes a second line.
+        before_choices = [choice.bounding_box() for choice in choices.all()]
+        before_navigation = review.get_by_role("group", name="Reading navigation").bounding_box()
+        for label in ["Printed text differs", "Matches signed text", "Can't tell", "Can't tell"]:
+            review.get_by_role("button", name=label, exact=True).tap()
+            assert [choice.bounding_box() for choice in choices.all()] == before_choices
+            assert review.get_by_role("group", name="Reading navigation").bounding_box() == before_navigation
         expect(review.get_by_role("button", name="Review summary", exact=True)).to_be_enabled()
         review.get_by_role("button", name="Previous reading", exact=True).click()
+        review.get_by_role("button", name="Printed text differs", exact=True).tap()
         expect(review.locator(".photo-differences > ol")).to_contain_text("923.45")
         assert assert_review_visible() == first_location
         review.get_by_role("button", name="All page highlights", exact=True).click()

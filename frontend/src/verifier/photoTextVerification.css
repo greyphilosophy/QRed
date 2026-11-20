@@ -105,6 +105,7 @@
 /* The review is a single sequence. Page context stays compact; decisions and
    navigation belong to the visible reading, with room for mobile safe areas. */
 .photo-check .photo-summary { font-size: .9rem; padding: .4rem .55rem; margin: .5rem 0; }
+.photo-result > .photo-summary { box-sizing: border-box; min-height: calc(3em + .8rem); }
 .review-status-label { font-weight: 600; }
 .review-progress { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 .review-progress > span { color: #475569; font-size: .8rem; white-space: nowrap; }
