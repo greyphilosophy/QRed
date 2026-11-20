@@ -140,7 +140,7 @@ def review_differences(review):
     """Walk the same difference cards the verifier sees, including the last one."""
     cards = []
     forward = review.get_by_role("button", name="Next difference", exact=True)
-    position = review.locator(".photo-finding-controls strong")
+    position = review.locator(".photo-finding-heading")
     current = review.locator(".photo-differences > ol > li")
     expect(current).to_be_visible(timeout=60000)
     total = int(review.locator(".photo-differences").get_attribute("data-count"))
@@ -574,8 +574,9 @@ def test_real_stamped_pages_separate_markings_and_detect_edits(browser, tmp_path
 
 
 @pytest.mark.parametrize("path", ["/", "/verify.htm"])
-def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_text, path, tmp_path):
-    context = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="allow")
+@pytest.mark.parametrize("viewport", [{"width": 360, "height": 800}, {"width": 390, "height": 844}])
+def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_text, path, viewport, tmp_path):
+    context = browser.new_context(viewport=viewport, is_mobile=True, has_touch=True, service_workers="allow")
     try:
         page = context.new_page()
         context.route("**/api/keys/default", lambda route: route.fulfill(json={"public_key": PUBLIC_KEY}))
@@ -583,21 +584,43 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
         if path != "/":
             page.locator("#publicKeyFileInput").set_input_files({"name": "key.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode()})
         expect(page.get_by_text("Camera photos stay on this device.", exact=False)).to_be_visible()
-        camera_paper(page, TEXT.replace("Friday", "Monday"), sealed_text[1]["qr"])
+        camera_paper(page, TEXT.replace("Friday", "Monday").replace("123.45", "923.45"), sealed_text[1]["qr"])
         page.get_by_role("button", name="Check document", exact=True).click()
         expect(page.locator(".ar-collection-progress, #statusText").filter(has_text="Page 2 captured. Show page 1.")).to_be_visible(timeout=45000)
         if path == "/verify.htm":
             assert page.locator("#sealList").evaluate("e => e.scrollWidth <= e.clientWidth")
         page.get_by_role("button", name="Check this page now", exact=True).click()
         review = page.get_by_role("region", name="Review Page 2 of 2", exact=True)
-        expect(review.locator(".photo-differences")).to_contain_text("Monday", timeout=60000)
+        expect(review.locator(".photo-differences")).to_contain_text("923.45", timeout=60000)
         expect(review.get_by_role("heading", name=re.compile("Page 2"))).to_be_focused()
-        overview = review.get_by_role("img", name="Page photo being compared with signed text").bounding_box()
-        assert overview["y"] >= 0 and overview["y"] + overview["height"] < 844, overview
-        crop = review.get_by_role("img", name="Magnified photo difference").first.bounding_box()
-        assert crop["y"] >= overview["y"] + overview["height"]
-        assert review.locator(".photo-differences > ol").evaluate("e => e.scrollHeight === e.clientHeight")
+        def assert_review_visible():
+            card = review.locator(".photo-differences > ol").bounding_box()
+            crop = review.get_by_role("img", name="Magnified photo difference").first.bounding_box()
+            navigation = review.get_by_role("group", name="Difference navigation").bounding_box()
+            # The wording, photo crop, and navigation must be visible together.
+            # A visible button alone does not make review usable.
+            assert 0 <= card["y"] <= crop["y"], (card, crop)
+            assert crop["y"] + crop["height"] <= navigation["y"], (crop, navigation)
+            assert navigation["y"] + navigation["height"] < viewport["height"], navigation
+            overview = review.get_by_role("img", name="Page photo being compared with signed text").bounding_box()
+            assert overview["y"] > navigation["y"] + navigation["height"]
+            assert review.locator(".photo-differences > ol").evaluate("e => e.scrollHeight === e.clientHeight")
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        assert_review_visible()
+        expect(review.get_by_role("button", name="Previous difference", exact=True)).to_be_disabled()
+        review.get_by_role("button", name="Next difference", exact=True).click()
+        expect(review.locator(".photo-differences > ol")).to_contain_text("Monday")
+        assert_review_visible()
+        expect(review.get_by_role("button", name="Next difference", exact=True)).to_be_disabled()
+        review.get_by_role("button", name="Previous difference", exact=True).click()
+        expect(review.locator(".photo-differences > ol")).to_contain_text("923.45")
+        assert_review_visible()
+        review.get_by_role("button", name="View full page", exact=True).click()
+        expect(review.get_by_role("heading", name="Full page", exact=True)).to_be_focused()
+        review.get_by_role("button", name="Different or extra text: Monday", exact=True).click()
+        expect(review.get_by_role("heading", name="Difference 2 of 2", exact=True)).to_be_focused()
+        assert_review_visible()
         expect(page.get_by_text("Other pages have not been checked.", exact=False)).to_be_visible()
-        page.screenshot(path=str(tmp_path / "page-first.png"))
+        page.screenshot(path=str(tmp_path / "difference-first.png"))
     finally:
         context.close()

@@ -1,6 +1,6 @@
 .photo-check { margin: 1.5rem auto; padding: 1.25rem; border: 1px solid #cbd5e1; border-radius: 12px; background: #fff; color: #172033; max-width: 780px; text-align: left; white-space: normal; }
 .photo-result { scroll-margin-block-start: .25rem; }
-.photo-review-header { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; flex-wrap: wrap; gap: .15rem .75rem; padding: .25rem 0; border-bottom: 1px solid #cbd5e1; background: #fff; }
+.photo-review-header { display: flex; align-items: center; flex-wrap: wrap; gap: .15rem .75rem; padding: .25rem 0; border-bottom: 1px solid #cbd5e1; background: #fff; }
 .photo-check .photo-review-header h3 { flex: 1 1 12rem; font-size: 1.05rem; line-height: 1.3; margin: .15rem 0; }
 .photo-review-header h3 .photo-note { font-size: .84rem; }
 .page-check-list { display: flex; flex-wrap: wrap; gap: .25rem; max-width: 100%; }
@@ -10,9 +10,17 @@
 .page-state-mark:not(:empty) { margin-left: .3em; font-weight: 700; }
 .photo-check .page-check-status.matches:not([aria-pressed=true]) .page-state-mark { color: #166534; }
 .photo-check .page-check-status.differences:not([aria-pressed=true]) .page-state-mark { color: #9a3412; }
-.photo-finding-controls, .photo-view-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .2rem .6rem; margin-top: .45rem; }
-.photo-finding-controls div { display: flex; gap: .35rem; }
-.photo-finding-controls button { font-size: .85rem; }
+.photo-finding-controls, .photo-view-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .4rem .6rem; margin-top: .45rem; }
+.photo-finding-steps { display: flex; flex: 1 1 12rem; gap: .5rem; }
+.photo-finding-steps button { flex: 1; }
+.photo-check :is(.photo-finding-controls, .photo-overview-header, .page-check-list) button { margin: 0; }
+.photo-check .photo-overview-link { background: #f1f5f9; color: #213c60; }
+.photo-finding-heading { font-size: 1rem; margin: .75rem 0 .5rem; }
+.photo-differences > ol { list-style: none; padding: 0; margin: 0; }
+.photo-check .photo-differences > ol > li { margin: 0; padding: .75rem; border: 1px solid #fecdd3; border-radius: 8px; line-height: 1.5; }
+.photo-full-page { margin-top: 1rem; border-top: 1px solid #cbd5e1; }
+.photo-overview-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; padding: .75rem 0; }
+.photo-overview-header h4 { font-size: 1rem; margin: 0; }
 .photo-check .photo-view-tools label { font-size: .83rem; }
 .photo-check .photo-view-tools select { min-height: 44px; padding: .2rem; }
 .difference-crop { display: block; width: 100%; max-height: 180px; margin-top: .6rem; background: white; border: 1px solid #cbd5e1; }
@@ -60,7 +68,7 @@
 .photo-word.uncertain { fill: #f59e0b40; stroke: #b45309; stroke-dasharray: 3 2; }
 .photo-word:focus { stroke: #172033; stroke-width: 3px; outline: none; }
 .photo-selected { padding: .75rem; background: #f1f5f9; overflow-wrap: anywhere; }
-.photo-differences ol, .photo-reading-review ol { padding-left: 1.5rem; }
+.photo-differences details ol, .photo-reading-review ol { padding-left: 1.5rem; }
 .photo-differences li { margin: .5rem 0; padding: .5rem; background: #fff1f2; overflow-wrap: anywhere; }
 .photo-typography li { background: #fffbeb; }
 .photo-reading-review li { margin: .5rem 0; padding: .5rem; background: #fffbeb; overflow-wrap: anywhere; }
@@ -73,3 +81,12 @@
 .evidence-reference rect { fill: #f59e0b45; stroke: #b45309; stroke-width: 2px; vector-effect: non-scaling-stroke; }
 .evidence-photo { width: 100%; height: auto; border: 1px solid #94a3b8; }
 @media (max-width: 520px) { .evidence-comparison { gap: .5rem; } .evidence-comparison figcaption { font-size: .85rem; } }
+@media (max-width: 600px) {
+  .photo-check { padding: .75rem; }
+  .verification-card .photo-check { margin: 1rem 0; padding: 0; border: 0; border-radius: 0; }
+  .photo-review-header { gap: .35rem; }
+  .photo-check .photo-review-header h3 { flex-basis: 100%; }
+  .page-check-list { width: 100%; }
+  .photo-check .page-check-status { flex: 1; }
+  .photo-check .photo-view-tools label, .photo-legend, .photo-review-header h3 .photo-note { font-size: .875rem; }
+}

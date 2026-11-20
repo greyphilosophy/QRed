@@ -35,6 +35,7 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
   const [selected, setSelected] = useState(""), [retake, setRetake] = useState(null);
   const [activeFinding, setActiveFinding] = useState(0);
   const selectedByUser = useRef(false), openedPriority = useRef(0), heading = useRef(null), focusPage = useRef(null);
+  const findingHeading = useRef(null), overviewHeading = useRef(null);
   useEffect(() => { checks.update(results, scanPhotos, { scanning, verifying }); }, [checks, results, scanPhotos, scanning, verifying]);
   useEffect(() => () => { if (!providedChecks) checks.dispose(); }, [checks, providedChecks]);
   const pages = useMemo(() => [...snapshot.pages].sort((a, b) => (a.page.page_number ?? 0) - (b.page.page_number ?? 0)), [snapshot.pages]);
@@ -69,6 +70,17 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
       heading.current?.closest(".photo-result")?.scrollIntoView?.({ block: "start" });
       focusPage.current = null;
     }
+  }
+  function selectFinding(index, focus = false) {
+    setActiveFinding(index);
+    // Keep the wording and crop in view after navigating a long difference or
+    // choosing a highlight farther down the page. Do not scroll only the buttons.
+    heading.current?.closest(".photo-result")?.scrollIntoView?.({ block: "start" });
+    if (focus) findingHeading.current?.focus({ preventScroll: true });
+  }
+  function viewFullPage() {
+    overviewHeading.current?.scrollIntoView?.({ block: "start" });
+    overviewHeading.current?.focus({ preventScroll: true });
   }
   const comparison = page?.comparison;
   const dateReviews = comparison?.retryReviews?.filter(reading => reading.dateField);
@@ -120,17 +132,10 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
           {page.state === "reading" ? photoProcessingMessage(page.progress) : resultLabel(page)}</p>
         {page.state === "reading" && <progress max="1" value={page.progress ?? undefined} aria-label="Printed-text recognition" />}
         {page.error && <p role="alert">{page.error}</p>}
-        {page.url && <PagePhoto key={`${page.id}:${page.captureId}`} page={page} contentDifferences={contentDifferences}
-          finding={activeFinding} onFinding={setActiveFinding} />}
         {comparison && <>
-          {difficultReading && <p className="photo-note reading-caution">Many characters could not be read reliably. Inspect the marked text on the paper; recognition errors can look like changes.</p>}
           <div className="photo-differences" data-count={contentDifferences.length}>
-            {contentDifferences.length > 0 && <>
-              <FindingPages items={contentDifferences} index={activeFinding} onChange={setActiveFinding} />
-              <ol start={Math.min(activeFinding + 1, contentDifferences.length)}>
-                <PhotoDifference page={page} difference={contentDifferences[Math.min(activeFinding, contentDifferences.length - 1)]} />
-              </ol>
-              </>}
+            {contentDifferences.length > 0 && <FindingPages page={page} items={contentDifferences} index={activeFinding}
+              headingRef={findingHeading} onChange={selectFinding} onViewPage={page.url ? viewFullPage : undefined} />}
             {spacingDifferences.length > 0 && <details className="photo-typography photo-spacing">
               <summary>Word spacing to review ({spacingDifferences.length})</summary>
               <p className="photo-note">The characters agree, but words were split or joined. Check the spacing on the paper.</p>
@@ -151,6 +156,7 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
               </li>)}</ol>
             </details>}
           </div>
+          {difficultReading && <p className="photo-note reading-caution">Many characters could not be read reliably. Inspect the marked text on the paper; recognition errors can look like changes.</p>}
           <RereadReview page={page} readings={dateReviews} dates />
           {numbersToCheck.length > 0 && <details className="photo-reading-review photo-number-review" open>
             <summary>Numbers to check ({numbersToCheck.length})</summary>
@@ -186,6 +192,14 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
               <DifferenceCrop page={page} difference={marking} /></div>)}
           </div>}
         </>}
+        {page.url && <section className="photo-full-page" aria-label="Full page photo">
+          <div className="photo-overview-header">
+            <h4 ref={overviewHeading} tabIndex={-1}>Full page</h4>
+            {contentDifferences.length > 0 && <button type="button" onClick={() => selectFinding(activeFinding, true)}>Back to difference</button>}
+          </div>
+          <PagePhoto key={`${page.id}:${page.captureId}`} page={page} contentDifferences={contentDifferences}
+            finding={activeFinding} onFinding={index => selectFinding(index, true)} />
+        </section>}
         <div className="photo-actions">
           {onReplacePhoto && <button type="button" onClick={() => setRetake(page.page)}>{page.page.seal_sheet
             ? `Photograph original page ${page.page.page_number}` : "Retake this page"}</button>}
@@ -211,15 +225,21 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
   </section>;
 }
 
-function FindingPages({ items, index, onChange }) {
+function FindingPages({ page, items, index, onChange, headingRef, onViewPage }) {
   const current = Math.min(index, items.length - 1);
-  return <div className="photo-finding-controls">
-    <strong aria-live="polite">Difference {current + 1} of {items.length}</strong>
-    {items.length > 1 && <div>
-      <button type="button" aria-label="Previous difference" disabled={current === 0} onClick={() => onChange(current - 1)}>Previous</button>
-      <button type="button" aria-label="Next difference" disabled={current >= items.length - 1} onClick={() => onChange(current + 1)}>Next</button>
-    </div>}
-  </div>;
+  return <>
+    <h4 className="photo-finding-heading" ref={headingRef} tabIndex={-1} aria-live="polite">Difference {current + 1} of {items.length}</h4>
+    <ol start={current + 1} aria-live="polite" aria-atomic="true">
+      <PhotoDifference page={page} difference={items[current]} />
+    </ol>
+    <div className="photo-finding-controls" role="group" aria-label="Difference navigation">
+      {items.length > 1 && <div className="photo-finding-steps">
+        <button type="button" aria-label="Previous difference" disabled={current === 0} onClick={() => onChange(current - 1)}>Previous</button>
+        <button type="button" aria-label="Next difference" disabled={current >= items.length - 1} onClick={() => onChange(current + 1)}>Next</button>
+      </div>}
+      {onViewPage && <button type="button" className="photo-overview-link" onClick={onViewPage}>View full page</button>}
+    </div>
+  </>;
 }
 
 function PagePhoto({ page, contentDifferences, finding, onFinding }) {

@@ -7,3 +7,6 @@
 .verification-note { color: #475569; font-size: .9rem; }
 .verification-result { border-top: 1px solid #cbd5e1; padding-top: 1rem; margin-top: 1rem; overflow-wrap: anywhere; }
 .verification-result pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; background: #f1f5f9; padding: 1rem; border-radius: 6px; }
+@media (max-width: 600px) {
+  .verification-card { padding: .75rem; }
+}
