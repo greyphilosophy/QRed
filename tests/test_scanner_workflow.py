@@ -249,7 +249,9 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         # Do not turn that conservative result into an unconditional green match.
         review.get_by_label("Show matching words too", exact=True).check()
         expected_words = [word for line in LINES for word in line.split()]
-        words = review.locator('.photo-stage svg[aria-label="Text comparison highlights"] .photo-word')
+        # Queue location markers also use the page overlay; these assertions
+        # check the OCR words themselves, not the extra review navigation boxes.
+        words = review.locator('.photo-stage svg[aria-label="Text comparison highlights"] .photo-word:not(.missing-region)')
         expect(words).to_have_count(len(expected_words))
         assert words.evaluate_all("nodes => nodes.map(node => node.getAttribute('aria-label'))") == [
             "Matching text: " + word for word in expected_words]
