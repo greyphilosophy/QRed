@@ -126,7 +126,7 @@ it("checks all captured pages without extra clicks and opens page 2's changed wo
   expect(ocr.read).toHaveBeenCalledTimes(2);
 });
 
-it("fits the page first, links its missing regions and words to difference cards, and resets on a page change", async () => {
+it("reviews the wording and crop before navigation, links full-page highlights, and resets on a page change", async () => {
   const content = "Top\nHeader\nRoom No\nEnd";
   const evidence = { width: 200, height: 100, text: content, layout: { mode: 3,
     lines: [.05, .3, .55, .8].map(y => ({ x: .05, y, width: .85, height: .14 })) } };
@@ -140,15 +140,25 @@ it("fits the page first, links its missing regions and words to difference cards
   const first = await screen.findByRole("region", { name: "Review Page 1 of 2" });
   const photo = await within(first).findByRole("img", { name: "Page photo being compared with signed text" });
   expect(await within(first).findByText("Difference 1 of 2")).toBeTruthy();
-  expect(photo.compareDocumentPosition(first.querySelector(".photo-differences")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const card = first.querySelector(".photo-differences > ol");
+  const navigation = within(first).getByRole("group", { name: "Difference navigation" });
+  expect(card.compareDocumentPosition(navigation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(navigation.compareDocumentPosition(photo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(first.querySelector(".photo-differences > ol").textContent).toContain("Header");
   fireEvent.click(within(first).getByRole("button", { name: "Next difference" }));
   expect(first.querySelector(".photo-differences > ol").textContent).toContain("Wrong");
   expect(within(first).getByRole("button", { name: "Next difference" }).disabled).toBe(true);
   fireEvent.keyDown(within(first).getByRole("button", { name: "Difference 1: Header" }), { key: "Enter" });
   expect(first.querySelector(".photo-differences > ol").textContent).toContain("Header");
+  expect(document.activeElement).toBe(within(first).getByRole("heading", { name: "Difference 1 of 2" }));
   fireEvent.click(within(first).getByRole("button", { name: "Different or extra text: Wrong" }));
   expect(within(first).getByText("Difference 2 of 2")).toBeTruthy();
+  fireEvent.click(within(first).getByRole("button", { name: "Previous difference" }));
+  expect(card.textContent).toContain("Header");
+  fireEvent.click(within(first).getByRole("button", { name: "View full page" }));
+  expect(document.activeElement).toBe(within(first).getByRole("heading", { name: "Full page" }));
+  fireEvent.click(within(first).getByRole("button", { name: "Back to difference" }));
+  expect(document.activeElement).toBe(within(first).getByRole("heading", { name: "Difference 1 of 2" }));
   fireEvent.change(within(first).getByRole("combobox", { name: "Zoom" }), { target: { value: "2" } });
   fireEvent.click(screen.getByRole("button", { name: /Page 2 of 2 · Seal authenticated/ }));
   const second = screen.getByRole("region", { name: "Review Page 2 of 2" });
