@@ -241,7 +241,7 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         expect(review).to_be_visible(timeout=15000)
         authenticated = time.monotonic()
         expect(review.locator("h3").first).to_contain_text("Seal: authenticated")
-        expect(review.locator(".photo-summary.matches, .photo-summary.uncertain")).to_have_count(1, timeout=20000)
+        expect(review.locator(".page-check-status.matches, .page-check-status.uncertain")).to_have_count(1, timeout=20000)
         finished = time.monotonic()
         print("Synthetic OCR review: " + review.inner_text())
         # Production pages have a navigation caption. Its visible review warning
@@ -260,13 +260,15 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         expect(review.locator(".photo-legend .different")).to_have_text("OCR differences: 0")
         expect(review.locator(".photo-legend .uncertain")).to_have_text("OCR uncertain: 0")
         expect(review.locator(".reading-caution, .photo-retries")).to_have_count(0)
-        if "to review" in review.locator(".photo-summary").inner_text():
+        if int(review.locator(".photo-differences").get_attribute("data-count")):
             expect(review.locator(".review-reason")).to_have_text("QRed marking")
             markings = []
             count = int(review.locator(".photo-differences").get_attribute("data-count"))
             for index in range(count):
                 expect(review.locator(".review-reason")).to_have_text("QRed marking")
+                review.get_by_text("Why this was flagged", exact=True).click()
                 markings.append(review.locator(".review-reading").inner_text())
+                review.get_by_text("Why this was flagged", exact=True).click()
                 if index + 1 < count:
                     review.get_by_role("button", name="Next reading", exact=True).click()
             assert any("Verify" in marking for marking in markings), markings

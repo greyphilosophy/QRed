@@ -3,6 +3,7 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { cropBounds } from "./ReviewReading.jsx";
 import { PhotoTextVerification } from "./PhotoTextVerification.jsx";
 
 const ocr = vi.hoisted(() => ({ prepare: vi.fn(), read: vi.fn(), dispose: vi.fn(), open: vi.fn() }));
@@ -41,13 +42,14 @@ it("includes conflicting dates and other rereads in one navigable queue", async 
   const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
   await screen.findByText("Conflicting date readings");
   const dates = currentCard(view.container);
-  expect(dates.textContent).toContain("Signed text: 03-14-27");
+  expect(dates.textContent).toContain("Sealed text: 03-14-27");
   expect(dates.textContent).toContain("First reading: 03-14-29");
   expect(dates.textContent).toContain("Closer reading: 03-14-27 (uncertain)");
   expect(dates.querySelector("image").getAttribute("href")).toBe("blob:page-photo");
   fireEvent.click(screen.getByRole("button", { name: "Next reading", exact: true }));
   expect(currentCard(view.container).textContent).toContain("Closer reading: Total");
-  expect(view.container.querySelector(".photo-summary.differences")).toBeTruthy();
+  expect(view.container.querySelector(".photo-summary.differences")).toBeNull();
+  expect(view.container.querySelector(".review-progress")).toBeTruthy();
 });
 
 it("prioritizes doubtful numbers and keeps other weak readings reachable", async () => {
@@ -62,12 +64,13 @@ it("prioritizes doubtful numbers and keeps other weak readings reachable", async
   const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
   await screen.findByText("Number or date");
   const numeric = currentCard(view.container);
-  expect(numeric.textContent).toContain("Signed text: 17");
+  expect(numeric.querySelector(".review-sealed-text").textContent).toContain("Sealed text: Amount 17");
   expect(numeric.textContent).toContain("Photo reading: I7");
   expect(numeric.querySelector("rect.uncertain")).toBeTruthy();
   const cards = readAllCards(view.container);
   expect(cards.some(card => card.includes("Photo reading: X"))).toBe(true);
-  expect(view.container.querySelector(".photo-summary.uncertain")).toBeTruthy();
+  expect(view.container.querySelector(".photo-summary.uncertain")).toBeNull();
+  expect(view.container.querySelector(".review-progress")).toBeTruthy();
 });
 
 it("shows a faint addition from the first reading when contrast-assisted text agrees", async () => {
@@ -75,7 +78,8 @@ it("shows a faint addition from the first reading when contrast-assisted text ag
     { ...word("Paid"), confidence: 40, bbox: {x0:10,y0:50,x1:90,y1:70} }], contrastAssisted: true });
   const view = render(<PhotoTextVerification results={[page]} scanPhotos={[capture(1, "first", "unused")]} />);
   await screen.findByText("Possible extra text");
-  expect(view.container.querySelector(".photo-summary.uncertain")).toBeTruthy();
+  expect(view.container.querySelector(".photo-summary.uncertain")).toBeNull();
+  expect(view.container.querySelector(".review-progress")).toBeTruthy();
   const original = currentCard(view.container);
   expect(original.textContent).toContain("Paid");
   expect(within(original).getByRole("img", { name: "Magnified photo difference" })).toBeTruthy();
@@ -123,8 +127,9 @@ it("explains an unreliable reading without hiding missing signed wording", async
   ocr.read.mockResolvedValue("The invoice is approved for payment".split(" ").map(text => ({ ...word(text), confidence: 40 })));
   const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
   await screen.findByText(/Many characters could not be read reliably/);
-  expect(view.container.querySelector(".photo-differences").textContent).toContain("Signed text: not");
-  expect(view.container.querySelector(".photo-summary.differences")).toBeTruthy();
+  expect(view.container.querySelector(".review-sealed-text").textContent).toContain("The invoice is not approved for payment");
+  expect(view.container.querySelector(".photo-summary.differences")).toBeNull();
+  expect(view.container.querySelector(".review-progress")).toBeTruthy();
   expect(view.container.querySelector(".photo-differences .difference-thumbnail")).toBeNull();
   expect(view.container.querySelector(".photo-differences").textContent).toContain("No reliable photo location");
 });
@@ -229,7 +234,9 @@ it("shows reported processing progress without claiming completion before the co
   expect(screen.getByRole("progressbar").hasAttribute("value")).toBe(false);
   await act(async () => finish([word("Monday")]));
   expect(screen.queryByRole("progressbar")).toBeNull();
-  expect(screen.getByText(/1 reading to review/)).toBeTruthy();
+  expect(screen.queryByText(/1 reading to review/)).toBeNull();
+  expect(screen.getByText("Reading 1 of 1")).toBeTruthy();
+  expect(screen.getByRole("group", { name: "Does the photo or paper match the sealed text?" })).toBeTruthy();
 });
 it("opens a later difference ahead of an earlier uncertain reading", async () => {
   ocr.read.mockImplementation(async canvas => [{ ...word(canvas.text), confidence: canvas.text === "Friday" ? 70 : 99 }]);
@@ -277,7 +284,7 @@ it("tracks decisions across pages, leaves skipped readings pending, and allows c
   fireEvent.click(screen.getByRole("button", { name: "Can't tell", exact: true }));
   fireEvent.click(screen.getByRole("button", { name: "Next page to review", exact: true }));
   expect(screen.getByRole("region", { name: "Review Page 2 of 2" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Matches signed text", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Matches sealed text", exact: true }));
   fireEvent.click(screen.getByRole("button", { name: "Review summary", exact: true }));
   const summary = screen.getByRole("region", { name: "Review summary", exact: true });
   expect(summary.textContent).toContain("2 of 3 review decisions recorded");
@@ -290,7 +297,7 @@ it("tracks decisions across pages, leaves skipped readings pending, and allows c
   fireEvent.click(screen.getByRole("button", { name: "Printed text differs", exact: true }));
   fireEvent.click(screen.getByRole("button", { name: "Next reading", exact: true }));
   expect(screen.getByRole("button", { name: "Can't tell", exact: true }).getAttribute("aria-pressed")).toBe("true");
-  fireEvent.click(screen.getByRole("button", { name: "Matches signed text", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Matches sealed text", exact: true }));
   fireEvent.click(screen.getByRole("button", { name: "Review summary", exact: true }));
   expect(screen.getByText("Review finished — discrepancies recorded")).toBeTruthy();
   expect(screen.getByText("3 of 3 review decisions recorded.")).toBeTruthy();
@@ -298,8 +305,9 @@ it("tracks decisions across pages, leaves skipped readings pending, and allows c
   expect(screen.getByText("Reading 2 of 2")).toBeTruthy();
   expect(document.activeElement).toBe(screen.getByRole("heading", { name: /Page 1 of 2/ }));
   fireEvent.click(screen.getByRole("button", { name: "Previous reading", exact: true }));
-  fireEvent.click(screen.getByRole("button", { name: "Matches signed text", exact: true }));
-  expect(view.container.querySelector(".photo-summary.differences")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Matches sealed text", exact: true }));
+  expect(view.container.querySelector(".photo-summary.differences")).toBeNull();
+  expect(view.container.querySelector(".review-progress")).toBeTruthy();
   expect(view.container.querySelector(".page-check-status.differences")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Review summary", exact: true }));
   expect(screen.getByText("All flagged readings reviewed")).toBeTruthy();
@@ -327,8 +335,8 @@ it("reports unclear decisions and incomplete documents honestly", async () => {
 it("clears only the retaken page's decisions and clears all decisions in a new session", async () => {
   const results = [page, other], firstCapture = capture(1, "first", "Monday"), secondCapture = capture(2, "second", "Monday");
   const view = render(<PhotoTextVerification results={results} scanPhotos={[firstCapture, secondCapture]} />);
-  await screen.findByRole("button", { name: "Matches signed text", exact: true });
-  fireEvent.click(screen.getByRole("button", { name: "Matches signed text", exact: true }));
+  await screen.findByRole("button", { name: "Matches sealed text", exact: true });
+  fireEvent.click(screen.getByRole("button", { name: "Matches sealed text", exact: true }));
   fireEvent.click(screen.getByRole("button", { name: /Page 2 of 2 · Seal authenticated/ }));
   fireEvent.click(screen.getByRole("button", { name: "Printed text differs", exact: true }));
   view.rerender(<PhotoTextVerification results={results} scanPhotos={[capture(3, "first", "Saturday"), secondCapture]} />);
@@ -337,9 +345,9 @@ it("clears only the retaken page's decisions and clears all decisions in a new s
   fireEvent.click(screen.getByRole("button", { name: /Page 1 of 2 · Seal authenticated/ }));
   expect(view.container.querySelector(".review-progress").textContent).toContain("0/1 reviewed");
   expect(currentCard(view.container).textContent).toContain("Saturday");
-  expect(screen.getByRole("button", { name: "Matches signed text", exact: true }).getAttribute("aria-pressed")).toBe("false");
+  expect(screen.getByRole("button", { name: "Matches sealed text", exact: true }).getAttribute("aria-pressed")).toBe("false");
   view.rerender(<PhotoTextVerification session={1} results={results} scanPhotos={[firstCapture, secondCapture]} />);
-  await screen.findByRole("button", { name: "Matches signed text", exact: true });
+  await screen.findByRole("button", { name: "Matches sealed text", exact: true });
   expect(view.container.querySelector(".review-progress").textContent).toContain("0/1 reviewed");
 });
 
@@ -407,4 +415,78 @@ it("opens the nearest reading from beside a small highlight at fit and enlarged 
   // The exact word stays keyboard accessible, with no duplicate overlay.
   fireEvent.keyDown(screen.getByRole("button", { name: "Different or extra text: Monday" }), { key: "Enter" });
   expect(currentCard(view.container).textContent).toContain("Monday");
+});
+
+
+it("keeps double-spaced neighboring lines in the crop at different photo resolutions", () => {
+  for (const scale of [1, 3]) {
+    const size = { width: 1200 * scale, height: 1600 * scale };
+    const selected = { x0: 400 * scale, y0: 500 * scale, x1: 580 * scale, y1: 530 * scale };
+    const crop = cropBounds(size, [selected]);
+    // Thirty-pixel glyphs on a 100-pixel baseline: include the full line above
+    // and below, while the marker remains tied to the selected text.
+    expect(crop.top).toBeLessThanOrEqual(400 * scale);
+    expect(crop.top + crop.height).toBeGreaterThanOrEqual(630 * scale);
+    const normalized = Object.fromEntries(Object.entries(crop).map(([key, value]) => [key, value / scale]));
+    expect(normalized).toEqual(cropBounds({ width: 1200, height: 1600 },
+      [{ x0: 400, y0: 500, x1: 580, y1: 530 }]));
+  }
+});
+
+it("keeps contextual crops inside all page edges and uses the full photo without a location", () => {
+  const size = { width: 1200, height: 1600 };
+  for (const box of [{ x0: 0, y0: 0, x1: 180, y1: 40 }, { x0: 1020, y0: 1560, x1: 1200, y1: 1600 }]) {
+    const crop = cropBounds(size, [box]);
+    expect(crop.left).toBeGreaterThanOrEqual(0);
+    expect(crop.top).toBeGreaterThanOrEqual(0);
+    expect(crop.left + crop.width).toBeLessThanOrEqual(size.width);
+    expect(crop.top + crop.height).toBeLessThanOrEqual(size.height);
+    expect(crop.left).toBeLessThanOrEqual(box.x0);
+    expect(crop.top).toBeLessThanOrEqual(box.y0);
+    expect(crop.left + crop.width).toBeGreaterThanOrEqual(box.x1);
+    expect(crop.top + crop.height).toBeGreaterThanOrEqual(box.y1);
+  }
+  expect(cropBounds(size, [])).toEqual({ left: 0, top: 0, width: 1200, height: 1600 });
+});
+
+
+it("makes the sealed line and photo primary and keeps raw OCR behind a closed disclosure", async () => {
+  const signed = { ...page, content: "Approved total 123.45\nPayment due Friday" };
+  ocr.read.mockResolvedValue([word("Approved"), word("total"), word("923.45"), word("Payment"), word("due"), word("Monday")]);
+  const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
+  await screen.findByText("Number or date");
+  const card = currentCard(view.container), reference = card.querySelector(".review-sealed-text");
+  expect(reference.textContent).toBe("Sealed text: Approved total 123.45");
+  expect([...reference.querySelectorAll("mark")].map(mark => mark.textContent)).toEqual(["1"]);
+  const details = card.querySelector(".review-machine-reading");
+  expect(details.open).toBe(false);
+  expect(details.textContent).toContain("Photo reading: 923.45");
+  expect(reference.textContent).not.toContain("923.45");
+  expect(card.querySelector(".review-decisions").compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  fireEvent.click(within(details).getByText("Why this was flagged"));
+  expect(details.open).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Next reading", exact: true }));
+  expect(currentCard(view.container).querySelector(".review-machine-reading").open).toBe(false);
+  expect(currentCard(view.container).querySelector(".review-sealed-text").textContent).toBe("Sealed text: Payment due Friday");
+});
+
+it("keeps the unreadable-page warning visible even when missing text creates review items", async () => {
+  ocr.read.mockResolvedValue([]);
+  const view = render(<PhotoTextVerification results={[page]} scanPhotos={[capture(1, "first", "unused")]} />);
+  await screen.findByRole("button", { name: "Read page again" });
+  expect(currentCard(view.container)).toBeTruthy();
+  expect(view.container.querySelector(".photo-result > .photo-summary.unreadable").textContent)
+    .toContain("No text could be read — retake this page");
+});
+
+it("includes the photographed line without moving the selected word or unrelated rows", () => {
+  const selected = { x0: 800, y0: 500, x1: 980, y1: 530 };
+  const neighbor = { x0: 100, y0: 495, x1: 650, y1: 530 };
+  const distant = { x0: 0, y0: 1000, x1: 1200, y1: 1030 };
+  const size = { width: 1200, height: 1600, comparison: { words: [{ bbox: selected }, { bbox: neighbor }, { bbox: distant }] } };
+  const crop = cropBounds(size, [selected]);
+  expect(crop.left).toBeLessThan(neighbor.x0);
+  expect(crop.left + crop.width).toBeGreaterThan(selected.x1);
+  expect(crop.top + crop.height).toBeLessThan(distant.y0);
+  expect(selected).toEqual({ x0: 800, y0: 500, x1: 980, y1: 530 });
 });
