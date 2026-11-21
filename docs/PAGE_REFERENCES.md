@@ -85,8 +85,9 @@ The uncompressed body shares the existing 8 MiB bound.
 ## Placement and verification
 
 **Watermark with appended overflow** is the default layout. Readable watermark
-pieces stay on each original text page. Any remaining pieces, including all
-seals for image-only and blank pages, go on appended sheets. **Automatic** and
+pieces stay on each original text page. If any piece needs an appendix (including
+image-only and blank pages), appended sheets carry a jointly compressed bundle
+of all signed page records. See [document bundles](DOCUMENT_BUNDLES_V5.md). **Automatic** and
 **Pale watermark (experimental)** use a per-page footer fallback. Explicit
 footer modes skip watermark placement.
 Text pages with embedded logos or pictures can use watermarks if the rendered

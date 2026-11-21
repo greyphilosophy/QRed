@@ -97,7 +97,7 @@ export function PageEvidenceVerification({ results = [], scanPhotos = [], sessio
     .sort((a, b) => (a.page_number || 0) - (b.page_number || 0));
   const page = pages.find(result => result.document_id === selected) || pages[0];
   if (!page) return null;
-  const captures = scanPhotos.filter(capture => capture.documentId === page.document_id);
+  const captures = scanPhotos.filter(capture => capture.documentId === page.document_id || page.photo_ids?.includes(capture.documentId));
   return <section className="photo-check" aria-label="Signed page reference">
     <h2>Signed page reference</h2>
     <label htmlFor={`${id}-page`}>Reference page</label>

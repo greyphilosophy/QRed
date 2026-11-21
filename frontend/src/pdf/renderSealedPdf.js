@@ -1,6 +1,6 @@
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { MAX_PDF_SEALS } from "../sealBudget.js";
-import { sealSheetString } from "../sealFormat.js";
+import { createDocumentBundle } from "../documentBundle.js";
 import { createQRedQrSymbol, qredQrPngDataUrl } from "../qredQr.js";
 import { DEFAULT_PAGE_LAYOUT, resolvePageScalingStrategy, applyPageScaling, visiblePageGeometry } from "./pageScaling.js";
 import { planFooterLayout } from "./qrLayout.js";
@@ -9,7 +9,7 @@ import { drawQrSymbol } from "./qrDrawing.js";
 import { appendSealSheets, usesSealSheets, usesWatermarks } from "./sealSheets.js";
 
 // Recheck each smaller placement on a fresh original. Never leave failed QR
-// ink behind or append a duplicate of a piece that passed on the original.
+// ink behind. An appended bundle backs up the entire signed document.
 async function partialWatermark(file, records, index, recovered) {
   const { planPdfWatermarks, stampWatermarks, checkWatermarks } = await import("./watermark.js");
   const seals = records[index].seals;
@@ -42,16 +42,14 @@ async function partialWatermark(file, records, index, recovered) {
 }
 
 async function finishWithSheets(bytes, records, onPageParts, watermarkLayout) {
-  const entries = [];
-  const pageSealStrings = records.map(({ seals }, index) => seals.map((original, part) => {
-    if (onPageParts[index].includes(part)) return original;
-    const seal = sealSheetString(original);
-    entries.push({ pageNumber: index + 1, part, total: seals.length, seal });
-    return seal;
-  }));
+  const needsSheet = records.some(({ seals }, index) => onPageParts[index].length < seals.length);
+  const bundle = needsSheet ? await createDocumentBundle(records) : null;
+  const sheetSeals = bundle?.seals ?? [];
+  const entries = sheetSeals.map((seal, part) => ({ part, total: sheetSeals.length, seal }));
   const { bytes: output, sheetCount } = await appendSealSheets(bytes, entries, records.length);
-  return { blob: new Blob([output], { type: "application/pdf" }), watermarkLayout, pageSealStrings,
-    sheetCount, sheetPages: [...new Set(entries.map(entry => entry.pageNumber))], footerPages: [], footerReasons: {} };
+  return { blob: new Blob([output], { type: "application/pdf" }), watermarkLayout, sheetSeals,
+    pageSealStrings: records.map(record => record.seals),
+    bundle, sheetCount, sheetPages: needsSheet ? records.map((_, index) => index + 1) : [], footerPages: [], footerReasons: {} };
 }
 
 export async function qrPngBytes(value) {

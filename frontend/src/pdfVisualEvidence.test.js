@@ -99,7 +99,7 @@ describe("PDF visual references", () => {
     const key_id = await computeKeyId(publicKey), seen = [];
     const metadata = { key_id, timestamp: "2026-10-23T12:00:00.000Z", identity: {
       provider: "google", name_source: "google", email: "person@example.com", name: "Example Person", subject: "test" } };
-    const { blob, pageSealStrings, sheetCount } = await sealPdfInBrowser({ file: await mixedDocument(), pageScalingStrategy, attestPages: async pages => {
+    const { blob, pageSealStrings, sheetCount, sheetSeals } = await sealPdfInBrowser({ file: await mixedDocument(), pageScalingStrategy, attestPages: async pages => {
       return Promise.all(pages.map(async page => {
         const salt = crypto.getRandomValues(new Uint8Array(32));
         const commitment = await pageCommitment(page.metadata, page.content, salt);
@@ -118,9 +118,15 @@ describe("PDF visual references", () => {
       expect(sheetCount).toBe(1);
       const { scanPdfPage } = await import("./verifier/scanPdf.js");
       const { seals } = await withPdfDocument(blob, async pdf => scanPdfPage(await renderPdfPage(pdf, 5), { pageAligned: false }));
-      expect(seals).toHaveLength(4);
-      for (const seal of seals) expect(await verifyQRedSeals([seal], "", { [key_id]: publicKey }))
-        .toMatchObject({ status: "VALID", identity_authenticated: true, seal_sheet: true, page_count: 4 });
+      expect(new Set(seals)).toEqual(new Set(sheetSeals));
+      const bundle = await verifyQRedSeals(seals, "", { [key_id]: publicKey });
+      expect(bundle).toMatchObject({ status: "VALID", document_bundle: true });
+      expect(bundle.pages).toHaveLength(4);
+      for (const [index, page] of bundle.pages.entries()) {
+        expect(page).toMatchObject({ status: "VALID", identity_authenticated: true, seal_sheet: true,
+          page_count: 4, page_number: index + 1, page_hash: results[index].page_hash,
+          content: results[index].content, evidence: results[index].evidence });
+      }
     }
   }, 60_000);
   it.each([0, 90, 180, 270])("preserves visible image pixels through a footer with rotation %s and a crop", async rotation => {

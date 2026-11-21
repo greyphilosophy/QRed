@@ -255,7 +255,7 @@ export function scanQrImage(data, width, height, { tryRescaling = true, tryWater
  * can collect them before the originating camera frame is overwritten.
  * Give each camera session its own scanner; still images use scanQrImage.
  */
-export function createQrFrameScanner({ preferWatermark = false } = {}) {
+export function createQrFrameScanner({ preferWatermark = false, sealOnly = false } = {}) {
   let previousWidth;
   let previousHeight;
   let sizes;
@@ -290,7 +290,8 @@ export function createQrFrameScanner({ preferWatermark = false } = {}) {
     if (width !== previousWidth || height !== previousHeight) {
       previousWidth = width;
       previousHeight = height;
-      sizes = [...scanAttempts(width, height, true, true, true), "pageAligned"];
+      sizes = sealOnly ? [...scanAttempts(width, height, true, false, false)]
+        : [...scanAttempts(width, height, true, true, true), "pageAligned"];
       // Whole-page verification normally sees a pale watermark. Try its one
       // bounded preview before expensive ordinary-code rescaling; keep every
       // fallback, and let a successful footer strategy become preferred too.

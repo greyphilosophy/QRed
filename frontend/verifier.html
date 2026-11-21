@@ -309,7 +309,7 @@
 <body>
   <header>
     <h1>QRed Verifier</h1>
-    <p>Frame the whole page and hold steady. QRed captures automatically and tells you when you can move.</p>
+    <p>Frame the whole page and hold steady, or choose Individual seal to scan a large QR up close.</p>
     <p>PDFs, photos, and seal text are processed in this browser and are not sent to a server.</p>
     <details>
       <summary>Optional: use airplane mode</summary>
@@ -340,6 +340,7 @@
       <div class="controls">
         <button class="btn btn-primary" id="btnScan">Check document</button>
         <button class="btn btn-primary" id="btnCapture" hidden>Capture now</button>
+        <select class="btn btn-secondary" id="scanTarget" aria-label="Scan target" hidden><option value="page">Whole page</option><option value="seal">Individual seal</option></select>
         <select class="btn btn-secondary" id="cameraFraming" aria-label="Camera framing" aria-describedby="cameraLightHint" hidden></select>
         <button class="btn btn-secondary" id="btnCameraLight" hidden aria-describedby="cameraLightHint">Flashlight off</button>
         <button class="btn btn-secondary" id="btnChoosePhoto">Choose photo</button>
@@ -447,6 +448,7 @@
       // During acquisition/decoding, the stage status replaces camera guidance.
       // Restore the latest quality/result feedback when that capture settles.
       document.getElementById("pageGuideHint").hidden = !!photoScanProgress.getSnapshot() || !state.isScanning;
+      document.getElementById("scanTarget").disabled = !!photoScanProgress.getSnapshot();
     });
     var collection = createVerificationSession();
     var photoComparison = mountPhotoTextVerification(document.getElementById("photoTextComparison"));
@@ -456,6 +458,7 @@
     });
     function updatePhotoComparison(results) {
       var snapshot = collection.getSnapshot();
+      scanPhotos?.bindResults(snapshot.results);
       photoComparison.update(results || snapshot.results, snapshot.session, state.scanImages, state.isScanning, {
         verifying: snapshot.busy,
         collectionProgress: snapshot.progress,
@@ -629,11 +632,13 @@
       })) return result;
       // A multipart wrapper has no key ID until reconstruction. Only look up
       // the public demo key once a complete local record is available.
-      var keys = result.key_id ? await fetchDefaultKeys() : null;
-      if (keys?.public_key && keys.key_id === result.key_id) {
+      var local = result.pages?.find(page => page.version === "3") || result;
+      if (local.version !== "3") return result;
+      var keys = local.key_id ? await fetchDefaultKeys() : null;
+      if (keys?.public_key && keys.key_id === local.key_id) {
         return verifyQRedSeals(seals, keys.public_key);
       }
-      var message = !result.key_id
+      var message = !local.key_id
         ? "No default trusted key could be selected because the seal does not include a key ID."
         : keys?.key_id ? "Default trusted key did not match this seal's key ID; showing unverified QR text."
         : "No default trusted key found; showing unverified QR text.";
@@ -644,13 +649,21 @@
     collection.subscribe(function() {
       issuerKeyControls.hidden = !collection.getSnapshot().seals.some(function(seal) {
         return decodeQRedSeal(seal)?.version === "3";
-      });
+      }) && !collection.getSnapshot().results.some(result => result.version === "3");
       updatePhotoComparison();
       updateSealList();
       refreshCollectionProgress();
     });
 
+    document.getElementById("scanTarget").onchange = function() {
+      if (!state.isScanning) return;
+      state.startGeneration++;
+      stopScanning();
+      startScanning();
+    };
     function startScanning({ openCamera = true } = {}) {
+      var sealOnly = document.getElementById("scanTarget").value === "seal";
+      document.getElementById("scanTarget").hidden = !openCamera;
       var video = document.getElementById("cameraVideo");
       var canvas = document.getElementById("scanCanvas");
       var placeholder = document.getElementById("placeholder");
@@ -670,9 +683,10 @@
 
       placeholder.style.display = openCamera ? "none" : "flex";
       video.style.display = openCamera ? "block" : "none";
-      guideArea.hidden = !openCamera;
+      guideArea.hidden = !openCamera || sealOnly;
+      hint.textContent = sealOnly ? "Move closer until one large QR fills the view." : "Show all four page corners and hold steady for automatic capture.";
       document.getElementById("pageGuideHint").hidden = false;
-      if (openCamera) state.stopPageGuide = observePageScanGuide(video, guideArea, document.getElementById("pageGuide"));
+      if (openCamera && !sealOnly) state.stopPageGuide = observePageScanGuide(video, guideArea, document.getElementById("pageGuide"));
 
       function collectFrame(action, photoCanvas = canvas) {
         if (!active()) return;
@@ -684,9 +698,9 @@
           processScannedSeal(text, photoCanvas);
         });
         if (added) {
-          hint.textContent = "Page captured. Show the next page.";
+          hint.textContent = sealOnly ? "Seal collected. Show another seal." : "Page captured. Show the next page.";
           if (typeof navigator.vibrate === "function") navigator.vibrate(80);
-        } else if (action.text || action.texts?.length) hint.textContent = "This page is already captured. Show the next page.";
+        } else if (action.text || action.texts?.length) hint.textContent = sealOnly ? "This seal is already collected. Show another seal." : "This page is already captured. Show the next page.";
         else if (action.message) hint.textContent = action.message;
         // Preserve recovered chunks, but do not tell the user to move on while
         // the timed-out live worker is paused until an explicit retry.
@@ -707,7 +721,7 @@
       }
       var liveScan = createLiveScanWorker({
         returnPayload: true,
-        requirePageQuality: true,
+        requirePageQuality: !sealOnly, sealOnly,
         onQuality: function(quality) {
           if (!active() || state.photoScan || processingCapture || (acquisitionFailed && quality.state === "captured")) return;
           lastQuality = { state: quality.state };
@@ -778,7 +792,7 @@
           { width: video.videoWidth, height: video.videoHeight }, preserveGate, lastQuality);
         var nativeBlob;
         try {
-          var options = { signal: controller.signal, requireHighResolution: true, onPhotoTaken: progress.photoReady,
+          var options = { signal: controller.signal, requireHighResolution: !sealOnly, onPhotoTaken: progress.photoReady,
             captureContext: captureContext,
             onPhotoBlob: function(blob) { nativeBlob = blob; }, onDiagnostic: function(diagnostic) {
             if (current()) captureDiagnostic = { ...diagnostic, ...captureContext };
@@ -792,7 +806,7 @@
             return;
           }
           progress.photoReady();
-          var action = await scanPhotoInWorker(still, { returnPayload: true, signal: controller.signal, onStage: progress.stage });
+          var action = await scanPhotoInWorker(still, { returnPayload: true, sealOnly, signal: controller.signal, onStage: progress.stage });
           if (current()) {
             if (action.timedOut) autoPaused = true;
             if (nativeBlob && (action.timedOut || action.status === "feedback")) offerFailedPhoto(nativeBlob);
@@ -827,7 +841,7 @@
           if (!active() || !video.videoWidth || !video.videoHeight) return;
           statusBar.classList.add("visible");
           if (liveScan.busy || state.photoScan || autoPaused) return;
-          var preview = readCameraFrame(video, canvas, { forGuidance: true });
+          var preview = readCameraFrame(video, canvas, { forGuidance: !sealOnly });
           if (preview) liveScan.scan(preview, { captureOnly: true });
         },
         onError: function(error) { previewError = error; reportPreviewError(); },
@@ -847,6 +861,7 @@
       state.photoPickerGeneration++; pagePhotoInput.oncancel = null;
       pagePhotoInput.value = "";
       btnCapture.hidden = true; btnCapture.onclick = null;
+      document.getElementById("scanTarget").hidden = true;
       document.getElementById("captureReadiness").hidden = true;
       state.stopPageGuide?.();
       state.stopPageGuide = null;
@@ -866,7 +881,7 @@
         showResult("QR_CONTENT", { content: sealStr });
         return;
       }
-      var captured = scanPhotos.capture(sealStr, frame, { replace: options.replaceImage, originalPage: options.originalPage });
+      var captured = scanPhotos.capture(sealStr, frame, { replace: options.replaceImage, originalPage: options.originalPage, documentId: options.documentId });
       if (!collection.add(sealStr)) return captured;
       return Promise.all([captured, collection.verify(state.publicKey, verifyWithDefaultKey)]);
     }

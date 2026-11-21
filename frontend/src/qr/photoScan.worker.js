@@ -8,14 +8,14 @@ import { scanStageDiagnostic } from "./photoScanDiagnostics.js";
 // finish all recovery on that photo; ordinary live scanning stays bounded.
 let scanQrFrame;
 const captureGate = createPageCaptureGate();
-self.onmessage = ({ data: { image, returnPayload, live = false, requirePageQuality = false, captureOnly = false, frameTime, prepareReading = false } }) => {
+self.onmessage = ({ data: { image, returnPayload, live = false, requirePageQuality = false, captureOnly = false, sealOnly = false, frameTime, prepareReading = false } }) => {
   try {
     if (prepareReading) {
       const action = preparePhotoReadingPixels(image);
       self.postMessage({ action }, [action.image.data.buffer]);
       return;
     }
-    scanQrFrame ??= createQrFrameScanner({ preferWatermark: requirePageQuality });
+    scanQrFrame ??= createQrFrameScanner({ preferWatermark: requirePageQuality, sealOnly });
     const quality = requirePageQuality ? captureGate.update(image, frameTime, { captureOnly }) : null;
     // Hand capture to the camera without decoding its lower-detail preview.
     // Keep this worker's gate so unchanged paper cannot trigger another shot.
@@ -29,7 +29,7 @@ self.onmessage = ({ data: { image, returnPayload, live = false, requirePageQuali
     // Captured pages enter the bounded photo pipeline once. Repeating a live
     // preview first adds latency and can spend the whole attempt on a miss.
     let action = quality && !quality.ready ? { status: "continue" } : quality?.ready || !live
-      ? decodePhoto(image, { returnPayload,
+      ? decodePhoto(image, { returnPayload, ...(sealOnly ? { sealOnly } : {}),
         onProgress: action => self.postMessage({ progress: action }),
         onStage: value => {
           const scanStage = scanStageDiagnostic(value);

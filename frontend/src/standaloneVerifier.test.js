@@ -838,3 +838,15 @@ it("reports live-worker stages only for its active capture", async () => {
   setup.callbacks.onStage({ stage: "general-qr", elapsedMs: 30 });
   expect(progress.getSnapshot()).toBeNull();
 });
+
+it("offers the same individual-seal mode on the standalone verifier", async () => {
+  const setup = setupStandaloneCapture();
+  fireEvent.click(document.getElementById("btnScan"));
+  await waitFor(() => expect(document.getElementById("scanTarget").hidden).toBe(false));
+  fireEvent.change(document.getElementById("scanTarget"), { target: { value: "seal" } });
+  expect(setup.callbacks).toMatchObject({ requirePageQuality: false, sealOnly: true });
+  expect(document.getElementById("pageGuideArea").hidden).toBe(true);
+  expect(document.getElementById("pageGuideHint").textContent).toContain("one large QR");
+  fireEvent.change(document.getElementById("scanTarget"), { target: { value: "page" } });
+  expect(setup.callbacks).toMatchObject({ requirePageQuality: true, sealOnly: false });
+});

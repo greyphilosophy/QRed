@@ -411,7 +411,7 @@ class TestImageOnlyPdfs:
     def test_seals_image_only_pdf_with_a_visual_reference(self, page: Page, image_only_pdf_path: str):
         sealed, result = _upload_and_seal(page, image_only_pdf_path, private_key=DEMO_PRIVATE_KEY)
         assert os.path.exists(sealed)
-        expect(page.locator("#stamp-result")).to_contain_text("Appended 1 seal sheet for original page(s) 1.")
+        expect(page.locator("#stamp-result")).to_contain_text("Appended 1 seal sheet containing the whole document.")
         assert result["full_result"]["evidence"]["visual"]
         assert not result["full_result"]["evidence"]["blank"]
         assert _verify_seal_with_seal_strings(page, result, result["document_id"], DEMO_PUBLIC_KEY)

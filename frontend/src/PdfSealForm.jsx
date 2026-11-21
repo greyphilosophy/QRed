@@ -23,7 +23,7 @@ function sealingMessages({ footerPages = [], footerReasons = {}, sheetCount = 0,
   const messages = ocrUnavailablePages.length
     ? [`OCR was unavailable on page(s) ${ocrUnavailablePages.join(", ")}. Their seals use the PDF text or visual reference. Load the English reader and re-stamp to include image lettering.`]
     : [];
-  if (sheetCount) return [...messages, `Appended ${sheetCount} seal sheet${sheetCount === 1 ? "" : "s"} for original page(s) ${sheetPages.join(", ")}.`];
+  if (sheetCount) return [...messages, `Appended ${sheetCount} seal sheet${sheetCount === 1 ? "" : "s"} containing the whole document. Scan their large codes in any order, then photograph the ${sheetPages.length} original page${sheetPages.length === 1 ? "" : "s"}.`];
   if (!footerPages.length) return messages;
   return [...messages, `Clear footer added to page(s) ${footerPages.join(", ")} to keep seals readable.`,
     ...footerPages.filter(page => footerReasons[page]).map(page => `Page ${page}: ${footerReasons[page]}`)];

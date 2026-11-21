@@ -88,7 +88,8 @@ export function createPageTextChecks({ reader = createPhotoOcrReader(), open = o
         if (page.status !== "VALID" || page.signature_valid !== true || !page.content?.trim()) continue;
         const id = page.document_id;
         keep.add(id);
-        const capture = photos.find(photo => photo.documentId === id);
+        const capture = photos.filter(photo => photo.documentId === id || page.photo_ids?.includes(photo.documentId))
+          .reduce((latest, photo) => !latest || photo.id > latest.id ? photo : latest, null);
         const reference = `${page.key_id}:${page.page_hash}:${page.content}`;
         const old = records.get(id);
         if (old && old.reference === reference && old.captureId === capture?.id) continue;

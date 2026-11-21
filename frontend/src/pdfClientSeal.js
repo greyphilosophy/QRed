@@ -101,7 +101,7 @@ async function finishPdfSeal({ file, prepared, pageSealResults, plans, pageScali
   const firstResult = printedResults[0] ?? null;
   return {
     ...placement, ocrUnavailablePages: plans.filter(page => page.ocrUnavailable).map(page => page.pageNumber),
-    sealResult: firstResult, stampedQrValues: firstResult?.seals ?? [],
+    sealResult: firstResult, stampedQrValues: placement.sheetSeals?.length ? placement.sheetSeals : firstResult?.seals ?? [],
     pageSealResults: printedResults, pageSealStrings, flattenedFieldCount: originalPages ? 0 : prepared.flattenedFieldCount,
   };
 }

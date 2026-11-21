@@ -42,7 +42,7 @@ export function PdfSealInput({ onSeal, session = 0 }) {
           if (!controller.signal.aborted) setStatus(`Reading seals on PDF page ${pageNumber} of ${pageCount}…`);
         },
         onSeal: submitPage,
-        onOriginalPage: (seal, image) => submitPage(seal, image, { originalPage: true }),
+        onOriginalPage: (seal, image, options) => submitPage(seal, image, { ...options, originalPage: true }),
       });
       if (!controller.signal.aborted) setStatus(pdfScanSummary(result));
     } catch (error) {

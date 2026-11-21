@@ -8,11 +8,12 @@ import { decodePageEvidence } from "./pageEvidence.js";
 import { verifyAsync as verifyEd25519 } from "@noble/ed25519";
 import { decompressBytes, MAX_SEAL_TEXT_BYTES } from "./sealCompression.js";
 import { computeKeyId, decodeBase64Url, sealSignatureMessage } from "./sealSignature.js";
-import { bytesEqual, bytesToHex, concatenate, decodeEnvelope, decodeTransport, MAX_ENVELOPE_BYTES,
+import { bytesEqual, bytesToHex, concatenate, decodeEnvelope, decodeTransport, encodeBase64Url, MAX_ENVELOPE_BYTES,
   qrPayloadBytes, sha256, strictUtf8 } from "./sealFormat.js";
 import { qredPayloadFromScanResult } from "./qr/qrPayload.js";
 import { tokenizeDocumentText, compareWordSequences, compareDocumentText } from "./qr/qrTextDiff.js";
 import { attestationMessage, pageCommitment } from "./attestation.js";
+import { decodeDocumentBundle } from "./documentBundle.js";
 import trustedAuthorities from "./trustedAuthorities.json";
 
 export { tokenizeDocumentText, compareWordSequences, compareDocumentText };
@@ -67,7 +68,7 @@ export function qredPayloadFromPhotoScanResult(_imageData, _width, _height, scan
 export function decodeSeal(sealString) {
   if (typeof sealString !== "string") return null;
   const fragment = sealString.includes("#") ? sealString.slice(sealString.indexOf("#") + 1) : sealString;
-  if (!/^QRED[34]:/.test(fragment)) return null;
+  if (!/^QRED[345]:/.test(fragment)) return null;
   try { return decodeTransport(qrPayloadBytes(sealString)); } catch { return null; }
 }
 
@@ -93,24 +94,42 @@ export async function verifyQRedSeals(seals, publicKey, authorities = trustedAut
   for (let index = 0; index < first.total_chunks; index += 1) if (!chunks.has(index)) missing.push(index);
   if (missing.length) return { status: "INCOMPLETE", document_id: first.document_id,
     collected_chunks: chunks.size, total_chunks: first.total_chunks, error_message: `Missing chunks: [${missing.join(", ")}]` };
-  let metadata = first, content, body, evidence;
+  let metadata = first;
   try {
     if (first.multipart) {
       const record = concatenate(Array.from({ length: first.total_chunks }, (_, index) => chunks.get(index).data));
       if (!bytesEqual((await sha256(record)).subarray(0, first.digest.length), first.digest)) return { status: "INVALID", error_message: "Seal set digest does not match its contents" };
+      if (first.document_bundle) {
+        const metadataPages = await decodeDocumentBundle(record);
+        const pages = [];
+        for (const metadata of metadataPages) {
+          const id = `S-${encodeBase64Url(metadata.signature)}`;
+          pages.push({ ...await verifyPageEnvelope(metadata, id, true, publicKey, authorities), bundle_id: first.document_id });
+        }
+        const status = pages.every(page => page.status === "VALID") ? "VALID"
+          : pages.some(page => page.status === "INVALID" || page.status === "ERROR") ? "INVALID" : "UNVERIFIED";
+        return { document_bundle: true, document_id: first.document_id, status, pages };
+      }
       metadata = decodeEnvelope(record);
       if (metadata.version !== first.version) throw new Error("Seal version does not match its chunks");
     }
+  } catch (error) { return { status: "ERROR", document_id: first.document_id, error_message: `Seal decoding failed: ${error.message}` }; }
+  return verifyPageEnvelope(metadata, first.document_id, sealSheet, publicKey, authorities);
+}
+
+async function verifyPageEnvelope(metadata, documentId, sealSheet, publicKey, authorities) {
+  let content, body, evidence;
+  try {
     body = metadata.encoding === "plaintext" ? metadata.data : await decompressBytes([metadata.data], metadata.encoding);
     evidence = metadata.page_evidence ? decodePageEvidence(body) : null;
     content = evidence ? evidence.text : strictUtf8.decode(body);
     if (body.length > MAX_SEAL_TEXT_BYTES) throw new Error("Seal text exceeds the 8 MiB limit");
-  } catch (error) { return { status: "ERROR", error_message: `Seal decoding failed: ${error.message}` }; }
+  } catch (error) { return { status: "ERROR", document_id: documentId, error_message: `Seal decoding failed: ${error.message}` }; }
   const pageHash = metadata.pdf ? bytesToHex(await sha256(body)) : null;
   const result = {
     ...(sealSheet && metadata.pdf ? { seal_sheet: true } : {}),
     ...(evidence ? { evidence } : {}),
-    document_id: first.document_id, timestamp: metadata.timestamp, content, encoding: metadata.encoding,
+    document_id: documentId, record_id: `S-${encodeBase64Url(metadata.signature)}`, timestamp: metadata.timestamp, content, encoding: metadata.encoding,
     key_id: metadata.key_id, version: metadata.version, pdf: metadata.pdf,
     page_number: metadata.page_number, page_count: metadata.page_count, page_hash: pageHash,
     document_root: metadata.pdf ? metadata.document_root || pageHash : null,

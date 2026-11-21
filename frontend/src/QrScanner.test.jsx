@@ -305,6 +305,25 @@ describe("QrScanner manual photo capture", () => {
     delete navigator.mediaDevices;
   });
 
+  it("switches to individual-seal scanning without requiring page corners", async () => {
+    const stop = vi.fn();
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: {
+      getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop }], getVideoTracks: () => [] }),
+    } });
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    render(<QrScanner collectSeals returnPayload />);
+    fireEvent.click(screen.getByRole("button", { name: "Check document" }));
+    await waitFor(() => expect(document.querySelector("video")?.srcObject).toBeTruthy());
+    expect(createLiveScanWorker.mock.calls.at(-1)[0]).toMatchObject({ requirePageQuality: true, sealOnly: false });
+    fireEvent.change(screen.getByRole("combobox", { name: "Scan target" }), { target: { value: "seal" } });
+    await waitFor(() => expect(createLiveScanWorker.mock.calls.at(-1)[0]).toMatchObject({ requirePageQuality: false, sealOnly: true }));
+    expect(document.querySelector(".page-scan-guide-area").hidden).toBe(true);
+    expect(stop).toHaveBeenCalled();
+    fireEvent.change(screen.getByRole("combobox", { name: "Scan target" }), { target: { value: "page" } });
+    await waitFor(() => expect(createLiveScanWorker.mock.calls.at(-1)[0]).toMatchObject({ requirePageQuality: true }));
+    expect(document.querySelector(".page-scan-guide-area").hidden).toBe(false);
+  });
+
   it("stops and releases the camera when manually loaded pages finish its collection", async () => {
     const stop = vi.fn(), onScanningChange = vi.fn();
     Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: {

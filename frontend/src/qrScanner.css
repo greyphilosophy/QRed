@@ -134,3 +134,12 @@
     transform: none;
   }
 }
+
+.ar-camera-tools { flex-wrap: wrap; }
+.ar-camera-tools .ar-scan-target { width: 9rem; }
+@media (max-width: 640px) {
+  .ar-camera-tools .ar-scan-target { margin-right: auto; }
+  .ar-display-scanning:has(.ar-scan-target) .ar-collection-progress { top: 7.5rem; left: .75rem; right: .75rem; }
+  .ar-display-scanning:has(.ar-scan-target) .ar-camera { --camera-top: 8rem; }
+  .ar-display-scanning:has(.ar-scan-target):has(.ar-collection-progress:not(:empty)) .ar-camera { --camera-top: 11rem; }
+}
