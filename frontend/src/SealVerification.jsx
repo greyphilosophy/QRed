@@ -22,6 +22,7 @@ export function useSealVerification() {
   const [notice, setNotice] = useState("");
   const [scanImages, setScanImages] = useState({ photos: [], notice: "" });
   const [photoCollection] = useState(() => createScanPhotoCollection(setScanImages));
+  useEffect(() => photoCollection.bindResults(snapshot.results), [photoCollection, snapshot.results]);
   useEffect(() => () => { photoCollection.clear(); textChecks.dispose(); }, [photoCollection, textChecks]);
   const clear = useCallback(() => {
     textChecks.clear(); photoCollection.clear(); collection.clear();
@@ -48,7 +49,7 @@ export function useSealVerification() {
     return () => { cancelled = true; controller.abort(); clearTimeout(timer); };
   }, []);
 
-  const addSeal = useCallback((text, frame, { replaceImage = false, originalPage = false } = {}) => {
+  const addSeal = useCallback((text, frame, { replaceImage = false, originalPage = false, documentId } = {}) => {
     if (collection.getSnapshot().session !== snapshot.session) return;
     if (isQRedEntryLink(text)) {
       setNotice("That code opens qred.org. Scan the pale watermark to read the document seal.");
@@ -59,7 +60,7 @@ export function useSealVerification() {
       return;
     }
     setNotice("");
-    const captured = photoCollection.capture(text, frame, { replace: replaceImage, originalPage });
+    const captured = photoCollection.capture(text, frame, { replace: replaceImage, originalPage, documentId });
     collection.add(text);
     return captured;
   }, [photoCollection, collection, snapshot.session]);
@@ -98,7 +99,7 @@ export function SealVerification({ verification, onScanMore, onChooseMore }) {
     return () => { imageRead.current += 1; imageScan.current?.abort(); };
   }, [verification.session, photoProgress]);
   const { seals, setPublicKey, results, notice, setNotice, busy, addSeal } = verification;
-  const hasLocalSeals = seals.some(seal => decodeSeal(seal)?.version === "3");
+  const hasLocalSeals = seals.some(seal => decodeSeal(seal)?.version === "3") || results.some(result => result.version === "3");
 
   async function openPublicKeyFile(event) {
     const input = event.currentTarget;

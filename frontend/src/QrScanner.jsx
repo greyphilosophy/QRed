@@ -27,6 +27,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
   const [captureRequest, setCaptureRequest] = useState(0);
+  const [scanTarget, setScanTarget] = useState("page");
   const [cameraAttempt, setCameraAttempt] = useState(0);
   const [cameraFailed, setCameraFailed] = useState(false);
   const [readingPhoto, setReadingPhoto] = useState(false);
@@ -147,7 +148,10 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
         captureRequest,
         onReadingPhoto: setReadingPhoto,
         returnPayload,
-        autoCapture: collectSeals,
+        autoCapture: collectSeals && scanTarget === "page",
+        sealOnly: collectSeals && scanTarget === "seal",
+        scanTarget: collectSeals ? scanTarget : null,
+        onScanTargetChange: setScanTarget,
       }),
       collectionProgress ? React.createElement("p", { className: "ar-collection-progress", role: "status", "aria-live": "polite" }, collectionProgress.message) : null,
       controls
@@ -165,7 +169,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
       React.createElement("div", { className: "ar-copy" },
         React.createElement("p", { className: "eyebrow" }, "QRed AR verifier"),
         React.createElement("h1", null, "Check a printed document"),
-        React.createElement("p", null, "Frame the whole page and hold steady. QRed captures automatically and tells you when you can move."),
+        React.createElement("p", null, "Frame the whole page and hold steady, or choose Individual seal to scan a large QR up close."),
         React.createElement("p", { className: "camera-privacy" }, "Camera photos stay on this device. Use Browse files to open a photo or scan ZIP from Downloads."),
         completionNotice ? React.createElement("p", { id: "check-clear-note", role: "status" }, completionNotice) : null,
         preparationError ? React.createElement("p", { role: "alert" }, preparationError + " Try Check document again while connected.") : null
@@ -217,7 +221,7 @@ export function decodeCanvasFrame(video, canvas, options = {}) {
   return qrFrameAction(image, code, options);
 }
 
-function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadingPhoto, returnPayload, autoCapture }) {
+function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadingPhoto, returnPayload, autoCapture, sealOnly = false, scanTarget, onScanTargetChange }) {
   const progress = usePhotoScanProgress();
   const progressSnapshot = useSyncExternalStore(progress.subscribe, progress.getSnapshot, progress.getSnapshot);
   const videoRef = useRef(null);
@@ -246,6 +250,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
   }
 
   useEffect(() => {
+    setFeedback(null); setQuality(null); setError(null); setFailedPhoto(null);
     const seen = new Set();
     let activeProgress = null;
     let captureReported = false;
@@ -255,11 +260,11 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
     let autoPaused = false;
     const capturedCanvas = canvasRef.current;
     let camera;
-    const stopGuide = observePageScanGuide(videoRef.current, guideAreaRef.current, guideRef.current);
+    const stopGuide = sealOnly ? () => {} : observePageScanGuide(videoRef.current, guideAreaRef.current, guideRef.current);
     preparePhotoScanner();
     const liveScan = createLiveScanWorker({
       returnPayload,
-      requirePageQuality: autoCapture,
+      requirePageQuality: autoCapture, sealOnly,
       onQuality: quality => {
         lastQuality = { state: quality.state };
         setQuality(quality);
@@ -296,19 +301,20 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
           if (!onScan(text, canvasRef.current)) { shouldStop = true; break; }
         }
         setFeedback(scanAction.timedOut ? scanAction.message
-          : added ? "Page captured. Show the next page." : "This page is already captured. Show the next page.");
+          : added ? (sealOnly ? "Seals collected. Show another seal." : "Page captured. Show the next page.")
+          : (sealOnly ? "These seals are already collected. Show another seal." : "This page is already captured. Show the next page."));
         if (added && typeof navigator.vibrate === "function") navigator.vibrate(80);
         if (shouldStop) { camera.stop(); return true; }
         return false;
       }
       if (scanAction.status === "found") {
         captureReported = true;
-        if (seen.has(scanAction.text)) { setFeedback("This page is already captured. Show the next page."); return false; }
+        if (seen.has(scanAction.text)) { setFeedback(sealOnly ? "This seal is already collected. Show another seal." : "This page is already captured. Show the next page."); return false; }
         seen.add(scanAction.text);
         // onScan copies the original pixels before the feedback can shake the camera.
         const keepScanning = onScan(scanAction.text, canvasRef.current);
         if (typeof navigator.vibrate === "function") navigator.vibrate(80);
-        setFeedback("Page captured. Show the next page.");
+        setFeedback(sealOnly ? "Seal collected. Show another seal." : "Page captured. Show the next page.");
         if (keepScanning) return false;
         camera.stop();
         return true;
@@ -372,7 +378,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
         let action;
         if (image) {
           attemptProgress.photoReady();
-          action = await scanPhotoInWorker(image, { returnPayload, signal: controller.signal, onStage: attemptProgress.stage });
+          action = await scanPhotoInWorker(image, { returnPayload, sealOnly, signal: controller.signal, onStage: attemptProgress.stage });
           if (!current()) return;
         } else {
           action = cameraPhotoFailure(captureDiagnostic);
@@ -466,7 +472,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
       if (capturedCanvas) capturedCanvas.width = capturedCanvas.height = 0;
       stopGuide();
     };
-  }, [onScan, returnPayload, onReadingPhoto, onCameraFailed, autoCapture, progress]);
+  }, [onScan, returnPayload, onReadingPhoto, onCameraFailed, autoCapture, sealOnly, progress]);
 
   useEffect(() => {
     if (captureRequest > 0) photoActionRef.current();
@@ -487,7 +493,7 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
       autoPlay: true,
     }),
     React.createElement(CameraCaptureNotice, { progress }),
-    React.createElement("div", { className: "page-scan-guide-area", ref: guideAreaRef, "aria-hidden": "true" },
+    React.createElement("div", { className: "page-scan-guide-area", ref: guideAreaRef, hidden: sealOnly, "aria-hidden": "true" },
       React.createElement("div", { className: "page-scan-guide", ref: guideRef, hidden: true },
         React.createElement("span", null),
         React.createElement("span", null),
@@ -505,10 +511,14 @@ function ScannerView({ onScan, onClose, onCameraFailed, captureRequest, onReadin
       feedback ? React.createElement("span", null, feedback) : null,
       failedPhoto ? React.createElement("button", { type: "button", className: "save-scan-photo",
         onClick: () => downloadCameraPhoto(failedPhoto, setFeedback) }, "Save scan photo") : null,
-      !quality && !feedback ? "Keep all four page corners visible. Avoid glare." : null,
+      !quality && !feedback ? (sealOnly ? "Move closer until one large QR fills the view." : "Keep all four page corners visible. Avoid glare.") : null,
       quality?.state === "hold" && !feedback ? React.createElement("progress", { className: "capture-readiness", max: 1,
         value: quality.progress, "aria-label": "Steady hold before automatic capture" }) : null) : null,
     React.createElement("div", { className: "ar-camera-tools" },
+      scanTarget ? React.createElement("select", { className: "ar-scan-target", "aria-label": "Scan target", value: scanTarget,
+        disabled: Boolean(progressSnapshot), onChange: event => onScanTargetChange(event.target.value) },
+        React.createElement("option", { value: "page" }, "Whole page"),
+        React.createElement("option", { value: "seal" }, "Individual seal")) : null,
       React.createElement("select", { ref: framingSelect, className: "ar-framing", hidden: true,
         "aria-label": "Camera framing", "aria-describedby": lightHint }),
       React.createElement("button", { type: "button", className: "ar-light", ref: lightButton, hidden: true,

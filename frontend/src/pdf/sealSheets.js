@@ -27,7 +27,7 @@ function drawInstructions(page, width, height, font, bold) {
   drawQrSymbol(page, createEntryQrSymbol(), entry, 0);
   const lines = [
     ["Scan this small QR", "with your phone camera.", "Or visit QRed.org."],
-    ["Use QRed to scan", "every large seal below,", "on every seal sheet."],
+    ["Use QRed to scan all", "large seals. Whole sheet", "or one seal at a time."],
     ["Then use QRed to", "photograph each", "original document page."],
   ];
   lines.forEach((step, index) => step.forEach((text, line) => {
@@ -35,8 +35,8 @@ function drawInstructions(page, width, height, font, bold) {
   }));
 }
 
-// Up to six codes can carry pieces belonging to different originals.
-// Labels use the signed original-page order, even if one record spans sheets.
+// Up to six pieces of the document bundle per sheet. The original page order
+// is recovered from signed records, not from labels beside individual codes.
 export async function appendSealSheets(bytes, entries, originalCount) {
   if (!entries.length) return { bytes, sheetCount: 0 };
   const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
@@ -57,10 +57,10 @@ export async function appendSealSheets(bytes, entries, originalCount) {
     drawInstructions(page, width, height, font, bold);
     const sheetEntries = entries.slice(sheet * SEALS_PER_SHEET, (sheet + 1) * SEALS_PER_SHEET);
     const boxes = planSealSheetLayout(width, height, sheetEntries.length);
-    sheetEntries.forEach(({ pageNumber, part, total, seal }, slot) => {
+    sheetEntries.forEach(({ seal }, slot) => {
       const { labelY, ...box } = boxes[slot];
-      page.drawText(`Original page ${pageNumber} of ${originalCount}`, { x: box.x, y: labelY, size: 12, font: bold });
-      if (total > 1) page.drawText(`Seal ${part + 1} of ${total}`, { x: box.x, y: labelY - 13, size: 10, font });
+      const label = `Seal ${sheet * SEALS_PER_SHEET + slot + 1} of ${entries.length}`;
+      page.drawText(label, { x: box.x + (box.width - font.widthOfTextAtSize(label, 9)) / 2, y: labelY, size: 9, font });
       const symbol = createQRedQrSymbol(seal);
       drawQrSymbol(page, symbol, box, 0);
     });

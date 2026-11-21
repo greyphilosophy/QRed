@@ -145,3 +145,12 @@ it("limits legacy navigation artwork to the authenticated first page through the
   expect(checks.getSnapshot().pages[1].comparison.differences[0].observed).toBe("Verify at qred.org_J");
   checks.dispose();
 });
+
+it("uses the newest original photo across watermark and document-bundle aliases", async () => {
+  const { checks, open } = setup();
+  checks.update([{ ...page("watermark", 1), photo_ids: ["watermark", "bundle-page"] }],
+    [photo(1, "watermark", "Friday"), photo(2, "bundle-page", "Monday")]);
+  await vi.waitFor(() => expect(open).toHaveBeenCalledWith({ text: "Monday" }));
+  expect(checks.getSnapshot().pages[0].captureId).toBe(2);
+  checks.dispose();
+});

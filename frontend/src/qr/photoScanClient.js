@@ -71,8 +71,8 @@ function runPhotoWorker(image, { signal, onStage, ...request }) {
   });
 }
 
-export function scanPhotoInWorker(image, { signal, onStage, returnPayload = false } = {}) {
-  return runPhotoWorker(image, { signal, onStage, returnPayload });
+export function scanPhotoInWorker(image, { signal, onStage, returnPayload = false, sealOnly = false } = {}) {
+  return runPhotoWorker(image, { signal, onStage, returnPayload, ...(sealOnly ? { sealOnly } : {}) });
 }
 
 export function preparePhotoReadingInWorker(image, { signal } = {}) {
@@ -81,7 +81,7 @@ export function preparePhotoReadingInWorker(image, { signal } = {}) {
 
 // No frame queue: callers keep the submitted canvas unchanged until onResult
 // runs, and check busy before drawing the next camera frame into that canvas.
-export function createLiveScanWorker({ onResult, onError, returnPayload = false, requirePageQuality = false, onQuality, onCaptured, onStage }) {
+export function createLiveScanWorker({ onResult, onError, returnPayload = false, requirePageQuality = false, sealOnly = false, onQuality, onCaptured, onStage }) {
   let worker = null, busy = false, stopped = false, paused = false;
   let timeout, partial = null, stage = null;
   const clearDeadline = () => { clearTimeout(timeout); timeout = undefined; partial = null; stage = null; };
@@ -156,7 +156,7 @@ export function createLiveScanWorker({ onResult, onError, returnPayload = false,
         busy = true;
         const qualityOptions = requirePageQuality ? { requirePageQuality, frameTime: performance.now(),
           ...(captureOnly ? { captureOnly: true } : {}) } : {};
-        worker.postMessage({ image: { data: image.data, width: image.width, height: image.height }, returnPayload, live: true, ...qualityOptions },
+        worker.postMessage({ image: { data: image.data, width: image.width, height: image.height }, returnPayload, live: true, ...(sealOnly ? { sealOnly } : {}), ...qualityOptions },
           [image.data.buffer]);
         return true;
       } catch (error) {

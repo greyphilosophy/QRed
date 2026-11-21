@@ -11,11 +11,11 @@ it.each([PageSizes.Letter, PageSizes.A4])("keeps one to six seals, labels and qu
       expect(box.x).toBeGreaterThanOrEqual(54);
       expect(box.x + box.width).toBeLessThanOrEqual(width - 54);
       expect(box.y).toBeGreaterThanOrEqual(48);
-      expect(box.labelY + 11).toBeLessThanOrEqual(height - 162);
-      expect(box.labelY - 13).toBeGreaterThan(box.y + box.height);
+      expect(box.labelY + 8).toBeLessThanOrEqual(height - 162);
+      expect(box.labelY).toBeGreaterThan(box.y + box.height);
       for (const other of boxes.slice(index + 1)) {
         expect(box.x + box.width + 18 <= other.x || other.x + other.width + 18 <= box.x ||
-          box.labelY + 11 + 18 <= other.y || other.labelY + 11 + 18 <= box.y).toBe(true);
+          box.labelY + 8 + 18 <= other.y || other.labelY + 8 + 18 <= box.y).toBe(true);
       }
     }
   }

@@ -2,7 +2,7 @@ import { maskQrCode } from "../qr/maskQrCode.js";
 import { scanQrImage } from "../qr/scanQrImage.js";
 import { decodeSeal, qredPayloadFromPhotoScanResult, verifyQRedSeals } from "../qredVerifier.js";
 import { scanPageAlignedImage } from "../qr/pageAlignedScan.js";
-import { scanFooterSeals } from "../qr/footerSealScan.js";
+import { footerQrRegions, scanFooterSeals } from "../qr/footerSealScan.js";
 import { qredPayloadFromScanResult } from "../qr/qrPayload.js";
 import { SEALS_PER_SHEET } from "../pdf/sealSheetLayout.js";
 
@@ -70,7 +70,28 @@ function regionPixels(pixels, width, region) {
 
 export async function scanPdfPage(image, { onSeal = () => {}, signal, pageAligned = true } = {}) {
   const seals = new Set();
-  const fullSealSheet = () => seals.size === SEALS_PER_SHEET && [...seals].every(seal => decodeSeal(seal).seal_sheet);
+  const fullSealSheet = () => {
+    const pieces = [...seals].map(decodeSeal);
+    return pieces.length > 0 && pieces.every(piece => piece.seal_sheet) &&
+      (pieces.length === SEALS_PER_SHEET || pieces.every(piece => piece.document_bundle &&
+        piece.document_id === pieces[0].document_id && piece.total_chunks === pieces.length));
+  };
+  // A whole-sheet locator can cross two dense adjacent symbols. Isolate dark
+  // QR regions before masking any of the original pixels in the legacy pass.
+  if (image.bounds || !pageAligned) {
+    const candidates = scanFooterSeals(image, { shouldContinue: () => !signal?.aborted,
+      regions: footerQrRegions(image, { shouldContinue: () => !signal?.aborted, maxAreaFraction: .8 }) });
+    for (const code of candidates) {
+      const seal = qredPayloadFromScanResult(code);
+      if (!decodeSeal(seal)?.seal_sheet || seals.has(seal)) continue;
+      seals.add(seal);
+      await onSeal(seal, image);
+      signal?.throwIfAborted();
+    }
+    // Four recovered codes may be only part of a six-seal sheet. Keep the
+    // generated-sheet limit shared with pagination before skipping fallback.
+    if (fullSealSheet()) return { seals: [...seals], limited: false };
+  }
   // The page-aligned path is independent of QR finder detection and can
   // recover rectangular modules with virtual quiet zones. It sees only the
   // provided pixels; the original PDF's layout is never required.
@@ -89,21 +110,6 @@ export async function scanPdfPage(image, { onSeal = () => {}, signal, pageAligne
         (aligned.length === 4 || aligned.length === 1 && decodeSeal(aligned[0].seal)?.total_chunks === 1)) {
       return { seals: [...seals], limited: false };
     }
-  }
-  // A whole-sheet locator can cross two dense adjacent symbols. Isolate dark
-  // QR regions before masking any of the original pixels in the legacy pass.
-  if (image.bounds || !pageAligned) {
-    const candidates = scanFooterSeals(image, { shouldContinue: () => !signal?.aborted });
-    for (const code of candidates) {
-      const seal = qredPayloadFromScanResult(code);
-      if (!decodeSeal(seal)?.seal_sheet || seals.has(seal)) continue;
-      seals.add(seal);
-      await onSeal(seal, image);
-      signal?.throwIfAborted();
-    }
-    // Four recovered codes may be only part of a six-seal sheet. Keep the
-    // generated-sheet limit shared with pagination before skipping fallback.
-    if (fullSealSheet()) return { seals: [...seals], limited: false };
   }
   // Never clone and subdivide the full 12–48 MP original merely because the
   // page-aligned scan was incomplete. The legacy fallback operates on its own
@@ -199,18 +205,20 @@ export async function scanPdfSeals(file, { onSeal = () => {}, onOriginalPage, on
           signal?.throwIfAborted();
           // Page numbers route the raster; the UI verifies with the recipient's
           // trusted key before allowing any text or visual comparison.
-          const page = await verifyQRedSeals(seals);
-          if (!["VALID", "UNVERIFIED"].includes(page.status) || !page.pdf || page.page_count >= firstSheet) continue;
-          try {
-            if (onOriginalPage) {
-              const image = await pageImage(page.page_number);
+          const recovered = await verifyQRedSeals(seals);
+          for (const page of recovered.document_bundle ? recovered.pages ?? [] : [recovered]) {
+            if (!["VALID", "UNVERIFIED"].includes(page.status) || !page.pdf || page.page_count >= firstSheet) continue;
+            try {
+              if (onOriginalPage) {
+                const image = await pageImage(page.page_number);
+                signal?.throwIfAborted();
+                await onOriginalPage(sheetRecords.get(id), image, { documentId: page.document_id });
+              }
+              originalPages.add(page.page_number);
+            } catch (error) {
               signal?.throwIfAborted();
-              await onOriginalPage(sheetRecords.get(id), image);
+              summary.failedPages.push({ pageNumber: page.page_number, message: error.message });
             }
-            originalPages.add(page.page_number);
-          } catch (error) {
-            signal?.throwIfAborted();
-            summary.failedPages.push({ pageNumber: page.page_number, message: error.message });
           }
         }
         summary.originalPages = [...originalPages].sort((a, b) => a - b);

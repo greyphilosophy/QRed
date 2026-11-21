@@ -83,3 +83,12 @@ it("posts only sanitized stage metadata before a synchronous decoder attempt", (
   capture();
   expect(scope.postMessage.mock.calls.map(([message]) => Object.keys(message)[0])).toEqual(["captured", "scanStage", "action"]);
 });
+
+it("decodes an individual-seal preview without the whole-page capture gate", () => {
+  scan.action.mockReturnValue({ status: "found", text: "individual seal" });
+  scope.onmessage({ data: { image, live: true, returnPayload: true, sealOnly: true } });
+  expect(scan.quality).not.toHaveBeenCalled();
+  expect(scan.photo).not.toHaveBeenCalled();
+  expect(scan.frame).toHaveBeenCalled();
+  expect(scope.postMessage).toHaveBeenCalledWith({ action: { status: "found", text: "individual seal" } });
+});

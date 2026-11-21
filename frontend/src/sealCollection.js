@@ -26,14 +26,26 @@ export async function verifySealCollection(seals, publicKey, verify = verifyQRed
     if (!groups.has(id)) groups.set(id, []);
     groups.get(id).push(seal);
   }
-  return orderSealResults(await Promise.all([...groups].map(async ([id, group]) => {
+  const results = (await Promise.all([...groups].map(async ([id, group]) => {
     try {
       const result = await verify(group, publicKey);
-      return { ...result, document_id: result.document_id || id };
+      return result.document_bundle && result.pages ? result.pages : [{ ...result, document_id: result.document_id || id }];
     } catch (error) {
-      return { status: "ERROR", document_id: id, error_message: error.message || String(error) };
+      return [{ status: "ERROR", document_id: id, error_message: error.message || String(error) }];
     }
-  })));
+  }))).flat();
+  // A watermark and a bundle can contain the same signed page. Prefer the
+  // original-page transport so its already captured photo stays associated.
+  const unique = new Map();
+  for (const result of results) {
+    const key = result.record_id ? JSON.stringify([result.record_id, result.status, result.page_hash, documentMembership(result)]) : result;
+    const previous = unique.get(key);
+    if (!previous) { unique.set(key, result); continue; }
+    const preferred = previous.seal_sheet && !result.seal_sheet ? result : previous;
+    unique.set(key, { ...preferred, bundle_id: previous.bundle_id || result.bundle_id,
+      photo_ids: [...new Set([...(previous.photo_ids || [previous.document_id]), result.document_id])] });
+  }
+  return orderSealResults([...unique.values()]);
 }
 
 // A chunk identifies its page record, not its PDF. Page membership becomes
@@ -56,6 +68,17 @@ export function sealCollectionProgress(seals, results = []) {
   const messageWithWarning = message => documentWarning ? `${documentWarning} ${message}` : message;
   if (result?.status === "INVALID" || result?.status === "ERROR") {
     return { ...progress, finished: true, message: messageWithWarning("Seal verification failed. Review the result below.") };
+  }
+  if (active.document_bundle) {
+    if (chunks.size < active.total_chunks) return { ...progress,
+      message: messageWithWarning(`${chunks.size} of ${active.total_chunks} document seals collected. Scan the remaining seals in any order.`) };
+    const pages = results.filter(item => item.bundle_id === active.document_id);
+    if (!pages.length) return { ...progress, message: messageWithWarning("Checking collected document seals…") };
+    if (pages.some(page => !["VALID", "UNVERIFIED"].includes(page.status))) return { ...progress, finished: true,
+      message: messageWithWarning("Seal verification failed. Review the result below.") };
+    return { ...progress, complete: true, finished: true, pagesCollected: pages.length, pagesTotal: pages.length,
+      message: messageWithWarning(`All document seals collected. Now photograph the ${pages.length === 1 ? "original page" : `${pages.length} original pages`}.` +
+        (pages.some(page => !page.metadata_authenticated) ? " Signatures not verified." : "")) };
   }
   if (chunks.size < active.total_chunks) {
     return { ...progress, message: messageWithWarning(`${chunks.size} of ${active.total_chunks} QR seals collected for this page. Keep scanning.`) };

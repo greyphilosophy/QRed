@@ -4,7 +4,7 @@
 import { scanQrImage } from "./scanQrImage.js";
 import { qredPayloadFromScanResult } from "./qrPayload.js";
 
-export function footerQrRegions(image, { shouldContinue = () => true } = {}) {
+export function footerQrRegions(image, { shouldContinue = () => true, maxAreaFraction = .45 } = {}) {
   const { data, width, height } = image;
   const step = Math.max(8, Math.ceil(Math.max(width, height) / 160));
   const cols = Math.ceil(width / step), rows = Math.ceil(height / step);
@@ -39,7 +39,7 @@ export function footerQrRegions(image, { shouldContinue = () => true } = {}) {
       }
     }
     const w = right - left + 1, h = bottom - top + 1;
-    if (w * h > cols * rows * 0.45 || w < 6 || h < 6 || w / h < 0.6 || w / h > 1.7 || queue.length / (w * h) < 0.6) continue;
+    if (w * h > cols * rows * maxAreaFraction || w < 6 || h < 6 || w / h < 0.6 || w / h > 1.7 || queue.length / (w * h) < 0.6) continue;
     const x = Math.max(0, (left - 2) * step), y = Math.max(0, (top - 2) * step);
     regions.push({ x, y, width: Math.min(width, (right + 3) * step) - x,
       height: Math.min(height, (bottom + 3) * step) - y });
@@ -47,10 +47,10 @@ export function footerQrRegions(image, { shouldContinue = () => true } = {}) {
   return regions.sort((a, b) => b.width * b.height - a.width * a.height).slice(0, 8);
 }
 
-export function scanFooterSeals(image, { shouldContinue = () => true, onSeal } = {}) {
+export function scanFooterSeals(image, { shouldContinue = () => true, onSeal, regions } = {}) {
   if (!shouldContinue()) return [];
   const codes = [], found = new Set();
-  for (const box of footerQrRegions(image, { shouldContinue })) {
+  for (const box of regions ?? footerQrRegions(image, { shouldContinue })) {
     if (!shouldContinue()) break;
     // Keep the working crop bounded even for a 48 MP upload. Candidate
     // detection and retained evidence always use the original photograph.

@@ -7,7 +7,7 @@ export function planSealSheetLayout(width, height, count) {
   if (!Number.isInteger(count) || count < 1 || count > SEALS_PER_SHEET) {
     throw new RangeError("A seal sheet must contain between one and six seals.");
   }
-  const margin = SEAL_SHEET_MARGIN, gap = 18, labelHeight = 28;
+  const margin = SEAL_SHEET_MARGIN, gap = 18, labelHeight = 12;
   const top = height - 162, bottom = 48;
   const rows = count === 2 ? 2 : Math.ceil(count / 2);
   const rowHeight = (top - bottom - (rows - 1) * gap) / rows;
@@ -19,7 +19,7 @@ export function planSealSheetLayout(width, height, count) {
     const rowTop = top - row * (rowHeight + gap) - (rowHeight - labelHeight - size) / 2;
     for (let column = 0; column < columns; column++) {
       boxes.push({ x: (width - rowWidth) / 2 + column * (size + gap),
-        y: rowTop - labelHeight - size, width: size, height: size, labelY: rowTop - 11 });
+        y: rowTop - labelHeight - size, width: size, height: size, labelY: rowTop - 8 });
     }
   });
   return boxes;

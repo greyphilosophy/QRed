@@ -6,13 +6,13 @@ import { decodePhoto } from "./decodePhoto.js";
 import { PHOTO_SCAN_BUDGET_MS } from "./photoScanBudget.js";
 import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
-import { scanFooterSeals } from "./footerSealScan.js";
+import { footerQrRegions, scanFooterSeals } from "./footerSealScan.js";
 import { scanWatermarkRegions } from "./watermarkRegionScan.js";
 import { scanRectifiedSeal, createRectifiedSealScanner, prepareCurvedPageScan } from "./rectifiedSealScan.js";
 
 vi.mock("./scanQrImage.js", () => ({ scanQrImage: vi.fn(), scanWatermarkPreview: vi.fn() }));
 vi.mock("./pageAlignedScan.js", () => ({ scanPageAlignedImage: vi.fn() }));
-vi.mock("./footerSealScan.js", () => ({ scanFooterSeals: vi.fn() }));
+vi.mock("./footerSealScan.js", () => ({ scanFooterSeals: vi.fn(), footerQrRegions: vi.fn(() => []) }));
 vi.mock("./watermarkRegionScan.js", () => ({ scanWatermarkRegions: vi.fn() }));
 vi.mock("./rectifiedSealScan.js", () => ({
   scanRectifiedSeal: vi.fn(), createRectifiedSealScanner: vi.fn(), prepareCurvedPageScan: vi.fn(),

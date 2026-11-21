@@ -71,7 +71,7 @@ export function qredPayloadFromScanResult(result) {
     } catch { /* A navigation code or ordinary QR message is not a seal. */ }
   }
   // A seal URL encoded as an ordinary QR message is also safe to accept.
-  if (typeof result.data !== "string" || !/^(?:[^#]*#)?QRED[34]:/.test(result.data)) return null;
+  if (typeof result.data !== "string" || !/^(?:[^#]*#)?QRED[345]:/.test(result.data)) return null;
   try {
     validateScannedPayload(qrPayloadBytes(result.data));
     return result.data;

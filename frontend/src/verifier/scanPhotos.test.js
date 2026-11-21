@@ -2,6 +2,8 @@
 import { webcrypto } from "node:crypto";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { createQRedSeals } from "../qredSealer.js";
+import { createDocumentBundle } from "../documentBundle.js";
+import { verifySealCollection } from "../sealCollection.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { createScanPhotoCollection, MAX_SCAN_PHOTO_BYTES, MAX_SCAN_PHOTOS, snapshotScanPhoto } from "./scanPhotos.js";
 
@@ -110,4 +112,23 @@ it("copies the unfiltered source synchronously, caps pixels, and releases the te
   await expect(pending).resolves.toBe(blob);
   expect(copy.width * copy.height).toBe(0);
   expect(source.width).toBe(6000);
+});
+
+it("replaces watermark photo aliases with originals routed from a bundle, including late encodings", async () => {
+  const keys = { privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes", publicKey: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q" };
+  const record = await createQRedSeals({ ...keys, content: "Original page. ".repeat(250), encodingStrategy: "plaintext",
+    pageContext: { pageNumber: 1, pageCount: 1 } });
+  const bundle = await createDocumentBundle([record]);
+  const pages = await verifySealCollection([...record.seals, ...bundle.seals], keys.publicKey);
+  const changed = vi.fn(), resolve = [];
+  const collection = createScanPhotoCollection(changed, () => new Promise(done => resolve.push(done)));
+  collection.bindResults(pages);
+  const old = collection.capture(record.seals[0], frame);
+  const next = collection.capture(bundle.seals[0], frame, { originalPage: true, documentId: pages[0].record_id, replace: true });
+  resolve[0]({ size: 1 }); await old;
+  expect(changed.mock.lastCall[0].photos).toEqual([]);
+  resolve[1]({ size: 2 }); await next;
+  expect(changed.mock.lastCall[0].photos).toMatchObject([{ documentId: pages[0].record_id, file: { size: 2 } }]);
+  await collection.capture(bundle.seals[0], null, { replace: true });
+  expect(changed.mock.lastCall[0].photos).toEqual([]);
 });

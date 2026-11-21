@@ -60,7 +60,10 @@ The signature and hashes are stored as bytes, without Base64/hex expansion.
 
 ## Appended seal sheets
 
-On a seal sheet the first byte of the ordinary QR message is lowercase ASCII
+New appendices use [compressed document bundles](DOCUMENT_BUNDLES_V5.md).
+Existing per-page seal sheets remain readable as follows.
+
+On a legacy seal sheet the first byte of the ordinary QR message is lowercase ASCII
 `q`. The four carrier tags are `qRS3`, `qRC3`, `qRS4`, and `qRC4`. Restore
 uppercase `Q` before interpreting the original record or comparing duplicate
 chunks. The placement hint occupies no additional bytes and conveys no trust.

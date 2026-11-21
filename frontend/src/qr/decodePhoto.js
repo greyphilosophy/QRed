@@ -1,7 +1,7 @@
 import { PHOTO_SCAN_BUDGET_MS } from "./photoScanBudget.js";
 import { scanQrImage, scanWatermarkPreview } from "./scanQrImage.js";
 import { scanPageAlignedImage } from "./pageAlignedScan.js";
-import { scanFooterSeals } from "./footerSealScan.js";
+import { footerQrRegions, scanFooterSeals } from "./footerSealScan.js";
 import { createRectifiedSealScanner, prepareCurvedPageScan } from "./rectifiedSealScan.js";
 import { scanWatermarkRegions } from "./watermarkRegionScan.js";
 import { pageScanQualityFeedback } from "./pageCaptureQuality.js";
@@ -30,7 +30,7 @@ export function qrFrameAction(image, code, options = {}) {
 // The same decoder serves a chosen photo and a manually captured camera frame.
 // Browser callers run this synchronous work in photoScan.worker.js.
 export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOTO_SCAN_BUDGET_MS,
-  onProgress, onStage } = {}) {
+  onProgress, onStage, sealOnly = false } = {}) {
   const { data, width, height } = image;
   if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0
     || width * height > 80_000_000 || data?.length !== width * height * 4) {
@@ -75,7 +75,30 @@ export function decodePhoto(image, { returnPayload = false, maxDurationMs = PHOT
     });
     return collectionComplete;
   };
+  if (sealOnly) {
+    // A close-up QR needs no page corners, watermark alignment or OCR image.
+    const code = attempt("ordinary-qr", () => scanQrImage(data, width, height,
+      { tryWatermark: false, shouldContinue }));
+    const action = qrFrameAction(image, code, { returnPayload });
+    return action.status !== "continue" ? action : { status: "feedback",
+      message: "Move closer to one large seal, keep the whole QR and its white border visible, and avoid glare." };
+  }
   if (returnPayload) {
+    // A sheet of dark QR symbols needs no watermark alignment. Locate dense
+    // regions cheaply, then give this preflight a small part of the budget.
+    // Pale pages retain their established recovery order and fallback time.
+    const sheetDeadline = started + Math.min(3000, maxDurationMs / 8);
+    const sheetContinue = () => performance.now() < sheetDeadline;
+    const regions = footerQrRegions(image, { shouldContinue: sheetContinue, maxAreaFraction: .8 });
+    if (regions.length && sheetContinue()) {
+      attempt("footer", () => scanFooterSeals(image, { regions, shouldContinue: sheetContinue, onSeal: keepPartial }));
+      if ([...partials].some(seal => decodeSeal(seal).seal_sheet)) {
+        // Once a sheet is confirmed, finish its remaining conventional codes
+        // with the photo budget rather than starting watermark recovery.
+        if (!sheetContinue() && shouldContinue()) attempt("footer", () => scanFooterSeals(image, { regions, shouldContinue, onSeal: keepPartial }));
+        return { status: "found-multiple", texts: [...partials] };
+      }
+    }
     // Try the measured whole-page grid before general-purpose QR location.
     // Reserve half the cooperative budget for other layouts if this misses.
     const scanRectified = createRectifiedSealScanner(image, { onMapping: measured => { straightMapping = measured; } });

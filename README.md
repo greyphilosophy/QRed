@@ -72,15 +72,22 @@ the **Verify at qred.org** caption without repeating the navigation QR. The
 caption sits beside the codes where space permits, otherwise above them.
 
 **Watermark with appended overflow** is the default page layout. QRed keeps
-readable watermarks on each original page and appends sheets only for the
-remaining seals. **Append seal sheets** places every seal on additional pages.
+readable watermarks on each original page. If any page needs an appendix, QRed
+compresses all signed page records together into a complete document bundle.
+**Append seal sheets** puts that bundle on additional pages without marking the originals.
 Both layouts preserve the original page sizes and supported form fields.
 Up to six labeled codes share a seal sheet in two columns and up to three rows,
 with larger codes wherever fewer seals leave room (including the last sheet).
+Codes are numbered pieces of the document, not individual original pages.
+Shared compression can reduce their number; each original page keeps its signature.
+The [document bundle format](docs/DOCUMENT_BUNDLES_V5.md) retains compatibility with older page seals.
 Each sheet has three printed steps:
 scan its small navigation QR with the phone camera to open QRed.org, use QRed to
 scan every large seal on all seal sheets, then photograph each original document
-page in QRed for text or visual comparison. Follow QRed's prompts to review the results.
+page in QRed for text or visual comparison. Collect bundle pieces in any order;
+all are needed before its original pages can be checked. Choose **Individual seal**
+in the camera to read a large code up close without the page-corner capture gate.
+Follow QRed's prompts to review the results.
 Opening the combined PDF pairs the signed references with the corresponding original pages.
 
 **Automatic** and **Pale watermark (experimental)** use a clear footer when a

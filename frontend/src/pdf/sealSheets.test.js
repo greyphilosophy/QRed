@@ -79,9 +79,10 @@ it.each([
       const text = (await page.getTextContent()).items.map(item => item.str).join(" ");
       expect(text).toContain("Open QRed.org");
       expect(text).toContain("with your phone camera.");
-      expect(text).toContain("on every seal sheet.");
+      expect(text).toContain("or one seal at a time.");
       expect(text).toContain("original document page.");
-      expect(text.match(/Original page 1 of 1/g)).toHaveLength(expected.length);
+      expect(text).not.toContain("Original page");
+      expect(text.match(/Seal \d+ of \d+/g)).toHaveLength(expected.length);
       // Text bounds also catch header collisions on narrower A4 sheets.
       const instructionItems = (await page.getTextContent()).items.filter(item => item.str && item.transform[5] > size[1] - 150);
       for (const item of instructionItems) expect(item.transform[4] + item.width).toBeLessThanOrEqual(size[0] - 54);
@@ -101,7 +102,7 @@ it("preserves original pages, forms and annotations and reads a whole sheet befo
   second.setCropBox(21, 33, 340, 420);
   second.setRotation(degrees(90));
   const file = await asFile(pdf);
-  const { blob, sheetCount, sheetPages, flattenedFieldCount } = await sealPdfInBrowser({ file, ...keys, pageScalingStrategy: "seal-sheets" });
+  const { blob, sheetCount, sheetPages, flattenedFieldCount, sheetSeals } = await sealPdfInBrowser({ file, ...keys, pageScalingStrategy: "seal-sheets" });
   expect([sheetCount, sheetPages, flattenedFieldCount]).toEqual([1, [1, 2], 0]);
   const out = await PDFDocument.load(await blob.arrayBuffer());
   expect(out.getForm().getTextField("Amount").getText()).toBe("12.34");
@@ -111,7 +112,7 @@ it("preserves original pages, forms and annotations and reads a whole sheet befo
   for (const [index, original] of originals.entries()) expect(samePixels(original, await imageOf(blob, index + 1))).toBe(true);
   const sheet = await imageOf(blob, 3);
   const action = decodePhoto(sheet, { returnPayload: true, maxDurationMs: 30_000 });
-  expect(action.texts).toHaveLength(2);
+  expect(action.texts?.sort()).toEqual([...sheetSeals].sort());
   const verified = await verifySealCollection(action.texts.reverse(), keys.publicKey);
   expect(verified.map(p => [p.status, p.page_number, p.page_count, p.seal_sheet])).toEqual([
     ["VALID", 1, 2, true], ["VALID", 2, 2, true]]);
@@ -120,14 +121,15 @@ it("preserves original pages, forms and annotations and reads a whole sheet befo
   const compared = [];
   const summary = await scanPdfSeals(blob, {
     onSeal: (seal, image) => { expect(decodeSeal(seal).seal_sheet).toBe(true); expect(image).toBeNull(); },
-    onOriginalPage: (seal, image) => {
-      const page = verified.find(p => p.document_id === decodeSeal(seal).document_id).page_number;
+    onOriginalPage: (seal, image, { documentId }) => {
+      expect(decodeSeal(seal).document_bundle).toBe(true);
+      const page = verified.find(p => p.document_id === documentId).page_number;
       expect(samePixels(originals[page - 1], image)).toBe(true);
       compared.push(page);
     },
   });
   expect(compared.sort()).toEqual([1, 2]);
-  expect(summary).toMatchObject({ originalPages: [1, 2], missingPages: [], failedPages: [], sealCount: 2 });
+  expect(summary).toMatchObject({ originalPages: [1, 2], missingPages: [], failedPages: [], sealCount: sheetSeals.length });
 }, 120_000);
 
 it("watermarks by default and adds sheets only for overflow", async () => {
@@ -139,15 +141,16 @@ it("watermarks by default and adds sheets only for overflow", async () => {
   pdf.addPage(PageSizes.Letter).drawCircle({ x: 80, y: 80, size: 40 });
   const file = await asFile(pdf);
   const mixed = await sealPdfInBrowser({ ...keys, file });
-  expect(mixed.sheetPages).toEqual([2]);
+  expect(mixed.sheetPages).toEqual([1, 2]);
   expect(mixed.watermarkLayout.map(Boolean)).toEqual([true, false]);
   expect(samePixels(await imageOf(file, 2), await imageOf(mixed.blob, 2))).toBe(true);
   const onSheet = await scanPdfPage(await imageOf(mixed.blob, 3), { pageAligned: false });
   expect(onSheet.seals).toHaveLength(1);
-  expect(await verifyQRedSeals(onSheet.seals, keys.publicKey)).toMatchObject({ status: "VALID", page_number: 2, seal_sheet: true });
+  expect((await verifySealCollection(onSheet.seals, keys.publicKey)).map(page => [page.status, page.page_number, page.seal_sheet]))
+    .toEqual([["VALID", 1, true], ["VALID", 2, true]]);
 }, 60_000);
 
-it("splits one multipart record between its original and the appendix without duplicates", async () => {
+it("backs up the full signed page when only some watermark pieces fit", async () => {
   const pdf = await PDFDocument.create();
   pdf.addPage([300, 340]).drawText("Page with little room", { x: 25, y: 306, size: 10 });
   const record = await createQRedSeals({ ...keys, content: "Original text. ".repeat(210), encodingStrategy: "plaintext",
@@ -158,18 +161,28 @@ it("splits one multipart record between its original and the appendix without du
   expect(result.watermarkLayout[0].boxes.length).toBeLessThan(4);
   const original = await scanPdfPage(await imageOf(result.blob, 1));
   const sheet = await scanPdfPage(await imageOf(result.blob, 2), { pageAligned: false });
-  const all = [...sheet.seals, ...original.seals];
-  expect(all.map(s => decodeSeal(s).chunk_number).sort()).toEqual([0, 1, 2, 3]);
-  expect(await verifyQRedSeals(sheet.seals, keys.publicKey)).toMatchObject({ status: "INCOMPLETE" });
-  expect(await verifyQRedSeals(all, keys.publicKey)).toMatchObject({ status: "VALID", page_number: 1 });
+  expect(original.seals.length).toBeGreaterThan(0);
+  expect(original.seals.length).toBeLessThan(4);
+  const pages = await verifySealCollection(sheet.seals, keys.publicKey);
+  expect(pages).toHaveLength(1);
+  expect(pages[0]).toMatchObject({ status: "VALID", page_number: 1, content: "Original text. ".repeat(210).trim() });
+  const all = await verifySealCollection([...sheet.seals, ...record.seals], keys.publicKey);
+  expect(all).toHaveLength(1);
+  expect(all[0].status).toBe("VALID");
 }, 120_000);
 
 it("paginates a dense original across multiple sheets and keeps its original page count", async () => {
   const pdf = await PDFDocument.create(), page = pdf.addPage(PageSizes.Letter);
-  for (let i = 0; i < 160; i++) page.drawText("Appendix pagination ".repeat(7), { x: 50, y: 740 - i * 4.2, size: 4 });
-  const result = await sealPdfInBrowser({ ...keys, file: await asFile(pdf), pageScalingStrategy: "seal-sheets", encodingStrategy: "plaintext" });
-  expect(result.pageSealStrings[0].length).toBeGreaterThan(6);
-  expect(result.sheetCount).toBe(Math.ceil(result.pageSealStrings[0].length / 6));
+  page.drawText("Fictional dense document bundle", { x: 54, y: 700 });
+  let seed = 13579;
+  const content = Array.from({ length: 25_000 }, () => {
+    seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
+    return String.fromCharCode(33 + ((seed >>> 0) % 90));
+  }).join("");
+  const record = await createQRedSeals({ ...keys, content, maxPageSeals: 4096, pageContext: { pageNumber: 1, pageCount: 1 } });
+  const result = await renderSealedPdf({ file: await asFile(pdf), pageSealResults: [record], pagesWithText: [true], pageScalingStrategy: "seal-sheets" });
+  expect(result.sheetSeals.length).toBeGreaterThan(6);
+  expect(result.sheetCount).toBe(Math.ceil(result.sheetSeals.length / 6));
   expect(result.sheetCount).toBeGreaterThan(1);
   const output = await PDFDocument.load(await result.blob.arrayBuffer());
   expect(output.getPageCount()).toBe(1 + result.sheetCount);
@@ -178,6 +191,6 @@ it("paginates a dense original across multiple sheets and keeps its original pag
     const decoded = await scanPdfPage(await imageOf(result.blob, number), { pageAligned: false });
     scans.push(...decoded.seals);
   }
-  expect(scans.sort()).toEqual([...result.pageSealStrings[0]].sort());
-  expect(await verifyQRedSeals(scans, keys.publicKey)).toMatchObject({ status: "VALID", page_number: 1, page_count: 1 });
+  expect(scans.sort()).toEqual([...result.sheetSeals].sort());
+  expect(await verifySealCollection(scans, keys.publicKey)).toMatchObject([{ status: "VALID", page_number: 1, page_count: 1, content }]);
 }, 180_000);
