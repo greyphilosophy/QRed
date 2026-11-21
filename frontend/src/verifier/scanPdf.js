@@ -4,6 +4,7 @@ import { decodeSeal, qredPayloadFromPhotoScanResult, verifyQRedSeals } from "../
 import { scanPageAlignedImage } from "../qr/pageAlignedScan.js";
 import { scanFooterSeals } from "../qr/footerSealScan.js";
 import { qredPayloadFromScanResult } from "../qr/qrPayload.js";
+import { SEALS_PER_SHEET } from "../pdf/sealSheetLayout.js";
 
 const MAX_CODES_PER_PAGE = 64;
 // An original 48 MP photo may remain in memory for trustworthy module
@@ -14,12 +15,15 @@ const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 0));
 
 
 function scanRegions(width, height) {
-  // Tight quadrants isolate adjacent dense codes; overlapping halves preserve
-  // quiet zones for codes crossing a split. Always try the complete page first.
+  // Tight quadrants isolate adjacent dense codes. A centered row also keeps
+  // the middle pair on a six-seal sheet whole across the horizontal split.
+  // Overlapping halves preserve other quiet zones. Try the complete page first.
   const w = Math.ceil(width * 0.6), h = Math.ceil(height * 0.6);
   const middleX = Math.floor(width / 2), middleY = Math.floor(height / 2);
   return [
     { x: 0, y: 0, width, height },
+    ...[[0, middleX], [middleX, width]].map(([left, right]) =>
+      ({ x: left, y: Math.floor(height / 4), width: right - left, height: Math.ceil(height / 2) })),
     ...[[0, middleX], [middleX, width]].flatMap(([left, right]) =>
       [[0, middleY], [middleY, height]].map(([top, bottom]) =>
         ({ x: left, y: top, width: right - left, height: bottom - top }))),
@@ -66,6 +70,7 @@ function regionPixels(pixels, width, region) {
 
 export async function scanPdfPage(image, { onSeal = () => {}, signal, pageAligned = true } = {}) {
   const seals = new Set();
+  const fullSealSheet = () => seals.size === SEALS_PER_SHEET && [...seals].every(seal => decodeSeal(seal).seal_sheet);
   // The page-aligned path is independent of QR finder detection and can
   // recover rectangular modules with virtual quiet zones. It sees only the
   // provided pixels; the original PDF's layout is never required.
@@ -96,7 +101,9 @@ export async function scanPdfPage(image, { onSeal = () => {}, signal, pageAligne
       await onSeal(seal, image);
       signal?.throwIfAborted();
     }
-    if (seals.size === 4 && [...seals].every(seal => decodeSeal(seal).seal_sheet)) return { seals: [...seals], limited: false };
+    // Four recovered codes may be only part of a six-seal sheet. Keep the
+    // generated-sheet limit shared with pagination before skipping fallback.
+    if (fullSealSheet()) return { seals: [...seals], limited: false };
   }
   // Never clone and subdivide the full 12–48 MP original merely because the
   // page-aligned scan was incomplete. The legacy fallback operates on its own
@@ -120,6 +127,7 @@ export async function scanPdfPage(image, { onSeal = () => {}, signal, pageAligne
         seals.add(payload);
         await onSeal(payload, image);
         signal?.throwIfAborted();
+        if (fullSealSheet()) return { seals: [...seals], limited: false };
       }
       // Navigation and unrelated QR codes are skipped too, so they cannot hide
       // another seal elsewhere on the page. Bound work on hostile input.

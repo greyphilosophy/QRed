@@ -35,7 +35,7 @@ function drawInstructions(page, width, height, font, bold) {
   }));
 }
 
-// Up to four codes can carry pieces belonging to different originals.
+// Up to six codes can carry pieces belonging to different originals.
 // Labels use the signed original-page order, even if one record spans sheets.
 export async function appendSealSheets(bytes, entries, originalCount) {
   if (!entries.length) return { bytes, sheetCount: 0 };
