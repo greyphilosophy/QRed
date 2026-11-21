@@ -88,18 +88,15 @@ def test_individual_document_seals_collect_offline_then_request_originals(browse
         count = len(document_bundle["seals"])
         progress = page.locator(".ar-collection-progress, #statusText")
         expect(progress).to_contain_text(f"1 of {count} document seals collected", timeout=30000)
-        expect(page.locator(".page-check-list button")).to_have_count(0)
+        expect(page.locator(".page-check-list button, .page-check-list option")).to_have_count(0)
         page.screenshot(path=str(tmp_path / "individual-seal-mobile.png"))
         for collected, image in enumerate(reversed(document_bundle["images"][:-1]), start=2):
             show_closeup(page, image)
             if collected < count:
                 expect(progress).to_contain_text(f"{collected} of {count} document seals collected", timeout=30000)
-        try:
-            expect(page.locator(".page-check-list button")).to_have_count(6, timeout=30000)
-        except AssertionError:
-            print("Bundle camera page:", page.locator("body").inner_text())
-            print("Camera tracks:", page.evaluate("bundleCamera.tracks.map(track=>({state:track.readyState,settings:track.getSettings()}))"))
-            raise
+        # More than five original pages use the compact page selector.
+        pages = page.get_by_role("combobox", name="Choose a page to review")
+        expect(pages.locator("option")).to_have_count(6, timeout=30000)
         expect(page.get_by_role("button", name="Photograph original page 1", exact=True)).to_be_visible()
         assert page.evaluate("bundleCamera.tracks.every(track=>track.readyState==='ended')")
         # No seal-sheet crop is used as an original page photograph.
