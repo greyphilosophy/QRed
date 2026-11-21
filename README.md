@@ -76,9 +76,11 @@ readable watermarks on each original page. If any page needs an appendix, QRed
 compresses all signed page records together into a complete document bundle.
 **Append seal sheets** puts that bundle on additional pages without marking the originals.
 Both layouts preserve the original page sizes and supported form fields.
-Up to six labeled codes share a seal sheet in two columns and up to three rows,
+Up to six codes share a seal sheet in two columns and up to three rows,
 with larger codes wherever fewer seals leave room (including the last sheet).
-Codes are numbered pieces of the document, not individual original pages.
+Only the sheet is labeled; each code carries its piece index inside the QR.
+Neighboring codes share a four-module quiet zone, and the bottom page margin
+supplies the last row's quiet zone without a footer or extra white borders.
 Shared compression can reduce their number; each original page keeps its signature.
 The [document bundle format](docs/DOCUMENT_BUNDLES_V5.md) retains compatibility with older page seals.
 Each sheet has three printed steps:

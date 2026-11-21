@@ -82,7 +82,9 @@ it.each([
       expect(text).toContain("or one seal at a time.");
       expect(text).toContain("original document page.");
       expect(text).not.toContain("Original page");
-      expect(text.match(/Seal \d+ of \d+/g)).toHaveLength(expected.length);
+      expect(text).not.toMatch(/Seal \d+ of \d+/);
+      expect(text).not.toContain("Follow QRed's prompts");
+      expect(text).toContain(`Seal sheet ${sheet + 1} of ${result.sheetCount}`);
       // Text bounds also catch header collisions on narrower A4 sheets.
       const instructionItems = (await page.getTextContent()).items.filter(item => item.str && item.transform[5] > size[1] - 150);
       for (const item of instructionItems) expect(item.transform[4] + item.width).toBeLessThanOrEqual(size[0] - 54);

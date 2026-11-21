@@ -3,13 +3,13 @@ import { createQRedQrSymbol } from "../qredQr.js";
 import { createEntryQrSymbol } from "./navigationQr.js";
 import { visiblePageGeometry } from "./pageScaling.js";
 import { drawQrSymbol } from "./qrDrawing.js";
-import { planSealSheetLayout, SEALS_PER_SHEET, SEAL_SHEET_MARGIN } from "./sealSheetLayout.js";
+import { planSealSheetLayout, SEALS_PER_SHEET, SEAL_SHEET_MARGIN, SEAL_SHEET_INSTRUCTIONS_HEIGHT } from "./sealSheetLayout.js";
 
 export const usesSealSheets = strategy => strategy === "seal-sheets" || strategy === "watermark-sheets";
 export const usesWatermarks = strategy => ["automatic", "watermark", "watermark-sheets"].includes(strategy);
 
 function drawInstructions(page, width, height, font, bold) {
-  const margin = SEAL_SHEET_MARGIN, top = height - 70, bottom = top - 80;
+  const margin = SEAL_SHEET_MARGIN, bottom = height - SEAL_SHEET_INSTRUCTIONS_HEIGHT, top = bottom + 80;
   const available = width - 2 * margin;
   const firstWidth = 216, nextWidth = (available - firstWidth) / 2;
   const starts = [margin, margin + firstWidth, margin + firstWidth + nextWidth];
@@ -56,15 +56,13 @@ export async function appendSealSheets(bytes, entries, originalCount) {
     page.drawText(sheetLabel, { x: width - margin - font.widthOfTextAtSize(sheetLabel, 10), y: height - 52, size: 10, font });
     drawInstructions(page, width, height, font, bold);
     const sheetEntries = entries.slice(sheet * SEALS_PER_SHEET, (sheet + 1) * SEALS_PER_SHEET);
-    const boxes = planSealSheetLayout(width, height, sheetEntries.length);
-    sheetEntries.forEach(({ seal }, slot) => {
-      const { labelY, ...box } = boxes[slot];
-      const label = `Seal ${sheet * SEALS_PER_SHEET + slot + 1} of ${entries.length}`;
-      page.drawText(label, { x: box.x + (box.width - font.widthOfTextAtSize(label, 9)) / 2, y: labelY, size: 9, font });
-      const symbol = createQRedQrSymbol(seal);
-      drawQrSymbol(page, symbol, box, 0);
+    const symbols = sheetEntries.map(({ seal }) => createQRedQrSymbol(seal));
+    const boxes = planSealSheetLayout(width, height, symbols.map(symbol => symbol.modules.size));
+    symbols.forEach((symbol, slot) => {
+      // The layout already reserves white space around the ink bounds. Drawing
+      // edge to edge avoids adding a second quiet zone inside each box.
+      drawQrSymbol(page, symbol, boxes[slot], 0, false, true);
     });
-    page.drawText("Follow QRed's prompts to review the results.", { x: margin, y: 30, size: 10, font });
   }
   return { bytes: await pdf.save({ updateFieldAppearances: false }), sheetCount };
 }

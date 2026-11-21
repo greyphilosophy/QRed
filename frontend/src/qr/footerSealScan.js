@@ -6,7 +6,11 @@ import { qredPayloadFromScanResult } from "./qrPayload.js";
 
 export function footerQrRegions(image, { shouldContinue = () => true, maxAreaFraction = .45 } = {}) {
   const { data, width, height } = image;
-  const step = Math.max(8, Math.ceil(Math.max(width, height) / 160));
+  // Six dense codes can share a single four-module white gap. A coarse cell
+  // can straddle that gap and join neighboring codes into one rejected region.
+  // Keep cells narrower than the gap; diagonal connectivity below still joins
+  // the smaller ink clusters inside an individual QR.
+  const step = Math.max(2, Math.ceil(Math.max(width, height) / 480));
   const cols = Math.ceil(width / step), rows = Math.ceil(height / step);
   const occupied = new Uint8Array(cols * rows);
   for (let row = 0; row < rows; row++) {
@@ -31,7 +35,7 @@ export function footerQrRegions(image, { shouldContinue = () => true, maxAreaFra
       const i = queue[head], x = i % cols, y = Math.floor(i / cols);
       left = Math.min(left, x); right = Math.max(right, x);
       top = Math.min(top, y); bottom = Math.max(bottom, y);
-      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [-1, 1], [1, -1], [1, 1]]) {
         const xx = x + dx, yy = y + dy, j = yy * cols + xx;
         if (xx >= 0 && yy >= 0 && xx < cols && yy < rows && occupied[j] && !seen[j]) {
           seen[j] = 1; queue.push(j);
