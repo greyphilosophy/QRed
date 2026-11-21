@@ -1,6 +1,6 @@
 import { degrees, PageSizes, PDFDocument, rgb } from "pdf-lib";
 import { Buffer } from "node:buffer";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { sealPdfInBrowser } from "../pdfClientSeal.js";
 import { decodeSeal, verifyQRedSeals } from "../qredVerifier.js";
 import { createQRedSeals } from "../qredSealer.js";
@@ -14,6 +14,7 @@ import { sealSheetString } from "../sealFormat.js";
 import { createQRedQrSymbol } from "../qredQr.js";
 import jsQR from "jsqr";
 import { ENTRY_URL } from "./navigationQr.js";
+import * as footerScanner from "../qr/footerSealScan.js";
 
 const keys = { privateKey: "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes",
   publicKey: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q" };
@@ -25,6 +26,7 @@ it.each([
   ["Letter", PageSizes.Letter, 1], ["A4", PageSizes.A4, 2],
   ["Letter", PageSizes.Letter, 3], ["A4", PageSizes.A4, 4],
   ["Letter", PageSizes.Letter, 5], ["Letter", PageSizes.Letter, 6],
+  ["A4", PageSizes.A4, 6], ["Letter", PageSizes.Letter, 7], ["A4", PageSizes.A4, 8],
 ])("reads every dense seal and the start QR from adaptive %s sheets (%j) with %i codes", async (_name, size, count) => {
   const pdf = await PDFDocument.create();
   pdf.addPage(size).drawText("Fictional seal-sheet layout test", { x: 54, y: 700, size: 12 });
@@ -38,17 +40,30 @@ it.each([
     entries.push({ pageNumber: 1, part: 0, total: 1, seal });
   }
   const result = await appendSealSheets(await pdf.save(), entries, 1);
-  expect(result.sheetCount).toBe(Math.ceil(count / 4));
+  expect(result.sheetCount).toBe(Math.ceil(count / 6));
   const file = new Blob([result.bytes], { type: "application/pdf" });
   for (let sheet = 0; sheet < result.sheetCount; sheet++) {
-    const expected = entries.slice(sheet * 4, sheet * 4 + 4).map(entry => entry.seal).sort();
+    const expected = entries.slice(sheet * 6, sheet * 6 + 6).map(entry => entry.seal).sort();
     const image = await imageOf(file, sheet + 2);
     // Phone decoding receives only page pixels, with no known QR positions or
     // PDF bounds. This catches the integration risk of changing the layout.
     const photo = decodePhoto({ data: image.data, width: image.width, height: image.height },
       { returnPayload: true, maxDurationMs: 30_000 });
     expect(photo.texts?.sort()).toEqual(expected);
-    const scanned = await scanPdfPage(image);
+    // Force a partial first pass on a six-code sheet. The real fallback must
+    // recover the remaining two instead of treating four as a complete sheet.
+    const partialFooter = count === 6 && _name === "A4";
+    const scanFooter = footerScanner.scanFooterSeals;
+    const spy = partialFooter ? vi.spyOn(footerScanner, "scanFooterSeals").mockImplementationOnce((...args) => {
+      const codes = scanFooter(...args);
+      expect(codes).toHaveLength(6);
+      return codes.slice(0, 4);
+    }) : null;
+    let scanned;
+    try {
+      scanned = await scanPdfPage(image, { pageAligned: !partialFooter });
+      if (spy) expect(spy).toHaveBeenCalledOnce();
+    } finally { spy?.mockRestore(); }
     expect(scanned.limited).toBe(false);
     expect(scanned.seals.sort()).toEqual(expected);
     for (const seal of photo.texts) {
@@ -151,17 +166,18 @@ it("splits one multipart record between its original and the appendix without du
 
 it("paginates a dense original across multiple sheets and keeps its original page count", async () => {
   const pdf = await PDFDocument.create(), page = pdf.addPage(PageSizes.Letter);
-  for (let i = 0; i < 100; i++) page.drawText("Appendix pagination ".repeat(7), { x: 50, y: 740 - i * 7, size: 5 });
+  for (let i = 0; i < 160; i++) page.drawText("Appendix pagination ".repeat(7), { x: 50, y: 740 - i * 4.2, size: 4 });
   const result = await sealPdfInBrowser({ ...keys, file: await asFile(pdf), pageScalingStrategy: "seal-sheets", encodingStrategy: "plaintext" });
-  expect(result.pageSealStrings[0].length).toBeGreaterThan(4);
-  expect(result.sheetCount).toBe(2);
+  expect(result.pageSealStrings[0].length).toBeGreaterThan(6);
+  expect(result.sheetCount).toBe(Math.ceil(result.pageSealStrings[0].length / 6));
+  expect(result.sheetCount).toBeGreaterThan(1);
   const output = await PDFDocument.load(await result.blob.arrayBuffer());
-  expect(output.getPageCount()).toBe(3);
+  expect(output.getPageCount()).toBe(1 + result.sheetCount);
   const scans = [];
-  for (const number of [3, 2]) {
+  for (let number = output.getPageCount(); number >= 2; number--) {
     const decoded = await scanPdfPage(await imageOf(result.blob, number), { pageAligned: false });
     scans.push(...decoded.seals);
   }
   expect(scans.sort()).toEqual([...result.pageSealStrings[0]].sort());
   expect(await verifyQRedSeals(scans, keys.publicKey)).toMatchObject({ status: "VALID", page_number: 1, page_count: 1 });
-}, 120_000);
+}, 180_000);

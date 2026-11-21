@@ -75,8 +75,9 @@ caption sits beside the codes where space permits, otherwise above them.
 readable watermarks on each original page and appends sheets only for the
 remaining seals. **Append seal sheets** places every seal on additional pages.
 Both layouts preserve the original page sizes and supported form fields.
-Up to four labeled codes share a seal sheet, with larger codes wherever fewer
-seals leave room (including the last sheet). Each sheet has three printed steps:
+Up to six labeled codes share a seal sheet in two columns and up to three rows,
+with larger codes wherever fewer seals leave room (including the last sheet).
+Each sheet has three printed steps:
 scan its small navigation QR with the phone camera to open QRed.org, use QRed to
 scan every large seal on all seal sheets, then photograph each original document
 page in QRed for text or visual comparison. Follow QRed's prompts to review the results.
