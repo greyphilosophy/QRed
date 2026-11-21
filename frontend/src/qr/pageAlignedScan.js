@@ -284,7 +284,29 @@ function paperBrightnessMap(image, mapping) {
     }
     values[row * count + col] = best;
   }
-  return (u, v) => {
+  // A solid graphic can hide every paper probe in a tile. Its near-black
+  // value is not a paper measurement: interpolating it into nearby exposed
+  // cells would turn pale QR ink into apparent white paper. Estimate only
+  // those covered tiles from nearby visible paper, keeping the original
+  // observations separate so one estimate cannot propagate across a page.
+  const measured = values.slice();
+  let coveredTiles = 0;
+  for (let row = 0; row < count; row++) for (let col = 0; col < count; col++) {
+    const neighbors = [];
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      const x = col + dx, y = row + dy;
+      if ((dx || dy) && x >= 0 && y >= 0 && x < count && y < count)
+        neighbors.push({ value: measured[y * count + x], weight: 1 / (dx * dx + dy * dy) });
+    }
+    const brightest = Math.max(...neighbors.map(p => p.value));
+    if (measured[row * count + col] >= brightest * .56) continue;
+    let total = 0, weight = 0;
+    for (const sample of neighbors) if (sample.value >= brightest * .8) {
+      total += sample.value * sample.weight; weight += sample.weight;
+    }
+    if (weight) { values[row * count + col] = total / weight; coveredTiles++; }
+  }
+  const paperAt = (u, v) => {
     const xx = Math.max(0, Math.min(count - 1.001, u * count - 0.5));
     const yy = Math.max(0, Math.min(count - 1.001, v * count - 0.5));
     const x = Math.floor(xx), y = Math.floor(yy), fx = xx - x, fy = yy - y;
@@ -294,6 +316,8 @@ function paperBrightnessMap(image, mapping) {
     return Math.max(35, (a * (1 - fx) + b * fx) * (1 - fy) +
       (c * (1 - fx) + d * fx) * fy);
   };
+  paperAt.coveredTiles = coveredTiles;
+  return paperAt;
 }
 
 function observe(image, mapping, region, size, row, col, ox = 0.5, oy = 0.5) {
@@ -508,7 +532,18 @@ function decodeRegion(image, mapping, region, versions, budget) {
     // pass this recovery. Erasures come from photographed opaque foreground,
     // never from a saved PDF's text, layout or claimed content.
     if (!unknown.some(Boolean)) continue;
-    const recovered = readErasedQrMatrix(bits, unknown, version, confidence);
+    // Match the photo reader's mixed error/erasure correction before the
+    // legacy ranked-byte fallback can return a different QR codeword. Broad
+    // graphics can consume most parity while leaving a few blurred glyph
+    // edges misread; rank missing bits only after measured recovery fails.
+    const recovered = readErasedQrMatrix(bits, unknown, version, confidence,
+      { allowSingleBitError: true, allowRankedErasures: false }) ||
+      (image.paperAt?.coveredTiles && budget.shouldContinue() &&
+        readErasedQrMatrix(bits, unknown, version, confidence, {
+          bitReliability: Float32Array.from(confidence, missing => 9 - missing),
+          rankedOutliers: true, shouldContinue: budget.shouldContinue,
+        })) ||
+      readErasedQrMatrix(bits, unknown, version, confidence);
     if (!recovered) continue;
     const code = { data: "", version, binaryData: bytePayloadFromCodewords(recovered.dataCodewords, version),
       location: scannedGeometry(mapping, region, size), pageAligned: true, erasureAware: true };
