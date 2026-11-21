@@ -634,7 +634,9 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
             assert crop["width"] >= card["width"] * .85, (card, crop)
             expect(review.locator(".review-machine-reading")).not_to_have_attribute("open", "")
             expect(review.locator(".review-machine-reading .review-wording").last).not_to_be_visible()
-            assert navigation["y"] + navigation["height"] < viewport["height"], navigation
+            # Sticky navigation can sit flush with the viewport's bottom edge.
+            # It must fit entirely, while the evidence/choices remain above it.
+            assert navigation["y"] + navigation["height"] <= viewport["height"], navigation
             overview = review.get_by_role("img", name="Page photo being compared with signed text").bounding_box()
             assert overview["y"] > navigation["y"] + navigation["height"]
             assert review.locator(".photo-differences > ol").evaluate("e => e.scrollHeight === e.clientHeight")
