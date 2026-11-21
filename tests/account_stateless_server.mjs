@@ -47,7 +47,10 @@ async function exchange(url, options) {
   const token = await new SignJWT({ sub: "browser-test-user", email: "browser.test@gmail.com", email_verified: true,
     name: "Browser Test", nonce: grant.nonce, ...(provider === "microsoft" ? { tid: tenant, ver: "2.0" } : {}) })
     .setProtectedHeader({ alg: "RS256", kid: "synthetic-provider-key" }).setIssuer(issuer)
-    .setAudience("browser-test-client").setIssuedAt(now).setExpirationTime(now + 3600).sign(rsa.privateKey);
+    // Reproduce a fresh Microsoft code exchange carrying an earlier provider
+    // authentication timestamp, while retaining this request's signed nonce.
+    .setAudience("browser-test-client").setIssuedAt(provider === "microsoft" ? now - 35 * 60 : now)
+    .setNotBefore(now - 300).setExpirationTime(now + 3600).sign(rsa.privateKey);
   return Response.json({ id_token: token });
 }
 // The optional Node PNG renderer is not used by browser sealing/verification.

@@ -5,7 +5,9 @@ import { RequestError } from "./authErrors.js";
 import { DEFAULT_ID_TOKEN_MAX_AGE_SECONDS } from "../src/accountAuthLimits.js";
 
 export const TOKEN_MAX_AGE = DEFAULT_ID_TOKEN_MAX_AGE_SECONDS;
-// Token freshness stays capped at five minutes for Google and Microsoft.
+// Google token freshness stays capped at five minutes. Microsoft request
+// freshness is enforced by the document nonce and five-minute session instead:
+// its iat is an authentication timestamp, not the start of this OAuth request.
 // Microsoft's timestamp failures are classified after signature verification
 // so they can be diagnosed without disclosing unverified JWT data.
 export const CLOCK_SKEW = 30;
@@ -73,8 +75,7 @@ export function checkTokenTime(payload, now, provider) {
   // Microsoft, distinguish the failure cause without echoing timestamps,
   // provider responses, credentials or any raw JWT claim to the browser.
   if (provider === "microsoft") {
-    if (!Number.isSafeInteger(payload.iat)) throw new RequestError("Microsoft identity token has an invalid issued-at timestamp.", 403);
-    if (payload.iat < seconds - TOKEN_MAX_AGE) throw new RequestError("Microsoft identity token was issued more than five minutes ago.", 403);
+    if (!Number.isSafeInteger(payload.iat) || payload.iat < 0) throw new RequestError("Microsoft identity token has an invalid issued-at timestamp.", 403);
     if (payload.iat > seconds + CLOCK_SKEW) throw new RequestError("Microsoft identity token timestamp is ahead of QRed's server clock.", 403);
     return;
   }
@@ -91,6 +92,7 @@ async function verifyIdToken(token, clientId, now, keys, issuer, provider, requi
     ...(provider === "microsoft" ? {} : { maxTokenAge: TOKEN_MAX_AGE }), clockTolerance: CLOCK_SKEW, currentDate: new Date(now),
   });
   checkTokenTime(payload, now, provider);
+  if (provider === "microsoft" && payload.iat >= payload.exp) throw new RequestError("Microsoft identity token has an invalid issued-at timestamp.", 403);
   if (payload.aud !== clientId || (payload.azp && payload.azp !== clientId)) throw new RequestError("Authentication failed", 403);
   return payload;
 }
@@ -121,9 +123,13 @@ export async function validateMicrosoftSpaToken(token, config, pending, now, ver
   if (typeof token !== "string" || !token || token.length > 16384) throw new RequestError("Invalid Microsoft identity token", 403);
   const payload = await (verifyTokens.microsoft || verifyMicrosoftIdToken)(token, config.clientId, now());
   // The signed, exact-match nonce binds this token to this document.
-  // A separate five-minute issued-at freshness check is enforced above,
-  // along with the absolute five-minute document session. The token does
-  // not need an iat after PDF preparation when it is otherwise fresh.
+  // Microsoft documents iat as when authentication occurred, so a fresh
+  // code exchange can legitimately carry an older timestamp. Do not use it
+  // as this request's age. Signature, issuer, audience, exp and nbf were
+  // checked above; the authenticated pending cookie enforces the absolute
+  // five-minute document deadline before AND after verification in accountAuth.
+  // A cached token from any other attempt cannot match this random nonce.
+  // https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference
   if (payload.nonce !== pending.nonce) {
     throw new RequestError("Microsoft identity nonce did not match this document sign-in request", 403);
   }
@@ -140,7 +146,6 @@ const MICROSOFT_REQUEST_DIAGNOSTICS = new Set([
   "Microsoft signing key does not match the account tenant",
   "Microsoft identity nonce did not match this document sign-in request",
   "Microsoft identity token has an invalid issued-at timestamp.",
-  "Microsoft identity token was issued more than five minutes ago.",
   "Microsoft identity token timestamp is ahead of QRed's server clock.",
   "Microsoft did not supply a profile name. Add a name to your Microsoft profile and try again, or use a private key file.",
   "Microsoft did not share an email address. Allow email access or choose another sealing method.",

@@ -27,7 +27,8 @@ describe.each(["microsoft"])("%s identity tokens", provider => {
     await expect(verify[provider](await token(claims(provider)), "test-client", now, keys)).resolves.toMatchObject({ sub: "account-123" });
     const invalid = [{ iss: "https://attacker.example" }, { aud: "another-app" }, { aud: ["test-client", "another-app"] },
       { azp: "another-app" }, { exp: seconds - 31 }, { exp: undefined }, { nonce: undefined }, { sub: undefined },
-      { iat: seconds + 31 }, { iat: seconds + 0.5 }];
+      { iat: seconds + 31 }, { iat: seconds + 0.5 }, { iat: -1 }, { iat: undefined },
+      { iat: seconds, exp: seconds }, { nbf: seconds + 31 }];
     if (provider === "microsoft") invalid.push({ tid: "not-a-guid" }, { tid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" }, { ver: "1.0" });
     for (const change of invalid) await expect(verify[provider](await token({ ...claims(provider), ...change }), "test-client", now, keys)).rejects.toThrow();
     const forged = (await token(claims(provider))).split(".");
@@ -60,7 +61,7 @@ it("categorizes Microsoft verification failures without reflecting private token
   }
 });
 
-it("requires a signed document nonce and a five-minute Microsoft token freshness limit", async () => {
+it("accepts earlier Microsoft authentication time only with a valid token and signed document nonce", async () => {
   const check = async change => validateMicrosoftSpaToken(
     await token({ ...claims("microsoft"), ...change }),
     { clientId: "test-client" }, { nonce: "nonce", iat: seconds }, () => now,
@@ -72,26 +73,30 @@ it("requires a signed document nonce and a five-minute Microsoft token freshness
   const recent = await check({ iat: seconds - 120 });
   expect(recent.identity.provider).toBe("microsoft");
   expect(recent.provider_iat).toBe(seconds - 120);
-  // The signed nonce is necessary but cannot replace token freshness.
-  await expect(check({ iat: seconds - 301 })).rejects.toThrow("more than five minutes ago");
-  await expect(check({ iat: seconds - 35 * 60 })).rejects.toThrow("more than five minutes ago");
+  // A strict 300-second iat cutoff rejects legitimate fresh code exchanges.
+  // Provider token validity is exp/nbf; QRed request age is the pending cookie.
+  for (const age of [300, 301, 305, 35 * 60]) {
+    await expect(check({ iat: seconds - age })).resolves.toMatchObject({ provider_iat: seconds - age });
+    await expect(check({ iat: seconds - age, nonce: "previous-document" })).rejects.toThrow("nonce did not match");
+  }
   // The actual token also must be unexpired and cannot be future-issued.
   await expect(check({ exp: seconds - 31 })).rejects.toThrow();
+  await expect(check({ iat: seconds - 2100, exp: seconds - 31 })).rejects.toThrow();
+  await expect(check({ iat: seconds - 2100, nbf: seconds + 31 })).rejects.toThrow();
   await expect(check({ iat: seconds + 31 })).rejects.toThrow("ahead of QRed");
   await expect(check({ iat: seconds + 0.5 })).rejects.toThrow("invalid issued-at");
 });
 
 
-it("enforces five-minute signed token freshness and safely distinguishes Microsoft clock errors", () => {
+it("keeps Google's token-age limit and rejects malformed or future Microsoft timestamps", () => {
   expect(() => checkTokenTime({ iat: seconds - 301 }, now, "google")).toThrow("too old");
   expect(() => checkTokenTime({ iat: seconds - 300 }, now, "microsoft")).not.toThrow();
-  expect(() => checkTokenTime({ iat: seconds - 301 }, now, "microsoft")).toThrow("more than five minutes ago");
+  expect(() => checkTokenTime({ iat: seconds - 301 }, now, "microsoft")).not.toThrow();
   expect(() => checkTokenTime({ iat: seconds + 31 }, now, "microsoft")).toThrow("ahead of QRed");
   expect(() => checkTokenTime({ iat: "wrong" }, now, "microsoft")).toThrow("invalid issued-at");
   expect(() => checkTokenTime({ iat: seconds * 1000 }, now, "microsoft")).toThrow("ahead of QRed");
   for (const message of [
     "Microsoft identity token has an invalid issued-at timestamp.",
-    "Microsoft identity token was issued more than five minutes ago.",
     "Microsoft identity token timestamp is ahead of QRed's server clock.",
   ]) {
     expect(safeMicrosoftVerificationReason(new RequestError(message))).toBe(message);
