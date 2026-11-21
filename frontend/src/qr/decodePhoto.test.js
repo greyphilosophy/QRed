@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createQRedSeals } from "../qredSealer.js";
 import { createQRedQrData } from "../qredQr.js";
+import { sealSheetString } from "../sealFormat.js";
 import { verifyQRedSeals } from "../qredVerifier.js";
 import { decodePhoto } from "./decodePhoto.js";
 import { PHOTO_SCAN_BUDGET_MS } from "./photoScanBudget.js";
@@ -38,6 +39,7 @@ beforeAll(async () => {
 beforeEach(() => {
   createRectifiedSealScanner.mockReset().mockImplementation(image => options => scanRectifiedSeal(image, options));
   scanFooterSeals.mockReset().mockReturnValue([]);
+  footerQrRegions.mockReset().mockReturnValue([]);
   scanWatermarkRegions.mockReset().mockReturnValue([]);
   scanWatermarkPreview.mockReset().mockReturnValue(null);
   scanPageAlignedImage.mockReset().mockReturnValue([]);
@@ -426,4 +428,14 @@ it("stops region attempts when their real collection is complete, without skippi
   expect(scanPageAlignedImage).not.toHaveBeenCalled();
   expect(scanCurvedPageSeal).not.toHaveBeenCalled();
   await expect(verifyQRedSeals(result.texts, publicKey)).resolves.toMatchObject({ status: "VALID" });
+});
+
+it("reads a confirmed dark seal sheet before starting watermark alignment", async () => {
+  const sheet = sealSheetString(single);
+  footerQrRegions.mockReturnValue([{ x: 0, y: 0, width: 100, height: 100 }]);
+  scanFooterSeals.mockImplementation((_image, { onSeal }) => { onSeal(sheet); return [code(sheet)]; });
+  expect(decodePhoto(image, { returnPayload: true })).toEqual({ status: "found-multiple", texts: [sheet] });
+  expect(scanRectifiedSeal).not.toHaveBeenCalled();
+  expect(scanWatermarkPreview).not.toHaveBeenCalled();
+  expect(await verifyQRedSeals([sheet], publicKey)).toMatchObject({ status: "VALID", seal_sheet: true });
 });
