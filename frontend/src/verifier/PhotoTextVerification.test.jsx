@@ -64,7 +64,7 @@ it("prioritizes doubtful numbers and keeps other weak readings reachable", async
   const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
   await screen.findByText("Number or date");
   const numeric = currentCard(view.container);
-  expect(numeric.textContent).toContain("Sealed text: 17");
+  expect(numeric.querySelector(".review-sealed-text").textContent).toContain("Sealed text: Amount 17");
   expect(numeric.textContent).toContain("Photo reading: I7");
   expect(numeric.querySelector("rect.uncertain")).toBeTruthy();
   const cards = readAllCards(view.container);
@@ -127,7 +127,7 @@ it("explains an unreliable reading without hiding missing signed wording", async
   ocr.read.mockResolvedValue("The invoice is approved for payment".split(" ").map(text => ({ ...word(text), confidence: 40 })));
   const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
   await screen.findByText(/Many characters could not be read reliably/);
-  expect(view.container.querySelector(".photo-differences").textContent).toContain("Sealed text: not");
+  expect(view.container.querySelector(".review-sealed-text").textContent).toContain("The invoice is not approved for payment");
   expect(view.container.querySelector(".photo-summary.differences")).toBeNull();
   expect(view.container.querySelector(".review-progress")).toBeTruthy();
   expect(view.container.querySelector(".photo-differences .difference-thumbnail")).toBeNull();
@@ -447,4 +447,46 @@ it("keeps contextual crops inside all page edges and uses the full photo without
     expect(crop.top + crop.height).toBeGreaterThanOrEqual(box.y1);
   }
   expect(cropBounds(size, [])).toEqual({ left: 0, top: 0, width: 1200, height: 1600 });
+});
+
+
+it("makes the sealed line and photo primary and keeps raw OCR behind a closed disclosure", async () => {
+  const signed = { ...page, content: "Approved total 123.45\nPayment due Friday" };
+  ocr.read.mockResolvedValue([word("Approved"), word("total"), word("923.45"), word("Payment"), word("due"), word("Monday")]);
+  const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
+  await screen.findByText("Number or date");
+  const card = currentCard(view.container), reference = card.querySelector(".review-sealed-text");
+  expect(reference.textContent).toBe("Sealed text: Approved total 123.45");
+  expect([...reference.querySelectorAll("mark")].map(mark => mark.textContent)).toEqual(["1"]);
+  const details = card.querySelector(".review-machine-reading");
+  expect(details.open).toBe(false);
+  expect(details.textContent).toContain("Photo reading: 923.45");
+  expect(reference.textContent).not.toContain("923.45");
+  expect(card.querySelector(".review-decisions").compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  fireEvent.click(within(details).getByText("Why this was flagged"));
+  expect(details.open).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Next reading", exact: true }));
+  expect(currentCard(view.container).querySelector(".review-machine-reading").open).toBe(false);
+  expect(currentCard(view.container).querySelector(".review-sealed-text").textContent).toBe("Sealed text: Payment due Friday");
+});
+
+it("keeps the unreadable-page warning visible even when missing text creates review items", async () => {
+  ocr.read.mockResolvedValue([]);
+  const view = render(<PhotoTextVerification results={[page]} scanPhotos={[capture(1, "first", "unused")]} />);
+  await screen.findByRole("button", { name: "Read page again" });
+  expect(currentCard(view.container)).toBeTruthy();
+  expect(view.container.querySelector(".photo-result > .photo-summary.unreadable").textContent)
+    .toContain("No text could be read — retake this page");
+});
+
+it("includes the photographed line without moving the selected word or unrelated rows", () => {
+  const selected = { x0: 800, y0: 500, x1: 980, y1: 530 };
+  const neighbor = { x0: 100, y0: 495, x1: 650, y1: 530 };
+  const distant = { x0: 0, y0: 1000, x1: 1200, y1: 1030 };
+  const size = { width: 1200, height: 1600, comparison: { words: [{ bbox: selected }, { bbox: neighbor }, { bbox: distant }] } };
+  const crop = cropBounds(size, [selected]);
+  expect(crop.left).toBeLessThan(neighbor.x0);
+  expect(crop.left + crop.width).toBeGreaterThan(selected.x1);
+  expect(crop.top + crop.height).toBeLessThan(distant.y0);
+  expect(selected).toEqual({ x0: 800, y0: 500, x1: 980, y1: 530 });
 });

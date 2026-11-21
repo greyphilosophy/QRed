@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { changedCharacters, createReviewItems, currentReview, reviewCounts } from "./reviewFindings.js";
+import { changedCharacters, createReviewItems, currentReview, reviewCounts, sealedPassage } from "./reviewFindings.js";
 
 const box = { x0: 10, y0: 20, x1: 80, y1: 40 };
 const comparison = overrides => ({ differences: [], words: [], ...overrides });
@@ -67,4 +67,32 @@ it("bounds work for long OCR fragments and preserves all original characters", (
   const prefix = "a".repeat(1000), suffix = "b".repeat(1000);
   const parts = changedCharacters(prefix + "7" + suffix, prefix + "2" + suffix);
   expect(parts.expected).toEqual([{ text: prefix, changed: false }, { text: "7", changed: true }, { text: suffix, changed: false }]);
+});
+
+it("shows the complete sealed line while keeping the disputed characters separate", () => {
+  const source = "Invoice 1042\nApproved total 123.45\nPayment due Friday";
+  expect(sealedPassage({ expected: "123.45", observed: "923.45", context: source }, source))
+    .toEqual({ before: "Approved total ", expected: "123.45", after: "" });
+  const longLine = "Original wording ".repeat(12) + "123.45" + " with exact punctuation!";
+  expect(sealedPassage({ expected: "123.45", context: longLine.slice(-90) }, longLine))
+    .toEqual({ before: "Original wording ".repeat(12), expected: "123.45", after: " with exact punctuation!" });
+});
+
+it("uses the supplied sealed context to distinguish repeated values", () => {
+  const source = "First amount 100\nSecond amount 100 due";
+  expect(sealedPassage({ expected: "100", context: "Second amount 100 due" }, source))
+    .toEqual({ before: "Second amount ", expected: "100", after: " due" });
+  expect(sealedPassage({ expected: "100", context: source }, source))
+    .toEqual({ before: "", expected: "100", after: "" });
+  expect(sealedPassage({ expected: "100" }, source))
+    .toEqual({ before: "", expected: "100", after: "" });
+});
+
+it("does not invent sealed wording from an extra reading or a partial token", () => {
+  expect(sealedPassage({ expected: "", observed: "Paid" }, "Approved total 123.45"))
+    .toEqual({ before: "", expected: "", after: "" });
+  expect(sealedPassage({ expected: "1" }, "Invoice 1042"))
+    .toEqual({ before: "", expected: "1", after: "" });
+  expect(sealedPassage({ expected: "Friday", observed: "Monday" }, "Friday"))
+    .toEqual({ before: "", expected: "Friday", after: "" });
 });

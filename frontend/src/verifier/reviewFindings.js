@@ -9,6 +9,33 @@ export function findingBoxes(difference, comparison) {
   });
 }
 
+// Display context from the authenticated reference, never from the camera's
+// reading. Repeated fragments stay unexpanded when their occurrence is unclear.
+export function sealedPassage(difference, signedText = "") {
+  const expected = difference.expected || "";
+  const fallback = { before: "", expected, after: "" };
+  if (!expected) return fallback;
+  const uniqueIndex = (text, part) => {
+    const index = text.indexOf(part);
+    return index >= 0 && index === text.lastIndexOf(part) ? index : -1;
+  };
+  const target = expected.normalize("NFC");
+  const context = (difference.context || expected).normalize("NFC");
+  let start = uniqueIndex(context, target), source = context;
+  if (start < 0) return fallback;
+  const signed = signedText.normalize("NFC"), contextStart = uniqueIndex(signed, context);
+  if (contextStart >= 0) { source = signed; start += contextStart; }
+  // An isolated token such as 1 must not acquire the line containing 123.
+  const wordCharacter = char => /[\p{L}\p{M}\p{N}]/u.test(char || "");
+  const end = start + target.length;
+  if (!difference.context && ((wordCharacter(target[0]) && wordCharacter(source[start - 1]))
+    || (wordCharacter(target.at(-1)) && wordCharacter(source[end])))) return fallback;
+  const lineStart = source.lastIndexOf("\n", start - 1) + 1;
+  const nextLine = source.indexOf("\n", end);
+  return { before: source.slice(lineStart, start), expected,
+    after: source.slice(end, nextLine < 0 ? source.length : nextLine) };
+}
+
 function reason(d) {
   if (d.spacing) return "Word spacing";
   if (d.typography) return "Typography";

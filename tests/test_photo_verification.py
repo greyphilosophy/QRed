@@ -146,7 +146,9 @@ def review_differences(review):
     total = int(review.locator(".photo-differences").get_attribute("data-count"))
     for index in range(total):
         expect(position).to_have_text(f"Reading {index + 1} of {total}")
+        current.get_by_text("Why this was flagged", exact=True).click()
         cards.append(current.inner_text())
+        current.get_by_text("Why this was flagged", exact=True).click()
         if index + 1 < total:
             forward.click()
     return cards
@@ -625,8 +627,13 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
             assert 0 <= card["y"] <= crop["y"], (card, crop)
             assert crop["y"] + crop["height"] <= navigation["y"], (crop, navigation)
             assert 0 <= location["y"] < location["y"] + location["height"] <= navigation["y"], location
-            assert 110 <= location["width"] <= 160 and 140 <= location["height"] <= 224, location
-            assert location["x"] + location["width"] < crop["x"], (location, crop)
+            assert 100 <= location["width"] <= 160 and 130 <= location["height"] <= 224, location
+            reference = review.locator(".review-sealed-text").bounding_box()
+            assert location["x"] + location["width"] < reference["x"], (location, reference)
+            assert location["y"] + location["height"] < crop["y"], (location, crop)
+            assert crop["width"] >= card["width"] * .85, (card, crop)
+            expect(review.locator(".review-machine-reading")).not_to_have_attribute("open", "")
+            expect(review.locator(".review-machine-reading .review-wording").last).not_to_be_visible()
             assert navigation["y"] + navigation["height"] < viewport["height"], navigation
             overview = review.get_by_role("img", name="Page photo being compared with signed text").bounding_box()
             assert overview["y"] > navigation["y"] + navigation["height"]

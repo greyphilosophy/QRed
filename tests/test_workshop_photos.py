@@ -99,7 +99,7 @@ def check_printed_year(review, *, changed):
     expect(matched).to_have_count(0)
     year_readings = []
     for card in review_differences(review):
-        signed = next((line for line in card.splitlines() if line.startswith("Sealed text:")), "")
+        signed = next((line for line in card.splitlines() if line.startswith("Flagged sealed text:")), "")
         observed = next((line for line in card.splitlines() if line.startswith("Photo reading:")), "")
         if re.search(r"\b2037\b", signed):
             year_readings.append(observed)

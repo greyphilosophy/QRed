@@ -188,7 +188,7 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
               </select>}
           </nav>
         </div>
-        {!items.length && <p className={`photo-summary ${page.state}`} role={page.state === "reading" ? "status" : undefined}>
+        {(!items.length || !["matches", "differences", "uncertain"].includes(page.state)) && <p className={`photo-summary ${page.state}`} role={page.state === "reading" ? "status" : undefined}>
           {page.state === "reading" ? photoProcessingMessage(page.progress) : <>{!["missing", "queued"].includes(page.state) &&
             <span className="review-status-label">Printed text: </span>}{resultLabel(page)}</>}</p>}
         {page.state === "reading" && <progress max="1" value={page.progress ?? undefined} aria-label="Printed-text recognition" />}
