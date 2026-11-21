@@ -75,8 +75,11 @@ caption sits beside the codes where space permits, otherwise above them.
 readable watermarks on each original page and appends sheets only for the
 remaining seals. **Append seal sheets** places every seal on additional pages.
 Both layouts preserve the original page sizes and supported form fields.
-Up to four labeled codes share a seal sheet. For printed copies, scan the seals,
-select the numbered original, and photograph it for text or visual comparison.
+Up to four labeled codes share a seal sheet, with larger codes wherever fewer
+seals leave room (including the last sheet). Each sheet has three printed steps:
+scan its small navigation QR with the phone camera to open QRed.org, use QRed to
+scan every large seal on all seal sheets, then photograph each original document
+page in QRed for text or visual comparison. Follow QRed's prompts to review the results.
 Opening the combined PDF pairs the signed references with the corresponding original pages.
 
 **Automatic** and **Pale watermark (experimental)** use a clear footer when a
