@@ -94,7 +94,12 @@ def test_individual_document_seals_collect_offline_then_request_originals(browse
             show_closeup(page, image)
             if collected < count:
                 expect(progress).to_contain_text(f"{collected} of {count} document seals collected", timeout=30000)
-        expect(page.locator(".page-check-list button")).to_have_count(6, timeout=30000)
+        try:
+            expect(page.locator(".page-check-list button")).to_have_count(6, timeout=30000)
+        except AssertionError:
+            print("Bundle camera page:", page.locator("body").inner_text())
+            print("Camera tracks:", page.evaluate("bundleCamera.tracks.map(track=>({state:track.readyState,settings:track.getSettings()}))"))
+            raise
         expect(page.get_by_role("button", name="Photograph original page 1", exact=True)).to_be_visible()
         assert page.evaluate("bundleCamera.tracks.every(track=>track.readyState==='ended')")
         # No seal-sheet crop is used as an original page photograph.
