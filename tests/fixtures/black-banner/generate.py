@@ -56,7 +56,8 @@ def paragraph(c, value, top, x=LEFT+9, width=WIDTH-18, style=BODY_STYLE):
     return top + height
 
 
-def make_pdf(path, *, dark_bar=True, bar_height=22, bar_center=353):
+def make_pdf(path, *, dark_bar=True, bar_height=22, bar_center=353,
+             caption=CAPTION, batch='DEMO-2037-46'):
     c = canvas.Canvas(str(path), pagesize=(PAGE_W, PAGE_H), invariant=1, pageCompression=1)
     c.setTitle('Synthetic equipment orientation notice - QRed test input')
     c.setAuthor('Synthetic fixture generator')
@@ -76,7 +77,7 @@ def make_pdf(path, *, dark_bar=True, bar_height=22, bar_center=353):
         ('Completed on:', 'Friday, October 16, 2026'),
         ('Participant:', 'MORGAN SAMPLE'),
         ('Member ID:', 'SYN-482691'),
-        ('Batch reference:', 'DEMO-2037-46'),
+        ('Batch reference:', batch),
         ('Requesting group:', 'Example Tool Library'),
         ('Workshop:', 'Woodworking and repair'),
         ('Review type:', 'Introductory equipment orientation'),
@@ -94,7 +95,7 @@ def make_pdf(path, *, dark_bar=True, bar_height=22, bar_center=353):
     asc, desc = pdfmetrics.getAscentDescent(font, size)
     # Center the actual font metrics inside the band, as well as centering horizontally.
     baseline_top = bar_center + (asc+desc)/2
-    text(c, PAGE_W/2, baseline_top, CAPTION, font, size, center=True)
+    text(c, PAGE_W/2, baseline_top, caption, font, size, center=True)
     c.setFillColor(black)
     c.setLineWidth(.65)
     c.rect(LEFT, PAGE_H-610, WIDTH, 307, fill=0, stroke=1)
@@ -171,6 +172,16 @@ def main():
     hashes = {case['text_sha256'] for case in manifest['cases']}
     if len(hashes) != 1:
         raise AssertionError('Variant text must be identical.')
+    # The OCR negative test needs stable glyph pixels on machines without
+    # Arial installed. Rasterize the same embedded font instead of drawing
+    # replacement text with an environment-dependent canvas font.
+    edited = args.output / 'changed-content.pdf'
+    make_pdf(edited, caption='Orientation Incomplete', batch='DEMO-2032-46')
+    with fitz.open(edited) as doc:
+        for name, box in [('changed-caption', (42, 342, 570, 364)),
+                          ('changed-batch', (211, 189, 306, 202))]:
+            doc[0].get_pixmap(matrix=fitz.Matrix(2, 2), clip=fitz.Rect(*box), alpha=False).save(
+                args.output / f'{name}.png')
     (args.output/'fixture_manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
     print(json.dumps({'created': [c['pdf'] for c in manifest['cases']],
                       'identical_extracted_text': True, 'page_size': 'US Letter',

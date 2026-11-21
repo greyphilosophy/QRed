@@ -57,5 +57,7 @@ The OCR test uses the installed offline Tesseract model and production image
 preparation, localized retries and comparison. It verifies the full white
 caption, then changes it to **Orientation Incomplete** and changes a batch
 digit from **2037** to **2032** while retaining the original seal. Both edits
-must be reported. It also checks that reading leaves original pixels intact.
+must be reported. The two `changed-*.png` crops are generated from the PDF's
+embedded font at 144 DPI so the edited glyphs do not depend on host fonts.
+It also checks that reading leaves original pixels intact.
 No new OCR algorithm is needed for these framed-page fixtures.

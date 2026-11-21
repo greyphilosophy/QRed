@@ -1,7 +1,8 @@
 import { Buffer } from "node:buffer";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
-import { createCanvas, ImageData } from "@napi-rs/canvas";
+import { createCanvas, ImageData, loadImage } from "@napi-rs/canvas";
 import { createWorker } from "tesseract.js";
 import { expect, it, vi } from "vitest";
 import { verifyQRedSeals } from "../qredVerifier.js";
@@ -35,17 +36,16 @@ it.each(["normal", "tall"])("reads the %s white banner and flags changed status 
     const verified = await verifyQRedSeals(bannerReference.seals, bannerReference.publicKey);
     expect(verified.status).toBe("VALID");
     const source = framedBanner(await renderBanner(kind));
+    const captionEdit = await loadImage(readFileSync("../tests/fixtures/black-banner/changed-caption.png"));
+    const batchEdit = await loadImage(readFileSync("../tests/fixtures/black-banner/changed-batch.png"));
     for (const changed of [false, true]) {
       const canvas = createCanvas(source.width, source.height), context = canvas.getContext("2d");
       context.putImageData(new ImageData(source.data.slice(), source.width, source.height), 0, 0);
       if (changed) {
-        // Edit the photographed content while retaining the original seal.
-        context.fillStyle = "black"; context.fillRect(144, 744, 1056, 44);
-        context.font = "bold 24px Arial"; context.fillStyle = "white"; context.textAlign = "center";
-        context.fillText("Orientation Incomplete", source.width / 2, 774);
-        context.fillStyle = "white"; context.fillRect(482, 438, 190, 26);
-        context.font = "bold 21px Arial"; context.fillStyle = "black"; context.textAlign = "left";
-        context.fillText("DEMO-2032-46", 484, 460);
+        // Edit photographed pixels while retaining the original seal. These
+        // crops use the PDF's embedded font, independent of host canvas fonts.
+        context.drawImage(captionEdit, 144, 744);
+        context.drawImage(batchEdit, 482, 438);
       }
       const before = Buffer.from(context.getImageData(0, 0, canvas.width, canvas.height).data);
       const reading = await reader.read(canvas, () => {}, { text: verified.content,
