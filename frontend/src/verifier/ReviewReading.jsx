@@ -12,7 +12,7 @@ export function ReviewReading({ page, item, decision, onDecision, onEnlarge }) {
   const uniqueContext = contextAt >= 0 && contextAt === d.context?.lastIndexOf(d.expected);
   return <li className={`review-reading ${decision || "pending"}`}>
     <p className="review-reason">{item.reason}</p>
-    {!item.inspection && <div className="review-wording"><strong>Signed text:</strong>{" "}
+    {!item.inspection && <div className="review-wording"><strong>Sealed text:</strong>{" "}
       <ChangedText parts={parts.expected} empty="(no text here)" /></div>}
     {d.observed !== undefined && <div className="review-wording"><strong>Photo reading:</strong>{" "}
       <ChangedText parts={parts.observed} empty="(not read — inspect for missing text)" /></div>}
@@ -20,7 +20,7 @@ export function ReviewReading({ page, item, decision, onDecision, onEnlarge }) {
     {item.readings && <div className="review-rereads">{item.readings.map(reading =>
       <div key={reading.label}><strong>{reading.label}:</strong> {reading.text}</div>)}</div>}
     <DifferenceCrop page={page} difference={d} decision={decision} onEnlarge={onEnlarge} />
-    {d.context && d.context !== d.expected && <details className="review-context"><summary>Nearby signed text</summary>
+    {d.context && d.context !== d.expected && <details className="review-context"><summary>Nearby sealed text</summary>
       <p>{uniqueContext ? <>{d.context.slice(0, contextAt)}<mark>{d.expected}</mark>{d.context.slice(contextAt + d.expected.length)}</> : d.context}</p>
     </details>}
     {(d.sourceReading || d.review === "firstReading" || item.notes.length > (item.inspection ? 1 : 0)) &&
@@ -31,7 +31,7 @@ export function ReviewReading({ page, item, decision, onDecision, onEnlarge }) {
       </details>}
     {item.inspection && !d.expected && <details className="review-context"><summary>Signed page text</summary>
       <p className="review-reference">{page.page.content}</p></details>}
-    <fieldset className="review-decisions"><legend>Your decision</legend>
+    <fieldset className="review-decisions"><legend>{item.inspection ? "Your decision" : "Does the photo or paper match the sealed text?"}</legend>
       <div>{Object.entries(choices).map(([value, label]) => <button type="button" key={value}
         className={`review-choice ${value}`} aria-pressed={decision === value}
         onClick={() => onDecision(decision === value ? undefined : value)}>{label}</button>)}</div>
@@ -47,11 +47,18 @@ function ChangedText({ parts, empty }) {
 
 export function cropBounds(page, boxes) {
   if (!boxes.length) return { left: 0, top: 0, width: page.width, height: page.height };
-  const left = Math.max(0, Math.min(...boxes.map(box => box.x0)) - 70);
-  const top = Math.max(0, Math.min(...boxes.map(box => box.y0)) - 24);
+  // Keep neighboring lines visible on double-spaced pages and high-resolution
+  // photos. Fixed pixel padding becomes almost invisible as resolution grows.
+  const heights = boxes.map(box => box.y1 - box.y0).sort((a, b) => a - b);
+  const lineHeight = heights[Math.floor(heights.length / 2)];
+  const horizontal = Math.max(page.width * .035, lineHeight * 2);
+  const vertical = Math.max(page.height * .025, lineHeight * 4);
+  const left = Math.max(0, Math.min(...boxes.map(box => box.x0)) - horizontal);
+  const top = Math.max(0, Math.min(...boxes.map(box => box.y0)) - vertical);
+  const right = Math.min(page.width, Math.max(...boxes.map(box => box.x1)) + horizontal);
+  const bottom = Math.min(page.height, Math.max(...boxes.map(box => box.y1)) + vertical);
   return { left, top,
-    width: Math.min(page.width - left, Math.max(...boxes.map(box => box.x1)) - left + 70),
-    height: Math.min(page.height - top, Math.max(...boxes.map(box => box.y1)) - top + 24) };
+    width: right - left, height: bottom - top };
 }
 
 function LocationMarks({ boxes, tone, halo = false }) {

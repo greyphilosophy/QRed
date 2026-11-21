@@ -130,7 +130,7 @@ def test_changed_and_erased_digits_on_a_curled_dated_form(browser, dated_form_ph
                 printed_date = "03-14-29" if kind == "changed" else "03-14-2"
                 assert sum(bool(re.search(r"Photo reading: [^\n]*\b" + printed_date + r"\b", card)) for card in cards) == 1
                 assert any(("twice" if kind == "changed" else "29.50") in card for card in cards)
-                expect(review.locator(".photo-summary")).to_contain_text("to review")
+                expect(review.locator(".review-progress")).to_contain_text("reviewed")
             guard.assert_quiet()
     finally:
         context.close()
@@ -298,7 +298,7 @@ def test_scaled_table_recovers_numeric_columns_and_keeps_swapped_amounts_visible
                 cards = review_differences(review)
                 assert any("100.50" in card for card in cards)
                 assert any("111.50" in card for card in cards)
-                expect(review.locator(".photo-summary")).to_contain_text("to review")
+                expect(review.locator(".review-progress")).to_contain_text("reviewed")
             else:
                 differences = review.locator(".photo-differences").inner_text()
                 assert differences == "", differences + "\n" + review.locator(".photo-legend").inner_text()
@@ -464,7 +464,10 @@ def test_guided_pages_find_changed_word_and_clear_without_persistence(browser, s
             camera_paper(page, text, sealed_text[1]["qr"], border=False)
             review.get_by_role("button", name="Retake this page", exact=True).click()
             page.get_by_role("dialog").get_by_role("button", name="Capture now").click()
-            expect(review.locator(".photo-summary")).to_contain_text(expected, timeout=60000)
+            if expected == "to review":
+                expect(review.locator(".review-progress")).to_contain_text("reviewed", timeout=60000)
+            else:
+                expect(review.locator(".photo-summary")).to_contain_text(expected, timeout=60000)
 
         review.get_by_role("button", name="Review summary", exact=True).click()
         page.get_by_role("region", name="Review summary", exact=True).get_by_role("button", name="Finish & clear", exact=True).click()
@@ -562,7 +565,7 @@ def test_real_stamped_pages_separate_markings_and_detect_edits(browser, tmp_path
             page.locator(".page-check-list button").nth(1).click()
             review = page.get_by_role("region", name="Review Page 2 of 2", exact=True)
             if variant == "unchanged":
-                expect(review.locator(".photo-summary")).not_to_contain_text("No text")
+                expect(review.locator(".page-check-status.unreadable, .page-check-status.error")).to_have_count(0)
                 assert review.locator(".photo-differences").get_attribute("data-content-count") == "0"
                 page.locator(".page-check-list button").nth(0).click()
                 first = page.get_by_role("region", name="Review Page 1 of 2", exact=True)
@@ -570,8 +573,10 @@ def test_real_stamped_pages_separate_markings_and_detect_edits(browser, tmp_path
                 # OCR may skip the small caption altogether. The user-facing
                 # requirement is no false document difference, whether stamp
                 # readings need separate review or no stamp text was returned.
-                expect(first.locator(".photo-summary")).to_have_text(
-                    re.compile(r"Printed text: (Recognized text matches the signed text|\d+ readings? to review|Some readings need review)"))
+                if int(first.locator(".photo-differences").get_attribute("data-count")):
+                    expect(first.locator(".review-progress")).to_contain_text("reviewed")
+                else:
+                    expect(first.locator(".photo-summary")).to_contain_text("Recognized text matches the signed text")
             elif variant == "changed":
                 cards = review_differences(review)
                 for wording in ["Friday", "Monday", "Paid"]:
@@ -579,7 +584,7 @@ def test_real_stamped_pages_separate_markings_and_detect_edits(browser, tmp_path
             else:
                 # A contrast fallback must never turn an unreadable light addition
                 # into an unqualified agreement. It needs explicit visual review.
-                expect(review.locator(".photo-summary")).not_to_contain_text("Recognized text matches the signed text")
+                expect(review.locator(".review-progress")).to_contain_text("reviewed")
             page.screenshot(path=str(tmp_path / (layout + "-" + variant.replace(" ", "-") + ".png")), full_page=True)
     finally:
         context.close()
@@ -611,16 +616,16 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
             thumbnail = review.get_by_role("img", name="Page thumbnail showing text location").first
             location = thumbnail.bounding_box()
             navigation = review.get_by_role("group", name="Reading navigation").bounding_box()
-            choices = review.get_by_role("group", name="Your decision").bounding_box()
+            choices = review.get_by_role("group", name="Does the photo or paper match the sealed text?").bounding_box()
             assert choices["y"] + choices["height"] <= navigation["y"], (choices, navigation)
-            for choice in review.get_by_role("group", name="Your decision").get_by_role("button").all():
+            for choice in review.get_by_role("group", name="Does the photo or paper match the sealed text?").get_by_role("button").all():
                 assert choice.bounding_box()["height"] >= 44
             # The wording, photo crop, and navigation must be visible together.
             # A visible button alone does not make review usable.
             assert 0 <= card["y"] <= crop["y"], (card, crop)
             assert crop["y"] + crop["height"] <= navigation["y"], (crop, navigation)
             assert 0 <= location["y"] < location["y"] + location["height"] <= navigation["y"], location
-            assert 44 <= location["width"] <= 100 and location["height"] <= 130, location
+            assert 110 <= location["width"] <= 160 and 140 <= location["height"] <= 224, location
             assert location["x"] + location["width"] < crop["x"], (location, crop)
             assert navigation["y"] + navigation["height"] < viewport["height"], navigation
             overview = review.get_by_role("img", name="Page photo being compared with signed text").bounding_box()
@@ -637,10 +642,10 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
             assert thumbnail.locator("image").get_attribute("href") == closeup.locator("image").get_attribute("href")
             return regions
         first_location = assert_review_visible()
-        choices = review.get_by_role("group", name="Your decision").get_by_role("button")
+        choices = review.get_by_role("group", name="Does the photo or paper match the sealed text?").get_by_role("button")
         before_choices = [choice.bounding_box() for choice in choices.all()]
         before_navigation = review.get_by_role("group", name="Reading navigation").bounding_box()
-        for label in ["Printed text differs", "Matches signed text", "Can't tell", "Can't tell"]:
+        for label in ["Printed text differs", "Matches sealed text", "Can't tell", "Can't tell"]:
             review.get_by_role("button", name=label, exact=True).tap()
             assert [choice.bounding_box() for choice in choices.all()] == before_choices
             assert review.get_by_role("group", name="Reading navigation").bounding_box() == before_navigation
@@ -649,11 +654,11 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
         review.get_by_role("button", name="Next reading", exact=True).click()
         expect(review.locator(".photo-differences > ol")).to_contain_text("Monday")
         assert assert_review_visible() != first_location
-        # The final decision changes the status banner, which must not move
-        # the active controls when its wording takes a second line.
+        # Recording the final decision must not introduce a status banner or
+        # move the active controls.
         before_choices = [choice.bounding_box() for choice in choices.all()]
         before_navigation = review.get_by_role("group", name="Reading navigation").bounding_box()
-        for label in ["Printed text differs", "Matches signed text", "Can't tell", "Can't tell"]:
+        for label in ["Printed text differs", "Matches sealed text", "Can't tell", "Can't tell"]:
             review.get_by_role("button", name=label, exact=True).tap()
             assert [choice.bounding_box() for choice in choices.all()] == before_choices
             assert review.get_by_role("group", name="Reading navigation").bounding_box() == before_navigation
@@ -696,7 +701,7 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
         expect(summary).to_contain_text("1 of 2 review decisions recorded")
         summary.get_by_role("button", name="Continue review", exact=True).click()
         expect(review.get_by_role("heading", name="Reading 1 of 2", exact=True)).to_be_visible()
-        expect(review.get_by_role("button", name="Matches signed text", exact=True)).to_have_attribute("aria-pressed", "false")
+        expect(review.get_by_role("button", name="Matches sealed text", exact=True)).to_have_attribute("aria-pressed", "false")
         # Resume via the file picker or camera directly from the partial summary.
         # The existing undecided/unclear observations must survive either path.
         review.get_by_role("button", name="Review summary", exact=True).click()

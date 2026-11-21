@@ -23,12 +23,12 @@
 .photo-overview-header h4 { font-size: 1rem; margin: 0; }
 .photo-check .photo-view-tools label { font-size: .83rem; }
 .photo-check .photo-view-tools select { min-height: 44px; padding: .2rem; }
-.difference-crop { display: block; width: 100%; max-height: 180px; margin-top: .6rem; background: white; border: 1px solid #cbd5e1; }
-.difference-visuals { display: grid; grid-template-columns: clamp(4rem, 24%, 6rem) minmax(0, 1fr); align-items: center; gap: .6rem; margin-top: .6rem; }
+.difference-crop { display: block; width: 100%; height: auto; max-height: 14rem; margin-top: .6rem; background: white; border: 1px solid #cbd5e1; }
+.difference-visuals { display: grid; grid-template-columns: minmax(0, min(40%, 10rem)) minmax(0, 1fr); align-items: center; gap: .6rem; margin-top: .6rem; }
 .difference-visuals figure { min-width: 0; margin: 0; }
 .difference-visuals figcaption { margin-top: .25rem; color: #475569; font-size: .875rem; line-height: 1.3; }
 .difference-visuals .difference-crop { margin-top: 0; }
-.difference-thumbnail { display: block; width: 100%; height: auto; max-height: 8rem; background: #fff; border: 1px solid #94a3b8; }
+.difference-thumbnail { display: block; width: 100%; height: auto; max-height: 14rem; background: #fff; border: 1px solid #94a3b8; }
 .difference-location-halo, .difference-location-mark { vector-effect: non-scaling-stroke; }
 .difference-location-halo { fill: none; stroke: #fff; stroke-width: 6px; }
 .difference-location-mark { stroke-width: 3px; }

@@ -188,12 +188,9 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
               </select>}
           </nav>
         </div>
-        <p className={`photo-summary ${page.state}`} role={page.state === "reading" ? "status" : undefined}>
-          {page.state === "reading" ? photoProcessingMessage(page.progress) : <>{!["missing", "queued"].includes(page.state) && <span className="review-status-label">Printed text: </span>}{items.length && ["matches", "differences", "uncertain"].includes(page.state)
-            ? counts.pending ? `${counts.pending} reading${counts.pending === 1 ? "" : "s"} to review`
-              : counts.unsure ? `${counts.unsure} reading${counts.unsure === 1 ? "" : "s"} still unclear`
-                : counts.differs ? "Your review recorded discrepancies" : "Your review decisions are recorded"
-            : resultLabel(page)}</>}</p>
+        {!items.length && <p className={`photo-summary ${page.state}`} role={page.state === "reading" ? "status" : undefined}>
+          {page.state === "reading" ? photoProcessingMessage(page.progress) : <>{!["missing", "queued"].includes(page.state) &&
+            <span className="review-status-label">Printed text: </span>}{resultLabel(page)}</>}</p>}
         {page.state === "reading" && <progress max="1" value={page.progress ?? undefined} aria-label="Printed-text recognition" />}
         {page.error && <p role="alert">{page.error}</p>}
         {comparison && <>

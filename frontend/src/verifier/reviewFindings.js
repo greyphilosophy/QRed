@@ -1,6 +1,6 @@
 // Review decisions describe a person's observations. They never change an OCR
 // result, signature verdict, or the signed reference, and are never persisted.
-export const REVIEW_DECISIONS = { matches: "Matches signed text", differs: "Printed text differs", unsure: "Can't tell" };
+export const REVIEW_DECISIONS = { matches: "Matches sealed text", differs: "Printed text differs", unsure: "Can't tell" };
 
 export function findingBoxes(difference, comparison) {
   return difference.boxes || (difference.wordIndices || []).flatMap(index => {
