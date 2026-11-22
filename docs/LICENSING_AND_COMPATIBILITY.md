@@ -1,20 +1,37 @@
 # Licensing and QR compatibility
 
-Updated November 1, 2026, after the merge of
-[PR #163](https://github.com/greyphilosophy/QRed/pull/163).
+Updated November 22, 2026, for the proposed noncommercial license transition.
 
 ## Source-code rights
 
-QRed's reference implementation is licensed under [Apache License 2.0](../LICENSE).
-Dependencies retain their own licenses and notices; QRed's license does not
-replace those terms. Keep applicable license, attribution and modification
-notices when redistributing. The [dependency patch notes](../frontend/patches/README.md)
+QRed's reference implementation is offered under the
+[PolyForm Noncommercial License 1.0.0](../LICENSE). This permits
+noncommercial use, modification, and distribution, including the explicitly
+permitted uses by certain nonprofit, educational, research, public-safety,
+health, and government organizations. It does not grant permission for
+other commercial uses. The source is publicly visible, but this is a
+**source-available license, not an OSI-approved open-source license**.
+Requests for separate commercial rights should go to the project maintainer.
+
+**This is not retroactive.** Earlier QRed source code was offered under
+[Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
+Permissions already granted for those prior versions are not revoked by
+this license change. Existing copies and forks may continue using those
+earlier versions subject to their Apache terms. A new license on this
+repository also does not supersede the rights of any other copyright holders.
+
+Dependencies retain their own licenses and notices; QRed's project license
+does not replace their terms. Keep applicable license, attribution, and
+modification notices when redistributing. The
+[dependency patch notes](../frontend/patches/README.md)
 record local changes to jsQR and other patched components.
 
-Apache 2.0 includes a contributor patent grant for covered claims that the
-contributor can license. It does not license unrelated third-party patents,
-provide general trademark permission, or warrant noninfringement. See the
-[license text, especially sections 3, 4, 6 and 7](https://www.apache.org/licenses/LICENSE-2.0).
+PolyForm Noncommercial contains a patent license only for claims the
+licensor has authority to grant. Neither that license nor the earlier
+Apache 2.0 contributor patent grants confer rights over unrelated
+third-party patents, general trademark permission, or a warranty of
+noninfringement. These source-code licenses are distinct from the
+[terms for QRed's hosted website](https://qred.org/terms.html).
 
 ## Message encoding and printed geometry
 
