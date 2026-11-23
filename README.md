@@ -591,10 +591,21 @@ The format, payload structure, chunking rules, compression algorithms, and verif
 
 # License
 
-This project's source code is released under [Apache License 2.0](LICENSE).
-Dependencies retain their own licenses. The contributor patent grant is limited
-to covered claims those contributors can license; it is not blanket permission
-from unrelated patent holders.
+QRed's reference implementation is now offered under the
+[PolyForm Noncommercial License 1.0.0](LICENSE): noncommercial use,
+modification, and redistribution are permitted, but the license does not
+grant rights for commercial use. QRed remains publicly inspectable and
+source-available, but is no longer open-source software as defined by the
+Open Source Initiative. For commercial licensing, contact the project
+maintainer.
+
+**Prior rights remain:** Code distributed in earlier QRed versions under
+Apache License 2.0 remains usable under the permissions already granted
+by that license; changing the current repository license does not revoke
+those grants. Third-party components retain their own licenses and notices.
+Any patents covered by the current license grant are limited to claims
+the respective licensor can license, not blanket permission from unrelated
+patent holders. See [licensing and QR compatibility](docs/LICENSING_AND_COMPATIBILITY.md).
 
 Ordinary QR byte encoding does not make the experimental rectangular watermark
 geometry JIS/ISO conformant. QRed does not claim patent clearance or separate
