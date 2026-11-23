@@ -1,5 +1,6 @@
 import { assignPhotoLines, enclosingBox, indicesInsidePhotoCrop } from "./photoTextLayout.js";
 import { comparePhotoText, OCR_REVIEW_THRESHOLD } from "./photoTextComparison.js";
+import { planProseRetry } from "./photoProseRetry.js";
 import { disputedDateFields, isDateReading } from "./photoDateField.js";
 
 export const MAX_TEXT_RETRIES = 12;
@@ -11,6 +12,7 @@ export function planTextRetries(words, comparison, signedLines, { width, height 
   const disputedNumbers = new Set(comparison.differences.filter(difference => /\d/u.test(difference.expected))
     .flatMap(difference => difference.wordIndices));
   const groups = signedLines ? assignPhotoLines(signedLines, words) : [];
+  const prose = planProseRetry(words, groups, questioned, { width, height });
   const grouped = new Set(groups.flatMap(line => line.wordIndices));
   const observed = new Map();
   words.forEach((word, index) => {
@@ -23,15 +25,18 @@ export function planTextRetries(words, comparison, signedLines, { width, height 
   for (const indices of observed.values()) groups.push({ wordIndices: indices,
     bbox: enclosingBox(indices.map(index => words[index].bbox)) });
   groups.unshift(...disputedDateFields(words, comparison.differences));
-  // The signed row can brush a neighboring row although the disputed value
-  // itself is isolated. Try its photographed word box if the full row fails.
+  // Read a weak amount from its own cell before retrying a whole table row.
+  // A colon-prefixed field can also be isolated when the row clips its neighbor.
+  const amount = /^[-+−]?\p{Sc}?\d+(?:,\d{3})*\.\d{2}$/u;
   for (const d of comparison.differences) {
-    if (!/^:\s*\d/u.test(d.expected) || d.wordIndices.length !== 1) continue;
+    if (d.wordIndices.length !== 1) continue;
     const first = words[d.wordIndices[0]];
-    if (first?.bbox && first.confidence < OCR_REVIEW_THRESHOLD) groups.push({
-      text: d.expected, wordIndices: d.wordIndices, bbox: first.bbox, separatedValue: true });
+    if (!first?.bbox || !(first.confidence < OCR_REVIEW_THRESHOLD)) continue;
+    const field = { text: d.expected, wordIndices: d.wordIndices, bbox: first.bbox };
+    if (amount.test(d.expected) && amount.test(first.text)) groups.unshift(field);
+    else if (/^:\s*\d/u.test(d.expected)) groups.push({ ...field, separatedValue: true });
   }
-  const candidates = [];
+  const candidates = prose ? [prose] : [];
   const missingBoxes = comparison.differences.filter(difference => difference.expected && !difference.observed)
     .flatMap(difference => difference.boxes || []);
   for (const group of groups) {
@@ -65,7 +70,10 @@ export function planTextRetries(words, comparison, signedLines, { width, height 
         candidates.push({ bbox: box, indices, priority: -1, dateField: true, signedDate: group.signedDate });
       continue;
     }
-    const priority = indices.some(index => disputedNumbers.has(index)) ? 0 : missing ? 1
+    // A glued page count needs glyph spacing on its isolated value. A wider
+    // crop can include a clear label while leaving the same wrong number.
+    const pageCount = group.separatedValue && /^:\s*\d+\s+of\s+\d+$/iu.test(group.text);
+    const priority = pageCount ? -2 : indices.some(index => disputedNumbers.has(index)) ? 0 : missing ? 1
       : indices.some(index => comparison.words.find(w => w.sourceIndex === index)?.agrees === false) ? 2 : 3;
     const sameLine = group.text && indices.length === group.wordIndices.length && indices.every(i => group.wordIndices.includes(i));
     if (group.separatedValue && !sameLine) continue;
@@ -176,6 +184,7 @@ export function applyTextRetries(words, replacements, compareWords) {
   for (const { candidate, words: retry } of replacements) {
     let reading = retry;
     const before = candidate.indices.map(index => words[index]);
+    if (candidate.prose && !accountsForFirstReading(before, reading)) continue;
     const original = before.map(word => word.text).join(" ");
     let observed = reading.map(word => word.text).join(" ");
     const changed = original && original.normalize("NFC") !== observed.normalize("NFC");

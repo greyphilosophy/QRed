@@ -4,13 +4,13 @@ import { changedCharacters, createReviewItems, currentReview, reviewCounts, seal
 const box = { x0: 10, y0: 20, x1: 80, y1: 40 };
 const comparison = overrides => ({ differences: [], words: [], ...overrides });
 
-it("keeps faint additions, low-confidence matches and spacing in the review queue", () => {
+it("keeps faint additions, unlocated readings and spacing in the review queue", () => {
   const result = comparison({ differences: [
     { expected: "now here", observed: "nowhere", spacing: true, wordIndices: [0] },
     { expected: "2027", observed: "2022", wordIndices: [1] },
   ], words: [{ sourceIndex: 0, bbox: box, status: "uncertain" },
     { sourceIndex: 1, bbox: box, status: "different" },
-    { sourceIndex: 2, text: "Approved", bbox: box, status: "uncertain", agrees: true }],
+    { sourceIndex: 2, text: "Approved", bbox: null, status: "uncertain", agrees: true }],
   originalComparison: comparison({ differences: [{ expected: "", observed: "Paid", boxes: [{ ...box, y0: 60, y1: 80 }] }] }),
   contrastAssisted: true });
   const items = createReviewItems(result);
@@ -107,4 +107,19 @@ it("does not invent sealed wording from an extra reading or a partial token", ()
     .toEqual({ before: "", expected: "1", after: "" });
   expect(sealedPassage({ expected: "Friday", observed: "Monday" }, "Friday"))
     .toEqual({ before: "", expected: "Friday", after: "" });
+});
+
+it("keeps competing OCR fragments of a single table rule in one review, preserving separate additions", () => {
+  const word = (text, x0, y0, x1, y1, confidence = 25, lineId = "rule") =>
+    ({ text, bbox: { x0, y0, x1, y1 }, confidence, lineId });
+  const words = [word("eee", 10, 400, 980, 416), word("rr", 180, 397, 205, 420),
+    word("is", 340, 397, 388, 420), word("Wi", 740, 397, 779, 420), word("Paid", 785, 395, 848, 419, 96),
+    word("ink", 1010, 397, 1050, 419), word("memo", 660, 430, 730, 451, 48, "body")]
+    .map((w, sourceIndex) => ({ ...w, sourceIndex }));
+  const extra = (...wordIndices) => ({ expected: "", observed: wordIndices.map(i => words[i].text).join(" "), wordIndices });
+  const differences = [extra(2, 3), extra(4), extra(5), extra(6), { ...extra(0, 1), review: "artwork" }];
+  const items = createReviewItems(comparison({ words, differences }));
+  expect(items.map(item => item.difference.observed)).toEqual(["eee rr is Wi", "Paid", "ink", "memo"]);
+  expect(items[0].difference.boxes).toEqual(words.slice(0, 4).map(w => w.bbox));
+  expect(items[0].reason).toBe("Possible extra text");
 });

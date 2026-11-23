@@ -216,15 +216,14 @@ it.each(["2", "3"])("rereads an isolated value and locates the remaining finding
     const signed = "Page :1 of 2 End", read = await reader.read(photo, () => {}, { text: signed });
     expect(engine.recognize).toHaveBeenCalledTimes(2);
     const findings = createReviewItems(comparePageReading(signed, read, photo));
-    const colon = findings.find(item => item.difference.expected === ":");
-    expect(colon.difference.boxes).toHaveLength(1);
-    const [mark] = colon.difference.boxes;
+    expect(findings.some(item => item.difference.expected === ":")).toBe(false);
+    const mark = read.words.find(w => w.precedingSeparatorBox).precedingSeparatorBox;
     expect(Math.abs(mark.x0 - 105)).toBeLessThan(1);
     expect(Math.abs(mark.y0 - 108)).toBeLessThan(1);
     expect(Math.abs(mark.x1 - 108)).toBeLessThan(1);
     expect(Math.abs(mark.y1 - 120)).toBeLessThan(1);
     const number = findings.find(item => item.difference.expected === "2");
-    if (lastDigit === "2") expect(findings).toHaveLength(1);
+    if (lastDigit === "2") expect(findings).toHaveLength(0);
     else {
       expect(number.difference.observed).toBe("3");
       expect(Math.abs(number.difference.boxes[0].x0 - 180)).toBeLessThan(1);
@@ -293,5 +292,47 @@ it("cancels an in-flight retry without publishing it or retaining its original-r
     expect(f.urls.revokeObjectURL).toHaveBeenCalledWith("blob:retained-photo");
     expect(f.decoded().src).toBe("");
     expect([...f.copies, f.prepared].every(c => c.width === 0 && c.height === 0)).toBe(true);
+  } finally { vi.unstubAllGlobals(); }
+});
+
+it("recovers a missed navigation QR beside a misread caption, and retains additions and moved captions", async () => {
+  const { createEntryQrSymbol } = await import("../pdf/navigationQr.js");
+  const { preparePhotoReadingPixels } = await import("./photoReadingPixels.js");
+  const { default: QRCode } = await import("qrcode");
+  const page = createCanvas(600, 600), ctx = page.getContext("2d");
+  const token = (text, x0, x1, y0) => ({ text, confidence: 95, bbox: { x0, y0, x1, y1: y0 + 20 } });
+  const pack = words => ({ data: { blocks: [{ paragraphs: [{ lines: [{ words }] }] }] } });
+  const body = token("Friday", 20, 80, 20);
+  const first = [token("Verity", 196, 257, 244), token("at", 265, 281, 246), token("qred.org", 288, 378, 248)];
+  const enlarged = [token("Verify", 16, 138, 16), token("at", 154, 186, 16), token("qred.org", 200, 380, 16)];
+  const extra = token("Paid", 380, 428, 244);
+  vi.stubGlobal("document", { createElement: () => createCanvas(1, 1) });
+  try {
+    for (const variant of ["ordinary", "extra", "moved", "duplicate", "wrong link", "changed lettering"]) {
+      const symbol = variant === "wrong link" ? QRCode.create("EXAMPLE.ORG") : createEntryQrSymbol();
+      ctx.fillStyle = "#c8c8c8"; ctx.fillRect(0, 0, 600, 600);
+      ctx.fillStyle = "#393939";
+      for (let y = 0; y < symbol.modules.size; y++) for (let x = 0; x < symbol.modules.size; x++) {
+        if (symbol.modules.get(y, x)) ctx.fillRect(245 + x * 4, 140 + y * 4, 4, 4);
+      }
+      const engine = worker(), moved = first.map(w => ({ ...w, bbox: { ...w.bbox, y0: 440, y1: 460 } }));
+      const original = variant === "moved" ? moved : [...first, ...(variant === "extra" ? [extra] : variant === "duplicate" ? moved : [])];
+      engine.recognize.mockResolvedValueOnce(pack([body, ...original])).mockResolvedValue(pack(
+        variant === "changed lettering" ? [enlarged[0], enlarged[1], { ...enlarged[2], text: "other.org" }] : enlarged));
+      const prepare = async canvas => {
+        // Whole-page detection misses the small code. Decode any targeted crop from its actual pixels.
+        if (canvas === page) return { canvas: createCanvas(1, 1), codes: [] };
+        const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
+        return { canvas: createCanvas(1, 1), codes: preparePhotoReadingPixels(pixels).codes };
+      };
+      const reader = createPhotoOcrReader(() => Promise.resolve(engine), prepare);
+      try {
+        const result = await reader.read(page, () => {}, { pageNumber: 1 });
+        const items = createReviewItems(comparePageReading("Friday", result, page, undefined, { pageNumber: 1 }));
+        if (variant === "ordinary") expect(items, variant).toEqual([]);
+        else if (variant === "extra") expect(items.map(i => i.difference.observed), variant).toEqual(["Paid"]);
+        else expect(items.some(i => /Verity/.test(i.difference.observed)), variant).toBe(true);
+      } finally { reader.dispose(); }
+    }
   } finally { vi.unstubAllGlobals(); }
 });

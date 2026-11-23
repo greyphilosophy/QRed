@@ -48,6 +48,40 @@ function reason(d) {
   return "Text to check";
 }
 
+// Table rules can produce a very wide OCR box and several weak, overlapping
+// "words" on that same engine line. Layout comparison can split them across
+// signed columns. Keep all their text and boxes together for one decision.
+function groupOverlappingExtras(source) {
+  const differences = source.differences || [], byIndex = new Map((source.words || []).map(w => [w.sourceIndex, w]));
+  const lines = new Map(), merged = new Map(), used = new Set();
+  for (const difference of differences) {
+    if (difference.expected || !difference.observed || /\d/u.test(difference.observed) || !difference.wordIndices?.length) continue;
+    const words = difference.wordIndices.map(i => byIndex.get(i)), line = words[0]?.lineId;
+    if (line == null || words.some(w => !w?.bbox || w.lineId !== line || !(w.confidence < 50))) continue;
+    if (!lines.has(line)) lines.set(line, []);
+    lines.get(line).push({ difference, words });
+  }
+  for (const groups of lines.values()) {
+    if (groups.length < 2) continue;
+    const words = groups.flatMap(g => g.words);
+    const span = words.find(({ bbox: b, text }) => text.length <= 8 && b.x1 - b.x0 > 20 * (b.y1 - b.y0))?.bbox;
+    if (!span) continue;
+    const overlapping = groups.filter(group => group.words.every(({ bbox: b }) => {
+      const x = (b.x0 + b.x1) / 2, y = (b.y0 + b.y1) / 2;
+      return x >= span.x0 && x <= span.x1 && y >= span.y0 && y <= span.y1;
+    }));
+    if (overlapping.length < 2) continue;
+    const members = overlapping.flatMap(g => g.words).sort((a, b) => a.sourceIndex - b.sourceIndex);
+    if (members.length < 3) continue;
+    const combined = { expected: "", observed: members.map(w => w.text).join(" "),
+      wordIndices: members.map(w => w.sourceIndex), boxes: members.map(w => w.bbox), context: "" };
+    if (overlapping.every(g => g.difference.review === "artwork")) combined.review = "artwork";
+    merged.set(overlapping[0].difference, combined);
+    overlapping.slice(1).forEach(g => used.add(g.difference));
+  }
+  return differences.filter(d => !used.has(d)).map(d => merged.get(d) || d);
+}
+
 export function createReviewItems(comparison) {
   if (!comparison) return [];
   const items = [], duplicates = new Map();
@@ -75,7 +109,7 @@ export function createReviewItems(comparison) {
   }
   function addComparison(source, prefix) {
     const covered = new Set();
-    for (const [index, d] of (source.differences || []).entries()) {
+    for (const [index, d] of groupOverlappingExtras(source).entries()) {
       (d.wordIndices || []).forEach(i => covered.add(i));
       add(`${prefix}-${index}`, d, source, { source: prefix,
         notes: prefix === "original" ? ["The first reading found this. Check the original photo; contrast enhancement can hide pale marks."] : [],

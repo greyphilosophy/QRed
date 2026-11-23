@@ -5,6 +5,7 @@ import { PageCameraCapture } from "./PageCameraCapture.jsx";
 import { createPageTextChecks } from "./pageTextChecks.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { photoProcessingMessage } from "./photoStatus.js";
+import { OCR_REVIEW_THRESHOLD } from "./photoTextComparison.js";
 import { createReviewItems, currentReview, reviewCounts } from "./reviewFindings.js";
 import { ReadingViewer, ReviewReading } from "./ReviewReading.jsx";
 import { ImageZoom } from "./ImageZoom.jsx";
@@ -140,7 +141,9 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
   }
   const comparison = page?.comparison;
   const contentDifferences = comparison?.differences.filter(d => !d.typography && !d.spacing && !d.review) || [];
-  const difficultReading = comparison?.words.length >= 5 && comparison.uncertainCount > comparison.words.length * 0.3;
+  const difficultReading = items.length > 0 && comparison?.words.length >= 5 &&
+    comparison.words.filter(word => word.status === "uncertain" || word.confidence < OCR_REVIEW_THRESHOLD).length >
+      comparison.words.length * 0.3;
   const validPages = results.filter(result => result.status === "VALID" && result.signature_valid === true);
   const unscanned = collectionProgress?.pagesTotal
     ? collectionProgress.pagesCollected < collectionProgress.pagesTotal

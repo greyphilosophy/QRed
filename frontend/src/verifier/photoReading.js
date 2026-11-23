@@ -217,7 +217,9 @@ export function comparePageReading(expected, reading, dimensions, evidence, opti
       wordIndices: difference.wordIndices.map(index => indices[index]),
     }));
   }
-  const markings = groups.map(indices => ({ observed: indices.map(index => words[index].text).join(" "),
+  const markings = groups.filter(indices => !(options.pageNumber === 1 && indices.length === 3 &&
+    indices.every(i => words[i].confirmedNavigationCaption) &&
+    indices.map(i => words[i].text).join(" ") === "Verify at qred.org")).map(indices => ({ observed: indices.map(index => words[index].text).join(" "),
     boxes: indices.map(index => words[index].bbox) }));
   qualifyPhotoReadings(comparison, layout, evidence?.visual, contrastAssisted || Boolean(originalReading), originalReading);
   const originalComparison = originalReading ? comparePageReading(expected,

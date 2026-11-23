@@ -89,10 +89,10 @@ function printedFixture() {
 
 it("registers one printer scale and offset using distinctive lines spread across the page", () => {
   const fixture = printedFixture();
-  // Faint exact anchors can establish location, but retain their low confidence.
+  // Exact text in the registered location also resolves a faint anchor.
   fixture.reading.at(-1).confidence = 40;
   const result = comparePageReading(fixture.content, { words: fixture.reading, corners }, size, fixture.evidence);
-  expect(result).toMatchObject({ status: "uncertain", lineAware: true, differences: [], uncertainCount: 1 });
+  expect(result).toMatchObject({ status: "matches", lineAware: true, differences: [], uncertainCount: 0 });
 });
 
 it("does not let global printer registration move individual changed rows to a matching location", () => {
@@ -118,4 +118,32 @@ it("does not calibrate to duplicated anchors and falls back when the border cann
 
 it("retains the page-wide token limit even when signed regions partition the comparison", () => {
   expect(() => compareLocatedPhotoText("word ".repeat(4001), [], size, [])).toThrow(/too much text/);
+});
+
+it("registers a slight vertical tilt across columns without moving individual values to matching rows", () => {
+  const entries = [
+    ["Visit location", .12, .25], ["Provider group", .12, .275], ["Unit number", .12, .30],
+    ["Case opened", .65, .25], ["Service date", .65, .275], ["Page reference", .65, .30],
+    ["Case closed", .65, .72], ["Review completed", .12, .74], ["Approved status", .12, .77],
+  ];
+  const signed = entries.map(([text]) => text).join("\n");
+  const form = { text: signed, ...size, layout: { mode: 3, lines: entries.map(([, x, y]) => ({
+    x, y, width: .16, height: .023,
+  })) } };
+  const fields = entries.map(([text, x, y], i) => {
+    const center = (y + .0115 + (x - .65) * .028) * size.height;
+    return { text, lineId: i, confidence: 98, bbox: { x0: x * size.width, x1: (x + .16) * size.width,
+      y0: center - 9, y1: center + 9 } };
+  });
+  const read = fields => comparePageReading(signed, { words: fields, corners }, size, form);
+  expect(read(fields)).toMatchObject({ status: "matches", lineAware: true, differences: [] });
+
+  const altered = fields.map((f, i) => i === 1 ? { ...f, text: "Unit number" } : i === 2 ? { ...f, text: "Provider group" } : f);
+  expect(read(altered).differences.map(d => d.observed)).toEqual(["Unit number", "Provider group"]);
+  const [first, ...remaining] = fields;
+  const duplicate = { ...first, bbox: { ...first.bbox, y0: first.bbox.y0 + 130, y1: first.bbox.y1 + 130 } };
+  expect(read([...fields, duplicate]).differences).toContainEqual(expect.objectContaining({
+    expected: "", observed: first.text, outsideSignedLines: true,
+  }));
+  expect(read(remaining).differences).toContainEqual(expect.objectContaining({ expected: first.text, observed: "" }));
 });

@@ -41,7 +41,7 @@ it.each([
 });
 
 it("rereads a questionable line once, preserving original-image coordinates", () => {
-  const words = [word("Pay"), word("123.45", 60, 100, 150), word("Friday", 98, 200)];
+  const words = [word("Pay"), word("123.4S", 60, 100, 150), word("Friday", 98, 200)];
   const result = planTextRetries(words, comparePageReading("Pay 123.45 Friday", { words }, size), null, size);
   expect(result).toHaveLength(1);
   expect(result[0].indices).toEqual([0, 1]);
@@ -183,7 +183,7 @@ it("keeps a faint separate addition even when the closer reading matches the sig
 });
 
 it("trims retry padding before it clips the edge of the next line", () => {
-  const words = [word("Total", 50), word("Following", 98, 127)];
+  const words = [word("TotaI", 50), word("Following", 98, 127)];
   const comparison = comparePageReading("Total Following", { words }, size);
   const plans = planTextRetries(words, comparison, null, size);
   expect(plans).toHaveLength(1);
@@ -192,7 +192,7 @@ it("trims retry padding before it clips the edge of the next line", () => {
 });
 
 it("rejects a crop that clips a neighboring word even if its center is outside", () => {
-  const words = [word("Total", 50), word("Neighbor", 98, 124, 80)];
+  const words = [word("TotaI", 50), word("Neighbor", 98, 124, 80)];
   const comparison = comparePageReading("Total Neighbor", { words }, size);
   expect(planTextRetries(words, comparison, null, size)).toEqual([]);
 });
@@ -223,4 +223,30 @@ it("isolates a numeric value after a field separator when the full signed row cl
   expect(result.words.map(w => w.text)).toContain("3");
   expect(comparePageReading("Page :1 of 2 Next", result, size).differences)
     .toContainEqual(expect.objectContaining({ expected: "2", observed: "3" }));
+});
+
+it("rereads a doubtful amount from its own cell and keeps a confirmed digit change visible", () => {
+  const signed = "Tax 5.31";
+  const label = word("Tax", 98), firstAmount = word("8.34", 55, 100, 300);
+  const first = [label, firstAmount];
+  const comparison = comparePageReading(signed, { words: first }, size);
+  const [crop] = planTextRetries(first, comparison, null, size);
+  expect(crop).toMatchObject({ indices: [1], signedText: "5.31" });
+  const read = amount => applyTextRetries(first, [{ candidate: crop, words: [{ ...firstAmount, text: amount, confidence: 96 }] }]);
+  expect(comparePageReading(signed, read("5.31"), size)).toMatchObject({ status: "matches", differences: [] });
+  expect(comparePageReading(signed, read("8.34"), size).differences).toContainEqual(expect.objectContaining({
+    expected: "5.31", observed: "8.34",
+  }));
+});
+
+it("prioritizes the isolated page count even when its whole label fits in a crop", () => {
+  const words = [word("Page", 96), word("til'of2", 0, 100, 200)];
+  const bbox = { x0: 18, y0: 90, x1: 400, y1: 130 };
+  const lines = [{ text: "Page :1 of 2", bbox,
+    polygon: [{ x: 18, y: 90 }, { x: 400, y: 90 }, { x: 400, y: 130 }, { x: 18, y: 130 }] }];
+  const comparison = { words: [{ sourceIndex: 0, status: "matched" }, { sourceIndex: 1, status: "different" }],
+    differences: [{ expected: ":1 of 2", wordIndices: [1] }] };
+  expect(planTextRetries(words, comparison, lines, size)[0]).toMatchObject({
+    indices: [1], separatedValue: true, signedText: ":1 of 2",
+  });
 });

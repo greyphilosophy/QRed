@@ -43,7 +43,8 @@ export function signedPhotoLayout(text, evidence, corners, { width, height }, wo
     || box.x < 0 || box.y < 0 || box.width <= 0 || box.height <= 0 || box.height > .15
     || box.x + box.width > 1.001 || box.y + box.height > 1.001)) return null;
   const adjustment = words.length ? printAdjustment(lines, evidence.layout.lines, words, mapping) : null;
-  const project = (x, y) => adjustment ? mapping(x * adjustment.scale + adjustment.x, y * adjustment.scale + adjustment.y) : mapping(x, y);
+  const project = (x, y) => adjustment ? mapping(x * adjustment.scale + adjustment.x,
+    y * adjustment.scale + adjustment.y + adjustment.tilt * x) : mapping(x, y);
   const readings = new Map((evidence.ocrReadings || []).map(entry => [entry.line, entry.observed]));
   const result = [];
   for (let i = 0; i < lines.length; i++) {
@@ -147,12 +148,29 @@ function printAdjustment(textLines, boxes, words, mapping) {
     const x = ((a.point.x - scale * a.x) + (b.point.x - scale * b.x)) / 2;
     const y = a.point.y - scale * a.y;
     if (scale < .88 || scale > 1.04 || Math.abs(x) > .08 || Math.abs(y) > .08) continue;
-    const inliers = anchors.filter(p => Math.abs(p.point.x - (p.x * scale + x)) < .012
-      && Math.abs(p.point.y - (p.y * scale + y)) < .008);
-    if (inliers.length < 3 || inliers.length < anchors.length * .65) continue;
-    const error = inliers.reduce((sum, p) => sum + Math.abs(p.point.x - (p.x * scale + x)) + Math.abs(p.point.y - (p.y * scale + y)), 0);
-    if (!best || inliers.length > best.count || (inliers.length === best.count && error < best.error))
-      best = { scale, x, y, count: inliers.length, error };
+    const near = anchors.filter(p => Math.abs(p.point.x - (p.x * scale + x)) < .012
+      && Math.abs(p.point.y - (p.y * scale + y)) < .025);
+    const models = [{ y, tilt: 0 }];
+    // A small camera/print skew leaves opposite edges at different heights.
+    // Estimate one tilt for the entire page from anchors on both sides.
+    if (near.length >= 5) {
+      const meanX = near.reduce((s, p) => s + p.x, 0) / near.length;
+      const dy = p => p.point.y - p.y * scale;
+      const meanY = near.reduce((s, p) => s + dy(p), 0) / near.length;
+      if (near.filter(p => p.x < meanX - .12).length >= 2 && near.filter(p => p.x > meanX + .12).length >= 2) {
+        const spread = near.reduce((s, p) => s + (p.x - meanX) ** 2, 0);
+        const tilt = near.reduce((s, p) => s + (p.x - meanX) * (dy(p) - meanY), 0) / spread;
+        if (Math.abs(tilt) <= .04) models.push({ y: meanY - tilt * meanX, tilt });
+      }
+    }
+    for (const model of models) {
+      const residual = p => Math.abs(p.point.y - (p.y * scale + model.y + model.tilt * p.x));
+      const inliers = near.filter(p => residual(p) < .008);
+      if (inliers.length < 3 || inliers.length < anchors.length * .65) continue;
+      const error = inliers.reduce((sum, p) => sum + Math.abs(p.point.x - (p.x * scale + x)) + residual(p), 0);
+      if (!best || inliers.length > best.count || (inliers.length === best.count && error < best.error))
+        best = { scale, x, ...model, count: inliers.length, error };
+    }
   }
   return best;
 }
@@ -196,7 +214,7 @@ export function compareLocatedPhotoText(expected, words, dimensions, lines) {
     const indices = line.wordIndices;
     indices.forEach(index => used.add(index));
     const observed = indices.map(index => words[index]);
-    const comparison = comparePhotoText(line.text, observed, dimensions);
+    const comparison = comparePhotoText(line.text, observed, dimensions, line.sourceReading);
     const repeated = line.sourceReading && observed.map(word => word.text).join(" ").normalize("NFC") === line.sourceReading.normalize("NFC");
     if (repeated) {
       const ending = comparison.differences.at(-1);
