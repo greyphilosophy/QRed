@@ -26,7 +26,13 @@ it("carries a real curved-page recovery through photo dispatch and session authe
   const action = decodePhoto(image, { returnPayload: true,
     onStage: ({ stage }) => stages.push(stage) });
   expect(action).toEqual({ status: "found", text: seals[0] });
-  expect(stages).toEqual(["rectified-fast", "curved-page"]);
+  // Finer dark-region detection may try the bounded footer preflight first.
+  // Recovery must still proceed directly from straight to curved geometry,
+  // without slipping into the slower watermark/general-QR fallbacks.
+  expect([
+    ["rectified-fast", "curved-page"],
+    ["footer", "rectified-fast", "curved-page"],
+  ]).toContainEqual(stages);
   expect(hash()).toBe(before);
   const session = createVerificationSession();
   expect(session.add(action.text)).toBe(true);
