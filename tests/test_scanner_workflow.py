@@ -244,9 +244,8 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         expect(review.locator(".page-check-status.matches, .page-check-status.uncertain")).to_have_count(1, timeout=20000)
         finished = time.monotonic()
         print("Synthetic OCR review: " + review.inner_text())
-        # Production pages have a navigation caption. Its visible review warning
-        # must remain, even when every signed document word agrees exactly.
-        # Do not turn that conservative result into an unconditional green match.
+        # A verified caption can clear independently of other ink beside the QR.
+        # All signed document words and any remaining marking are checked below.
         review.get_by_label("Show matching words too", exact=True).check()
         expected_words = [word for line in LINES for word in line.split()]
         # Queue location markers also use the page overlay; these assertions
@@ -260,18 +259,26 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
         expect(review.locator(".photo-legend .different")).to_have_text("OCR differences: 0")
         expect(review.locator(".photo-legend .uncertain")).to_have_text("OCR uncertain: 0")
         expect(review.locator(".reading-caution, .photo-retries")).to_have_count(0)
-        if int(review.locator(".photo-differences").get_attribute("data-count")):
+        review_count = int(review.locator(".photo-differences").get_attribute("data-count"))
+        if degraded:
+            assert review_count > 0, "The unread QR marking still needs review"
+        if review_count:
             expect(review.locator(".review-reason")).to_have_text("QRed marking")
             markings = []
-            count = int(review.locator(".photo-differences").get_attribute("data-count"))
-            for index in range(count):
+            for index in range(review_count):
                 expect(review.locator(".review-reason")).to_have_text("QRed marking")
                 review.get_by_text("Why this was flagged", exact=True).click()
                 markings.append(review.locator(".review-reading").inner_text())
                 review.get_by_text("Why this was flagged", exact=True).click()
-                if index + 1 < count:
+                if index + 1 < review_count:
                     review.get_by_role("button", name="Next reading", exact=True).click()
-            assert any("Verify" in marking for marking in markings), markings
+            if degraded:
+                # The enlarged caption and the decoded link agree on this frame.
+                # The unread QR glyphs are still presented for visual review.
+                assert all("Verify at" not in marking for marking in markings), markings
+                assert any("Photo reading:" in marking for marking in markings), markings
+            else:
+                assert any("Verify" in marking for marking in markings), markings
         else:
             expect(review.locator(".photo-summary")).to_contain_text("Recognized text matches the signed text")
         previews = page.evaluate("__documentScanRequests.filter(request => request.live)")
