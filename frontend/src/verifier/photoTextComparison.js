@@ -122,13 +122,15 @@ export function comparePhotoText(expectedText, words, dimensions = {}, sourceRea
       }
     }
     if (signed === ":") {
-      const label = words[indices[0]], nextWord = words[next?.wordIndex];
-      const singleGlyph = indices.length === 1 && label.text === readTokens && [...readTokens].length === 1;
-      const trailing = readTokens === "." && indices.length === 1 && /^\p{L}+\.$/u.test(label.text) &&
-        reference[i - 2]?.value === label.text.slice(0, -1) && observed[j - 2]?.wordIndex === indices[0] &&
-        reference[i]?.value === next?.value && nextWord !== label;
-      if (photographedColon(dimensions, singleGlyph ? label.bbox : separator) ||
-          (trailing && photographedLabelColon(dimensions, label.bbox, nextWord?.bbox))) {
+      const first = words[indices[0]], nextWord = words[next?.wordIndex];
+      const singleGlyph = indices.length === 1 && first.text === readTokens && [...readTokens].length === 1;
+      const previous = reference[i - 2], label = first || words[observed[j - 1]?.wordIndex];
+      const labelMatches = previous && /^\p{L}+$/u.test(previous.value) && previous.end === pending.start &&
+        (indices.length === 0 ? label?.text === previous.value : readTokens === "." &&
+          indices.length === 1 && label.text === previous.value + "." && observed[j - 2]?.wordIndex === indices[0]);
+      if (photographedColon(dimensions, singleGlyph ? first.bbox : separator) ||
+          (labelMatches && reference[i]?.value === next?.value && nextWord !== label &&
+            photographedLabelColon(dimensions, label.bbox, nextWord?.bbox))) {
         pending.tokenIndices.forEach(index => matched.add(index));
         pending = null;
         return;

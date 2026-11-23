@@ -54,7 +54,7 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
         const { data } = await current.recognize(image, {}, { text: true, blocks: true });
         controller.signal.throwIfAborted();
         onProgress({ status: "processing" });
-        return recognizedWords(data, pass);
+        return recognizedWords(data, pass, image === canvas ? canvas.height : undefined);
       };
       const controller = new AbortController();
       preprocessing = controller;
@@ -107,17 +107,20 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
               detail.width = width * 2; detail.height = height * 2;
               try {
                 const context = detail.getContext("2d");
-                // Both end words have descenders. Their lower edges give the
-                // caption baseline, even when the whole page is slightly tilted.
-                if (line.tilt) {
+                const draw = () => context.drawImage(canvas, left, top, width, height, 0, 0, detail.width, detail.height);
+                draw();
+                let caption = await recognize(detail), inverse;
+                // Interpolation can blur the URL's descender. Keep the straight
+                // reading unless only the caption's first word remains unclear.
+                if (line.tilt && /^Veri[lt]y at qred\.org$/.test(caption.map(w => w.text).join(" "))) {
                   context.fillStyle = "white"; context.fillRect(0, 0, detail.width, detail.height);
                   context.translate(detail.width / 2, detail.height / 2); context.rotate(-line.tilt);
                   context.translate(-detail.width / 2, -detail.height / 2);
+                  draw();
+                  caption = await recognize(detail);
+                  inverse = context.getTransform().inverse();
                 }
-                context.drawImage(canvas, left, top, width, height, 0, 0, detail.width, detail.height);
-                const caption = await recognize(detail);
                 if (!isPrintedCaption(caption)) continue;
-                const inverse = line.tilt && context.getTransform().inverse();
                 const mapped = caption.map(word => {
                   const { x0, x1, y0, y1 } = word.bbox;
                   const points = [{ x: x0, y: y0 }, { x: x0, y: y1 }, { x: x1, y: y0 }, { x: x1, y: y1 }]
@@ -221,14 +224,15 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
                 const input = source?.image || canvas;
                 const sx = (source?.width || canvas.width) / canvas.width;
                 const sy = (source?.height || canvas.height) / canvas.height;
-                if (candidate.prose) {
+                if (candidate.prose || candidate.numericField) {
                   const crop = contrastCropCanvas(input, box, sx, sy, Math.min(500000, TEXT_RETRY_PIXELS - pixels), 1);
                   if (crop) try {
                     pixels += crop.canvas.width * crop.canvas.height;
-                    await current.setParameters({ tessedit_pageseg_mode: "6" });
+                    if (candidate.prose) await current.setParameters({ tessedit_pageseg_mode: "6" });
                     const read = await recognize(crop.canvas);
-                    const evidence = selectProseReading(words, candidate, read.filter(w => w.bbox).map(w => ({ ...w, bbox: crop.project(w.bbox) })));
-                    if (evidence) replacements.push({ candidate, words: evidence });
+                    const mapped = read.filter(w => w.bbox).map(w => ({ ...w, bbox: crop.project(w.bbox) }));
+                    const evidence = candidate.prose ? selectProseReading(words, candidate, mapped) : mapped;
+                    if (evidence?.length && (candidate.prose || evidence.length === 1)) replacements.push({ candidate, words: evidence });
                   } finally {
                     crop.canvas.width = crop.canvas.height = 0;
                     if (worker === current) await current.setParameters({ tessedit_pageseg_mode: "7" });

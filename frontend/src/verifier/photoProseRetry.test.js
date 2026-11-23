@@ -52,3 +52,22 @@ it("keeps the first reading if a reread cannot place independent anchors on both
   const result = retry(close.filter(w => w.lineId !== "lower"));
   expect(result.words).toEqual(words);
 });
+
+it("includes the entire reliable word when a two-line crop starts partway through its anchor", () => {
+  const input = [...words];
+  input[6] = word("Contact", 1, 25, 130, 145);
+  input[7] = word("our", 29, 57, 130, 145);
+  input[8] = word("office", 65, 122, 130, 145);
+  const crop = planTextRetries(input, compare(input), lines, size).find(c => c.prose);
+  expect(crop.prose[1].anchors).toContain(8);
+  expect(crop.bbox.x0).toBeLessThanOrEqual(input[8].bbox.x0);
+});
+
+it("checks both lines when a spanning word's center lands on the lower signed row", () => {
+  const input = words.map((w, i) => i === 2 || i === 3 ? { ...w, bbox: { ...w.bbox, y1: 154 } } : w);
+  const crop = planTextRetries(input, compare(input), lines, size).find(c => c.prose);
+  expect(crop).toBeDefined();
+  const evidence = selectProseReading(input, crop, close);
+  const result = applyTextRetries(input, [{ candidate: crop, words: evidence }], compare);
+  expect(compare(result.words).differences).toEqual([]);
+});

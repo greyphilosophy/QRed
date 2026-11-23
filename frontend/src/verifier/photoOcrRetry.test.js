@@ -250,3 +250,47 @@ it("prioritizes the isolated page count even when its whole label fits in a crop
     indices: [1], separatedValue: true, signedText: ":1 of 2",
   });
 });
+
+it("rereads an amount when the first pass loses its decimal point", () => {
+  const signed = "Tax 3.41";
+  const first = [word("Tax", 98), word("341", 76, 100, 300)];
+  const comparison = comparePageReading(signed, { words: first }, size);
+  const [crop] = planTextRetries(first, comparison, null, size);
+  expect(crop).toMatchObject({ indices: [1], signedText: "3.41" });
+  for (const printed of ["3.41", "341", "3.47"]) {
+    const words = [{ ...first[1], text: printed, confidence: 98 }];
+    const result = applyTextRetries(first, [{ candidate: crop, words }]);
+    const findings = createReviewItems(comparePageReading(signed, result, size));
+    if (printed === "3.41") expect(findings).toEqual([]);
+    else expect(findings.some(item => item.difference.observed === printed)).toBe(true);
+  }
+});
+
+it("isolates the number when OCR damages the separator and changes a digit in the same field", () => {
+  const signed = "Desk : 475";
+  const field = [word("Desk", 96), { ...word("i", 45, 100, 200), bbox: { x0: 200, x1: 204, y0: 100, y1: 118 } },
+    word("476.", 70, 100, 230)];
+  const comparison = comparePageReading(signed, { words: field }, size);
+  const [crop] = planTextRetries(field, comparison, null, size);
+  expect(crop).toMatchObject({ indices: [2], signedText: "475" });
+  for (const photographed of ["475", "476"]) {
+    const result = applyTextRetries(field, [{ candidate: crop, words: [{ ...field[2], text: photographed, confidence: 98 }] }]);
+    const findings = createReviewItems(comparePageReading(signed, result, size));
+    expect(findings.some(item => item.difference.observed.includes("i"))).toBe(true);
+    expect(findings.some(item => item.difference.observed.includes("476"))).toBe(photographed === "476");
+  }
+});
+
+it("rereads both adjacent totals when only the empty padding between their rows overlaps", () => {
+  const line = (text, y0) => ({ text, bbox: { x0: 20, x1: 600, y0, y1: y0 + 29 },
+    polygon: [{ x: 20, y: y0 }, { x: 600, y: y0 }, { x: 600, y: y0 + 29 }, { x: 20, y: y0 + 29 }] });
+  const lines = [line("Charge 400.12", 100), line("Credit 400.12", 132)];
+  const words = [word("Charge", 96, 102), word("Credit", 96, 134)];
+  const compare = next => compareLocatedPhotoText(lines.map(l => l.text).join("\n"), next, size, lines);
+  const plans = planTextRetries(words, compare(words), lines, size);
+  expect(plans).toHaveLength(2);
+  expect(plans[0].bbox.y1).toBeLessThanOrEqual(plans[1].bbox.y0);
+  const reread = applyTextRetries(words, plans.map((candidate, i) => ({ candidate, words: [words[i],
+    word(i ? "400.13" : "400.12", 97, i ? 134 : 102, 460)] })), compare);
+  expect(compare(reread.words).differences).toEqual([expect.objectContaining({ expected: "400.12", observed: "400.13" })]);
+});

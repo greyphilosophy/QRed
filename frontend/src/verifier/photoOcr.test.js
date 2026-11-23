@@ -308,7 +308,7 @@ it("recovers a missed navigation QR beside a misread caption, and retains additi
   const extra = token("Paid", 380, 428, 244);
   vi.stubGlobal("document", { createElement: () => createCanvas(1, 1) });
   try {
-    for (const variant of ["ordinary", "extra", "moved", "duplicate", "wrong link", "changed lettering"]) {
+    for (const variant of ["ordinary", "extra", "moved", "duplicate", "wrong link", "changed lettering", "misread URL", "printed gred.org", "tilted word"]) {
       const symbol = variant === "wrong link" ? QRCode.create("EXAMPLE.ORG") : createEntryQrSymbol();
       ctx.fillStyle = "#c8c8c8"; ctx.fillRect(0, 0, 600, 600);
       ctx.fillStyle = "#393939";
@@ -316,9 +316,14 @@ it("recovers a missed navigation QR beside a misread caption, and retains additi
         if (symbol.modules.get(y, x)) ctx.fillRect(245 + x * 4, 140 + y * 4, 4, 4);
       }
       const engine = worker(), moved = first.map(w => ({ ...w, bbox: { ...w.bbox, y0: 440, y1: 460 } }));
-      const original = variant === "moved" ? moved : [...first, ...(variant === "extra" ? [extra] : variant === "duplicate" ? moved : [])];
-      engine.recognize.mockResolvedValueOnce(pack([body, ...original])).mockResolvedValue(pack(
-        variant === "changed lettering" ? [enlarged[0], enlarged[1], { ...enlarged[2], text: "other.org" }] : enlarged));
+      const urlVariant = variant === "misread URL" || variant === "printed gred.org";
+      const wholeCaption = urlVariant ? [{ ...first[0], text: "Verify" }, first[1], { ...first[2], text: "gred.org" }] : first;
+      const original = variant === "moved" ? moved : [...wholeCaption, ...(variant === "extra" ? [extra] : variant === "duplicate" ? moved : [])];
+      engine.recognize.mockResolvedValueOnce(pack([body, ...original]));
+      if (variant === "tilted word") engine.recognize.mockResolvedValueOnce(pack([{ ...enlarged[0], text: "Verily" }, ...enlarged.slice(1)]));
+      engine.recognize.mockResolvedValue(pack(
+        variant === "printed gred.org" ? [...enlarged.slice(0, 2), { ...enlarged[2], text: "gred.org" }] :
+          variant === "changed lettering" ? [enlarged[0], enlarged[1], { ...enlarged[2], text: "other.org" }] : enlarged));
       const prepare = async canvas => {
         // Whole-page detection misses the small code. Decode any targeted crop from its actual pixels.
         if (canvas === page) return { canvas: createCanvas(1, 1), codes: [] };
@@ -329,7 +334,8 @@ it("recovers a missed navigation QR beside a misread caption, and retains additi
       try {
         const result = await reader.read(page, () => {}, { pageNumber: 1 });
         const items = createReviewItems(comparePageReading("Friday", result, page, undefined, { pageNumber: 1 }));
-        if (variant === "ordinary") expect(items, variant).toEqual([]);
+        if (["ordinary", "misread URL", "tilted word"].includes(variant)) expect(items, variant).toEqual([]);
+        else if (variant === "printed gred.org") expect(items.map(i => i.difference.observed)).toContain("Verify at gred.org");
         else if (variant === "extra") expect(items.map(i => i.difference.observed), variant).toEqual(["Paid"]);
         else expect(items.some(i => /Verity/.test(i.difference.observed)), variant).toBe(true);
       } finally { reader.dispose(); }

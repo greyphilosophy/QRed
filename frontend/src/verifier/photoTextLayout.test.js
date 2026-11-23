@@ -147,3 +147,13 @@ it("registers a slight vertical tilt across columns without moving individual va
   }));
   expect(read(remaining).differences).toContainEqual(expect.objectContaining({ expected: first.text, observed: "" }));
 });
+
+it("keeps a rounded word center at the signed row edge, while flagging changed or misplaced words", () => {
+  const line = { text: "Please confirm receipt", bbox: { x0: 25, y0: 95, x1: 550, y1: 119.8 },
+    polygon: [{ x: 25, y: 95 }, { x: 550, y: 95 }, { x: 550, y: 119.8 }, { x: 25, y: 119.8 }] };
+  const read = (middle, y) => compareLocatedPhotoText(line.text,
+    [word("Please", 30, 96), word(middle, 160, y), word("receipt", 305, 96)], size, [line]);
+  expect(read("confirm", 109).differences).toEqual([]);
+  expect(read("deny", 109).differences).toContainEqual(expect.objectContaining({ expected: "confirm", observed: "deny" }));
+  expect(read("confirm", 130).differences).toContainEqual(expect.objectContaining({ expected: "confirm", observed: "" }));
+});

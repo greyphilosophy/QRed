@@ -29,14 +29,28 @@ export function planTextRetries(words, comparison, signedLines, { width, height 
   // A colon-prefixed field can also be isolated when the row clips its neighbor.
   const amount = /^[-+−]?\p{Sc}?\d+(?:,\d{3})*\.\d{2}$/u;
   for (const d of comparison.differences) {
+    // When a field separator and its value are both disputed, the value can
+    // be read independently. The separator still needs its own pixel evidence.
+    if (d.wordIndices.length === 2) {
+      const [markIndex, valueIndex] = d.wordIndices, mark = words[markIndex], value = words[valueIndex];
+      const field = /^:\s*(\d+)$/u.exec(d.expected);
+      if (field && mark?.bbox && value?.bbox && [...mark.text].length === 1 && /^\d+[.,]?$/u.test(value.text) &&
+          value.confidence < OCR_REVIEW_THRESHOLD && mark.bbox.x1 <= value.bbox.x0 &&
+          mark.bbox.y0 < value.bbox.y1 && value.bbox.y0 < mark.bbox.y1) {
+        groups.unshift({ text: field[1], wordIndices: [valueIndex], bbox: value.bbox, numericField: true });
+      }
+      continue;
+    }
     if (d.wordIndices.length !== 1) continue;
     const first = words[d.wordIndices[0]];
     if (!first?.bbox || !(first.confidence < OCR_REVIEW_THRESHOLD)) continue;
     const field = { text: d.expected, wordIndices: d.wordIndices, bbox: first.bbox };
     if (amount.test(d.expected) && amount.test(first.text)) groups.unshift(field);
+    else if (amount.test(d.expected) && /^\d+$/u.test(first.text)) groups.unshift({ ...field, numericField: true });
     else if (/^:\s*\d/u.test(d.expected)) groups.push({ ...field, separatedValue: true });
   }
   const candidates = prose ? [prose] : [];
+  const signedContent = new Map();
   const missingBoxes = comparison.differences.filter(difference => difference.expected && !difference.observed)
     .flatMap(difference => difference.boxes || []);
   for (const group of groups) {
@@ -76,14 +90,32 @@ export function planTextRetries(words, comparison, signedLines, { width, height 
     const priority = pageCount ? -2 : indices.some(index => disputedNumbers.has(index)) ? 0 : missing ? 1
       : indices.some(index => comparison.words.find(w => w.sourceIndex === index)?.agrees === false) ? 2 : 3;
     const sameLine = group.text && indices.length === group.wordIndices.length && indices.every(i => group.wordIndices.includes(i));
-    if (group.separatedValue && !sameLine) continue;
-    candidates.push({ bbox: box, indices, priority, signedLine: Boolean(group.text), signedText: sameLine ? group.text : undefined,
-      ...(group.separatedValue ? { separatedValue: true } : {}) });
+    if ((group.separatedValue || group.numericField) && !sameLine) continue;
+    const candidate = { bbox: box, indices, priority, signedLine: Boolean(group.text), signedText: sameLine ? group.text : undefined,
+      ...(group.separatedValue ? { separatedValue: true } : {}), ...(group.numericField ? { numericField: true } : {}) };
+    candidates.push(candidate);
+    if (sameLine && group.polygon) signedContent.set(candidate, base);
   }
   const selected = [];
   for (const candidate of candidates.sort((a, b) => a.priority - b.priority)) {
-    if (selected.some(other => Math.min(other.bbox.x1, candidate.bbox.x1) > Math.max(other.bbox.x0, candidate.bbox.x0)
-      && Math.min(other.bbox.y1, candidate.bbox.y1) > Math.max(other.bbox.y0, candidate.bbox.y0))) continue;
+    const padding = [];
+    const fits = selected.every(other => {
+      const a = candidate.bbox, b = other.bbox;
+      if (a.x0 >= b.x1 || a.x1 <= b.x0 || a.y0 >= b.y1 || a.y1 <= b.y0) return true;
+      const ac = signedContent.get(candidate), bc = signedContent.get(other);
+      if (!ac || !bc) return false;
+      // Two complete signed rows can have overlapping crop padding. Split
+      // that empty gap without clipping either row's ink or rereading it twice.
+      if (ac.y1 <= bc.y0) padding.push([a, b, (ac.y1 + bc.y0) / 2]);
+      else if (bc.y1 <= ac.y0) padding.push([b, a, (bc.y1 + ac.y0) / 2]);
+      else return false;
+      return true;
+    });
+    if (!fits) continue;
+    for (const [above, below, boundary] of padding) {
+      above.y1 = Math.min(above.y1, boundary);
+      below.y0 = Math.max(below.y0, boundary);
+    }
     selected.push(candidate);
     if (selected.length === MAX_TEXT_RETRIES) break;
   }

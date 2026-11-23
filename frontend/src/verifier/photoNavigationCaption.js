@@ -6,7 +6,7 @@ export async function locateNavigationCaption(canvas, words, codes, { pageNumber
   let line;
   for (let i = 0; i + 2 < words.length; i++) {
     const [first, at, url] = words.slice(i, i + 3);
-    if (!/^Veri[ft]y$/.test(first.text) || at.text !== "at" || url.text !== "qred.org") continue;
+    if (!/^Veri[ft]y$/.test(first.text) || at.text !== "at" || !/^[qg]red\.org$/.test(url.text)) continue;
     // Multiple copies cannot establish which caption was printed by QRed.
     if (line) return null;
     const boxes = [first.bbox, at.bbox, url.bbox];

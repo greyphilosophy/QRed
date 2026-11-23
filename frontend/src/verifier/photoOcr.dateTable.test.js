@@ -5,6 +5,8 @@ import { createWorker } from "tesseract.js";
 import { expect, it, vi } from "vitest";
 import { createPhotoOcrReader } from "./photoOcr.js";
 import { comparePageReading } from "./photoReading.js";
+import { recognizedWords } from "../ocrEngine.js";
+import { applyDateColumn } from "./photoDateTable.js";
 
 it("rereads a dated column from its pixels, keeping changed, missing and extra ink", async () => {
   const width = 850, height = 650, canvas = createCanvas(width, height);
@@ -23,7 +25,11 @@ it("rereads a dated column from its pixels, keeping changed, missing and extra i
   for (let i = 0; i < expected.length; i++) {
     const y = 70 + i * 55, label = i ? "Transaction" : "Description";
     ctx.fillText(printed[i], 85, y + 22); ctx.fillText(label, 290, y + 22);
-    if (first[i]) initial.push(word(first[i], 85, y, ctx.measureText(first[i]).width, i === 0 ? 70 : 92));
+    if (i === 0 || i === 3) {
+      const left = printed[i].slice(0, 1), right = printed[i].slice(1);
+      initial.push(word(left, 85, y, ctx.measureText(left).width),
+        word(right, 85 + ctx.measureText(left).width, y, ctx.measureText(right).width));
+    } else if (first[i]) initial.push(word(first[i], 85, y, ctx.measureText(first[i]).width, 92));
     initial.push(word(label, 290, y, 145));
     signed.push(expected[i] + " " + label);
     lines.push({ x: 80 / width, y: (y - 2) / height, width: 380 / width, height: 30 / height });
@@ -55,3 +61,22 @@ it("rereads a dated column from its pixels, keeping changed, missing and extra i
     expect(reading.retryReviews).toEqual([expect.objectContaining({ original: "04-14-27", observed: "04-14-30" })]);
   } finally { reader.dispose(); vi.unstubAllGlobals(); }
 }, 20000);
+
+it("reconciles sideways segmentation only when every glyph is accounted for across read rows", () => {
+  const rows = [100, 150, 200].map(y => ({ expected: "04-15-27", row: {
+    polygon: [{ x: 20, y }, { x: 200, y }, { x: 200, y: y + 30 }, { x: 20, y: y + 30 }],
+  } }));
+  const plan = { fields: rows, box: { x0: 10, x1: 160, y0: 90, y1: 240 } };
+  const reread = [100, 150, 200].map(y => ({ text: "04-15-27", confidence: 95,
+    bbox: { x0: 20, x1: 143, y0: y + 4, y1: y + 27 } }));
+  const pageHeight = 400;
+  const sideways = (text, x, tops) => ({ text, confidence: 45,
+    bbox: { x0: x, x1: x + 12, y0: Math.min(...tops), y1: Math.max(...tops) + 12 },
+    // The pinned engine expresses symbol extents along the rotated line.
+    symbols: tops.map(y => ({ bbox: { x0: pageHeight - y - 12, x1: pageHeight - y, y0: pageHeight, y1: pageHeight } })),
+  });
+  const engine = [sideways("NNN", 60, [105, 155, 205]), sideways("EXTRA", 79, [106, 132, 156, 181, 206])];
+  const first = recognizedWords({ blocks: [{ paragraphs: [{ lines: [{ words: engine }] }] }] }, 1, pageHeight);
+  const result = applyDateColumn(first, plan, reread);
+  expect(result.words.map(w => w.text).sort()).toEqual(["04-15-27", "04-15-27", "04-15-27", "EXTRA"]);
+});

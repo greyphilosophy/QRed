@@ -129,15 +129,27 @@ export function prepareDateColumn(source, plan, sx, sy, pixelLimit) {
   return crop;
 }
 
-function containsReading(container, box) {
+function containsReading(container, box, required = .65) {
   const overlap = Math.max(0, Math.min(box.x1, container.x1) - Math.max(box.x0, container.x0)) *
     Math.max(0, Math.min(box.y1, container.y1) - Math.max(box.y0, container.y0));
-  return overlap >= .65 * (box.x1 - box.x0) * (box.y1 - box.y0);
+  return overlap >= required * (box.x1 - box.x0) * (box.y1 - box.y0);
+}
+
+// Sometimes the page splits a complete date into a digit and another
+// date-shaped token. Accept the longer reading only when the shorter text
+// occupies the corresponding part of the photographed word.
+function locatedSubstring(first, word) {
+  if (!first.text || first.text.length >= word.text.length) return false;
+  const offset = word.text.indexOf(first.text);
+  if (offset < 0) return false;
+  const box = word.bbox, advance = (box.x1 - box.x0) / word.text.length;
+  return Math.abs(first.bbox.x0 - box.x0 - offset * advance) < .65 * advance &&
+    Math.abs(first.bbox.x1 - box.x0 - (offset + first.text.length) * advance) < .65 * advance;
 }
 
 export function applyDateColumn(words, plan, reread) {
   const replacements = new Map(), removed = new Set(), added = [], retryReviews = [];
-  const groups = plan.fields.map(() => []);
+  const groups = plan.fields.map(() => []), dateBoxes = [];
   for (const word of reread) {
     const box = word.bbox;
     let closest = -1, distance = Infinity;
@@ -170,18 +182,21 @@ export function applyDateColumn(words, plan, reread) {
     // Determine what ink this reading covers using photographed coordinates.
     const indices = words.flatMap((first, index) => first.bbox &&
       first.bbox.x0 >= plan.box.x0 && first.bbox.x1 <= plan.box.x1 &&
-      Math.abs(centerY(first.bbox) - centerY(box)) < (box.y1 - box.y0) ? [index] : []);
-    if (!indices.every(index => containsReading(box, words[index].bbox))) continue;
+      Math.abs(centerY(first.bbox) - centerY(box)) < (box.y1 - box.y0) &&
+      containsReading(box, first.bbox) ? [index] : []);
+    const joined = indices.map(index => words[index]).sort((a, b) => a.bbox.x0 - b.bbox.x0)
+      .map(first => first.text).join("");
     const competing = indices.find(index => {
       const first = words[index];
-      return first.text !== word.text && first.confidence >= OCR_REVIEW_THRESHOLD &&
-        (isDateReading(first.text) || /^\p{L}{2,}$/u.test(first.text) || first.bbox.x1 - first.bbox.x0 >= .85 * (box.x1 - box.x0));
+      return first.text !== word.text && joined !== word.text && first.confidence >= OCR_REVIEW_THRESHOLD &&
+        !locatedSubstring(first, word) && (isDateReading(first.text) || /^\p{L}{2,}$/u.test(first.text) || first.bbox.x1 - first.bbox.x0 >= .85 * (box.x1 - box.x0));
     });
     if (competing !== undefined) {
       retryReviews.push({ dateField: !heading, signedDate: expected, original: words[competing].text,
         observed: word.text, boxes: [box], lowConfidence: false });
       continue;
     }
+    if (!heading) dateBoxes.push(box);
     if (indices.length) {
       const first = words[indices[0]];
       // Keep a whole-page location and line identity when both passes agree.
@@ -190,6 +205,14 @@ export function applyDateColumn(words, plan, reread) {
         ? { ...first, confidence: Math.max(first.confidence, word.confidence) } : word);
       indices.forEach(index => removed.add(index));
     } else added.push(word);
+  }
+  // Page segmentation sometimes groups aligned digits down the column.
+  // Every glyph in that weak vertical word must belong to confident dates
+  // on at least two different rows. Keep any ink in the gaps for review.
+  for (const [index, first] of words.entries()) {
+    if (!first.verticalGlyphs || first.confidence >= OCR_REVIEW_THRESHOLD) continue;
+    const covered = first.verticalGlyphs.map(glyph => dateBoxes.find(box => containsReading(box, glyph, .9)));
+    if (covered.every(Boolean) && new Set(covered).size >= 2) removed.add(index);
   }
   return { words: [...words.flatMap((word, i) => replacements.get(i) || (removed.has(i) ? [] : [word])), ...added], retryReviews };
 }

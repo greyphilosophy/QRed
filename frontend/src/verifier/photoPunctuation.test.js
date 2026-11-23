@@ -34,8 +34,11 @@ describe("rereading punctuation in the original photograph", () => {
   it("reads a faint trailing colon just beyond the last letter of a photographed label", () => {
     const label = word("Customer.", 10, 12, 66, 34), value = word("office", 82, 12, 160, 34);
     const edge = [63, 16, 3, 16], top = [70, 18, 3, 3], bottom = [70, 29, 3, 3];
-    const read = marks => findings("Customer: office", [label, value], marks);
-    expect(read([edge, top, bottom])).toEqual([]);
+    const read = (marks, text = label.text) => findings("Customer: office", [{ ...label, text }, value], marks);
+    for (const text of ["Customer.", "Customer"]) {
+      expect(read([edge, top, bottom], text)).toEqual([]);
+      expect(read([edge, bottom], text)).toEqual([":"]);
+    }
     for (const changed of [[edge, bottom], [edge, top, [70, 28, 2, 7]],
       [[63, 29, 3, 3], top, bottom], [edge, top, bottom, [76, 30, 3, 3]]]) {
       expect(read(changed)).toEqual([":"]);

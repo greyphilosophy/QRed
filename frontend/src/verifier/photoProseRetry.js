@@ -43,7 +43,6 @@ export function planProseRetry(words, groups, questioned, { width, height }) {
       }));
       if (!spansBoth) continue;
       const targets = bad.filter(j => words[j].bbox.x0 < b.x1 + 1.5 * h && words[j].bbox.x1 > b.x0 - 1.5 * h);
-      if (!pair.every(row => targets.some(j => row.includes(j)))) continue;
       const area = enclosingBox(targets.map(j => words[j].bbox));
       const left = area.x0 - .4 * h, right = area.x1 + .4 * h;
       const rows = pair.map((row, k) => {
@@ -53,9 +52,12 @@ export function planProseRetry(words, groups, questioned, { width, height }) {
           right: Math.min(right, ...row.filter(j => centerX(words[j].bbox) > right).map(j => words[j].bbox.x0)) };
       });
       if (rows.some(row => !row.anchors.length)) continue;
-      const bbox = { x0: Math.max(0, Math.floor(left - .25 * h)), x1: Math.min(width, Math.ceil(right + 3 * h)),
+      const indices = [...new Set(rows.flatMap(row => row.indices))];
+      const whole = enclosingBox(indices.map(j => words[j].bbox));
+      const bbox = { x0: Math.max(0, Math.floor(Math.min(left - .25 * h, whole.x0 - .65 * h))),
+        x1: Math.min(width, Math.ceil(Math.max(right + 3 * h, whole.x1 + .65 * h))),
         y0: Math.max(0, Math.floor(area.y0 - .55 * h)), y1: Math.min(height, Math.ceil(area.y1 + .3 * h)) };
-      return { prose: rows, priority: -1, bbox, indices: [...new Set(rows.flatMap(row => row.indices))] };
+      return { prose: rows, priority: -1, bbox, indices };
     }
   }
   return null;

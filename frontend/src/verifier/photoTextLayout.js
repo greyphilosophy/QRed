@@ -190,6 +190,12 @@ export function assignPhotoLines(lines, words) {
     if (!box) return;
     const x = (box.x0 + box.x1) / 2, y = (box.y0 + box.y1) / 2;
     let candidates = assigned.filter(line => contains(line.polygon, x, y));
+    // OCR rounds box edges to whole photo pixels; signed polygons project
+    // to fractional positions. Allow half a pixel at an unambiguous row edge.
+    if (!candidates.length) {
+      const near = assigned.filter(line => contains(line.polygon, x, y - .5) || contains(line.polygon, x, y + .5));
+      if (near.length === 1) candidates = near;
+    }
     // A narrow field separator can fall just beyond the registered line edge.
     // Assign by geometry only, then compare it with every other character.
     if (!candidates.length && /^[.:,;]$/u.test(word.text)) {
