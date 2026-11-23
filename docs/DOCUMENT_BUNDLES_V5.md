@@ -2,8 +2,10 @@
 
 An appended sheet carries pieces of one compressed document bundle, with at most
 six QR symbols per sheet. Fewer symbols use the available space for larger QR
-squares. The short labels are `Seal 1 of N`, etc.; each QR includes the normal
-four-module quiet zone. Every sheet retains the small navigation QR and the
+squares. Only the sheet is labeled (`Seal sheet 1 of N`); piece indexes stay
+inside the codes. Neighboring symbols share one four-module quiet zone, sized
+for the larger physical modules. The bottom page margin supplies the last row's
+quiet zone; there is no footer. Every sheet retains the small navigation QR and the
 three printed steps: open QRed, scan the large seals, photograph the originals.
 
 The bundle contains every original page, including pages with readable watermarks

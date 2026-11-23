@@ -70,6 +70,7 @@ function regionPixels(pixels, width, region) {
 
 export async function scanPdfPage(image, { onSeal = () => {}, signal, pageAligned = true } = {}) {
   const seals = new Set();
+  let footerRegions = [];
   const fullSealSheet = () => {
     const pieces = [...seals].map(decodeSeal);
     return pieces.length > 0 && pieces.every(piece => piece.seal_sheet) &&
@@ -79,8 +80,9 @@ export async function scanPdfPage(image, { onSeal = () => {}, signal, pageAligne
   // A whole-sheet locator can cross two dense adjacent symbols. Isolate dark
   // QR regions before masking any of the original pixels in the legacy pass.
   if (image.bounds || !pageAligned) {
+    footerRegions = footerQrRegions(image, { shouldContinue: () => !signal?.aborted, maxAreaFraction: .8 });
     const candidates = scanFooterSeals(image, { shouldContinue: () => !signal?.aborted,
-      regions: footerQrRegions(image, { shouldContinue: () => !signal?.aborted, maxAreaFraction: .8 }) });
+      regions: footerRegions });
     for (const code of candidates) {
       const seal = qredPayloadFromScanResult(code);
       if (!decodeSeal(seal)?.seal_sheet || seals.has(seal)) continue;
@@ -116,7 +118,15 @@ export async function scanPdfPage(image, { onSeal = () => {}, signal, pageAligne
   // bounded copy; collected seals still retain the ORIGINAL page photograph.
   const legacy = boundedLegacyRaster(image);
   const pixels = legacy === image ? new Uint8ClampedArray(image.data) : legacy.data;
-  const regions = scanRegions(legacy.width, legacy.height);
+  // Keep optical candidates for deeper recovery after a partial preflight.
+  // Generic half-page crops can bisect a shared quiet zone between dense codes.
+  const sheetRegions = [...seals].some(seal => decodeSeal(seal)?.seal_sheet) ? footerRegions : [];
+  const regions = [...sheetRegions.map(box => {
+    const sx = legacy.width / image.width, sy = legacy.height / image.height;
+    const x = Math.floor(box.x * sx), y = Math.floor(box.y * sy);
+    return { x, y, width: Math.min(legacy.width, Math.ceil((box.x + box.width) * sx)) - x,
+      height: Math.min(legacy.height, Math.ceil((box.y + box.height) * sy)) - y };
+  }), ...scanRegions(legacy.width, legacy.height)];
   let codes = 0;
   for (let regionIndex = 0; regionIndex < regions.length; regionIndex++) {
     const region = regions[regionIndex];
