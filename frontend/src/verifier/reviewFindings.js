@@ -1,12 +1,39 @@
 // Review decisions describe a person's observations. They never change an OCR
 // result, signature verdict, or the signed reference, and are never persisted.
-export const REVIEW_DECISIONS = { matches: "Matches signed text", differs: "Printed text differs", unsure: "Can't tell" };
+export const REVIEW_DECISIONS = { matches: "Matches sealed text", differs: "Printed text differs", unsure: "Can't tell" };
 
 export function findingBoxes(difference, comparison) {
   return difference.boxes || (difference.wordIndices || []).flatMap(index => {
     const box = comparison?.words.find(word => word.sourceIndex === index)?.bbox;
     return box ? [box] : [];
   });
+}
+
+// Display context from the authenticated reference, never from the camera's
+// reading. Repeated fragments stay unexpanded when their occurrence is unclear.
+export function sealedPassage(difference, signedText = "") {
+  const expected = difference.expected || "";
+  const fallback = { before: "", expected, after: "" };
+  if (!expected) return fallback;
+  const uniqueIndex = (text, part) => {
+    const index = text.indexOf(part);
+    return index >= 0 && index === text.lastIndexOf(part) ? index : -1;
+  };
+  const target = expected.normalize("NFC");
+  const context = (difference.context || expected).normalize("NFC");
+  let start = uniqueIndex(context, target), source = context;
+  if (start < 0) return fallback;
+  const signed = signedText.normalize("NFC"), contextStart = uniqueIndex(signed, context);
+  if (contextStart >= 0) { source = signed; start += contextStart; }
+  // An isolated token such as 1 must not acquire the line containing 123.
+  const wordCharacter = char => /[\p{L}\p{M}\p{N}]/u.test(char || "");
+  const end = start + target.length;
+  if (!difference.context && ((wordCharacter(target[0]) && wordCharacter(source[start - 1]))
+    || (wordCharacter(target.at(-1)) && wordCharacter(source[end])))) return fallback;
+  const lineStart = source.lastIndexOf("\n", start - 1) + 1;
+  const nextLine = source.indexOf("\n", end);
+  return { before: source.slice(lineStart, start), expected,
+    after: source.slice(end, nextLine < 0 ? source.length : nextLine) };
 }
 
 function reason(d) {
@@ -21,6 +48,40 @@ function reason(d) {
   return "Text to check";
 }
 
+// Table rules can produce a very wide OCR box and several weak, overlapping
+// "words" on that same engine line. Layout comparison can split them across
+// signed columns. Keep all their text and boxes together for one decision.
+function groupOverlappingExtras(source) {
+  const differences = source.differences || [], byIndex = new Map((source.words || []).map(w => [w.sourceIndex, w]));
+  const lines = new Map(), merged = new Map(), used = new Set();
+  for (const difference of differences) {
+    if (difference.expected || !difference.observed || /\d/u.test(difference.observed) || !difference.wordIndices?.length) continue;
+    const words = difference.wordIndices.map(i => byIndex.get(i)), line = words[0]?.lineId;
+    if (line == null || words.some(w => !w?.bbox || w.lineId !== line || !(w.confidence < 50))) continue;
+    if (!lines.has(line)) lines.set(line, []);
+    lines.get(line).push({ difference, words });
+  }
+  for (const groups of lines.values()) {
+    if (groups.length < 2) continue;
+    const words = groups.flatMap(g => g.words);
+    const span = words.find(({ bbox: b, text }) => text.length <= 8 && b.x1 - b.x0 > 20 * (b.y1 - b.y0))?.bbox;
+    if (!span) continue;
+    const overlapping = groups.filter(group => group.words.every(({ bbox: b }) => {
+      const x = (b.x0 + b.x1) / 2, y = (b.y0 + b.y1) / 2;
+      return x >= span.x0 && x <= span.x1 && y >= span.y0 && y <= span.y1;
+    }));
+    if (overlapping.length < 2) continue;
+    const members = overlapping.flatMap(g => g.words).sort((a, b) => a.sourceIndex - b.sourceIndex);
+    if (members.length < 3) continue;
+    const combined = { expected: "", observed: members.map(w => w.text).join(" "),
+      wordIndices: members.map(w => w.sourceIndex), boxes: members.map(w => w.bbox), context: "" };
+    if (overlapping.every(g => g.difference.review === "artwork")) combined.review = "artwork";
+    merged.set(overlapping[0].difference, combined);
+    overlapping.slice(1).forEach(g => used.add(g.difference));
+  }
+  return differences.filter(d => !used.has(d)).map(d => merged.get(d) || d);
+}
+
 export function createReviewItems(comparison) {
   if (!comparison) return [];
   const items = [], duplicates = new Map();
@@ -31,21 +92,25 @@ export function createReviewItems(comparison) {
     // Identical readings at the same place share a decision. Different wording
     // or different geometry must remain separately reviewable, including faint
     // additions seen only before contrast enhancement.
-    const key = JSON.stringify([difference.expected, difference.observed, boxes, item.inspection]);
-    const existing = boxes.length && duplicates.get(key);
+    // A missing token has no photographed word. Its offset in the signed
+    // text distinguishes repeated punctuation, even within the same line box.
+    const missingPosition = difference.expected && !difference.observed && Number.isInteger(difference.referenceStart)
+      ? [difference.referenceStart, difference.context] : null;
+    const key = boxes.length || missingPosition
+      ? JSON.stringify([difference.expected, difference.observed, boxes, missingPosition, item.inspection]) : null;
+    const existing = key && duplicates.get(key);
     if (existing) {
       existing.notes.push(...item.notes);
       if (item.readings) { existing.readings = item.readings; existing.reason = item.reason; }
       return;
     }
     items.push(item);
-    if (boxes.length) duplicates.set(key, item);
+    if (key) duplicates.set(key, item);
   }
   function addComparison(source, prefix) {
     const covered = new Set();
-    for (const [index, d] of (source.differences || []).entries()) {
+    for (const [index, d] of groupOverlappingExtras(source).entries()) {
       (d.wordIndices || []).forEach(i => covered.add(i));
-      if (d.review === "sourceSeparator") continue;
       add(`${prefix}-${index}`, d, source, { source: prefix,
         notes: prefix === "original" ? ["The first reading found this. Check the original photo; contrast enhancement can hide pale marks."] : [],
       });
@@ -63,7 +128,6 @@ export function createReviewItems(comparison) {
   addComparison(comparison, "current");
   if (comparison.originalComparison) addComparison(comparison.originalComparison, "original");
   for (const [index, reading] of (comparison.retryReviews || []).entries()) {
-    if (reading.completedLine) continue;
     add(`reread-${index}`, { expected: reading.signedDate, observed: reading.original, boxes: reading.boxes }, comparison, {
       reason: reading.dateField ? "Conflicting date readings" : "Conflicting readings", inspection: !reading.signedDate,
       readings: [{ label: "First reading", text: reading.original },

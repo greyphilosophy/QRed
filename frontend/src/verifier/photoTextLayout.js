@@ -11,6 +11,18 @@ export function enclosingBox(boxes) {
     x1: Math.max(...boxes.map(b => b.x1)), y1: Math.max(...boxes.map(b => b.y1)) };
 }
 
+// A crop can replace only complete words from that reading. A clipped glyph
+// can belong to a neighboring line or column.
+export function indicesInsidePhotoCrop(words, box) {
+  const indices = [];
+  for (const [index, { bbox: b }] of words.entries()) {
+    if (!b || b.x1 <= box.x0 || b.x0 >= box.x1 || b.y1 <= box.y0 || b.y0 >= box.y1) continue;
+    if (b.x0 < box.x0 || b.x1 > box.x1 || b.y0 < box.y0 || b.y1 > box.y1) return null;
+    indices.push(index);
+  }
+  return indices;
+}
+
 // Signed locations describe the ORIGINAL page. Coarse line starts and a
 // different paper aspect (for example a Letter page extended with a Legal
 // footer) are not enough to infer safe line boxes: keep sequence comparison.
@@ -31,7 +43,8 @@ export function signedPhotoLayout(text, evidence, corners, { width, height }, wo
     || box.x < 0 || box.y < 0 || box.width <= 0 || box.height <= 0 || box.height > .15
     || box.x + box.width > 1.001 || box.y + box.height > 1.001)) return null;
   const adjustment = words.length ? printAdjustment(lines, evidence.layout.lines, words, mapping) : null;
-  const project = (x, y) => adjustment ? mapping(x * adjustment.scale + adjustment.x, y * adjustment.scale + adjustment.y) : mapping(x, y);
+  const project = (x, y) => adjustment ? mapping(x * adjustment.scale + adjustment.x,
+    y * adjustment.scale + adjustment.y + adjustment.tilt * x) : mapping(x, y);
   const readings = new Map((evidence.ocrReadings || []).map(entry => [entry.line, entry.observed]));
   const result = [];
   for (let i = 0; i < lines.length; i++) {
@@ -135,12 +148,29 @@ function printAdjustment(textLines, boxes, words, mapping) {
     const x = ((a.point.x - scale * a.x) + (b.point.x - scale * b.x)) / 2;
     const y = a.point.y - scale * a.y;
     if (scale < .88 || scale > 1.04 || Math.abs(x) > .08 || Math.abs(y) > .08) continue;
-    const inliers = anchors.filter(p => Math.abs(p.point.x - (p.x * scale + x)) < .012
-      && Math.abs(p.point.y - (p.y * scale + y)) < .008);
-    if (inliers.length < 3 || inliers.length < anchors.length * .65) continue;
-    const error = inliers.reduce((sum, p) => sum + Math.abs(p.point.x - (p.x * scale + x)) + Math.abs(p.point.y - (p.y * scale + y)), 0);
-    if (!best || inliers.length > best.count || (inliers.length === best.count && error < best.error))
-      best = { scale, x, y, count: inliers.length, error };
+    const near = anchors.filter(p => Math.abs(p.point.x - (p.x * scale + x)) < .012
+      && Math.abs(p.point.y - (p.y * scale + y)) < .025);
+    const models = [{ y, tilt: 0 }];
+    // A small camera/print skew leaves opposite edges at different heights.
+    // Estimate one tilt for the entire page from anchors on both sides.
+    if (near.length >= 5) {
+      const meanX = near.reduce((s, p) => s + p.x, 0) / near.length;
+      const dy = p => p.point.y - p.y * scale;
+      const meanY = near.reduce((s, p) => s + dy(p), 0) / near.length;
+      if (near.filter(p => p.x < meanX - .12).length >= 2 && near.filter(p => p.x > meanX + .12).length >= 2) {
+        const spread = near.reduce((s, p) => s + (p.x - meanX) ** 2, 0);
+        const tilt = near.reduce((s, p) => s + (p.x - meanX) * (dy(p) - meanY), 0) / spread;
+        if (Math.abs(tilt) <= .04) models.push({ y: meanY - tilt * meanX, tilt });
+      }
+    }
+    for (const model of models) {
+      const residual = p => Math.abs(p.point.y - (p.y * scale + model.y + model.tilt * p.x));
+      const inliers = near.filter(p => residual(p) < .008);
+      if (inliers.length < 3 || inliers.length < anchors.length * .65) continue;
+      const error = inliers.reduce((sum, p) => sum + Math.abs(p.point.x - (p.x * scale + x)) + residual(p), 0);
+      if (!best || inliers.length > best.count || (inliers.length === best.count && error < best.error))
+        best = { scale, x, ...model, count: inliers.length, error };
+    }
   }
   return best;
 }
@@ -160,6 +190,12 @@ export function assignPhotoLines(lines, words) {
     if (!box) return;
     const x = (box.x0 + box.x1) / 2, y = (box.y0 + box.y1) / 2;
     let candidates = assigned.filter(line => contains(line.polygon, x, y));
+    // OCR rounds box edges to whole photo pixels; signed polygons project
+    // to fractional positions. Allow half a pixel at an unambiguous row edge.
+    if (!candidates.length) {
+      const near = assigned.filter(line => contains(line.polygon, x, y - .5) || contains(line.polygon, x, y + .5));
+      if (near.length === 1) candidates = near;
+    }
     // A narrow field separator can fall just beyond the registered line edge.
     // Assign by geometry only, then compare it with every other character.
     if (!candidates.length && /^[.:,;]$/u.test(word.text)) {
@@ -184,16 +220,20 @@ export function compareLocatedPhotoText(expected, words, dimensions, lines) {
     const indices = line.wordIndices;
     indices.forEach(index => used.add(index));
     const observed = indices.map(index => words[index]);
-    const comparison = comparePhotoText(line.text, observed, dimensions);
+    const comparison = comparePhotoText(line.text, observed, dimensions, line.sourceReading);
     const repeated = line.sourceReading && observed.map(word => word.text).join(" ").normalize("NFC") === line.sourceReading.normalize("NFC");
     if (repeated) {
+      const ending = comparison.differences.at(-1);
+      if (ending?.expected === ":" && !ending.observed && /[\p{L}.]\s*:\s*$/u.test(line.text) &&
+          ending.referenceStart === line.text.normalize("NFC").trimEnd().length - 1 &&
+          observed.every(w => w.confidence >= OCR_REVIEW_THRESHOLD)) {
+        comparison.differences.pop();
+      }
       for (const difference of comparison.differences) {
         // Repeating an ambiguous numeral still calls for a visual check of
         // the value. A different reading, even on this line, has no exemption.
         const numeric = /[\p{N}\p{Sc}%]/u.test(difference.expected + difference.observed);
-        const knownColon = !difference.observed && difference.expected === ":" &&
-          /[\p{L}.]\s*:\s*$/u.test(line.text) && observed.every(w => w.confidence >= OCR_REVIEW_THRESHOLD);
-        difference.review = numeric ? "number" : knownColon ? "sourceSeparator" : "sourceOcr";
+        difference.review = numeric ? "number" : "sourceOcr";
         difference.sourceReading = line.sourceReading;
       }
     }
@@ -203,7 +243,7 @@ export function compareLocatedPhotoText(expected, words, dimensions, lines) {
     classified.push(...comparison.words.map(word => ({ ...word, sourceIndex: indices[word.sourceIndex] })));
     differences.push(...comparison.differences.map(difference => ({ ...difference,
       wordIndices: difference.wordIndices.map(index => indices[index]),
-      ...(!difference.wordIndices.length ? { boxes: [line.bbox] } : {}),
+      ...(!difference.wordIndices.length && !difference.boxes ? { boxes: [line.bbox] } : {}),
       ...(weakStart && !difference.observed && /^\p{L}$/u.test(difference.expected)
         && line.text.startsWith(difference.expected + " ") ? { weakLeadingGlyph: true } : {}),
     })));

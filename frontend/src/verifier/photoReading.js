@@ -1,6 +1,7 @@
 import { preparePhotoReadingInWorker } from "../qr/photoScanClient.js";
 import { renderVisualReference } from "../pageEvidence.js";
-import { assignPhotoLines, compareLocatedPhotoText, overlapsReferenceInk, signedPhotoLayout } from "./photoTextLayout.js";
+import { assignPhotoLines, compareLocatedPhotoText, enclosingBox, indicesInsidePhotoCrop, overlapsReferenceInk, signedPhotoLayout } from "./photoTextLayout.js";
+import { accountsForFirstReading, preferTextRetry } from "./photoOcrRetry.js";
 import { OCR_REVIEW_THRESHOLD } from "./photoTextComparison.js";
 
 // This is a second reading, never a replacement for the displayed original.
@@ -167,13 +168,41 @@ function qualifyPhotoReadings(comparison, layout, visual, reread, originalWords)
     }
   }
   if (comparison.status === "differences" && comparison.differences.every(d => d.review || d.typography || d.spacing)) {
-    comparison.status = !comparison.uncertainCount && comparison.differences.every(d => d.review === "sourceSeparator")
-      ? "matches" : "uncertain";
+    comparison.status = "uncertain";
   }
 }
 
+// The whole-page fallback keeps a second copy of the comparison. Discard the
+// same misread there only if the close-up also resolves those original words.
+// Extra ink or a stronger contradictory first reading still gets its own review.
+function reconcileOriginalReading(original, crops) {
+  if (!crops.length) return original;
+  const removed = new Set(), insertions = new Map(), extra = [];
+  for (const { candidate, before, after } of crops) {
+    const inside = indicesInsidePhotoCrop(original, candidate.bbox);
+    if (!inside) continue;
+    const footprint = enclosingBox([...before, ...after].map(word => word.bbox));
+    // An extra mark in the crop's padding is a separate finding.
+    const indices = inside.filter(i => {
+      const a = original[i].bbox;
+      return a.x0 < footprint.x1 && a.x1 > footprint.x0 && a.y0 < footprint.y1 && a.y1 > footprint.y0;
+    });
+    const raw = indices.map(index => original[index]);
+    const sameWords = sample => sample.length === raw.length && sample.every((word, i) => word.text === raw[i].text);
+    const alreadyRead = sameWords(after);
+    if (alreadyRead && !after[0]?.precedingSeparatorBox && raw.every(word => word.confidence >= OCR_REVIEW_THRESHOLD)) continue;
+    if (!alreadyRead && !(sameWords(before) && preferTextRetry(raw, after))) continue;
+    if (!accountsForFirstReading(raw, after)) continue;
+    indices.forEach(index => removed.add(index));
+    if (indices.length) insertions.set(indices[0], after);
+    else extra.push(...after);
+  }
+  return [...original.flatMap((word, i) => insertions.get(i) || (removed.has(i) ? [] : [word])), ...extra];
+}
+
 export function comparePageReading(expected, reading, dimensions, evidence, options = {}) {
-  const { words, codes = [], contrastAssisted = false, corners, retryReviews = [], originalReading } = Array.isArray(reading) ? { words: reading } : reading;
+  const { words, codes = [], contrastAssisted = false, corners, retryReviews = [], originalReading,
+    resolvedCrops = [] } = Array.isArray(reading) ? { words: reading } : reading;
   const layout = signedPhotoLayout(expected, evidence, corners, dimensions, words);
   const compare = input => compareLocatedPhotoText(expected, input, dimensions, layout?.lines);
   let comparison = compare(words);
@@ -188,11 +217,14 @@ export function comparePageReading(expected, reading, dimensions, evidence, opti
       wordIndices: difference.wordIndices.map(index => indices[index]),
     }));
   }
-  const markings = groups.map(indices => ({ observed: indices.map(index => words[index].text).join(" "),
+  const markings = groups.filter(indices => !(options.pageNumber === 1 && indices.length === 3 &&
+    indices.every(i => words[i].confirmedNavigationCaption) &&
+    indices.map(i => words[i].text).join(" ") === "Verify at qred.org")).map(indices => ({ observed: indices.map(index => words[index].text).join(" "),
     boxes: indices.map(index => words[index].bbox) }));
   qualifyPhotoReadings(comparison, layout, evidence?.visual, contrastAssisted || Boolean(originalReading), originalReading);
-  if (comparison.status === "matches" && (contrastAssisted || originalReading || markings.length || retryReviews.some(r => !r.completedLine))) comparison.status = "uncertain";
   const originalComparison = originalReading ? comparePageReading(expected,
-    { words: originalReading, codes, corners }, dimensions, evidence, options) : null;
+    { words: reconcileOriginalReading(originalReading, resolvedCrops), codes, corners }, dimensions, evidence, options) : null;
+  if (comparison.status === "matches" && (contrastAssisted || (originalComparison && originalComparison.status !== "matches") ||
+      markings.length || retryReviews.length)) comparison.status = "uncertain";
   return { ...comparison, contrastAssisted, markings, retryReviews, originalComparison };
 }

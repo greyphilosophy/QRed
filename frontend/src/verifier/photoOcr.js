@@ -1,10 +1,13 @@
 import { createWorker } from "tesseract.js";
 import { DOCUMENT_OCR_PARAMETERS, openLocalOcrWorker, recognizedWords } from "../ocrEngine.js";
 import { captionLineCandidates, comparePageReading, isPrintedCaption, preparePhotoReading } from "./photoReading.js";
+import { locateNavigationCaption } from "./photoNavigationCaption.js";
 import { signedPhotoLines } from "./photoTextLayout.js";
-import { applyTextRetries, planTextRetries, TEXT_RETRY_MS, TEXT_RETRY_PIXELS } from "./photoOcrRetry.js";
+import { applyTextRetries, planTextRetries, MAX_TEXT_RETRIES, TEXT_RETRY_MS, TEXT_RETRY_PIXELS } from "./photoOcrRetry.js";
 import { needsPageReread, pageReadingCanvas, preferPageReread } from "./photoOcrFallback.js";
 import { spacePhotoLine } from "./photoLineSpacing.js";
+import { planDateTableRetry, contrastCropCanvas, prepareDateColumn, applyDateColumn } from "./photoDateTable.js";
+import { selectProseReading } from "./photoProseRetry.js";
 import { dateReadingCanvas } from "./photoDateField.js";
 
 export function createPhotoOcrReader(workerFactory = createWorker, prepareImage = preparePhotoReading) {
@@ -51,7 +54,7 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
         const { data } = await current.recognize(image, {}, { text: true, blocks: true });
         controller.signal.throwIfAborted();
         onProgress({ status: "processing" });
-        return recognizedWords(data, pass);
+        return recognizedWords(data, pass, image === canvas ? canvas.height : undefined);
       };
       const controller = new AbortController();
       preprocessing = controller;
@@ -86,7 +89,11 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
             if (worker === current) await current.setParameters({ thresholding_kfactor: "0.2" });
           }
         }
-        const candidates = captionLineCandidates(words, prepared.codes);
+        const navigation = await locateNavigationCaption(canvas, words, prepared.codes,
+          { pageNumber: reference.pageNumber, prepareImage, signal: controller.signal });
+        const candidates = captionLineCandidates(words, prepared.codes).filter(line =>
+          !navigation || !line.indices.some(i => navigation.line.indices.includes(i)));
+        if (navigation) candidates.unshift(navigation.line);
         if (candidates.length) {
           const removed = new Set(), replacements = new Map();
           await current.setParameters({ tessedit_pageseg_mode: "7" });
@@ -99,13 +106,30 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
               const detail = document.createElement("canvas");
               detail.width = width * 2; detail.height = height * 2;
               try {
-                detail.getContext("2d").drawImage(canvas, left, top, width, height, 0, 0, detail.width, detail.height);
-                const caption = await recognize(detail);
+                const context = detail.getContext("2d");
+                const draw = () => context.drawImage(canvas, left, top, width, height, 0, 0, detail.width, detail.height);
+                draw();
+                let caption = await recognize(detail), inverse;
+                // Interpolation can blur the URL's descender. Keep the straight
+                // reading unless only the caption's first word remains unclear.
+                if (line.tilt && /^Veri[lt]y at qred\.org$/.test(caption.map(w => w.text).join(" "))) {
+                  context.fillStyle = "white"; context.fillRect(0, 0, detail.width, detail.height);
+                  context.translate(detail.width / 2, detail.height / 2); context.rotate(-line.tilt);
+                  context.translate(-detail.width / 2, -detail.height / 2);
+                  draw();
+                  caption = await recognize(detail);
+                  inverse = context.getTransform().inverse();
+                }
                 if (!isPrintedCaption(caption)) continue;
-                const mapped = caption.map(word => ({ ...word, bbox: {
-                  x0: left + word.bbox.x0 / 2, x1: left + word.bbox.x1 / 2,
-                  y0: top + word.bbox.y0 / 2, y1: top + word.bbox.y1 / 2,
-                } }));
+                const mapped = caption.map(word => {
+                  const { x0, x1, y0, y1 } = word.bbox;
+                  const points = [{ x: x0, y: y0 }, { x: x0, y: y1 }, { x: x1, y: y0 }, { x: x1, y: y1 }]
+                    .map(p => inverse ? inverse.transformPoint(p) : p);
+                  return { ...word, bbox: {
+                    x0: left + Math.min(...points.map(p => p.x)) / 2, x1: left + Math.max(...points.map(p => p.x)) / 2,
+                    y0: top + Math.min(...points.map(p => p.y)) / 2, y1: top + Math.max(...points.map(p => p.y)) / 2,
+                  } };
+                });
                 const x0 = Math.min(...mapped.map(w => w.bbox.x0)), x1 = Math.max(...mapped.map(w => w.bbox.x1));
                 // Preserve every original word outside the newly read caption.
                 // In particular, never drop a nearby addition the crop missed.
@@ -113,6 +137,22 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
                   const center = (words[i].bbox.x0 + words[i].bbox.x1) / 2;
                   return center >= x0 && center <= x1;
                 });
+                if (line === navigation?.line) {
+                  // All three printed words must occupy their original places on an
+                  // independent reading. Other lettering inside or beside this crop
+                  // never belongs to the confirmed caption.
+                  if (caption.map(w => w.text).join(" ") !== "Verify at qred.org" ||
+                      replaced.length !== 3 || mapped.some((w, j) => {
+                        const b = words[line.indices[j]].bbox, center = (w.bbox.x0 + w.bbox.x1) / 2;
+                        return center < b.x0 || center > b.x1 || w.bbox.y1 <= b.y0 || w.bbox.y0 >= b.y1;
+                      })) continue;
+                  mapped.forEach((word, j) => {
+                    word.confirmedNavigationCaption = true;
+                    // Keep the tighter glyph bounds from the original photograph.
+                    word.bbox = words[line.indices[j]].bbox;
+                  });
+                  if (!prepared.codes.includes(navigation.code)) prepared.codes = [...prepared.codes, navigation.code];
+                }
                 if (replaced.length) {
                   replaced.forEach(i => removed.add(i));
                   replacements.set(Math.min(...replaced), mapped);
@@ -122,20 +162,40 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
           } finally { if (worker === current) await current.setParameters({ tessedit_pageseg_mode: "3" }); }
           words = words.flatMap((word, index) => replacements.get(index) || (removed.has(index) ? [] : [word]));
         }
-        let retryReviews = [];
+        let retryReviews = [], resolvedCrops = [];
         if (reference.text?.trim() && (!contrastAssisted || originalReading)) {
           const reading = { words, codes: prepared.codes, corners: prepared.corners };
-          const comparison = comparePageReading(reference.text, reading, canvas, reference.evidence, { pageNumber: reference.pageNumber });
+          const compareWords = nextWords => comparePageReading(reference.text, { ...reading, words: nextWords },
+            canvas, reference.evidence, { pageNumber: reference.pageNumber });
+          const comparison = compareWords(words);
           const lines = signedPhotoLines(reference.text, reference.evidence, prepared.corners, canvas, words);
-          const candidates = planTextRetries(words, comparison, lines, canvas);
-          if (candidates.length) {
+          let candidates = planTextRetries(words, comparison, lines, canvas);
+          const table = planDateTableRetry(words, lines, canvas);
+          if (table || candidates.length) {
             const replacements = [], deadline = performance.now() + TEXT_RETRY_MS;
             let source = null, pixels = 0;
-            // A line crop needs its own threshold: retaining every watermark
-            // edge can hide an entire numeric column. Changed first readings
-            // remain in retryReviews, including any faint words this misses.
+            // A local threshold can recover a numeric column beside a watermark.
+            // Keep unresolved disagreements, including faint words it misses.
             await current.setParameters({ tessedit_pageseg_mode: "7", thresholding_kfactor: "0.34" });
             try {
+              if (table) {
+                if (reference.file) source = await openPhotoSource(reference.file);
+                controller.signal.throwIfAborted();
+                const crop = performance.now() < deadline && prepareDateColumn(source?.image || canvas, table,
+                  (source?.width || canvas.width) / canvas.width, (source?.height || canvas.height) / canvas.height,
+                  Math.min(500000, TEXT_RETRY_PIXELS));
+                if (crop) try {
+                  pixels += crop.canvas.width * crop.canvas.height;
+                  await current.setParameters({ tessedit_pageseg_mode: "6" });
+                  const read = await recognize(crop.canvas);
+                  const result = applyDateColumn(words, table, read.filter(w => w.bbox).map(w => ({ ...w, bbox: crop.project(w.bbox) })));
+                  words = result.words; retryReviews.push(...result.retryReviews);
+                  candidates = planTextRetries(words, compareWords(words), lines, canvas).slice(0, MAX_TEXT_RETRIES - 1);
+                } finally {
+                  crop.canvas.width = crop.canvas.height = 0;
+                  if (worker === current) await current.setParameters({ tessedit_pageseg_mode: "7" });
+                }
+              }
               for (const candidate of candidates) {
                 if (performance.now() >= deadline) break;
                 controller.signal.throwIfAborted();
@@ -164,6 +224,21 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
                 const input = source?.image || canvas;
                 const sx = (source?.width || canvas.width) / canvas.width;
                 const sy = (source?.height || canvas.height) / canvas.height;
+                if (candidate.prose || candidate.numericField) {
+                  const crop = contrastCropCanvas(input, box, sx, sy, Math.min(500000, TEXT_RETRY_PIXELS - pixels), 1);
+                  if (crop) try {
+                    pixels += crop.canvas.width * crop.canvas.height;
+                    if (candidate.prose) await current.setParameters({ tessedit_pageseg_mode: "6" });
+                    const read = await recognize(crop.canvas);
+                    const mapped = read.filter(w => w.bbox).map(w => ({ ...w, bbox: crop.project(w.bbox) }));
+                    const evidence = candidate.prose ? selectProseReading(words, candidate, mapped) : mapped;
+                    if (evidence?.length && (candidate.prose || evidence.length === 1)) replacements.push({ candidate, words: evidence });
+                  } finally {
+                    crop.canvas.width = crop.canvas.height = 0;
+                    if (worker === current) await current.setParameters({ tessedit_pageseg_mode: "7" });
+                  }
+                  continue;
+                }
                 const scale = Math.min(Math.max(1, sx, 64 / height), 3, Math.sqrt(500000 / (width * height)));
                 const detail = document.createElement("canvas");
                 detail.width = Math.max(1, Math.round(width * scale));
@@ -175,8 +250,9 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
                   context.drawImage(input, box.x0 * sx, box.y0 * sy, width * sx, height * sy,
                     0, 0, detail.width, detail.height);
                   const originalWidth = detail.width, originalHeight = detail.height;
-                  const spaced = originalReading && candidate.signedLine
-                    ? spacePhotoLine(context.getImageData(0, 0, originalWidth, originalHeight)) : null;
+                  const spaced = candidate.separatedValue || (originalReading && candidate.signedLine)
+                    ? spacePhotoLine(context.getImageData(0, 0, originalWidth, originalHeight), candidate.separatedValue) : null;
+                  if (candidate.separatedValue && !spaced) continue;
                   if (spaced) {
                     pixels += Math.max(0, spaced.width * spaced.height - originalWidth * originalHeight);
                     if (pixels > TEXT_RETRY_PIXELS) break;
@@ -190,6 +266,12 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
                     x0: box.x0 + sourceX(word.bbox.x0) * width / originalWidth, x1: box.x0 + sourceX(word.bbox.x1) * width / originalWidth,
                     y0: box.y0 + sourceY(word.bbox.y0) * height / originalHeight, y1: box.y0 + sourceY(word.bbox.y1) * height / originalHeight,
                   } }));
+                  if (mapped.length && spaced?.separator) {
+                    const mark = spaced.separator;
+                    mapped[0].precedingSeparatorBox = {
+                      x0: box.x0 + mark.x0 * width / originalWidth, x1: box.x0 + mark.x1 * width / originalWidth,
+                      y0: box.y0 + mark.y0 * height / originalHeight, y1: box.y0 + mark.y1 * height / originalHeight };
+                  }
                   replacements.push({ candidate, words: mapped });
                 } finally { detail.width = detail.height = 0; }
               }
@@ -197,10 +279,12 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
               source?.release();
               if (worker === current) await current.setParameters({ tessedit_pageseg_mode: "3", thresholding_kfactor: "0.2" });
             }
-            ({ words, retryReviews } = applyTextRetries(words, replacements));
+            const result = applyTextRetries(words, replacements, compareWords);
+            words = result.words; resolvedCrops = result.resolvedCrops; retryReviews.push(...result.retryReviews);
           }
         }
-        return { words, codes: prepared.codes, corners: prepared.corners, contrastAssisted, retryReviews, originalReading };
+        return { words, codes: prepared.codes, corners: prepared.corners, contrastAssisted, retryReviews, originalReading,
+          ...(originalReading && resolvedCrops.length ? { resolvedCrops } : {}) };
       } finally {
         controller.abort();
         if (preprocessing === controller) preprocessing = null;

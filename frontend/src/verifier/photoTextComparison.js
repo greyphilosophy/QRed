@@ -1,7 +1,8 @@
-// Compare independently recognized text with authenticated text. Whitespace and
-// canonical Unicode composition are the only ignored differences. In particular,
-// never case-fold, strip punctuation, or substitute lookalike letters/digits.
-// Typography and split/joined words remain visible review items, never matches.
+import { photographedColon, photographedLabelColon, photographedPeriod } from "./photoPunctuation.js";
+
+// Compare independently recognized text with authenticated text. General
+// alignment preserves case, punctuation and digits. A registered line may
+// also carry signed source OCR evidence for a known glyph ambiguity.
 const MAX_TEXT_LENGTH = 60000;
 export const MAX_PHOTO_TOKENS = 4000;
 const MAX_ALIGNMENT_CELLS = 4_000_000;
@@ -28,6 +29,21 @@ function validBox(box, width, height) {
     && box.x1 <= width && box.y1 <= height;
 }
 
+// Some fonts print the standalone pronoun I as a single vertical stroke. Only
+// use the alternate reading where the authenticated source OCR saw it too.
+function sourceStrokePositions(sourceReading, reference) {
+  if (!sourceReading?.includes("|") || sourceReading.length > MAX_TEXT_LENGTH) return null;
+  const source = tokenize(sourceReading);
+  if (source.length !== reference.length) return null;
+  const positions = new Set();
+  for (let i = 0; i < source.length; i++) {
+    if (reference[i].value === source[i].value) continue;
+    if (reference[i].value !== "I" || source[i].value !== "|") return null;
+    positions.add(i);
+  }
+  return positions;
+}
+
 export function boundedPhotoTokens(expectedText, words) {
   if (typeof expectedText !== "string" || !Array.isArray(words)) throw new Error("No text available for comparison.");
   if (expectedText.length > MAX_TEXT_LENGTH || words.length > MAX_PHOTO_TOKENS
@@ -46,8 +62,10 @@ export function boundedPhotoTokens(expectedText, words) {
   return { expected, reference, observed };
 }
 
-export function comparePhotoText(expectedText, words, { width, height } = {}) {
+export function comparePhotoText(expectedText, words, dimensions = {}, sourceReading) {
+  const { width, height } = dimensions;
   const { expected, reference, observed } = boundedPhotoTokens(expectedText, words);
+  const sourceStrokes = sourceStrokePositions(sourceReading, reference);
   const referenceKeys = reference.map(token => typographyKey(token.value));
   const observedKeys = observed.map(token => typographyKey(token.value));
   const columns = observed.length + 1;
@@ -66,11 +84,58 @@ export function comparePhotoText(expectedText, words, { width, height } = {}) {
   const typographyTokens = new Set();
   const differences = [];
   let pending = null;
+  let i = 0, j = 0;
   const flush = () => {
     if (!pending) return;
     const indices = [...pending.wordIndices];
     const signed = pending.start === null ? "" : expected.slice(pending.start, pending.end);
     const readTokens = pending.tokenIndices.map(index => observed[index].value).join(" ");
+    if (signed === "I" && readTokens === "|" && sourceStrokes?.has(i - 1)) {
+      const stroke = words[indices[0]], next = words[observed[j]?.wordIndex];
+      const a = stroke.bbox, b = next?.bbox;
+      // Anchor the ambiguous glyph in the photographed phrase. A digit, an
+      // isolated table divider or a stroke on another row stays a difference.
+      if (stroke.text === "|" && validBox(a, width, height) && validBox(b, width, height) &&
+          a.x1 - a.x0 < (a.y1 - a.y0) / 2 && a.x1 <= b.x0 && a.y0 < b.y1 && a.y1 > b.y0 &&
+          [0, 1].every(k => /^\p{Ll}{2,}$/u.test(reference[i + k]?.value || "") &&
+            reference[i + k].value === observed[j + k]?.value)) {
+        matched.add(pending.tokenIndices[0]);
+        pending = null;
+        return;
+      }
+    }
+    // The isolated-value retry records the ink before its first word even if
+    // it cannot read the punctuation. Keep its measured box for unresolved cases.
+    const next = observed[j];
+    const separator = signed === ":" && !indices.length && next?.start === 0 && reference[i] &&
+      !expected.slice(pending.end, reference[i].start).includes("\n") ? words[next.wordIndex].precedingSeparatorBox : null;
+    // A full-word match on either side locates the missing dot within a dotted
+    // name. Do not infer punctuation from the authenticated spelling alone.
+    if (signed === "." && !indices.length && pending.end === reference[i]?.start &&
+        pending.start === reference[i - 2]?.end && /^\p{L}+$/u.test(reference[i].value) &&
+        /^\p{L}+$/u.test(reference[i - 2].value)) {
+      const left = words[observed[j - 1]?.wordIndex], right = words[observed[j]?.wordIndex];
+      if (left?.text === reference[i - 2].value && right?.text === reference[i].value &&
+          photographedPeriod(dimensions, left.bbox, right.bbox)) {
+        pending = null;
+        return;
+      }
+    }
+    if (signed === ":") {
+      const first = words[indices[0]], nextWord = words[next?.wordIndex];
+      const singleGlyph = indices.length === 1 && first.text === readTokens && [...readTokens].length === 1;
+      const previous = reference[i - 2], label = first || words[observed[j - 1]?.wordIndex];
+      const labelMatches = previous && /^\p{L}+$/u.test(previous.value) && previous.end === pending.start &&
+        (indices.length === 0 ? label?.text === previous.value : readTokens === "." &&
+          indices.length === 1 && label.text === previous.value + "." && observed[j - 2]?.wordIndex === indices[0]);
+      if (photographedColon(dimensions, singleGlyph ? first.bbox : separator) ||
+          (labelMatches && reference[i]?.value === next?.value && nextWord !== label &&
+            photographedLabelColon(dimensions, label.bbox, nextWord?.bbox))) {
+        pending.tokenIndices.forEach(index => matched.add(index));
+        pending = null;
+        return;
+      }
+    }
     const typography = signed.length > 0 && readTokens.length > 0 && typographyKey(signed) === typographyKey(readTokens);
     // Do not edit characters or discard punctuation. Even an exact character
     // sequence with different word boundaries still needs a person's review
@@ -83,12 +148,13 @@ export function comparePhotoText(expectedText, words, { width, height } = {}) {
       context: pending.start === null ? "" : expected.slice(Math.max(0, pending.start - 70), Math.min(expected.length, pending.end + 70)),
       observed: typography ? readTokens : indices.map(index => words[index].text).join(" "),
       wordIndices: indices,
+      ...(!indices.length ? { referenceStart: pending.start } : {}),
+      ...(validBox(separator, width, height) ? { boxes: [separator] } : {}),
       ...(typography ? { typography: true } : {}),
       ...(spacing ? { spacing: true } : {}),
     });
     pending = null;
   };
-  let i = 0, j = 0;
   while (i < reference.length || j < observed.length) {
     if (i < reference.length && j < observed.length && referenceKeys[i] === observedKeys[j]) {
       flush();
@@ -120,12 +186,13 @@ export function comparePhotoText(expectedText, words, { width, height } = {}) {
   const classified = words.map((word, index) => {
     const indices = tokenIndices[index];
     const box = validBox(word.bbox, width, height) ? word.bbox : null;
-    const uncertain = !Number.isFinite(word.confidence) || word.confidence < OCR_REVIEW_THRESHOLD || !box;
+    const weak = !Number.isFinite(word.confidence) || word.confidence < OCR_REVIEW_THRESHOLD;
     const agrees = indices.length > 0 && indices.every(tokenIndex => matched.has(tokenIndex));
     const typographyOnly = !agrees && indices.length > 0
       && indices.every(tokenIndex => matched.has(tokenIndex) || typographyTokens.has(tokenIndex));
     return { text: String(word.text || ""), sourceIndex: index, bbox: box, confidence: word.confidence,
-      status: uncertain || typographyOnly ? "uncertain" : agrees ? "matched" : "different", agrees };
+      ...(typeof word.lineId === "string" ? { lineId: word.lineId } : {}),
+      status: agrees && box ? "matched" : !box || weak || typographyOnly ? "uncertain" : "different", agrees };
   }).filter(word => word.text.trim());
   const uncertainCount = classified.filter(word => word.status === "uncertain").length;
   return {

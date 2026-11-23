@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { comparePhotoText } from "./photoTextComparison.js";
+import { createReviewItems } from "./reviewFindings.js";
+import { compareLocatedPhotoText } from "./photoTextLayout.js";
 
 const size = { width: 2000, height: 2000 };
 function words(text, confidence = 97) {
@@ -79,16 +81,51 @@ describe("photo comparison against signed text", () => {
     expect(result.words.map(word => word.status)).toEqual(["matched", "different", "matched"]);
     expect(result.differences).toEqual([{ expected: "", observed: "500", wordIndices: [1], context: "" }]);
     const deleted = comparePhotoText("Invoice not approved", words("Invoice approved"), size);
-    expect(deleted.differences).toEqual([{ expected: "not", observed: "", wordIndices: [], context: "Invoice not approved" }]);
+    expect(deleted.differences).toEqual([{ expected: "not", observed: "", wordIndices: [],
+      referenceStart: 8, context: "Invoice not approved" }]);
   });
-  it("keeps low-confidence matches and mismatches uncertain", () => {
-    const result = comparePhotoText("Pay 100", words("Pay 100", 45), size);
-    expect(result.status).toBe("uncertain");
-    expect(result.matchedCount).toBe(0);
-    expect(result.uncertainCount).toBe(2);
-    const changed = comparePhotoText("Pay 100", words("Pay 900", 45), size);
+  it("uses measured prefix ink only for a missing colon on the same line and within the photo", () => {
+    const field = words("Reference 1");
+    const dots = { x0: 2, y0: 21, x1: 5, y1: 31 };
+    field[1].precedingSeparatorBox = dots;
+    expect(comparePhotoText("Reference :1", field, size).differences[0].boxes).toEqual([dots]);
+    expect(comparePhotoText("Reference :\n1", field, size).differences[0].boxes).toBeUndefined();
+    expect(comparePhotoText("Reference #1", field, size).differences[0].boxes).toBeUndefined();
+    expect(comparePhotoText("Reference 1:", field, size).differences[0].boxes).toBeUndefined();
+    field[1].precedingSeparatorBox = { ...dots, x0: -1 };
+    expect(comparePhotoText("Reference :1", field, size).differences[0].boxes).toBeUndefined();
+  });
+  it("clears exact located readings at low confidence, including digits and punctuation", () => {
+    const result = comparePhotoText("Date : 2017", words("Date : 2017", 36), size);
+    expect(result).toMatchObject({ status: "matches", matchedCount: 3, uncertainCount: 0 });
+    expect(createReviewItems(result)).toEqual([]);
+    const changed = comparePhotoText("Pay : 2017", words("Pay : 2012", 36), size);
     expect(changed.status).toBe("differences");
-    expect(changed.words[1].status).toBe("uncertain");
+    expect(changed.words.map(w => w.status)).toEqual(["matched", "matched", "uncertain"]);
+    expect(createReviewItems(changed).map(item => item.difference)).toEqual([
+      expect.objectContaining({ expected: "2017", observed: "2012" }),
+    ]);
+  });
+  it("clears repeated source OCR strokes only in the corresponding signed prose", () => {
+    const signed = "I agree that I am responsible for 2017";
+    const sourceReading = "| agree that | am responsible for 2017";
+    const box = { x0: 0, y0: 0, x1: 420, y1: 30 };
+    const line = { text: signed, bbox: box, polygon: [
+      { x: 0, y: 0 }, { x: 420, y: 0 }, { x: 420, y: 30 }, { x: 0, y: 30 },
+    ] };
+    const read = (photo, source = sourceReading, geometry = line) => {
+      const located = words(photo).map((word, i) => ({ ...word, confidence: word.text === "|" ? 46 : 95,
+        bbox: { x0: 2 + 45 * i, y0: 5, x1: 2 + 45 * i + (word.text === "|" ? 3 : 25), y1: 23 } }));
+      return compareLocatedPhotoText(geometry.text, located, size, [{ ...geometry, sourceReading: source }]);
+    };
+    expect(createReviewItems(read(sourceReading))).toEqual([]);
+    const changed = read("| agree that | am responsible for 2012");
+    expect(changed.differences).toEqual([expect.objectContaining({ expected: "2017", observed: "2012" })]);
+    expect(read(sourceReading, signed).differences.map(d => d.expected)).toEqual(["I", "I"]);
+    expect(read(sourceReading, null).differences.map(d => d.expected)).toEqual(["I", "I"]);
+    expect(read("1 agree that | am responsible for 2017").differences[0]).toMatchObject({ expected: "I", observed: "1" });
+    expect(read("| agree not | am responsible for 2017").differences.find(d => d.expected === "I")).toBeTruthy();
+    expect(read("| 2 3", "| 2 3", { ...line, text: "I 2 3" }).differences).toHaveLength(1);
   });
   it("never declares an empty or unlocated OCR result a match", () => {
     expect(comparePhotoText("Entire missing page", [], size).status).toBe("unreadable");

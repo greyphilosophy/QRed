@@ -210,7 +210,7 @@ def test_saved_rotated_native_photo_reopens_with_its_digit_difference(browser, d
         cards = review_differences(review)
         assert any("03-14-27" in card for card in cards)
         assert sum(bool(re.search(r"Photo reading: [^\n]*\b03-14-29\b", card)) for card in cards) == 1
-        expect(review.locator(".photo-summary")).to_contain_text("to review")
+        expect(review.locator(".review-progress")).to_contain_text("reviewed")
         guard.assert_quiet()
     finally:
         context.close()

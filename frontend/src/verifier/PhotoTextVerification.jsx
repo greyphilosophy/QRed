@@ -5,8 +5,9 @@ import { PageCameraCapture } from "./PageCameraCapture.jsx";
 import { createPageTextChecks } from "./pageTextChecks.js";
 import { decodeSeal } from "../qredVerifier.js";
 import { photoProcessingMessage } from "./photoStatus.js";
+import { OCR_REVIEW_THRESHOLD } from "./photoTextComparison.js";
 import { createReviewItems, currentReview, reviewCounts } from "./reviewFindings.js";
-import { DifferenceCrop, ReadingViewer, ReviewReading } from "./ReviewReading.jsx";
+import { ReadingViewer, ReviewReading } from "./ReviewReading.jsx";
 import { ImageZoom } from "./ImageZoom.jsx";
 import "./photoTextVerification.css";
 
@@ -21,8 +22,6 @@ const labels = {
   unreadable: "No text could be read — retake this page",
   error: "Text check could not finish — retry or retake",
 };
-const resultLabel = page => page.state === "matches" && page.comparison?.differences.some(d => d.review === "sourceSeparator")
-  ? "No unexplained text differences" : labels[page.state];
 const pageStateMark = { matches: "✓", differences: "!", uncertain: "?", unreadable: "!", error: "!" };
 const wordLabels = { matched: "Matching text", different: "Different or extra text", uncertain: "Uncertain reading" };
 const pageName = page => page.pdf ? `Page ${page.page_number} of ${page.page_count}` : "Signed text";
@@ -141,10 +140,10 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
     return queue.length ? `${reviewCounts(queue, currentReview(reviews[item.id], item).decisions).reviewed}/${queue.length} reviewed` : "";
   }
   const comparison = page?.comparison;
-  const completions = comparison?.retryReviews?.filter(reading => reading.completedLine) || [];
-  const knownSeparators = comparison?.differences.filter(d => d.review === "sourceSeparator") || [];
   const contentDifferences = comparison?.differences.filter(d => !d.typography && !d.spacing && !d.review) || [];
-  const difficultReading = comparison?.words.length >= 5 && comparison.uncertainCount > comparison.words.length * 0.3;
+  const difficultReading = items.length > 0 && comparison?.words.length >= 5 &&
+    comparison.words.filter(word => word.status === "uncertain" || word.confidence < OCR_REVIEW_THRESHOLD).length >
+      comparison.words.length * 0.3;
   const validPages = results.filter(result => result.status === "VALID" && result.signature_valid === true);
   const unscanned = collectionProgress?.pagesTotal
     ? collectionProgress.pagesCollected < collectionProgress.pagesTotal
@@ -177,23 +176,20 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
           <h3 ref={heading} tabIndex={-1}>{pageName(page.page)} <span className="photo-note">· Seal: authenticated</span></h3>
           <nav aria-label="Page checks" className="page-check-list">
             {pages.length <= 5 ? pages.map(item => <button type="button" key={item.id}
-              className={`page-check-status ${item.state}`} title={resultLabel(item)} aria-pressed={page.id === item.id}
-              aria-label={`${pageName(item.page)} · Seal authenticated · ${resultLabel(item)}${pageProgress(item) ? ` · ${pageProgress(item)}` : ""}`}
+              className={`page-check-status ${item.state}`} title={labels[item.state]} aria-pressed={page.id === item.id}
+              aria-label={`${pageName(item.page)} · Seal authenticated · ${labels[item.state]}${pageProgress(item) ? ` · ${pageProgress(item)}` : ""}`}
               onClick={() => selectPage(item.id)}>{item.page.page_number ? `Page ${item.page.page_number}` : "Signed text"}
               <span aria-hidden="true" className="page-state-mark">{queues.get(item.id)?.length
                 ? pageProgress(item) : pageStateMark[item.state]}</span>
-              <span className="sr-only"> · {resultLabel(item)}</span></button>)
+              <span className="sr-only"> · {labels[item.state]}</span></button>)
               : <select aria-label="Choose a page to review" value={page.id} onChange={event => selectPage(event.target.value)}>
-                {pages.map(item => <option key={item.id} value={item.id} className={`page-check-status ${item.state}`}>{pageName(item.page)} · {pageProgress(item) || resultLabel(item)}</option>)}
+                {pages.map(item => <option key={item.id} value={item.id} className={`page-check-status ${item.state}`}>{pageName(item.page)} · {pageProgress(item) || labels[item.state]}</option>)}
               </select>}
           </nav>
         </div>
-        <p className={`photo-summary ${page.state}`} role={page.state === "reading" ? "status" : undefined}>
-          {page.state === "reading" ? photoProcessingMessage(page.progress) : <>{!["missing", "queued"].includes(page.state) && <span className="review-status-label">Printed text: </span>}{items.length && ["matches", "differences", "uncertain"].includes(page.state)
-            ? counts.pending ? `${counts.pending} reading${counts.pending === 1 ? "" : "s"} to review`
-              : counts.unsure ? `${counts.unsure} reading${counts.unsure === 1 ? "" : "s"} still unclear`
-                : counts.differs ? "Your review recorded discrepancies" : "Your review decisions are recorded"
-            : resultLabel(page)}</>}</p>
+        {(!items.length || !["matches", "differences", "uncertain"].includes(page.state)) && <p className={`photo-summary ${page.state}`} role={page.state === "reading" ? "status" : undefined}>
+          {page.state === "reading" ? photoProcessingMessage(page.progress) : <>{!["missing", "queued"].includes(page.state) &&
+            <span className="review-status-label">Printed text: </span>}{labels[page.state]}</>}</p>}
         {page.state === "reading" && <progress max="1" value={page.progress ?? undefined} aria-label="Printed-text recognition" />}
         {page.error && <p role="alert">{page.error}</p>}
         {comparison && <>
@@ -214,15 +210,6 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
             </>}
           </div>
           {difficultReading && <p className="photo-note reading-caution">Many characters could not be read reliably. Inspect the marked text on the paper; recognition errors can look like changes.</p>}
-          {(knownSeparators.length > 0 || completions.length > 0) && <details className="photo-reading-review">
-            <summary>Explained readings ({knownSeparators.length + completions.length})</summary>
-            <ol>{knownSeparators.map((difference, index) => <PhotoDifference key={index} page={page} difference={difference} />)}
-              {completions.map((reading, index) => <li key={`reread-${index}`}>
-                <div>The closer reading recovered the complete signed line.</div>
-                <div><strong>First reading:</strong> {reading.original}</div>
-                <div><strong>Closer reading:</strong> {reading.observed}</div>
-                <DifferenceCrop page={page} difference={{ ...reading, spacing: true }} />
-              </li>)}</ol></details>}
         </>}
         {addPageActions}
         {page.url && <section className="photo-full-page" aria-label="Full page photo">
@@ -283,7 +270,7 @@ function ReviewSummary({ pages, queues, reviews, headingRef, incomplete, validCo
   const title = incomplete || unfinished.length ? "Document check incomplete" : total.pending ? "Review in progress"
     : !total.total ? "No flagged readings to review" : total.unsure ? "Review finished with unclear readings"
       : total.differs ? "Review finished — discrepancies recorded" : "All flagged readings reviewed";
-  const next = rows.find(row => row.counts.pending) || rows.find(row => row.counts.unsure) || unfinished[0] || rows.find(row => row.counts.total) || rows[0];
+  const next = rows.find(row => row.counts.pending) || rows.find(row => row.counts.unsure) || unfinished[0] || rows.find(row => row.counts.total);
   return <section className="review-summary" aria-label="Review summary">
     <h3 ref={headingRef} tabIndex={-1}>Review summary</h3>
     <p className="review-summary-status" role="status">{title}</p>
@@ -291,23 +278,25 @@ function ReviewSummary({ pages, queues, reviews, headingRef, incomplete, validCo
     {incomplete && <p className="photo-note">Some pages or seals still need checking. This summary covers the available readings.</p>}
     {addPageActions}
     {unfinished.length > 0 && <p className="photo-note">Text checking is unfinished on {unfinished.length} page{unfinished.length === 1 ? "" : "s"}.</p>}
-    <h4>Your observations</h4>
-    <p>{total.reviewed} of {total.total} review decisions recorded.</p>
-    <dl className="review-totals">
-      <div><dt>No discrepancy seen</dt><dd>{total.matches}</dd></div>
-      <div><dt>Discrepancy or concern</dt><dd>{total.differs}</dd></div>
-      <div><dt>Can't tell</dt><dd>{total.unsure}</dd></div>
-      <div><dt>No decision yet</dt><dd>{total.pending}</dd></div>
-    </dl>
+    {total.total > 0 && <>
+      <h4>Your observations</h4>
+      <p>{total.reviewed} of {total.total} review decisions recorded.</p>
+      <dl className="review-totals">
+        <div><dt>No discrepancy seen</dt><dd>{total.matches}</dd></div>
+        <div><dt>Discrepancy or concern</dt><dd>{total.differs}</dd></div>
+        <div><dt>Can't tell</dt><dd>{total.unsure}</dd></div>
+        <div><dt>No decision yet</dt><dd>{total.pending}</dd></div>
+      </dl>
+    </>}
     <div className="photo-actions">{next && <button type="button" onClick={() => onSelect(next.page)}>{total.pending || total.unsure || unfinished.length ? "Continue review" : "Revisit readings"}</button>}
       {onFinish && <button type="button" className="photo-overview-link" onClick={onFinish}>Finish &amp; clear</button>}</div>
     <ul className="review-page-results">{rows.map(({ page, counts }) => <li key={page.id}>
       <button type="button" onClick={() => onSelect(page)}><strong>{pageName(page.page)}</strong><span>{counts.total
         ? `${counts.reviewed}/${counts.total} reviewed · ${counts.pending} undecided · ${counts.unsure} unclear`
-        : resultLabel(page)}</span></button>
+        : labels[page.state]}</span></button>
     </li>)}</ul>
     <p className="photo-note">These decisions are your observations, separate from seal authentication. Text recognition does not check every mark, image, or handwritten addition; inspect the whole page too.</p>
-    <p className="photo-note">Review decisions stay in this session. You can revisit and change them; a new photo needs a new review.</p>
+    {total.total > 0 && <p className="photo-note">Review decisions stay in this session. You can revisit and change them; a new photo needs a new review.</p>}
   </section>;
 }
 
@@ -385,18 +374,4 @@ function PagePhoto({ page, contentDifferences, decisions = [], finding, onFindin
       <li className="uncertain">OCR uncertain: {comparison.uncertainCount}</li>
     </ul>}
   </>;
-}
-
-function PhotoDifference({ page, difference }) {
-  return <li>
-    {difference.review === "sourceSeparator" ? <><div><strong>Signed line:</strong> {difference.context}</div>
-      <div><strong>Both OCR readings:</strong> {difference.sourceReading}</div></> : <>
-    {difference.sourceReading && <p>Before sealing, OCR read this line as <strong>{difference.sourceReading}</strong></p>}
-    {difference.review === "firstReading" && <p>The first reading found this wording in the same place. Check the photo to resolve the disagreement.</p>}
-    {difference.review === "artwork" ? <p>The signed page image shows ink here. The seal has no wording for this area. Check the lettering on the page.</p>
-      : <div><strong>Signed text:</strong> {difference.expected || "(no text here)"}</div>}
-    <div><strong>Photo reading:</strong> {difference.observed || "(not read — inspect for missing text)"}</div></>}
-    <DifferenceCrop page={page} difference={difference} />
-    {difference.review !== "sourceSeparator" && difference.context && difference.context !== difference.expected && <p className="photo-note">Signed wording nearby: {difference.context}</p>}
-  </li>;
 }

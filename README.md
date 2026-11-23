@@ -287,9 +287,10 @@ authenticated**, separately from the printed-text result.
 The photographed page appears above the detailed readings. Use the page buttons
 to move through a document and select a marked word or step through differences.
 The photo fits the screen initially. Zoom in to pan around fine print.
-The explained readings include repeated omissions of trailing field colons and
-confident line rereads that recover the signed ending while retaining every earlier
-word in place. Conflicting amounts, dates and added wording still need review.
+The review count includes only readings that still need a decision. When a clear
+close-up resolves a first-pass OCR error against the signed wording, QRed drops
+that finding. If only punctuation remains unclear, the review shows that
+punctuation. Unresolved amounts, dates and additional wording still need review.
 
 Differences show the signed wording, the independently recognized wording, and a
 magnified photo region where a reliable location is available. Red highlights mark

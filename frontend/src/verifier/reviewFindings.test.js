@@ -1,16 +1,16 @@
 import { expect, it } from "vitest";
-import { changedCharacters, createReviewItems, currentReview, reviewCounts } from "./reviewFindings.js";
+import { changedCharacters, createReviewItems, currentReview, reviewCounts, sealedPassage } from "./reviewFindings.js";
 
 const box = { x0: 10, y0: 20, x1: 80, y1: 40 };
 const comparison = overrides => ({ differences: [], words: [], ...overrides });
 
-it("keeps faint additions, low-confidence matches and spacing in the review queue", () => {
+it("keeps faint additions, unlocated readings and spacing in the review queue", () => {
   const result = comparison({ differences: [
     { expected: "now here", observed: "nowhere", spacing: true, wordIndices: [0] },
     { expected: "2027", observed: "2022", wordIndices: [1] },
   ], words: [{ sourceIndex: 0, bbox: box, status: "uncertain" },
     { sourceIndex: 1, bbox: box, status: "different" },
-    { sourceIndex: 2, text: "Approved", bbox: box, status: "uncertain", agrees: true }],
+    { sourceIndex: 2, text: "Approved", bbox: null, status: "uncertain", agrees: true }],
   originalComparison: comparison({ differences: [{ expected: "", observed: "Paid", boxes: [{ ...box, y0: 60, y1: 80 }] }] }),
   contrastAssisted: true });
   const items = createReviewItems(result);
@@ -33,6 +33,18 @@ it("shares duplicate locations while retaining the conflicting reread evidence",
   expect(items[0].readings.map(reading => reading.text)).toEqual(["03-14-29", "03-14-27"]);
   expect(items[0].notes.join(" ")).toContain("first reading");
   expect(result.differences[0]).toEqual(difference);
+});
+
+it("shares missing punctuation across passes only at the same signed position", () => {
+  const missing = { expected: ":", observed: "", wordIndices: [], context: "A : B :", referenceStart: 2 };
+  const differences = [missing, { ...missing, referenceStart: 6 }, { ...missing, context: "C : D" }];
+  for (const boxes of [[], [box]]) {
+    const findings = differences.map(d => ({ ...d, boxes }));
+    const result = comparison({ differences: findings, originalComparison: comparison({ differences: findings }) });
+    expect(createReviewItems(result).map(item => item.difference)).toEqual(findings);
+  }
+  const unlocated = { expected: ":", observed: "", wordIndices: [] };
+  expect(createReviewItems(comparison({ differences: [unlocated, unlocated] }))).toHaveLength(2);
 });
 
 it("does not merge equal wording at different locations or invent a signed reference", () => {
@@ -67,4 +79,47 @@ it("bounds work for long OCR fragments and preserves all original characters", (
   const prefix = "a".repeat(1000), suffix = "b".repeat(1000);
   const parts = changedCharacters(prefix + "7" + suffix, prefix + "2" + suffix);
   expect(parts.expected).toEqual([{ text: prefix, changed: false }, { text: "7", changed: true }, { text: suffix, changed: false }]);
+});
+
+it("shows the complete sealed line while keeping the disputed characters separate", () => {
+  const source = "Invoice 1042\nApproved total 123.45\nPayment due Friday";
+  expect(sealedPassage({ expected: "123.45", observed: "923.45", context: source }, source))
+    .toEqual({ before: "Approved total ", expected: "123.45", after: "" });
+  const longLine = "Original wording ".repeat(12) + "123.45" + " with exact punctuation!";
+  expect(sealedPassage({ expected: "123.45", context: longLine.slice(-90) }, longLine))
+    .toEqual({ before: "Original wording ".repeat(12), expected: "123.45", after: " with exact punctuation!" });
+});
+
+it("uses the supplied sealed context to distinguish repeated values", () => {
+  const source = "First amount 100\nSecond amount 100 due";
+  expect(sealedPassage({ expected: "100", context: "Second amount 100 due" }, source))
+    .toEqual({ before: "Second amount ", expected: "100", after: " due" });
+  expect(sealedPassage({ expected: "100", context: source }, source))
+    .toEqual({ before: "", expected: "100", after: "" });
+  expect(sealedPassage({ expected: "100" }, source))
+    .toEqual({ before: "", expected: "100", after: "" });
+});
+
+it("does not invent sealed wording from an extra reading or a partial token", () => {
+  expect(sealedPassage({ expected: "", observed: "Paid" }, "Approved total 123.45"))
+    .toEqual({ before: "", expected: "", after: "" });
+  expect(sealedPassage({ expected: "1" }, "Invoice 1042"))
+    .toEqual({ before: "", expected: "1", after: "" });
+  expect(sealedPassage({ expected: "Friday", observed: "Monday" }, "Friday"))
+    .toEqual({ before: "", expected: "Friday", after: "" });
+});
+
+it("keeps competing OCR fragments of a single table rule in one review, preserving separate additions", () => {
+  const word = (text, x0, y0, x1, y1, confidence = 25, lineId = "rule") =>
+    ({ text, bbox: { x0, y0, x1, y1 }, confidence, lineId });
+  const words = [word("eee", 10, 400, 980, 416), word("rr", 180, 397, 205, 420),
+    word("is", 340, 397, 388, 420), word("Wi", 740, 397, 779, 420), word("Paid", 785, 395, 848, 419, 96),
+    word("ink", 1010, 397, 1050, 419), word("memo", 660, 430, 730, 451, 48, "body")]
+    .map((w, sourceIndex) => ({ ...w, sourceIndex }));
+  const extra = (...wordIndices) => ({ expected: "", observed: wordIndices.map(i => words[i].text).join(" "), wordIndices });
+  const differences = [extra(2, 3), extra(4), extra(5), extra(6), { ...extra(0, 1), review: "artwork" }];
+  const items = createReviewItems(comparison({ words, differences }));
+  expect(items.map(item => item.difference.observed)).toEqual(["eee rr is Wi", "Paid", "ink", "memo"]);
+  expect(items[0].difference.boxes).toEqual(words.slice(0, 4).map(w => w.bbox));
+  expect(items[0].reason).toBe("Possible extra text");
 });
