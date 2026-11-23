@@ -66,6 +66,7 @@ export function comparePhotoText(expectedText, words, { width, height } = {}) {
   const typographyTokens = new Set();
   const differences = [];
   let pending = null;
+  let i = 0, j = 0;
   const flush = () => {
     if (!pending) return;
     const indices = [...pending.wordIndices];
@@ -77,18 +78,24 @@ export function comparePhotoText(expectedText, words, { width, height } = {}) {
     // ("now here" and "nowhere" need not mean the same thing).
     const spacing = !typography && signed.length > 0 && readTokens.length > 0
       && signed.replace(/\s/gu, "") === readTokens.replace(/\s/gu, "");
+    // A close-up can locate the ink before a word without recognizing it.
+    // Attach that box only to the missing colon directly before this word.
+    const next = observed[j];
+    const separator = signed === ":" && !indices.length && next?.start === 0 && reference[i] &&
+      !expected.slice(pending.end, reference[i].start).includes("\n") ? words[next.wordIndex].precedingSeparatorBox : null;
     if (typography || spacing) pending.tokenIndices.forEach(index => typographyTokens.add(index));
     differences.push({
       expected: signed,
       context: pending.start === null ? "" : expected.slice(Math.max(0, pending.start - 70), Math.min(expected.length, pending.end + 70)),
       observed: typography ? readTokens : indices.map(index => words[index].text).join(" "),
       wordIndices: indices,
+      ...(!indices.length ? { referenceStart: pending.start } : {}),
+      ...(validBox(separator, width, height) ? { boxes: [separator] } : {}),
       ...(typography ? { typography: true } : {}),
       ...(spacing ? { spacing: true } : {}),
     });
     pending = null;
   };
-  let i = 0, j = 0;
   while (i < reference.length || j < observed.length) {
     if (i < reference.length && j < observed.length && referenceKeys[i] === observedKeys[j]) {
       flush();

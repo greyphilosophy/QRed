@@ -133,9 +133,10 @@ verification pass. Compare the same files and stage metrics before and after.
 
 For each root cause, add a non-private regression that failed before the fix.
 Keep changed amounts, missing words and faint additions as negative controls.
-A stronger OCR threshold may improve reading, but its first reading must remain
-reviewable and its result must not become an unqualified match. Do not select an
-OCR reading because it resembles the signed text.
+A contrast-assisted whole-page read still calls for inspection of pale marks.
+For a focused reread, verify that an independently recovered signed phrase
+disappears from the review queue and counts. Any remaining discrepancy at that
+location still needs a decision. Keep original-only additions reviewable.
 
 The Galaxy Z Flip6 is a physical acceptance target. Mobile viewport/touch replay
 tests layout, and CPU throttling can expose budget failures; neither reproduces

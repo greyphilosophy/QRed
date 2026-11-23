@@ -79,7 +79,19 @@ describe("photo comparison against signed text", () => {
     expect(result.words.map(word => word.status)).toEqual(["matched", "different", "matched"]);
     expect(result.differences).toEqual([{ expected: "", observed: "500", wordIndices: [1], context: "" }]);
     const deleted = comparePhotoText("Invoice not approved", words("Invoice approved"), size);
-    expect(deleted.differences).toEqual([{ expected: "not", observed: "", wordIndices: [], context: "Invoice not approved" }]);
+    expect(deleted.differences).toEqual([{ expected: "not", observed: "", wordIndices: [],
+      referenceStart: 8, context: "Invoice not approved" }]);
+  });
+  it("uses measured prefix ink only for a missing colon on the same line and within the photo", () => {
+    const field = words("Reference 1");
+    const dots = { x0: 2, y0: 21, x1: 5, y1: 31 };
+    field[1].precedingSeparatorBox = dots;
+    expect(comparePhotoText("Reference :1", field, size).differences[0].boxes).toEqual([dots]);
+    expect(comparePhotoText("Reference :\n1", field, size).differences[0].boxes).toBeUndefined();
+    expect(comparePhotoText("Reference #1", field, size).differences[0].boxes).toBeUndefined();
+    expect(comparePhotoText("Reference 1:", field, size).differences[0].boxes).toBeUndefined();
+    field[1].precedingSeparatorBox = { ...dots, x0: -1 };
+    expect(comparePhotoText("Reference :1", field, size).differences[0].boxes).toBeUndefined();
   });
   it("keeps low-confidence matches and mismatches uncertain", () => {
     const result = comparePhotoText("Pay 100", words("Pay 100", 45), size);

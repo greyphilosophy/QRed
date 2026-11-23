@@ -35,6 +35,18 @@ it("shares duplicate locations while retaining the conflicting reread evidence",
   expect(result.differences[0]).toEqual(difference);
 });
 
+it("shares missing punctuation across passes only at the same signed position", () => {
+  const missing = { expected: ":", observed: "", wordIndices: [], context: "A : B :", referenceStart: 2 };
+  const differences = [missing, { ...missing, referenceStart: 6 }, { ...missing, context: "C : D" }];
+  for (const boxes of [[], [box]]) {
+    const findings = differences.map(d => ({ ...d, boxes }));
+    const result = comparison({ differences: findings, originalComparison: comparison({ differences: findings }) });
+    expect(createReviewItems(result).map(item => item.difference)).toEqual(findings);
+  }
+  const unlocated = { expected: ":", observed: "", wordIndices: [] };
+  expect(createReviewItems(comparison({ differences: [unlocated, unlocated] }))).toHaveLength(2);
+});
+
 it("does not merge equal wording at different locations or invent a signed reference", () => {
   const items = createReviewItems(comparison({ differences: [
     { expected: "12", observed: "72", boxes: [box] },

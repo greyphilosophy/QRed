@@ -3,6 +3,7 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { applyTextRetries } from "./photoOcrRetry.js";
 import { cropBounds } from "./ReviewReading.jsx";
 import { PhotoTextVerification } from "./PhotoTextVerification.jsx";
 
@@ -30,6 +31,36 @@ function readAllCards(container) {
   }
   return cards;
 }
+
+it.each(["2017", "2012"])("drops a resolved page number from the review and summary alongside year %s", async year => {
+  const signed = { ...page, page_count: 1, content: "1 of 2\nYear 2017" };
+  const at = (text, x0, x1, y0, confidence = 98) => ({ text, confidence, bbox: { x0, x1, y0, y1: y0 + 10 } });
+  const two = at("2", 55, 64, 10);
+  const firstPass = [at("‘dof", 10, 47, 10, 45), two, at("Year", 10, 47, 50), at(year, 55, 95, 50)];
+  ocr.read.mockResolvedValue(applyTextRetries(firstPass, [{
+    candidate: { indices: [0, 1], signedLine: true, signedText: "1 of 2", bbox: { x0: 8, x1: 66, y0: 8, y1: 22 } },
+    words: [at("1", 10, 18, 10), at("of", 26, 47, 10), two],
+  }]));
+  const view = render(<PhotoTextVerification results={[signed]} scanPhotos={[capture(1, "first", "unused")]} />);
+  const count = year === "2017" ? 0 : 1;
+  await waitFor(() => expect(view.container.querySelector(".photo-differences")?.dataset.count).toBe(String(count)));
+  expect(view.container.textContent).not.toMatch(/explained readings|‘dof/i);
+  if (count) {
+    expect(currentCard(view.container).textContent).toContain("2012");
+    expect(screen.getByText("Reading 1 of 1")).toBeTruthy();
+  } else {
+    expect(currentCard(view.container)).toBeNull();
+    expect(view.container.querySelector(".photo-summary.matches")).toBeTruthy();
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Review summary", exact: true }));
+  if (count) {
+    expect(screen.getByText("0 of 1 review decisions recorded.")).toBeTruthy();
+  } else {
+    expect(screen.getByText("No flagged readings to review")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Revisit readings" })).toBeNull();
+    expect(screen.queryByText(/review decisions recorded/)).toBeNull();
+  }
+});
 
 it("includes conflicting dates and other rereads in one navigable queue", async () => {
   const signed = { ...page, content: "03-14-27" };

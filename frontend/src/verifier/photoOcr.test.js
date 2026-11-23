@@ -1,4 +1,7 @@
 import { expect, it, vi } from "vitest";
+import { createCanvas, ImageData } from "@napi-rs/canvas";
+import { comparePageReading } from "./photoReading.js";
+import { createReviewItems } from "./reviewFindings.js";
 import { createPhotoOcrReader } from "./photoOcr.js";
 
 function worker() {
@@ -181,6 +184,54 @@ it("rereads a disputed date from enlarged contrast-adjusted pixels without suppl
   } finally { f.reader.dispose(); vi.unstubAllGlobals(); }
 });
 
+it.each(["2", "3"])("rereads an isolated value and locates the remaining findings on the original page (%s)", async lastDigit => {
+  const photo = createCanvas(400, 400), ctx = photo.getContext("2d");
+  ctx.fillStyle = "white"; ctx.fillRect(0, 0, 400, 400);
+  ctx.fillStyle = "black";
+  for (const y of [108, 117]) ctx.fillRect(105, y, 3, 3);
+  for (const x of [128, 151, 180]) ctx.fillRect(x, 103, 7, 20);
+  const pack = words => ({ data: { blocks: [{ paragraphs: [{ lines: [{ words }] }] }] } });
+  const word = (text, x0, y0, x1, y1, confidence = 98) => ({ text, bbox: { x0, y0, x1, y1 }, confidence });
+  // The whole-page engine grouped two rows. Its line box is too tall to retry.
+  const engine = worker();
+  engine.recognize.mockResolvedValueOnce(pack([
+    word("Page", 12, 103, 52, 123), word("‘dof", 102, 103, 190, 123, 32), word("End", 10, 200, 52, 220),
+  ])).mockImplementationOnce(async (crop, options) => {
+    expect(options).toEqual({});
+    // Read the three separated ink groups in the prepared crop.
+    const xRuns = [], y = Math.round(crop.height / 2);
+    const pixels = crop.getContext("2d").getImageData(0, y, crop.width, 1).data;
+    for (let x = 0; x < crop.width; x++) {
+      if (pixels[4 * x] > 96) continue;
+      if (xRuns.at(-1)?.[1] === x) xRuns.at(-1)[1] = x + 1;
+      else xRuns.push([x, x + 1]);
+    }
+    expect(xRuns).toHaveLength(3);
+    return pack(xRuns.map(([left, right], i) => word(["1", "of", lastDigit][i], left, y - 3, right, y + 3)));
+  });
+  vi.stubGlobal("document", { createElement: () => createCanvas(1, 1) });
+  vi.stubGlobal("ImageData", ImageData);
+  const reader = createPhotoOcrReader(async () => engine, () => ({ canvas: {}, codes: [] }));
+  try {
+    const signed = "Page :1 of 2 End", read = await reader.read(photo, () => {}, { text: signed });
+    expect(engine.recognize).toHaveBeenCalledTimes(2);
+    const findings = createReviewItems(comparePageReading(signed, read, photo));
+    const colon = findings.find(item => item.difference.expected === ":");
+    expect(colon.difference.boxes).toHaveLength(1);
+    const [mark] = colon.difference.boxes;
+    expect(Math.abs(mark.x0 - 105)).toBeLessThan(1);
+    expect(Math.abs(mark.y0 - 108)).toBeLessThan(1);
+    expect(Math.abs(mark.x1 - 108)).toBeLessThan(1);
+    expect(Math.abs(mark.y1 - 120)).toBeLessThan(1);
+    const number = findings.find(item => item.difference.expected === "2");
+    if (lastDigit === "2") expect(findings).toHaveLength(1);
+    else {
+      expect(number.difference.observed).toBe("3");
+      expect(Math.abs(number.difference.boxes[0].x0 - 180)).toBeLessThan(1);
+    }
+  } finally { reader.dispose(); vi.unstubAllGlobals(); }
+});
+
 it("rereads native-resolution pixels independently, maps the crop back, and releases every temporary image", async () => {
   const f = retryFixture();
   f.engine.recognize.mockImplementationOnce(async image => f.pack([{ text: "Total", confidence: 96,
@@ -189,7 +240,7 @@ it("rereads native-resolution pixels independently, maps the crop back, and rele
     const result = await f.reader.read(f.input, () => {}, f.reference);
     expect(result.words[0]).toMatchObject({ text: "Total", confidence: 96,
       bbox: { x0: 122.5, y0: 205, x1: 177.5, y1: 225 } });
-    expect(result.retryReviews).toEqual([expect.objectContaining({ original: "TotaI", observed: "Total" })]);
+    expect(result.retryReviews).toEqual([]);
     expect(f.copies[0].drawImage).toHaveBeenCalledWith(f.decoded(), 190, 390, 220, 80, 0, 0, 220, 80);
     expect(f.engine.recognize.mock.calls.every(([, options, output]) =>
       Object.keys(options).length === 0 && output.text === true && output.blocks === true)).toBe(true);

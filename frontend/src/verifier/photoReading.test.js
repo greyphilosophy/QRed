@@ -1,5 +1,7 @@
 import { expect, it } from "vitest";
 import { comparePageReading, possiblePrintedMarkings } from "./photoReading.js";
+import { applyTextRetries } from "./photoOcrRetry.js";
+import { createReviewItems } from "./reviewFindings.js";
 
 const box = { x0: 100, y0: 200, x1: 160, y1: 260 };
 const word = (text, x0, y0, width = 20) => ({ text, confidence: 99, bbox: { x0, y0, x1: x0 + width, y1: y0 + 12 } });
@@ -43,12 +45,16 @@ it("explains an exact source omission of a trailing label colon without excusing
   const recorded = [{ line: 1, observed: "Custom Ref." }];
   const check = (signed, words, ocrReadings = recorded) => registeredReading(signed, words, [], { reread: false, ocrReadings });
   const label = [word("Custom", 68, 403), word("Ref.", 150, 403)];
-  expect(check("Custom Ref. :", label)).toMatchObject({ status: "matches", differences: [
-    expect.objectContaining({ review: "sourceSeparator", expected: ":", observed: "" })] });
+  expect(check("Custom Ref. :", label)).toMatchObject({ status: "matches", differences: [] });
   expect(check("Custom Ref. :", label, []).status).toBe("differences");
   expect(check("Custom Ref. :", [...label, word("1", 200, 403)]).status).toBe("differences");
   expect(check("Custom Ref. : 7", label).status).toBe("uncertain");
   expect(check("Custom Ref. :", [{...label[0], confidence: 30}, label[1]]).differences[0].review).toBe("sourceOcr");
+  for (const observed of ["A B :", "A B"]) {
+    const field = observed.split(" ").map((text, i) => word(text, 65 + 45 * i, 403));
+    const result = check("A : B :", field, [{ line: 1, observed }]);
+    expect(result.differences).toEqual([expect.objectContaining({ expected: ":", referenceStart: 2 })]);
+  }
 });
 
 it("retains lettering over original artwork for review and reports new text in a blank area", () => {
@@ -63,6 +69,16 @@ it("retains lettering over original artwork for review and reports new text in a
   expect(review.words.at(-1)).toMatchObject({ status: "uncertain", agrees: false, bbox: art.bbox });
   expect(read([art, addition], { visual }).differences.find(d => d.observed === "PAID").review).toBeUndefined();
   expect(read([art], {}).status).toBe("differences");
+});
+
+it("shows the measured prefix ink for a registered line with an unreadable colon", () => {
+  const dots = { x0: 66, y0: 405, x1: 69, y1: 414 };
+  const field = [{ ...word("1", 78, 403), precedingSeparatorBox: dots }, word("of", 110, 403), word("2", 150, 403)];
+  const result = registeredReading(":1 of 2", field, [], { reread: false });
+  expect(result.lineAware).toBe(true);
+  expect(createReviewItems(result).map(item => item.difference)).toEqual([
+    expect.objectContaining({ expected: ":", observed: "", boxes: [dots] }),
+  ]);
 });
 
 it("keeps digit changes and missing signed words prominent even on a noisy reread", () => {
@@ -116,6 +132,43 @@ it("retains a faint added word from the first reading even if the second agrees"
   expect(result.originalComparison.status).toBe("differences");
   expect(result.originalComparison.differences).toContainEqual(expect.objectContaining({ observed: "Paid", expected: "" }));
   expect(comparePageReading("Monday", { words: text, originalReading: first, contrastAssisted: true }, dimensions).status).toBe("differences");
+});
+
+it("discards the same resolved pagination misread in both page readings and retains unrelated original ink", () => {
+  const garbage = { ...word("‘dof", 60, 100, 52), confidence: 42 };
+  const last = word("2", 128, 100);
+  const first = [garbage, last];
+  const dots = { x0: 56, y0: 102, x1: 58, y1: 109 };
+  const after = [{ ...word("1", 60, 100), precedingSeparatorBox: dots }, word("of", 90, 100), last];
+  const crop = { bbox: { x0: 55, y0: 95, x1: 200, y1: 118 }, indices: [0, 1], signedLine: true };
+  for (const signed of ["1 of 2", ": 1 of 2"]) {
+    const reread = applyTextRetries(first, [{ candidate: { ...crop, signedText: signed }, words: after }]);
+    expect(reread.resolvedCrops).toHaveLength(1);
+    const compare = originalReading => comparePageReading(signed, { ...reread, originalReading }, dimensions);
+    const result = compare(first);
+    const remaining = signed.startsWith(":") ? [":"] : [];
+    expect(result.differences.map(d => d.expected)).toEqual(remaining);
+    expect(result.originalComparison.differences.map(d => d.expected)).toEqual(remaining);
+    expect(createReviewItems(result).map(item => item.difference.expected)).toEqual(remaining);
+    if (!remaining.length) {
+      expect(result.status).toBe("matches");
+      expect(createReviewItems(result)).toEqual([]);
+    } else {
+      const rawBody = [word("1", 60, 100), ...after.slice(1)];
+      for (const comparison of [result, compare(rawBody)]) {
+        expect(createReviewItems(comparison).map(item => item.difference.boxes)).toEqual([[dots]]);
+      }
+    }
+    for (const extra of [word("PAID", 65, 200), word("PAID", 170, 100)]) {
+      const retained = compare([...first, { ...extra, confidence: 40 }]);
+      expect(createReviewItems(retained).map(item => item.difference.observed)).toContain("PAID");
+      expect(retained.originalComparison.words.some(w => w.text === "‘dof")).toBe(false);
+    }
+    const distinct = compare([word("4", 62, 100), word("of", 90, 100), last]);
+    expect(distinct.originalComparison.differences).toContainEqual(expect.objectContaining({ observed: "4" }));
+    const strongFirst = compare([{ ...garbage, confidence: 98 }, last]);
+    expect(strongFirst.originalComparison.differences).toContainEqual(expect.objectContaining({ observed: "‘dof" }));
+  }
 });
 it("separates likely QR markings for visible review without declaring a match", () => {
   const result = comparePageReading("Friday", { words: [...text, word("[=]", 110, 220), ...caption], codes: [box] }, dimensions);

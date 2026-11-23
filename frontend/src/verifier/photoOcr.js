@@ -122,18 +122,19 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
           } finally { if (worker === current) await current.setParameters({ tessedit_pageseg_mode: "3" }); }
           words = words.flatMap((word, index) => replacements.get(index) || (removed.has(index) ? [] : [word]));
         }
-        let retryReviews = [];
+        let retryReviews = [], resolvedCrops = [];
         if (reference.text?.trim() && (!contrastAssisted || originalReading)) {
           const reading = { words, codes: prepared.codes, corners: prepared.corners };
-          const comparison = comparePageReading(reference.text, reading, canvas, reference.evidence, { pageNumber: reference.pageNumber });
+          const compareWords = nextWords => comparePageReading(reference.text, { ...reading, words: nextWords },
+            canvas, reference.evidence, { pageNumber: reference.pageNumber });
+          const comparison = compareWords(words);
           const lines = signedPhotoLines(reference.text, reference.evidence, prepared.corners, canvas, words);
           const candidates = planTextRetries(words, comparison, lines, canvas);
           if (candidates.length) {
             const replacements = [], deadline = performance.now() + TEXT_RETRY_MS;
             let source = null, pixels = 0;
-            // A line crop needs its own threshold: retaining every watermark
-            // edge can hide an entire numeric column. Changed first readings
-            // remain in retryReviews, including any faint words this misses.
+            // A local threshold can recover a numeric column beside a watermark.
+            // Keep unresolved disagreements, including faint words it misses.
             await current.setParameters({ tessedit_pageseg_mode: "7", thresholding_kfactor: "0.34" });
             try {
               for (const candidate of candidates) {
@@ -175,8 +176,9 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
                   context.drawImage(input, box.x0 * sx, box.y0 * sy, width * sx, height * sy,
                     0, 0, detail.width, detail.height);
                   const originalWidth = detail.width, originalHeight = detail.height;
-                  const spaced = originalReading && candidate.signedLine
-                    ? spacePhotoLine(context.getImageData(0, 0, originalWidth, originalHeight)) : null;
+                  const spaced = candidate.separatedValue || (originalReading && candidate.signedLine)
+                    ? spacePhotoLine(context.getImageData(0, 0, originalWidth, originalHeight), candidate.separatedValue) : null;
+                  if (candidate.separatedValue && !spaced) continue;
                   if (spaced) {
                     pixels += Math.max(0, spaced.width * spaced.height - originalWidth * originalHeight);
                     if (pixels > TEXT_RETRY_PIXELS) break;
@@ -190,6 +192,12 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
                     x0: box.x0 + sourceX(word.bbox.x0) * width / originalWidth, x1: box.x0 + sourceX(word.bbox.x1) * width / originalWidth,
                     y0: box.y0 + sourceY(word.bbox.y0) * height / originalHeight, y1: box.y0 + sourceY(word.bbox.y1) * height / originalHeight,
                   } }));
+                  if (mapped.length && spaced?.separator) {
+                    const mark = spaced.separator;
+                    mapped[0].precedingSeparatorBox = {
+                      x0: box.x0 + mark.x0 * width / originalWidth, x1: box.x0 + mark.x1 * width / originalWidth,
+                      y0: box.y0 + mark.y0 * height / originalHeight, y1: box.y0 + mark.y1 * height / originalHeight };
+                  }
                   replacements.push({ candidate, words: mapped });
                 } finally { detail.width = detail.height = 0; }
               }
@@ -197,10 +205,11 @@ export function createPhotoOcrReader(workerFactory = createWorker, prepareImage 
               source?.release();
               if (worker === current) await current.setParameters({ tessedit_pageseg_mode: "3", thresholding_kfactor: "0.2" });
             }
-            ({ words, retryReviews } = applyTextRetries(words, replacements));
+            ({ words, retryReviews, resolvedCrops } = applyTextRetries(words, replacements, compareWords));
           }
         }
-        return { words, codes: prepared.codes, corners: prepared.corners, contrastAssisted, retryReviews, originalReading };
+        return { words, codes: prepared.codes, corners: prepared.corners, contrastAssisted, retryReviews, originalReading,
+          ...(originalReading && resolvedCrops.length ? { resolvedCrops } : {}) };
       } finally {
         controller.abort();
         if (preprocessing === controller) preprocessing = null;

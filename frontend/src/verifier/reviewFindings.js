@@ -58,21 +58,25 @@ export function createReviewItems(comparison) {
     // Identical readings at the same place share a decision. Different wording
     // or different geometry must remain separately reviewable, including faint
     // additions seen only before contrast enhancement.
-    const key = JSON.stringify([difference.expected, difference.observed, boxes, item.inspection]);
-    const existing = boxes.length && duplicates.get(key);
+    // A missing token has no photographed word. Its offset in the signed
+    // text distinguishes repeated punctuation, even within the same line box.
+    const missingPosition = difference.expected && !difference.observed && Number.isInteger(difference.referenceStart)
+      ? [difference.referenceStart, difference.context] : null;
+    const key = boxes.length || missingPosition
+      ? JSON.stringify([difference.expected, difference.observed, boxes, missingPosition, item.inspection]) : null;
+    const existing = key && duplicates.get(key);
     if (existing) {
       existing.notes.push(...item.notes);
       if (item.readings) { existing.readings = item.readings; existing.reason = item.reason; }
       return;
     }
     items.push(item);
-    if (boxes.length) duplicates.set(key, item);
+    if (key) duplicates.set(key, item);
   }
   function addComparison(source, prefix) {
     const covered = new Set();
     for (const [index, d] of (source.differences || []).entries()) {
       (d.wordIndices || []).forEach(i => covered.add(i));
-      if (d.review === "sourceSeparator") continue;
       add(`${prefix}-${index}`, d, source, { source: prefix,
         notes: prefix === "original" ? ["The first reading found this. Check the original photo; contrast enhancement can hide pale marks."] : [],
       });
@@ -90,7 +94,6 @@ export function createReviewItems(comparison) {
   addComparison(comparison, "current");
   if (comparison.originalComparison) addComparison(comparison.originalComparison, "original");
   for (const [index, reading] of (comparison.retryReviews || []).entries()) {
-    if (reading.completedLine) continue;
     add(`reread-${index}`, { expected: reading.signedDate, observed: reading.original, boxes: reading.boxes }, comparison, {
       reason: reading.dateField ? "Conflicting date readings" : "Conflicting readings", inspection: !reading.signedDate,
       readings: [{ label: "First reading", text: reading.original },

@@ -11,6 +11,18 @@ export function enclosingBox(boxes) {
     x1: Math.max(...boxes.map(b => b.x1)), y1: Math.max(...boxes.map(b => b.y1)) };
 }
 
+// A crop can replace only complete words from that reading. A clipped glyph
+// can belong to a neighboring line or column.
+export function indicesInsidePhotoCrop(words, box) {
+  const indices = [];
+  for (const [index, { bbox: b }] of words.entries()) {
+    if (!b || b.x1 <= box.x0 || b.x0 >= box.x1 || b.y1 <= box.y0 || b.y0 >= box.y1) continue;
+    if (b.x0 < box.x0 || b.x1 > box.x1 || b.y0 < box.y0 || b.y1 > box.y1) return null;
+    indices.push(index);
+  }
+  return indices;
+}
+
 // Signed locations describe the ORIGINAL page. Coarse line starts and a
 // different paper aspect (for example a Letter page extended with a Legal
 // footer) are not enough to infer safe line boxes: keep sequence comparison.
@@ -187,13 +199,17 @@ export function compareLocatedPhotoText(expected, words, dimensions, lines) {
     const comparison = comparePhotoText(line.text, observed, dimensions);
     const repeated = line.sourceReading && observed.map(word => word.text).join(" ").normalize("NFC") === line.sourceReading.normalize("NFC");
     if (repeated) {
+      const ending = comparison.differences.at(-1);
+      if (ending?.expected === ":" && !ending.observed && /[\p{L}.]\s*:\s*$/u.test(line.text) &&
+          ending.referenceStart === line.text.normalize("NFC").trimEnd().length - 1 &&
+          observed.every(w => w.confidence >= OCR_REVIEW_THRESHOLD)) {
+        comparison.differences.pop();
+      }
       for (const difference of comparison.differences) {
         // Repeating an ambiguous numeral still calls for a visual check of
         // the value. A different reading, even on this line, has no exemption.
         const numeric = /[\p{N}\p{Sc}%]/u.test(difference.expected + difference.observed);
-        const knownColon = !difference.observed && difference.expected === ":" &&
-          /[\p{L}.]\s*:\s*$/u.test(line.text) && observed.every(w => w.confidence >= OCR_REVIEW_THRESHOLD);
-        difference.review = numeric ? "number" : knownColon ? "sourceSeparator" : "sourceOcr";
+        difference.review = numeric ? "number" : "sourceOcr";
         difference.sourceReading = line.sourceReading;
       }
     }
@@ -203,7 +219,7 @@ export function compareLocatedPhotoText(expected, words, dimensions, lines) {
     classified.push(...comparison.words.map(word => ({ ...word, sourceIndex: indices[word.sourceIndex] })));
     differences.push(...comparison.differences.map(difference => ({ ...difference,
       wordIndices: difference.wordIndices.map(index => indices[index]),
-      ...(!difference.wordIndices.length ? { boxes: [line.bbox] } : {}),
+      ...(!difference.wordIndices.length && !difference.boxes ? { boxes: [line.bbox] } : {}),
       ...(weakStart && !difference.observed && /^\p{L}$/u.test(difference.expected)
         && line.text.startsWith(difference.expected + " ") ? { weakLeadingGlyph: true } : {}),
     })));
