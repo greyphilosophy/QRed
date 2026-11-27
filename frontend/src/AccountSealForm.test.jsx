@@ -81,7 +81,7 @@ it("does not contact an account service or prepare account signing in offline mo
   fireEvent.click(screen.getByRole("button", { name: "Private key (offline)" }));
   upload();
   expect(screen.getByLabelText("Private Key")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Stamp and save PDF" }).disabled).toBe(false);
+  expect(screen.getByRole("button", { name: "Seal and save PDF" }).disabled).toBe(false);
   await Promise.resolve();
   expect(fetch).not.toHaveBeenCalled();
   expect(prepareAccountPdfSeal).not.toHaveBeenCalled();

@@ -21,7 +21,7 @@ const layoutHelp = {
 
 function sealingMessages({ footerPages = [], footerReasons = {}, sheetCount = 0, sheetPages = [], ocrUnavailablePages = [] }) {
   const messages = ocrUnavailablePages.length
-    ? [`OCR was unavailable on page(s) ${ocrUnavailablePages.join(", ")}. Their seals use the PDF text or visual reference. Load the English reader and re-stamp to include image lettering.`]
+    ? [`OCR was unavailable on page(s) ${ocrUnavailablePages.join(", ")}. Their seals use the PDF text or visual reference. Load the English reader and seal again to include image lettering.`]
     : [];
   if (sheetCount) return [...messages, `Appended ${sheetCount} seal sheet${sheetCount === 1 ? "" : "s"} containing the whole document. Scan their large codes in any order, then photograph the ${sheetPages.length} original page${sheetPages.length === 1 ? "" : "s"}.`];
   if (!footerPages.length) return messages;
@@ -184,7 +184,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       setPrivateKey(keys.privateKey);
       setPublicKey(keys.publicKey);
       setShowPrivateKey(false);
-      reportKeyStatus("Key pair generated. You can stamp a PDF now. Save your private key to reuse this signing identity later.");
+      reportKeyStatus("Key pair generated. You can seal a PDF now. Save your private key to reuse this signing identity later.");
     } catch (error) {
       reportKeyStatus(`Key generation failed: ${error.message}`, true);
     } finally {
@@ -211,7 +211,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       setPrivateKey(key);
       setPublicKey(matchingPublicKey);
       setShowPrivateKey(false);
-      reportKeyStatus("Private key opened. Matching public key derived. You can stamp a PDF now.");
+      reportKeyStatus("Private key opened. Matching public key derived. You can seal a PDF now.");
     } catch (error) {
       reportKeyStatus(`Key import failed: ${error.message}`, true);
     } finally {
@@ -235,7 +235,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     try {
       const key = encodeBase64Url(decodeSigningKey(publicKey, "public"));
       onUsePublicKey(key);
-      reportKeyStatus("Public key selected for verification on this device. You can now check your stamped seals above.");
+      reportKeyStatus("Public key selected for verification on this device. You can now check your seals above.");
     } catch (error) {
       reportKeyStatus(error.message, true);
     }
@@ -397,7 +397,7 @@ export function PdfSealForm({ onUsePublicKey }) {
 
   return (
     <div className="card">
-      <h2>Stamp a PDF</h2>
+      <h2>Seal a PDF</h2>
       <p className="key-help">
         Your PDF stays on this device. Account sign-in sends page fingerprints to QRed, not the file itself.
       </p>
@@ -432,7 +432,7 @@ export function PdfSealForm({ onUsePublicKey }) {
         {loading
           ? <p className="sealing-method-selected">Sealing method: {method === "private-key" ? "Private key (offline)" : provider.label + " login"}</p>
           : <fieldset className="sealing-methods">
-            <legend>Authenticate and stamp</legend>
+            <legend>Authenticate and seal</legend>
             {!file && <p className="key-help">Open a PDF to enable account sign-in.</p>}
             <div className="sealing-method-grid">
               {Object.entries(AUTH_PROVIDERS).map(([id, account]) => {
@@ -480,7 +480,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       </div>
       <details className="stamp-method-details">
         <summary>About seals, privacy and page layouts</summary>
-        <p>QRed reads the original PDF locally before stamping. It signs embedded text, lettering recognized in images, and each recorded OCR misreading with its line position. The default layout appends any extra seals that cannot fit readably on the original. Spare space can carry a small visual reference. Pages without readable text use a visual or blank reference. Seal-sheet layouts preserve supported form fields and seal their values at signing time. Other layouts flatten those fields.</p>
+        <p>QRed reads the original PDF locally before sealing. It signs embedded text, lettering recognized in images, and each recorded OCR misreading with its line position. The default layout appends any extra seals that cannot fit readably on the original. Spare space can carry a small visual reference. Pages without readable text use a visual or blank reference. Seal-sheet layouts preserve supported form fields and seal their values at signing time. Other layouts flatten those fields.</p>
         <p>Review the saved PDF before sharing. Fine visual details, including digits or faces, may not be preserved in the reference. A valid seal does not guarantee every visible detail is unchanged.</p>
         <p>For account sealing, QRed receives SHA-256 page commitments and account details, but not your original PDF, extracted text, or private key. These commitments are unsalted: QRed's server could recognize repeated pages or test guesses about their contents. Your chosen provider receives the login request, not your document fingerprints.</p>
         <p>Account seals include the provider's name, profile name, email, account identifier and signing time, all readable by anyone with the seal. A profile name does not establish legal identity or signing authority. QRed does not independently verify Microsoft or Amazon email ownership. Finished seals can be checked offline.</p>
@@ -536,7 +536,7 @@ export function PdfSealForm({ onUsePublicKey }) {
       {keyStatus && <p id="signing-key-status" role="status" style={{ marginTop: "1rem", color: keyError ? "#ef4444" : "#64748b" }}>{keyStatus}</p>}
       {method === "private-key" && <button type="button" onClick={() => sealPdf()}
         disabled={loading || loadingKeys} aria-busy={loading} style={{ marginTop: "1rem" }}>
-        {loading ? "Sealing..." : "Stamp and save PDF"}
+        {loading ? "Sealing..." : "Seal and save PDF"}
       </button>}
 
       {loading && usesAccount && authenticating && <button type="button"

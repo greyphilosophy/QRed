@@ -85,7 +85,7 @@ def stamp_and_save(page, source, destination=None):
     page.get_by_label("Open PDF", exact=True).set_input_files(source)
     page.evaluate("window.__qredTestMode = true; window.__lastSealResult = null")
     with page.expect_download(timeout=60000) as saved:
-        page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
+        page.get_by_role("button", name="Seal and save PDF", exact=True).click()
         page.wait_for_function("""() => window.__lastSealResult ||
             document.querySelector('#stamp-result')?.textContent.includes('PDF sealing failed:')""", timeout=60000)
         message = page.locator("#stamp-result").inner_text()

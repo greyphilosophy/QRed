@@ -141,9 +141,9 @@ def _open_stamp_tool(page: Page) -> Page:
     """
     home_url = f"{BASE_URL}/"
     page.goto(home_url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT)
-    btn = page.locator("button[aria-label='Open PDF stamping tool']")
+    btn = page.locator("button[aria-label='Seal PDF']")
     if btn.count() == 0:
-        btn = page.locator("button").filter(has_text="Stamp PDF").first
+        btn = page.locator("button").filter(has_text="Seal PDF").first
     btn.wait_for(state="visible", timeout=10_000)
     btn.click()
     page.get_by_role("button", name="Private key (offline)", exact=True).click()
@@ -215,7 +215,7 @@ def _upload_file_to_stamp_tool(
 
 
         # Click the Seal button — must exist after upload
-        seal_btn = page.get_by_role("button", name="Stamp and save PDF", exact=True)
+        seal_btn = page.get_by_role("button", name="Seal and save PDF", exact=True)
         expect(seal_btn).to_be_enabled(timeout=SEAL_BUTTON_TIMEOUT)
         seal_btn.click(timeout=5_000)
         expect(page.locator("#stamp-result")).to_have_text(

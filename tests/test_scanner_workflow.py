@@ -46,7 +46,7 @@ def printed_workflow_page(browser, tmp_path_factory):
     try:
         page = context.new_page()
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"), wait_until="networkidle")
-        page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Seal PDF").click()
         page.get_by_role("button", name="Private key (offline)", exact=True).click()
         page.get_by_label("Private Key", exact=True).fill(PRIVATE_KEY)
         stamped, result = stamp_and_save(page, {

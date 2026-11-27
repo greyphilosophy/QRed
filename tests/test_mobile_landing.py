@@ -17,7 +17,7 @@ def test_mobile_shows_scan_and_stamp_without_scrolling(page, width, height):
 
     expect(page.get_by_role("heading", name="Check a printed document")).to_be_visible()
     scan = page.get_by_role("button", name="Check document")
-    stamp = page.get_by_role("button", name="Open PDF stamping tool")
+    stamp = page.get_by_role("button", name="Seal PDF")
     expect(scan).to_be_visible()
     expect(stamp).to_be_visible()
 
@@ -34,16 +34,16 @@ def test_mobile_shows_scan_and_stamp_without_scrolling(page, width, height):
         )
         assert button_box["height"] >= 44
 
-    # The Stamp PDF action must still open its actual stamping workflow.
+    # The Seal PDF action must still open its actual stamping workflow.
     stamp.click()
-    expect(page.get_by_role("heading", name="Stamp a PDF with QRed seals")).to_be_visible()
+    expect(page.get_by_role("heading", name="Seal a PDF with QRed")).to_be_visible()
 
 
 def test_desktop_keeps_scan_and_stamp_side_by_side(page):
     page.set_viewport_size({"width": 1280, "height": 800})
     page.goto(BASE_URL)
     scan = page.get_by_role("button", name="Check document")
-    stamp = page.get_by_role("button", name="Open PDF stamping tool")
+    stamp = page.get_by_role("button", name="Seal PDF")
     expect(scan).to_be_visible()
     expect(stamp).to_be_visible()
     scan_box = scan.bounding_box()
@@ -55,7 +55,7 @@ def test_desktop_keeps_scan_and_stamp_side_by_side(page):
 def test_stamp_tool_asks_for_pdf_and_layout_before_signing_method(page):
     page.set_viewport_size({"width": 393, "height": 700})
     page.goto(BASE_URL)
-    page.get_by_role("button", name="Open PDF stamping tool").click()
+    page.get_by_role("button", name="Seal PDF").click()
 
     pdf = page.get_by_label("Open PDF", exact=True)
     layout = page.get_by_label("Page layout", exact=True)
@@ -79,11 +79,11 @@ def test_stamp_tool_asks_for_pdf_and_layout_before_signing_method(page):
     }""")
     assert all(button.get_attribute("aria-pressed") == "false" for button in choices.all())
     expect(page.get_by_label("Private Key", exact=True)).to_have_count(0)
-    expect(page.get_by_role("button", name="Stamp and save PDF")).to_have_count(0)
+    expect(page.get_by_role("button", name="Seal and save PDF")).to_have_count(0)
 
     choices.last.click()
     expect(page.get_by_label("Private Key", exact=True)).to_be_visible()
-    expect(page.get_by_role("button", name="Stamp and save PDF")).to_be_visible()
+    expect(page.get_by_role("button", name="Seal and save PDF")).to_be_visible()
 
 @pytest.mark.parametrize("provider,provider_url", [
     ("Google", "https://accounts.google.com/o/oauth2/v2/auth"),
@@ -134,7 +134,7 @@ def test_prepared_provider_link_opens_direct_popup_without_losing_pdf(page, prov
                        lambda route: route.fulfill(status=200, content_type="text/html",
                                                    body="<h1>Provider login page</h1>"))
     page.goto(BASE_URL)
-    page.get_by_role("button", name="Open PDF stamping tool").click()
+    page.get_by_role("button", name="Seal PDF").click()
     page.get_by_label("Open PDF", exact=True).set_input_files(str(file_path))
     link = page.get_by_role("link", name={"Google": "Sign in with Google", "Microsoft": "Sign in with Microsoft", "Amazon": "Login with Amazon"}[provider])
     expect(link).to_be_visible(timeout=30000)

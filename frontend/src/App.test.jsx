@@ -17,7 +17,7 @@ const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 
 function openStampTool() {
   render(React.createElement(App));
-  fireEvent.click(screen.getByRole("button", { name: "Open PDF stamping tool" }));
+  fireEvent.click(screen.getByRole("button", { name: "Seal PDF" }));
   chooseOfflineSealing();
 }
 
@@ -54,7 +54,7 @@ function keyFile(contents, name) {
 describe("App PDF signing keys", () => {
   it("does not request or send an issuer name when stamping", async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Open PDF stamping tool" }));
+    fireEvent.click(screen.getByRole("button", { name: "Seal PDF" }));
     expect(screen.queryByLabelText("Issuer", { exact: true })).toBeNull();
   });
 
@@ -83,23 +83,23 @@ describe("App PDF signing keys", () => {
     render(React.createElement(App));
     expect(screen.getByRole("heading", { name: "Check a printed document" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Check document" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Open PDF stamping tool" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Seal PDF" })).toBeTruthy();
     expect(screen.queryByLabelText("Private Key")).toBeNull();
   });
 
-  it("opens Stamp PDF and scrolls/focuses the stamping section on first and repeated clicks", async () => {
+  it("opens Seal PDF and scrolls/focuses the stamping section on first and repeated clicks", async () => {
     const scroll = vi.fn(), previous = HTMLElement.prototype.scrollIntoView;
     HTMLElement.prototype.scrollIntoView = scroll;
     try {
       render(<App />);
-      const trigger = screen.getByRole("button", { name: "Open PDF stamping tool" });
+      const trigger = screen.getByRole("button", { name: "Seal PDF" });
       expect(trigger.getAttribute("aria-expanded")).toBe("false");
       fireEvent.click(trigger);
       const section = document.getElementById("pdf-stamp-tool");
       expect(section).not.toBeNull();
       expect(trigger.getAttribute("aria-controls")).toBe("pdf-stamp-tool");
       expect(trigger.getAttribute("aria-expanded")).toBe("true");
-      const heading = screen.getByRole("heading", { name: "Stamp a PDF with QRed seals" });
+      const heading = screen.getByRole("heading", { name: "Seal a PDF with QRed" });
       await waitFor(() => expect(scroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" }));
       expect(scroll.mock.instances[0]).toBe(section);
       expect(document.activeElement).toBe(heading);
@@ -154,7 +154,7 @@ describe("App PDF signing keys", () => {
     const pdf = new File(["%PDF-1.4"], "source.pdf", { type: "application/pdf" });
     fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [pdf] } });
     expect(screen.getByLabelText("Page layout").value).toBe("watermark-sheets");
-    fireEvent.click(screen.getByRole("button", { name: "Stamp and save PDF" }));
+    fireEvent.click(screen.getByRole("button", { name: "Seal and save PDF" }));
     await screen.findByText(/Sealed source\.pdf in this browser\./);
     expect(sealPdfInBrowser).toHaveBeenCalledWith(expect.objectContaining({ file: pdf, ...keys, pageScalingStrategy: "watermark-sheets" }));
     fireEvent.click(screen.getByRole("button", { name: "Use public key to verify" }));
@@ -179,7 +179,7 @@ describe("App PDF signing keys", () => {
     expect(screen.getByText(/This file is unencrypted/)).toBeTruthy();
   });
 
-  it("restores an existing private key and derives its public key before stamping", async () => {
+  it("restores an existing private key and derives its public key before sealing", async () => {
     openStampTool();
     fireEvent.change(screen.getByLabelText("Private Key"), { target: { value: privateKey } });
     await waitFor(() => expect(window.__qredPublicKeys).toBe(publicKey.replace(/=$/, "")));
@@ -189,7 +189,7 @@ describe("App PDF signing keys", () => {
     expect(window.__qredPublicKeys).toBe(publicKey.replace(/=$/, ""));
     const pdf = new File(["%PDF-1.4"], "saved-key.pdf", { type: "application/pdf" });
     fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [pdf] } });
-    fireEvent.click(screen.getByRole("button", { name: "Stamp and save PDF" }));
+    fireEvent.click(screen.getByRole("button", { name: "Seal and save PDF" }));
     await screen.findByText(/Sealed saved-key\.pdf/);
   });
 
@@ -210,7 +210,7 @@ describe("App PDF signing keys", () => {
     expect(screen.getByLabelText("Private Key").type).toBe("password");
     expect(window.__qredPublicKeys).toBe(keys.publicKey);
     fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [new File(["pdf"], "imported.pdf")] } });
-    fireEvent.click(screen.getByRole("button", { name: "Stamp and save PDF" }));
+    fireEvent.click(screen.getByRole("button", { name: "Seal and save PDF" }));
     await screen.findByText(/Sealed imported\.pdf in this browser/);
     expect(sealPdfInBrowser).toHaveBeenCalledWith(expect.objectContaining(keys));
     expect(fetch).not.toHaveBeenCalled();
@@ -260,7 +260,7 @@ describe("App PDF signing keys", () => {
     openStampTool();
     fireEvent.change(screen.getByLabelText("Private Key"), { target: { value: "not-a-key" } });
     fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [new File(["pdf"], "test.pdf")] } });
-    fireEvent.click(screen.getByRole("button", { name: "Stamp and save PDF" }));
+    fireEvent.click(screen.getByRole("button", { name: "Seal and save PDF" }));
     expect(await screen.findByText(/Private key must be.*32-byte Ed25519 seed/)).toBeTruthy();
     expect(sealPdfInBrowser).not.toHaveBeenCalled();
   });
@@ -290,7 +290,7 @@ describe("App PDF signing keys", () => {
     expect(input.type).toBe("password");
     fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
     expect(Object.hasOwn(window, "__qredPublicKeys")).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Open PDF stamping tool" }));
+    fireEvent.click(screen.getByRole("button", { name: "Seal PDF" }));
     expect(screen.queryByLabelText("Private Key")).toBeNull();
     chooseOfflineSealing();
     await waitFor(() => expect(screen.getByLabelText("Private Key").value).toBe(""));

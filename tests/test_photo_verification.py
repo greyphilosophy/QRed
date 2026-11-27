@@ -531,7 +531,7 @@ def test_real_stamped_pages_separate_markings_and_detect_edits(browser, tmp_path
         # report background glyphs instead of the four unchanged text lines.
         # Fix Date only; camera, decoding and recognition timers still run.
         page.clock.set_fixed_time("2026-11-02T22:28:38.060Z")
-        page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Seal PDF").click()
         page.get_by_role("button", name="Private key (offline)", exact=True).click()
         page.get_by_label("Private Key", exact=True).fill("txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=")
         page.get_by_label("Page layout", exact=True).select_option(layout)
