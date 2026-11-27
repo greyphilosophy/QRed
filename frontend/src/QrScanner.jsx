@@ -116,7 +116,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
       className: "ar-button ar-button-secondary", onClick: () => chooseSavedPhoto(false),
     }, "Choose photo") : null,
     onOpenPdfStampTool && mode !== "scanning" ? React.createElement("button", {
-      "aria-label": "Open PDF stamping tool",
+      "aria-label": "Seal PDF",
       "aria-controls": "pdf-stamp-tool",
       "aria-expanded": pdfStampToolOpen,
       className: "ar-button ar-button-secondary",
@@ -124,7 +124,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
       type: "button",
     },
       React.createElement("span", { "aria-hidden": "true", className: "stamp-icon" }, "▣"),
-      React.createElement("span", null, "Stamp PDF")
+      React.createElement("span", null, "Seal PDF")
     ) : null,
     onChoosePhoto ? React.createElement("button", {
       className: "ar-button ar-button-secondary", type: "button", onClick: () => chooseSavedPhoto(true),

@@ -64,8 +64,8 @@ function App() {
         <section className="pdf-stamp-tool" id="pdf-stamp-tool" ref={stampSection} aria-labelledby="pdf-stamp-heading">
           <div className="tool-header">
             <div>
-              <p className="eyebrow">PDF stamping tool</p>
-              <h2 id="pdf-stamp-heading" ref={stampHeading} tabIndex={-1}>Stamp a PDF with QRed seals</h2>
+              <p className="eyebrow">PDF sealing tool</p>
+              <h2 id="pdf-stamp-heading" ref={stampHeading} tabIndex={-1}>Seal a PDF with QRed</h2>
             </div>
             <button className="tool-close" onClick={() => setShowPdfStampTool(false)} type="button">
               Close

@@ -163,7 +163,7 @@ def multi_page_pdf_path(pdf_dir):
 def _upload_and_seal(page: Page, file_path: str, private_key: str = "", layout: str | None = None):
     """Open the real stamping UI and return its downloaded PDF and result."""
     page.goto(BASE_URL, wait_until="networkidle", timeout=30000)
-    page.get_by_role("button", name="Open PDF stamping tool", exact=True).click()
+    page.get_by_role("button", name="Seal PDF", exact=True).click()
     page.get_by_role("button", name="Private key (offline)", exact=True).click()
     expect(page.get_by_role("button", name="Generate key pair", exact=True)).to_be_enabled()
     page.get_by_label("Private Key", exact=True).fill(private_key or DEMO_PRIVATE_KEY)
@@ -478,14 +478,14 @@ class TestPdfExtractionIntegrity:
     def _assert_rejected(page, source, message):
         base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
         page.goto(base_url, wait_until="networkidle")
-        page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Seal PDF").click()
         page.get_by_role("button", name="Private key (offline)", exact=True).click()
         expect(page.get_by_role("button", name="Generate key pair", exact=True)).to_be_enabled()
         page.get_by_label("Open PDF", exact=True).set_input_files(source)
         page.get_by_label("Private Key", exact=True).fill(DEMO_PRIVATE_KEY)
         downloads = []
         page.on("download", lambda download: downloads.append(download))
-        page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
+        page.get_by_role("button", name="Seal and save PDF", exact=True).click()
         expect(page.locator("#stamp-result")).to_contain_text(message, timeout=30_000)
         assert not downloads, "Rejected PDF must not produce a signed download"
 
@@ -502,7 +502,7 @@ class TestKeyGenerationImportAndSignatureVerification:
         page.add_init_script("window.__qredTestMode = true;")
         base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
         page.goto(base_url, wait_until="networkidle")
-        page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Seal PDF").click()
         page.get_by_role("button", name="Private key (offline)", exact=True).click()
         private_input = page.get_by_label("Private Key", exact=True)
         public_input = page.get_by_label("Public Key", exact=True)
@@ -535,7 +535,7 @@ class TestKeyGenerationImportAndSignatureVerification:
 
         # Closing clears the keys. The private download restores the same identity.
         page.get_by_role("button", name="Close", exact=True).click()
-        page.get_by_role("button", name="Open PDF stamping tool").click()
+        page.get_by_role("button", name="Seal PDF").click()
         page.get_by_role("button", name="Private key (offline)", exact=True).click()
         expect(private_input).to_have_value("")
         expect(public_input).to_have_count(0)
@@ -549,7 +549,7 @@ class TestKeyGenerationImportAndSignatureVerification:
         page.get_by_label("Open PDF", exact=True).set_input_files(simple_pdf_path)
         page.get_by_label("Page layout", exact=True).select_option("legal-footer")
         with page.expect_download(timeout=60_000) as download_info:
-            page.get_by_role("button", name="Stamp and save PDF", exact=True).click()
+            page.get_by_role("button", name="Seal and save PDF", exact=True).click()
         sealed_path = tmp_path / download_info.value.suggested_filename
         download_info.value.save_as(sealed_path)
         assert sealed_path.read_bytes().startswith(b"%PDF-")

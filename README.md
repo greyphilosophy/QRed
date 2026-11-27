@@ -50,17 +50,17 @@ npm install
 npm start
 ```
 
-Open `http://localhost:3000` in your browser. Click "Open PDF stamping tool" to open a PDF from your device and seal it in-browser.
+Open `http://localhost:3000` in your browser. Click "Seal PDF" to open a PDF from your device and seal it in-browser.
 
-## Generate signing keys and stamp a PDF
+## Generate signing keys and seal a PDF
 
-1. Open the PDF stamping tool and click **Generate key pair**. QRed creates a fresh Ed25519 pair using the browser's secure random generator and fills both key fields. Use HTTPS or localhost with Web Crypto support.
+1. Open the PDF sealing tool and click **Generate key pair**. QRed creates a fresh Ed25519 pair using the browser's secure random generator and fills both key fields. Use HTTPS or localhost with Web Crypto support.
 2. **Save private key** and keep the file private. It is an unencrypted text file; QRed does not keep a copy, and closing the tool or reloading clears it. Anyone with this key can sign as you.
 3. **Save public key** to share with recipients through a trusted channel. This file contains only the public key.
-4. Choose a PDF and click **Stamp and save PDF**.
-5. To test your seals on the same page, click **Use public key to verify**. This sets the key in **Verify collected seals**, where you can scan or choose the QR images from your stamped PDF. Recipients can choose **Open issuer public key file** on the home page or standalone verifier.
+4. Choose a PDF and click **Seal and save PDF**.
+5. To test your seals on the same page, click **Use public key to verify**. This sets the key in **Verify collected seals**, where you can scan or choose the QR images from your sealed PDF. Recipients can choose **Open issuer public key file** on the home page or standalone verifier.
 
-Letter-to-legal stamping preserves the original letter content at its original
+Letter-to-legal sealing preserves the original letter content at its original
 size and uses the added three-inch footer for QR seals. One or two seals are
 2.75 inches square, including their quiet zones, with a quarter-inch bottom
 print margin. Larger sets use the grid that allows the largest codes within
@@ -221,7 +221,7 @@ contents, not every visible mark on the loaded PDF; compare the page below.
 
 Choose **Private key file (offline)** to reuse a local signing identity. Open its `.txt` file or paste the private key; QRed derives the public key automatically. There is no separate public-key entry or derive button in the sealing form. You can still save the public key or select **Use public key to verify** on the same device. After scanning a locally signed seal, the verifier offers **Open issuer public key file** and rechecks collected seals when a key is imported. Obtain this file from the issuer through a trusted channel. Invalid files leave existing keys intact, and replacing a private key asks for confirmation.
 
-The **Stamp PDF** button in the QR scanner opens the PDF stamping section, scrolls to it and moves focus to the heading. In the stamping tool, choose **Private key (offline)** or one of the three individual **Authenticate with Google/Microsoft/Amazon login** buttons (not a dropdown). The selected method is highlighted, and methods confirmed unavailable are disabled. Selecting an account method and a PDF automatically prepares the PDF locally; choosing a method alone does not authenticate or upload anything.
+The **Seal PDF** button in the QR scanner opens the PDF sealing section, scrolls to it and moves focus to the heading. In the sealing tool, choose **Private key (offline)** or one of the three individual **Authenticate with Google/Microsoft/Amazon login** buttons (not a dropdown). The selected method is highlighted, and methods confirmed unavailable are disabled. Selecting an account method and a PDF automatically prepares the PDF locally; choosing a method alone does not authenticate or upload anything.
 
 QRed automatically prepares the PDF in the original browser tab. Once the document-specific short-lived account session is ready, the provider sign-in button appears. This avoids a blank `about:blank` popup while the original browser tab processes the PDF. Google and Microsoft use a native `<a target="_blank" rel="noopener noreferrer">` link to their verified sign-in URLs. Amazon first tries direct `window.open(finalUrl)` on the same user tap, then synchronously clears the new tab's `opener` before external content can load. If the browser blocks it, Amazon falls back to the native link. No provider pre-opens a blank popup while QRed prepares the PDF or uses delayed navigation. On phones, return to the original QRed tab after authenticating to finish the PDF; keep that tab open and do not navigate away. The prepared session expires after five minutes, and cancellation attempts to clear the encrypted session cookies. After the provider opens, **Check sign-in status** on the original tab can verify a pending, failed, or completed Worker session if the browser silently closed the provider tab. A successful Google or Amazon callback attempts to close its sign-in tab without requiring a window opener. If the browser blocks closure, use the callback's close button or switch back to the original QRed tab; never reload the original page. A failed sign-in callback stays visible with a sanitized reason. If the callback shows success but the original tab stays pending, the PDF is **not yet sealed**, and browser cookie isolation or another session handoff problem needs investigation. The PDF stays on the device; only unsalted page commitments are sent to the Worker.
 
@@ -231,7 +231,7 @@ There is no public-key text field in the verifier. Account seals select a bundle
 
 Key files contain one raw key as Base64URL or standard Base64, with or without padding. Surrounding whitespace and a UTF-8 BOM are accepted; files larger than 4 KB are rejected. The private key is a raw 32-byte Ed25519 seed; the public key is a raw 32-byte Ed25519 public key (43 encoded characters, optionally followed by `=`). PEM, SSH, hex, and expanded 64-byte private keys are not accepted. Because raw private and public keys have the same encoding, use the appropriate file control; QRed catches swapped files when they retain its saved filenames. For the private-key method, key generation, file reading, derivation, validation, and signing happen locally; user keys are never sent to a server or saved in browser storage.
 
-The configured/default public key is for verification only. The stamping tool does not preload it because an unrelated private key cannot sign for it. A generated key proves control of that signing key, not an independently verified issuer identity.
+The configured/default public key is for verification only. The sealing tool does not preload it because an unrelated private key cannot sign for it. A generated key proves control of that signing key, not an independently verified issuer identity.
 
 ## Check a printed document
 
@@ -575,7 +575,7 @@ Each issuing authority maintains a signing key pair:
 
 **User private keys and original document contents stay on the device.** Local signing and verification work offline after resources are loaded. Optional account sealing sends deterministic, unsalted page commitments and account details to QRed; these commitments are document-related metadata, not anonymized data. The server holds its own authority signing key as a secret and never sends it to clients. Its public trust anchors are bundled in the verifier; unknown account-attestation authorities remain unverified. See [the attestation privacy and trust model](docs/ACCOUNT_ATTESTATION.md).
 
-Public demo keys in test fixtures prove no issuer identity. The stamping tool does
+Public demo keys in test fixtures prove no issuer identity. The sealing tool does
 not preload a demo private key. Generate or import your own key, or choose a
 configured account provider.
 
