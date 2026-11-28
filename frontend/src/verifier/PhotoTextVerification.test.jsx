@@ -1,5 +1,4 @@
 /* @vitest-environment jsdom */
-/* eslint-disable no-unused-vars */
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -9,6 +8,11 @@ import { PhotoTextVerification } from "./PhotoTextVerification.jsx";
 
 const ocr = vi.hoisted(() => ({ prepare: vi.fn(), read: vi.fn(), dispose: vi.fn(), open: vi.fn() }));
 vi.mock("./photoOcr.js", () => ({ createPhotoOcrReader: () => ocr, openPagePhoto: ocr.open, photoPreviewUrl: vi.fn() }));
+const retakeCamera = vi.hoisted(() => ({ start: vi.fn(), stop: vi.fn() }));
+vi.mock("./PageCameraCapture.jsx", () => ({ PageCameraCapture: ({ pageLabel, onClose }) => {
+  React.useEffect(() => { retakeCamera.start(); return () => retakeCamera.stop(); }, []);
+  return <div role="dialog" aria-label={`Retake ${pageLabel}`}><button type="button" onClick={onClose}>Cancel retake</button></div>;
+} }));
 const page = { status: "VALID", signature_valid: true, document_id: "first", key_id: "trusted", content: "Friday", pdf: true, page_number: 1, page_count: 2 };
 const other = { ...page, document_id: "second", page_number: 2 };
 const capture = (id, documentId, text) => ({ id, documentId, file: { text } });
@@ -302,6 +306,72 @@ it("does not offer a file-capture handoff and makes retakes available without lo
   expect(screen.getByRole("button", { name: "Retake this page" })).toBeTruthy();
   expect(view.container.querySelector("input[capture]")).toBeNull();
   expect(view.container.querySelector("input[type=file]")).toBeNull();
+});
+
+it("releases a retake when leaving the task while preserving decisions and the reading position", async () => {
+  const props = { results: [{ ...page, page_count: 1, content: "Pay 100 Due Friday" }],
+    scanPhotos: [capture(1, "first", "two")], onReplacePhoto: vi.fn() };
+  ocr.read.mockResolvedValue([word("Pay"), word("900"), word("Due"), word("Monday")]);
+  const view = render(<PhotoTextVerification {...props} />);
+  await screen.findByText("Reading 1 of 2");
+  fireEvent.click(screen.getByRole("button", { name: "Next reading", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Matches sealed text", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Retake this page", exact: true }));
+  expect(screen.getByRole("dialog", { name: "Retake Page 1 of 1" })).toBeTruthy();
+  expect(retakeCamera.start).toHaveBeenCalledTimes(1);
+
+  view.rerender(<PhotoTextVerification {...props} active={false} />);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(retakeCamera.stop).toHaveBeenCalledTimes(1);
+  view.rerender(<PhotoTextVerification {...props} active />);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(retakeCamera.start).toHaveBeenCalledTimes(1);
+  expect(screen.getByText("Reading 2 of 2")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Matches sealed text", exact: true }).getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(screen.getByRole("button", { name: "Retake this page", exact: true }));
+  expect(retakeCamera.start).toHaveBeenCalledTimes(2);
+});
+
+it("closes the enlarged viewer and restores scrolling when the task becomes inactive", async () => {
+  const props = { results: [page], scanPhotos: [capture(1, "first", "Monday")] };
+  const view = render(<PhotoTextVerification {...props} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Printed text differs", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Enlarge close-up", exact: true }));
+  expect(screen.getByRole("dialog", { name: "Enlarged close-up" })).toBeTruthy();
+  expect(document.body.style.overflow).toBe("hidden");
+  view.rerender(<PhotoTextVerification {...props} active={false} />);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(document.body.style.overflow).toBe("");
+  view.rerender(<PhotoTextVerification {...props} active />);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("button", { name: "Printed text differs", exact: true }).getAttribute("aria-pressed")).toBe("true");
+});
+
+it("finishes OCR in an inactive task without moving focus or scrolling the visible view", async () => {
+  let finishRead;
+  ocr.read.mockImplementation(() => new Promise(resolve => { finishRead = resolve; }));
+  const props = { results: [page], scanPhotos: [capture(1, "first", "Monday")] };
+  function Views({ active }) {
+    return <><button type="button">About QRed</button><div hidden={!active}><PhotoTextVerification {...props} active={active} /></div></>;
+  }
+  const previousScroll = HTMLElement.prototype.scrollIntoView, scroll = vi.fn();
+  HTMLElement.prototype.scrollIntoView = scroll;
+  try {
+    const view = render(<Views active />);
+    await waitFor(() => expect(ocr.read).toHaveBeenCalledTimes(1));
+    view.rerender(<Views active={false} />);
+    const about = screen.getByRole("button", { name: "About QRed" });
+    about.focus(); scroll.mockClear();
+    await act(async () => finishRead([word("Monday")]));
+    await waitFor(() => expect(view.container.querySelector(".photo-differences")?.dataset.count).toBe("1"));
+    expect(document.activeElement).toBe(about);
+    expect(scroll).not.toHaveBeenCalled();
+    view.rerender(<Views active />);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("heading", { name: /Page 1 of 2/ })));
+  } finally {
+    if (previousScroll === undefined) delete HTMLElement.prototype.scrollIntoView;
+    else HTMLElement.prototype.scrollIntoView = previousScroll;
+  }
 });
 
 it("tracks decisions across pages, leaves skipped readings pending, and allows corrections from the summary", async () => {

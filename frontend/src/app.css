@@ -1,0 +1,82 @@
+.qred-app {
+  --qred-bg: #edf2f9;
+  --qred-panel: #fff;
+  --qred-text: #15243b;
+  --qred-muted: #52617a;
+  --qred-line: #b8c6d9;
+  --qred-action: #1c3d67;
+  --qred-action-text: #fff;
+  --qred-soft: #e6eef9;
+  background: var(--qred-bg);
+  color: var(--qred-text);
+  padding: 18px 16px 32px;
+}
+.qred-app [hidden] { display: none !important; }
+.qred-app .qred-shell { width: 100%; max-width: 760px; margin: 0 auto; }
+.qred-app.qred-view-home .qred-shell, .qred-app.qred-view-about .qred-shell { max-width: 440px; }
+.qred-app h1 { margin: 0 0 20px; font-size: clamp(1.65rem, 5vw, 2rem); line-height: 1.2; letter-spacing: -.025em; }
+.qred-app-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 22px; }
+.qred-app .qred-wordmark, .qred-app .qred-about-link, .qred-app .qred-back {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 6px 0;
+  border: 0; background: transparent; color: var(--qred-text); font: inherit; cursor: pointer;
+}
+.qred-app .qred-wordmark { font-size: 1.1rem; font-weight: 750; letter-spacing: .025em; text-transform: none; }
+.qred-app .qred-about-link { font-size: .9rem; }
+.qred-about-link[aria-current="page"] { text-decoration: underline; text-underline-offset: 4px; }
+.qred-app .qred-about-link svg, .qred-app .qred-back svg { width: 19px; height: 19px; }
+.qred-app .qred-back { color: var(--qred-muted); margin: -10px 0 14px; }
+.qred-app button:focus-visible, .qred-app a:focus-visible, .qred-app summary:focus-visible { outline: 3px solid #2563eb; outline-offset: 4px; }
+.qred-check-group { padding: 24px 18px 18px; background: var(--qred-panel); border: 1px solid var(--qred-line); border-radius: 18px; }
+.qred-mobile-security { margin: -8px 0 18px; color: var(--qred-muted); font-size: .88rem; line-height: 1.4; }
+.qred-check-methods { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.qred-app .qred-method {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 112px;
+  padding: 16px 10px; border: 1px solid var(--qred-line); border-radius: 14px; background: var(--qred-soft); color: var(--qred-text);
+  font: inherit; font-size: 1.05rem; font-weight: 600; cursor: pointer;
+}
+.qred-method svg { width: 34px; height: 34px; }
+.qred-app .qred-method-primary { background: var(--qred-action); border-color: var(--qred-action); color: var(--qred-action-text); }
+.qred-app .qred-seal-entry {
+  display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 58px;
+  margin: 20px 0 0; padding: 12px 16px; border: 1px solid var(--qred-line); border-radius: 14px; background: var(--qred-panel);
+  color: var(--qred-text); font: inherit; font-size: 1.05rem; font-weight: 600; cursor: pointer;
+}
+.qred-seal-entry .stamp-icon { display: inline-block; transform: rotate(-8deg); font-size: 1.5rem; font-weight: 400; }
+.qred-app .qred-resume { width: 100%; margin-top: 12px; min-height: 44px; border: 0; background: transparent; color: var(--qred-action); font: inherit; cursor: pointer; }
+.qred-device-note, .qred-completion { margin-top: 18px; color: var(--qred-muted); font-size: .85rem; text-align: center; line-height: 1.5; }
+.qred-check-toolbar { display: flex; gap: 10px; margin-bottom: 16px; }
+.qred-app .qred-check-toolbar button, .qred-app .qred-secondary-action {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 46px; padding: 10px 16px;
+  border: 1px solid var(--qred-line); border-radius: 10px; background: var(--qred-panel); color: var(--qred-text); font: inherit; cursor: pointer;
+}
+.qred-check-toolbar button { flex: 1; }
+.qred-check-toolbar svg { width: 20px; height: 20px; }
+.qred-app .verification-card { margin: 0; padding: 18px; }
+.qred-app .pdf-stamp-tool { max-width: none; margin: 0; padding: 0; }
+.qred-app .pdf-stamp-tool > .card { margin: 0; }
+.qred-seal-session-actions { max-width: 540px; margin: 24px auto 0; padding-top: 16px; border-top: 1px solid var(--qred-line); }
+.qred-camera-view .ar-display-scanning {
+  min-height: calc(100vh - 1rem);
+  min-height: calc(100dvh - 1rem);
+  scroll-margin-top: .5rem;
+}
+.qred-camera-view .ar-display-scanning .ar-controls { max-width: calc(100% - 1rem); }
+.qred-app .qred-about-content { font-size: 1rem; line-height: 1.6; }
+.qred-about-content .qred-intro { margin: -6px 0 24px; color: var(--qred-muted); }
+.qred-about-content > section + section { margin-top: 22px; }
+.qred-about-content h2 { margin: 0 0 8px; font-size: 1.08rem; line-height: 1.35; }
+.qred-about-content p { margin: 0 0 14px; color: var(--qred-muted); }
+.qred-about-content strong { color: var(--qred-text); }
+.qred-about-details { margin-top: 24px; border-top: 1px solid var(--qred-line); }
+.qred-about-details details { border-bottom: 1px solid var(--qred-line); }
+.qred-about-details summary { padding: 16px 0; min-height: 52px; font-weight: 600; cursor: pointer; }
+.qred-about-details .qred-secondary-action { margin-bottom: 16px; }
+.qred-policy-links { margin-top: 24px; }
+.qred-policy-links nav { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.qred-policy-links a { display: inline-flex; align-items: center; min-height: 44px; color: var(--qred-action); font-size: .85rem; }
+@media (max-width: 360px) {
+  .qred-app { padding: 12px 12px 24px; }
+  .qred-app-header { margin-bottom: 16px; }
+  .qred-check-group { padding: 20px 14px 14px; }
+  .qred-app .verification-card { padding: 12px; }
+}

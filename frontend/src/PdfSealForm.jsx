@@ -8,16 +8,16 @@ import { beginAccountSignIn, finishAccountSignIn, checkAccountSignInStatus, atte
 import { AUTH_PROVIDERS, authProvider } from "./authProviders.js";
 import { ProviderMark } from "./ProviderMark.jsx";
 import { ACCOUNT_SESSION_SECONDS } from "./accountAuthLimits.js";
+import { SealLayoutPicker } from "./SealLayoutPicker.jsx";
+import "./pdfSealForm.css";
 
 const BOOTSTRAP_URL = "https://qred.org/";
-const layoutHelp = {
-  automatic: "Uses a watermark when readable, otherwise a footer.",
-  watermark: "Uses a pale watermark, or a footer if necessary.",
-  "seal-sheets": "Keeps every original page intact. Scan the appended seals, then photograph the originals.",
-  "watermark-sheets": "Keeps readable watermarks on the originals and appends the remaining seals.",
-  "legal-footer": "Adds a footer without shrinking letter-size content.",
-  "shrink-footer": "Shrinks page content to fit a footer on the original sheet.",
-};
+
+function fileSizeLabel(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function sealingMessages({ footerPages = [], footerReasons = {}, sheetCount = 0, sheetPages = [], ocrUnavailablePages = [] }) {
   const messages = ocrUnavailablePages.length
@@ -41,7 +41,7 @@ function saveText(text, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function PdfSealForm({ onUsePublicKey }) {
+export function PdfSealForm({ onUsePublicKey, onOpenAbout, active = true }) {
   const [file, setFile] = useState(null);
   const [privateKey, setPrivateKey] = useState("");
   const [publicKey, setPublicKey] = useState("");
@@ -66,12 +66,13 @@ export function PdfSealForm({ onUsePublicKey }) {
   const preparedRef = useRef(null);
   const preparationRef = useRef(null);
   const derivedFor = useRef("");
+  const pdfInput = useRef(null);
 
   // Prepare everything that could stall Android's backgrounded QRed tab
   // before enabling one-tap provider links. No copies of the PDF are stored:
   // the prepared plans and original File remain only in this tab's memory.
   useEffect(() => {
-    if (!file || method === "private-key" || !accountSealingAvailable) {
+    if (!active || activeRequest.current || !file || method === "private-key" || !accountSealingAvailable) {
       setPreparedProviders(null);
       setPreparingProviders(false);
       return;
@@ -146,7 +147,7 @@ export function PdfSealForm({ onUsePublicKey }) {
         void finishAccountSignIn(session.provider, session);
       }
     };
-  }, [file, pageScalingStrategy, method === "private-key", prepareRetry]);
+  }, [active, file, pageScalingStrategy, method === "private-key", prepareRetry]);
 
   useEffect(() => () => {
     activeRequest.current?.controller.abort();
@@ -235,7 +236,7 @@ export function PdfSealForm({ onUsePublicKey }) {
     try {
       const key = encodeBase64Url(decodeSigningKey(publicKey, "public"));
       onUsePublicKey(key);
-      reportKeyStatus("Public key selected for verification on this device. You can now check your seals above.");
+      reportKeyStatus("Public key selected for verification on this device. It will be used when you check your seals.");
     } catch (error) {
       reportKeyStatus(error.message, true);
     }
@@ -396,48 +397,62 @@ export function PdfSealForm({ onUsePublicKey }) {
   }
 
   return (
-    <div className="card">
-      <h2>Seal a PDF</h2>
-      <p className="key-help">
-        Your PDF stays on this device. Account sign-in sends page fingerprints to QRed, not the file itself.
-      </p>
-      <div className="demo-grid">
-        <div className="demo-input">
-          <label htmlFor="pdf-to-stamp">Open PDF</label>
-          <input id="pdf-to-stamp" type="file" accept="application/pdf" disabled={loading} onChange={(e) => setFile(e.target.files?.[0] || null)} />
+    <div className="pdf-seal-form">
+      <h2 className="seal-form-heading"><span aria-hidden="true">▣</span>Seal PDF</h2>
+      <input ref={pdfInput} id="pdf-to-stamp" className="seal-file-input" aria-label="Open PDF"
+        type="file" accept="application/pdf" disabled={loading}
+        onChange={event => {
+          setFile(event.target.files?.[0] || null);
+          setMessage("");
+        }} />
+      {file ? <div className="seal-file-card">
+        <svg viewBox="0 0 24 28" width="27" height="31" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d="M5 1h9l6 6v19H5zM14 1v6h6M8 12h9M8 16h9M8 20h6" />
+        </svg>
+        <div className="seal-file-description">
+          <span className="seal-file-name">{file.name}</span>
+          <span className="seal-file-meta">PDF · {fileSizeLabel(file.size)}</span>
         </div>
-        <div className="demo-input">
-          <label>Page layout</label>
-          <select
-            aria-label="Page layout"
-            value={pageScalingStrategy}
-            disabled={loading}
-            onChange={(e) => setPageScalingStrategy(e.target.value)}
-            title="Choose where to place the document seals."
-          >
-            <option value="watermark-sheets">Watermark with appended overflow</option>
-            <option value="automatic">Automatic (watermark first, footer fallback)</option>
-            <option value="watermark">Pale watermark (experimental, footer fallback)</option>
-            <option value="seal-sheets">Append seal sheets</option>
-            <option value="legal-footer">Expand letter pages to legal size (bottom 3-inch footer)</option>
-            <option value="shrink-footer">Shrink the document to create a footer</option>
-          </select>
-          <small style={{ color: "#64748b", display: "block", marginTop: "0.5rem" }}>
-            {layoutHelp[pageScalingStrategy]}
-          </small>
-        </div>
-      </div>
+        <button type="button" className="seal-icon-action" aria-label="Remove PDF" disabled={loading}
+          onClick={() => {
+            setFile(null);
+            setMessage("");
+            if (pdfInput.current) pdfInput.current.value = "";
+          }}><span aria-hidden="true">×</span></button>
+      </div> : <div className="seal-file-picker">
+        <span className="seal-file-placeholder" aria-hidden="true">▣</span>
+        <button type="button" className="seal-primary-action" disabled={loading} onClick={() => pdfInput.current?.click()}>
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7">
+            <path d="M3 7V5h6l2 2h10v3M3 10h19l-3 10H3z" />
+          </svg>
+          Choose PDF
+        </button>
+      </div>}
+      <p className="seal-privacy-line">Your PDF stays on this device.</p>
 
-      <div className="demo-input">
+      <SealLayoutPicker value={pageScalingStrategy} onChange={setPageScalingStrategy} disabled={loading} />
+
+      {onOpenAbout ? <button type="button" className="seal-inline-action seal-about-action" onClick={onOpenAbout}>
+        How sealing works<span aria-hidden="true">›</span>
+      </button> : <details className="seal-help-details">
+        <summary>About seals, privacy and page layouts</summary>
+        <p>QRed reads the original PDF locally before sealing. It signs embedded text, lettering recognized in images, and each recorded OCR misreading with its line position. The default layout keeps readable watermarks and adds seal sheets when needed. Those sheets contain a backup of the whole signed document. Spare space can carry a small visual reference. Pages without readable text use a visual or blank reference. Seal-sheet layouts preserve supported form fields and seal their values at signing time. Other layouts flatten those fields.</p>
+        <p>Review the saved PDF before sharing. Fine visual details, including digits or faces, may not be preserved in the reference. A valid seal does not guarantee every visible detail is unchanged.</p>
+        <p>For account sealing, QRed receives SHA-256 page commitments and account details, but not your original PDF, extracted text, or private key. These commitments are unsalted: QRed's server could recognize repeated pages or test guesses about their contents. Your chosen provider receives the login request, not your document fingerprints.</p>
+        <p>Account seals include the provider's name, profile name, email, account identifier and signing time, all readable by anyone with the seal. A profile name does not establish legal identity or signing authority. QRed does not independently verify Microsoft or Amazon email ownership. Finished seals can be checked offline.</p>
+      </details>}
+
+      <section className="seal-auth-section" aria-label="Sealing identity">
         {loading
           ? <p className="sealing-method-selected">Sealing method: {method === "private-key" ? "Private key (offline)" : provider.label + " login"}</p>
           : <fieldset className="sealing-methods">
-            <legend>Authenticate and seal</legend>
-            {!file && <p className="key-help">Open a PDF to enable account sign-in.</p>}
+            <legend>Sign in to seal</legend>
+            <p className="seal-auth-copy">Sign-in sends page fingerprints to QRed. Your account name and email are readable in the seals.</p>
+            {!file && <p className="seal-auth-copy">Choose a PDF to enable sign-in, or use a private key offline.</p>}
             <div className="sealing-method-grid">
               {Object.entries(AUTH_PROVIDERS).map(([id, account]) => {
                 const session = preparedProviders?.sessions?.[id];
-                const usable = method !== "private-key" && file && !loading && !loadingKeys && session &&
+                const usable = active && method !== "private-key" && file && !loading && !loadingKeys && session &&
                   Date.now() < session.startedAt + ACCOUNT_SESSION_SECONDS * 1000 - 10000;
                 const label = account.button;
                 return usable ? <a key={id} href={session.authorize_url}
@@ -445,7 +460,7 @@ export function PdfSealForm({ onUsePublicKey }) {
                   aria-label={label} onClick={event => startPreparedProvider(event, id)}>
                   <ProviderMark provider={id} /><span>{label}</span>
                 </a> : <button key={id} type="button"
-                  disabled={method !== "private-key" || loading || loadingKeys}
+                  disabled={!active || method !== "private-key" || loading || loadingKeys}
                   onClick={() => {
                     // Explicitly choosing an account method exits offline mode.
                     // No account request is made until this click (and a PDF is
@@ -462,93 +477,83 @@ export function PdfSealForm({ onUsePublicKey }) {
                   <ProviderMark provider={id} /><span>{label}</span>
                 </button>;
               })}
-              <button type="button" aria-pressed={method === "private-key"}
+              <button type="button" className="seal-private-choice" aria-label="Private key (offline)"
+                aria-pressed={method === "private-key"}
                 onClick={() => { setMethod("private-key"); setMessage(""); setSigningIdentity(null); }}
                 disabled={loading || loadingKeys}>
-                Private key (offline)
+                <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7">
+                  <circle cx="8" cy="8" r="5" /><path d="m12 12 9 9m-5-5 3-3m-1 5 3-3" />
+                </svg>
+                Use a private key · offline
               </button>
             </div>
-            <p className="key-help">
-              Account seals disclose your provider profile name and email to anyone who scans them.
-            </p>
             {file && method !== "private-key" && preparingProviders &&
-              <p className="key-help" role="status">Preparing sign-in…</p>}
+              <p className="seal-status" role="status">Preparing sign-in…</p>}
             {file && method !== "private-key" && prepareError &&
-              <p role="status">{prepareError} <button type="button" onClick={() =>
+              <p className="seal-status" role="status">{prepareError} <button type="button" className="seal-inline-action" onClick={() =>
                 setPrepareRetry(value => value + 1)}>Retry preparation</button></p>}
           </fieldset>}
-      </div>
-      <details className="stamp-method-details">
-        <summary>About seals, privacy and page layouts</summary>
-        <p>QRed reads the original PDF locally before sealing. It signs embedded text, lettering recognized in images, and each recorded OCR misreading with its line position. The default layout appends any extra seals that cannot fit readably on the original. Spare space can carry a small visual reference. Pages without readable text use a visual or blank reference. Seal-sheet layouts preserve supported form fields and seal their values at signing time. Other layouts flatten those fields.</p>
-        <p>Review the saved PDF before sharing. Fine visual details, including digits or faces, may not be preserved in the reference. A valid seal does not guarantee every visible detail is unchanged.</p>
-        <p>For account sealing, QRed receives SHA-256 page commitments and account details, but not your original PDF, extracted text, or private key. These commitments are unsalted: QRed's server could recognize repeated pages or test guesses about their contents. Your chosen provider receives the login request, not your document fingerprints.</p>
-        <p>Account seals include the provider's name, profile name, email, account identifier and signing time, all readable by anyone with the seal. A profile name does not establish legal identity or signing authority. QRed does not independently verify Microsoft or Amazon email ownership. Finished seals can be checked offline.</p>
-      </details>
-      {usesAccount && signingIdentity && <p className="key-help" role="status">
+      </section>
+      {usesAccount && signingIdentity && <p className="seal-status" role="status">
         Authenticated as {signingIdentity.email} through {provider.label}.
       </p>}
-      {method === "private-key" && <><details>
-        <summary>Optional: use airplane mode</summary>
-        <p>Load QRed, then enable airplane mode and turn Wi-Fi and Bluetooth off in your device settings to limit network access while you work. Keep this tab open.</p>
-        <p>Try your workflow with a non-sensitive file before opening sensitive documents. Some PDF fonts and text-recognition resources may still need an internet connection.</p>
-      </details>
-      <div className="signing-key-help">
-        <h3>Signing keys</h3>
-        <p>Generate or open a private key to sign without an account. Save it securely—QRed cannot recover it.</p>
-        <button type="button" onClick={generateKeys} disabled={loadingKeys || loading}>
-          {loadingKeys ? "Preparing keys..." : "Generate key pair"}
-        </button>
-        <p className="key-help">Save your private key before leaving. The saved file is unencrypted.</p>
-      </div>
-      </>}
-      {method === "private-key" && <div className="demo-input">
-          <label htmlFor="signing-private-key">Private Key</label>
-          <input
-            id="signing-private-key"
-            aria-label="Private Key"
-            aria-describedby="private-key-help"
-            type={showPrivateKey ? "text" : "password"}
-            value={privateKey}
-            onChange={(e) => { setPrivateKey(e.target.value); reportKeyStatus(""); }}
-            placeholder="Generate, open, or paste an Ed25519 private key"
-            autoComplete="off"
-            autoCapitalize="none"
-            spellCheck={false}
-            disabled={loadingKeys || loading}
-          />
-          <small id="private-key-help" className="key-help">Keep secret. Raw 32-byte Ed25519 seed in Base64 or Base64URL; PEM and hex are unsupported.</small>
+      {method === "private-key" && <section className="seal-private-section" aria-labelledby="seal-private-heading">
+        <h3 id="seal-private-heading">Seal with a private key</h3>
+        <p className="seal-auth-copy">Generate or open a private key to sign without an account. Save it securely—QRed cannot recover it.</p>
+        <div className="seal-key-start-actions">
           <label htmlFor="signing-private-key-file">Open private key file</label>
           <input id="signing-private-key-file" type="file" accept=".txt,text/plain" onChange={openKeyFile} disabled={loadingKeys || loading} />
-          <div className="key-actions">
-            <button type="button" onClick={() => setShowPrivateKey((v) => !v)}>
-              {showPrivateKey ? "Hide private key" : "Show private key"}
-            </button>
-            <button type="button" onClick={() => saveKey("private")} disabled={!privateKey.trim() || loadingKeys || loading}>Save private key</button>
-          </div>
-          <small className="key-help">Your public key is derived automatically and can be shared for verification.</small>
-          <div className="key-actions">
-            <button type="button" onClick={() => saveKey("public")} disabled={!publicKey.trim() || loadingKeys || loading}>Save public key</button>
-            {onUsePublicKey && <button type="button" onClick={usePublicKey} disabled={!publicKey.trim() || loadingKeys || loading}>Use public key to verify</button>}
-          </div>
-        </div>}
+          <button type="button" className="seal-secondary-action" onClick={generateKeys} disabled={loadingKeys || loading}>
+            {loadingKeys ? "Preparing keys..." : "Generate key pair"}
+          </button>
+        </div>
+        <label className="seal-key-label" htmlFor="signing-private-key">Private Key</label>
+        <input
+          id="signing-private-key"
+          aria-label="Private Key"
+          aria-describedby="private-key-help"
+          type={showPrivateKey ? "text" : "password"}
+          value={privateKey}
+          onChange={(e) => { setPrivateKey(e.target.value); reportKeyStatus(""); }}
+          placeholder="Open, generate, or paste a private key"
+          autoComplete="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          disabled={loadingKeys || loading}
+        />
+        <small id="private-key-help" className="seal-key-help">Keep secret. Raw 32-byte Ed25519 seed in Base64 or Base64URL; PEM and hex are unsupported.</small>
+        <div className="seal-key-actions">
+          <button type="button" className="seal-secondary-action" onClick={() => setShowPrivateKey((v) => !v)}>
+            {showPrivateKey ? "Hide private key" : "Show private key"}
+          </button>
+          <button type="button" className="seal-secondary-action" onClick={() => saveKey("private")} disabled={!privateKey.trim() || loadingKeys || loading}>Save private key</button>
+        </div>
+        <p className="seal-key-help">Save your private key before leaving. The saved file is unencrypted.</p>
+        <p className="seal-key-help">Your public key is derived automatically and can be shared for verification.</p>
+        <div className="seal-key-actions">
+          <button type="button" className="seal-secondary-action" onClick={() => saveKey("public")} disabled={!publicKey.trim() || loadingKeys || loading}>Save public key</button>
+          {onUsePublicKey && <button type="button" className="seal-secondary-action" onClick={usePublicKey} disabled={!publicKey.trim() || loadingKeys || loading}>Use public key to verify</button>}
+        </div>
+        {keyStatus && <p id="signing-key-status" role="status" className={`seal-status${keyError ? " seal-status-error" : ""}`}>{keyStatus}</p>}
+        <button type="button" className="seal-primary-action seal-save-action" onClick={() => sealPdf()}
+          disabled={loading || loadingKeys} aria-busy={loading}>
+          {loading ? "Sealing..." : "Seal and save PDF"}
+        </button>
+        <details className="seal-help-details">
+          <summary>Optional: use airplane mode</summary>
+          <p>Load QRed, then enable airplane mode and turn Wi-Fi and Bluetooth off in your device settings to limit network access while you work. Keep this tab open.</p>
+          <p>Try your workflow with a non-sensitive file before opening sensitive documents. Some PDF fonts and text-recognition resources may still need an internet connection.</p>
+        </details>
+      </section>}
 
-      {keyStatus && <p id="signing-key-status" role="status" style={{ marginTop: "1rem", color: keyError ? "#ef4444" : "#64748b" }}>{keyStatus}</p>}
-      {method === "private-key" && <button type="button" onClick={() => sealPdf()}
-        disabled={loading || loadingKeys} aria-busy={loading} style={{ marginTop: "1rem" }}>
-        {loading ? "Sealing..." : "Seal and save PDF"}
-      </button>}
-
-      {loading && usesAccount && authenticating && <button type="button"
+      {loading && usesAccount && authenticating && <button type="button" className="seal-secondary-action"
         onClick={checkSignInStatus} disabled={checkingAccount}>
         {checkingAccount ? "Checking sign-in..." : "Check sign-in status"}
       </button>}
-      {loading && usesAccount && <button type="button" onClick={cancelSealing}>Cancel sealing</button>}
-      {message && (
-        <p id="stamp-result" role="status" style={{ marginTop: "1rem", color: message.includes("failed") ? "#ef4444" : "#334155", whiteSpace: "pre-wrap" }}>
-          {message}
-        </p>
-      )}
+      {loading && usesAccount && <button type="button" className="seal-inline-action" onClick={cancelSealing}>Cancel sealing</button>}
+      {message && <p id="stamp-result" role="status" className={`seal-status${message.includes("failed") ? " seal-status-error" : ""}`}>
+        {message}
+      </p>}
     </div>
   );
 }

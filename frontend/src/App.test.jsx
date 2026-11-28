@@ -59,6 +59,7 @@ describe("App PDF signing keys", () => {
   });
 
   beforeEach(() => {
+    window.history.replaceState(null, "", "/");
     vi.stubGlobal("__qredTestMode", true);
     vi.stubGlobal("crypto", webcrypto);
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
@@ -79,39 +80,60 @@ describe("App PDF signing keys", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps the scanner as the landing page with a stamping entry point", () => {
+  it("groups camera and files under Check document with a separate sealing task", () => {
     render(React.createElement(App));
-    expect(screen.getByRole("heading", { name: "Check a printed document" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Check document" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Check document" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Camera", exact: true })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "File", exact: true })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "QRed home" }).textContent).toBe("QRed");
     expect(screen.getByRole("button", { name: "Seal PDF" })).toBeTruthy();
     expect(screen.queryByLabelText("Private Key")).toBeNull();
   });
 
-  it("opens Seal PDF and scrolls/focuses the stamping section on first and repeated clicks", async () => {
+  it.each([["Mozilla/5.0 (Linux; Android 17) Mobile", true], ["Mozilla/5.0 (X11; Linux x86_64)", false]])(
+    "shows the airplane-mode note only for mobile devices (%s)", (agent, mobile) => {
+      vi.spyOn(navigator, "userAgent", "get").mockReturnValue(agent);
+      render(<App />);
+      expect(Boolean(screen.queryByText("Use airplane mode for extra security"))).toBe(mobile);
+    });
+
+  it("opens direct seal links and uses a safe home fallback for Back", () => {
+    window.history.replaceState(null, "", "/#/seal");
+    render(<App />);
+    expect(screen.getByRole("heading", { name: "Seal PDF" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Back", exact: true }));
+    expect(screen.getByRole("heading", { name: "Check document" })).toBeTruthy();
+  });
+
+  it("keeps the PDF, key and layout when opening About and using app/browser Back", async () => {
     const scroll = vi.fn(), previous = HTMLElement.prototype.scrollIntoView;
     HTMLElement.prototype.scrollIntoView = scroll;
     try {
       render(<App />);
-      const trigger = screen.getByRole("button", { name: "Seal PDF" });
-      expect(trigger.getAttribute("aria-expanded")).toBe("false");
-      fireEvent.click(trigger);
-      const section = document.getElementById("pdf-stamp-tool");
-      expect(section).not.toBeNull();
-      expect(trigger.getAttribute("aria-controls")).toBe("pdf-stamp-tool");
-      expect(trigger.getAttribute("aria-expanded")).toBe("true");
-      const heading = screen.getByRole("heading", { name: "Seal a PDF with QRed" });
-      await waitFor(() => expect(scroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" }));
-      expect(scroll.mock.instances[0]).toBe(section);
+      fireEvent.click(screen.getByRole("button", { name: "Seal PDF" }));
+      const heading = screen.getByRole("heading", { name: "Seal PDF" });
+      expect(window.location.hash).toBe("#/seal");
       expect(document.activeElement).toBe(heading);
-
-      scroll.mockClear();
-      fireEvent.click(trigger);
-      expect(scroll).toHaveBeenCalledOnce();
-      expect(scroll.mock.instances[0]).toBe(section);
-
-      fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
-      expect(trigger.getAttribute("aria-expanded")).toBe("false");
-      expect(document.getElementById("pdf-stamp-tool")).toBeNull();
+      chooseOfflineSealing();
+      fireEvent.change(screen.getByLabelText("Private Key"), { target: { value: privateKey } });
+      const pdf = new File(["%PDF-1.4"], "keep-me.pdf", { type: "application/pdf" });
+      fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [pdf] } });
+      fireEvent.click(screen.getByRole("button", { name: "Change layout" }));
+      fireEvent.click(screen.getByRole("radio", { name: "Separate seal pages" }));
+      fireEvent.click(screen.getByRole("button", { name: "Use this layout" }));
+      fireEvent.click(screen.getByRole("button", { name: "About QRed" }));
+      expect(screen.getByRole("heading", { name: "What is QRed?" })).toBeTruthy();
+      expect(screen.queryByRole("heading", { name: "Seal PDF" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Back", exact: true }));
+      await waitFor(() => expect(screen.getByRole("heading", { name: "Seal PDF" })).toBeTruthy());
+      expect(screen.getByText("keep-me.pdf")).toBeTruthy();
+      expect(screen.getByText("Separate seal pages", { exact: true })).toBeTruthy();
+      expect(screen.getByLabelText("Private Key").value).toBe(privateKey);
+      window.history.back();
+      await waitFor(() => expect(screen.getByRole("heading", { name: "Check document" })).toBeTruthy());
+      window.history.forward();
+      await waitFor(() => expect(screen.getByRole("heading", { name: "Seal PDF" })).toBeTruthy());
+      expect(screen.getByLabelText("Open PDF").files[0]).toBe(pdf);
     } finally {
       if (previous === undefined) delete HTMLElement.prototype.scrollIntoView;
       else HTMLElement.prototype.scrollIntoView = previous;
@@ -153,7 +175,7 @@ describe("App PDF signing keys", () => {
     const keys = await generateKeys();
     const pdf = new File(["%PDF-1.4"], "source.pdf", { type: "application/pdf" });
     fireEvent.change(screen.getByLabelText("Open PDF"), { target: { files: [pdf] } });
-    expect(screen.getByLabelText("Page layout").value).toBe("watermark-sheets");
+    expect(screen.getByText("Watermarks", { exact: true })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Seal and save PDF" }));
     await screen.findByText(/Sealed source\.pdf in this browser\./);
     expect(sealPdfInBrowser).toHaveBeenCalledWith(expect.objectContaining({ file: pdf, ...keys, pageScalingStrategy: "watermark-sheets" }));
@@ -280,7 +302,7 @@ describe("App PDF signing keys", () => {
     expect(window.__qredPublicKeys).toBe(keys.publicKey);
   });
 
-  it("hides private keys by default and does not retain them after closing the tool", async () => {
+  it("hides private keys by default and discards them when finishing the sealing session", async () => {
     openStampTool();
     await generateKeys();
     const input = screen.getByLabelText("Private Key");
@@ -288,7 +310,7 @@ describe("App PDF signing keys", () => {
     expect(input.type).toBe("text");
     fireEvent.click(screen.getByRole("button", { name: "Hide private key" }));
     expect(input.type).toBe("password");
-    fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Finish & clear", exact: true }));
     expect(Object.hasOwn(window, "__qredPublicKeys")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Seal PDF" }));
     expect(screen.queryByLabelText("Private Key")).toBeNull();

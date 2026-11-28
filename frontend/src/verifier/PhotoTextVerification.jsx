@@ -30,7 +30,7 @@ export function PhotoTextVerification({ session = 0, ...props }) {
   return <PageChecks key={session} {...props} session={session} />;
 }
 
-function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captureNotice = "", scanning = false, verifying = false,
+function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captureNotice = "", scanning = false, verifying = false, active = true,
   checks: providedChecks, onReplacePhoto, onFinish, onScanMore, onChooseMore, addingPage = false, collectionProgress, session }) {
   const [checks] = useState(() => providedChecks || createPageTextChecks());
   const snapshot = useSyncExternalStore(checks.subscribe, checks.getSnapshot);
@@ -39,6 +39,14 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
   const summaryHeading = useRef(null), focusFinding = useRef(false);
   const selectedByUser = useRef(false), openedPriority = useRef(0), heading = useRef(null), focusPage = useRef(null);
   const findingHeading = useRef(null), overviewHeading = useRef(null);
+  useEffect(() => {
+    if (active) return;
+    // Keep the review and reading position, but release camera resources and
+    // modal focus/scroll locks when another task view is shown. Returning to
+    // this view must not reopen a camera without a fresh retake action.
+    setRetake(null); setViewer(null);
+    focusPage.current = null; focusFinding.current = false;
+  }, [active]);
   useEffect(() => { checks.update(results, scanPhotos, { scanning, verifying }); }, [checks, results, scanPhotos, scanning, verifying]);
   useEffect(() => () => { if (!providedChecks) checks.dispose(); }, [checks, providedChecks]);
   const pages = useMemo(() => [...snapshot.pages].sort((a, b) => (a.page.page_number ?? 0) - (b.page.page_number ?? 0)), [snapshot.pages]);
@@ -58,7 +66,7 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
     });
   }, [pages]);
   useEffect(() => {
-    if (selectedByUser.current || scanning || verifying) return;
+    if (!active || selectedByUser.current || scanning || verifying) return;
     const priority = item => item.state === "differences" ? 4 : ["unreadable", "error"].includes(item.state) ? 3
       : item.state === "uncertain" ? (item.comparison?.markings?.length || item.comparison?.contrastAssisted ? 1 : 2) : 0;
     const issue = [...pages].sort((a, b) => priority(b) - priority(a))[0];
@@ -69,24 +77,24 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
       // A clean single-page scan also needs to bring the finished result into view.
       focusPage.current = issue.id; setSelected(issue.id);
     }
-  }, [pages, scanning, verifying, selected]);
+  }, [active, pages, scanning, verifying, selected]);
   useEffect(() => {
-    if (focusPage.current !== page?.id || !heading.current) return;
+    if (!active || focusPage.current !== page?.id || !heading.current) return;
     focusPage.current = null;
     heading.current.focus({ preventScroll: true });
     heading.current.closest(".photo-result")?.scrollIntoView?.({ block: "start" });
-  }, [page?.id, pages, showSummary]);
+  }, [active, page?.id, pages, showSummary]);
   useEffect(() => {
-    if (!focusFinding.current || !findingHeading.current || showSummary) return;
+    if (!active || !focusFinding.current || !findingHeading.current || showSummary) return;
     focusFinding.current = false;
     findingHeading.current.focus({ preventScroll: true });
     findingHeading.current.scrollIntoView?.({ block: "start" });
-  }, [activeFinding, page?.id, showSummary]);
+  }, [active, activeFinding, page?.id, showSummary]);
   useEffect(() => {
-    if (!showSummary) return;
+    if (!active || !showSummary) return;
     summaryHeading.current?.focus({ preventScroll: true });
     summaryHeading.current?.scrollIntoView?.({ block: "start" });
-  }, [showSummary]);
+  }, [active, showSummary]);
   function saveReview(target, changes) {
     setReviews(previous => ({ ...previous, [target.id]: { ...currentReview(previous[target.id], target),
       comparison: target.comparison, captureId: target.captureId, reference: target.reference, ...changes } }));
@@ -232,14 +240,14 @@ function PageChecks({ results = EMPTY, seals = EMPTY, scanPhotos = EMPTY, captur
         {comparison && <p className="photo-note">Text recognition can miss or misread marks. Check important numbers and unmarked areas. Photographs and handwriting need visual review.</p>}
       </section>}
     </>}
-    {viewer && page?.url && viewer.pageId === page.id && viewer.comparison === page.comparison && <ReadingViewer
+    {active && viewer && page?.url && viewer.pageId === page.id && viewer.comparison === page.comparison && <ReadingViewer
       page={page} item={items[activeFinding]} decision={review.decisions[items[activeFinding]?.id]}
       initialMode={viewer.mode} opener={viewer.opener} onClose={() => setViewer(null)} />}
     {validPages.some(result => result.evidence) && <details open={!pages.length}>
       <summary>Compare the signed visual reference</summary>
       <PageEvidenceVerification results={results} scanPhotos={scanPhotos} session={session} onRetake={onReplacePhoto ? setRetake : undefined} />
     </details>}
-    {retake && <PageCameraCapture pageLabel={pageName(retake)} separateOriginal={Boolean(retake.seal_sheet)} onClose={() => setRetake(null)}
+    {active && retake && <PageCameraCapture pageLabel={pageName(retake)} separateOriginal={Boolean(retake.seal_sheet)} onClose={() => setRetake(null)}
       seals={seals.filter(seal => decodeSeal(seal)?.document_id === retake.document_id)}
       onCapture={file => { onReplacePhoto?.(retake.document_id, file); selectedByUser.current = true; setSelected(retake.document_id); }} />}
     <details><summary>Prepare for offline checking</summary>

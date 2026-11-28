@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 import pytest
 from PIL import Image
 from playwright.sync_api import expect
+from browser_helpers import start_camera
 from browser_helpers import (BASE_URL, NATIVE_PHOTO_CAMERA_SCRIPT, OfflineNetworkGuard,
                              assert_document_preview_not_decoded, observe_document_scan_requests,
                              wait_for_offline_resources)
@@ -59,7 +60,7 @@ def test_native_still_capture_keeps_more_detail_and_acknowledges_only_after_capt
         observe_document_scan_requests(page)
         baseline = persistent_state(page)
         downloads = []; page.on("download", lambda item: downloads.append(item))
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         page.wait_for_function("stillRequests.length === 1")
         expect(page.get_by_text("Hold steady — taking photo…", exact=True)).to_be_visible()
         expect(page.get_by_text(CAPTURED_NOTICE, exact=True)).to_have_count(0)
@@ -111,7 +112,7 @@ def test_auto_capture_quality_manual_fallback_and_retake(browser, sealed_text, p
         page.on("download", lambda value: downloads.append(value))
         # A readable seal with no visible paper boundary must not capture itself.
         camera_paper(page, TEXT.replace("Friday", "Monday"), sealed_text[1]["qr"], border=False)
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         expect(page.get_by_text("Show all four page corners. Try a contrasting background, or use Capture now.", exact=True)).to_be_visible(timeout=45000)
         baseline = persistent_state(page)
         expect(page.locator(".page-check-list button")).to_have_count(0)
@@ -199,7 +200,7 @@ def test_capture_notice_keeps_the_photo_when_the_camera_moves(browser, sealed_te
                 frame.getContext('2d').drawImage(blank, 0, 0);
             }).observe(document.body, {subtree: true, childList: true, characterData: true});
         }""", CAPTURED_NOTICE)
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         page.wait_for_function("window.__captureNotices === 1")
         assert page.evaluate("window.__noticeBeforeSeal")
         expect(page.locator(".page-check-list button")).to_have_count(1, timeout=15000)
@@ -251,7 +252,7 @@ def test_document_capture_failure_never_decodes_video_and_can_retry(browser, sea
                 }
             };
         }""", failure)
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         page.wait_for_function("__documentScanRequests.some(request => request.live)")
         page.get_by_role("button", name="Capture now", exact=True).click()
         expect(page.get_by_text("No video frame was scanned.", exact=False)).to_be_visible(timeout=10000)
@@ -303,7 +304,7 @@ def test_save_scan_photo_preserves_pixels_and_capture_metadata_offline(browser, 
                 }
             };
         }""")
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         page.wait_for_function("document.querySelector('video')?.videoWidth > 0")
         save = page.get_by_role("button", name="Save scan photo", exact=True)
         downloads = []

@@ -16,6 +16,7 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from playwright.sync_api import expect
 from reportlab.pdfgen import canvas
 
+from browser_helpers import start_camera
 from browser_helpers import (
     NATIVE_PHOTO_CAMERA_SCRIPT, assert_document_preview_not_decoded,
     observe_document_scan_requests, prepare_text_for_offline, stamp_and_save,
@@ -209,7 +210,7 @@ def test_full_printed_page_guidance_capture_and_verification(browser, printed_wo
             })
         prepare_text_for_offline(page)
         install_changing_camera(page, camera_frames(printed_workflow_page, degraded=degraded, preview_size=preview_size))
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         guide = page.locator(".ar-scan-feedback, #pageGuideHint").first
         expect(guide).to_contain_text("four page corners", timeout=15000)
         if degraded:

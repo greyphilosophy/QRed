@@ -10,7 +10,7 @@ import subprocess
 import pytest
 from PIL import Image, ImageDraw
 from playwright.sync_api import expect
-from browser_helpers import show_seal_details, show_file_inputs, prepare_text_for_offline, OfflineNetworkGuard, stamp_and_save, wait_for_offline_resources, NATIVE_PHOTO_CAMERA_SCRIPT, observe_document_scan_requests
+from browser_helpers import choose_layout, start_camera, browse_files, show_seal_details, show_file_inputs, prepare_text_for_offline, OfflineNetworkGuard, stamp_and_save, wait_for_offline_resources, NATIVE_PHOTO_CAMERA_SCRIPT, observe_document_scan_requests
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
@@ -71,7 +71,7 @@ def test_scan_seal_sheet_then_compare_unmarked_originals(browser, tmp_path, path
         page.get_by_role("button", name="Seal PDF").click()
         page.get_by_role("button", name="Private key (offline)", exact=True).click()
         page.get_by_label("Private Key", exact=True).fill(PRIVATE_KEY)
-        page.get_by_label("Page layout", exact=True).select_option("seal-sheets")
+        choose_layout(page, "seal-sheets")
         output = tmp_path / "sealed.pdf"
         seal(page, invoice("123.45"), output)
         expect(page.locator("#stamp-result")).to_contain_text("Appended 1 seal sheet")
@@ -121,7 +121,7 @@ def test_load_pdf_seals_on_both_verifiers_offline(browser, tmp_path, path):
         page.get_by_role("button", name="Seal PDF").click()
         page.get_by_role("button", name="Private key (offline)", exact=True).click()
         page.get_by_label("Private Key", exact=True).fill(PRIVATE_KEY)
-        expect(page.get_by_label("Page layout", exact=True)).to_have_value("watermark-sheets")
+        expect(page.locator(".seal-layout-summary strong")).to_have_text("Watermarks")
         stamped = tmp_path / "pdf-input-sealed.pdf"
         seal(page, buffer.getvalue(), stamped)
         expect(page.locator("#stamp-result")).not_to_contain_text("Clear footer added")
@@ -184,7 +184,7 @@ def test_text_invoice_with_raster_logos_keeps_watermarks(page, tmp_path, logo_lo
     page.get_by_role("button", name="Seal PDF").click()
     page.get_by_role("button", name="Private key (offline)", exact=True).click()
     page.get_by_label("Private Key", exact=True).fill(PRIVATE_KEY)
-    expect(page.get_by_label("Page layout", exact=True)).to_have_value("watermark-sheets")
+    expect(page.locator(".seal-layout-summary strong")).to_have_text("Watermarks")
     stamped = tmp_path / "invoice-sealed.pdf"
     result = seal(page, buffer.getvalue(), stamped)
     assert result["total_seals"] == 1
@@ -229,7 +229,7 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
         page.get_by_role("button", name="Seal PDF").click()
         page.get_by_role("button", name="Private key (offline)", exact=True).click()
         page.get_by_label("Private Key", exact=True).fill(PRIVATE_KEY)
-        page.get_by_label("Page layout", exact=True).select_option("automatic")
+        choose_layout(page, "automatic")
         stamped = tmp_path / "sealed.pdf"
         result = seal(page, synthetic_page(blank), stamped)
         assert result["total_seals"] == 1
@@ -282,7 +282,7 @@ def test_visual_reference_from_printed_seal_works_offline(browser, tmp_path, pat
                 window.__syntheticCameraFrame = frame;
             }""", camera_image)
             page.evaluate(NATIVE_PHOTO_CAMERA_SCRIPT)
-            page.get_by_role("button", name="Check document", exact=True).click()
+            start_camera(page)
             # A footer-only view has no paper boundary. Its intentional manual
             # capture must still recover the signed visual reference offline.
             page.wait_for_function("document.querySelector('video')?.readyState >= 2")

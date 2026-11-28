@@ -58,8 +58,8 @@ afterEach(() => {
 
 it("shows only essential pre-sign-in disclosures and keeps technical explanations collapsed", async () => {
   render(<PdfSealForm />);
-  expect(screen.getByText(/Your PDF stays on this device\. Account sign-in sends page fingerprints/)).toBeTruthy();
-  expect(screen.getByText(/Account seals disclose your provider profile name and email/)).toBeTruthy();
+  expect(screen.getByText("Your PDF stays on this device.")).toBeTruthy();
+  expect(screen.getByText(/Sign-in sends page fingerprints to QRed\. Your account name and email are readable in the seals/)).toBeTruthy();
   const details = screen.getByText("About seals, privacy and page layouts").closest("details");
   expect(details.open).toBe(false);
   expect(details.textContent).toContain("These commitments are unsalted");
@@ -68,9 +68,12 @@ it("shows only essential pre-sign-in disclosures and keeps technical explanation
   expect(screen.getByRole("button", { name: "Sign in with Microsoft" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Login with Amazon" })).toBeTruthy();
   expect(screen.queryByText(/QRed prepares authentication securely/)).toBeNull();
-  expect(screen.getByText(/Keeps readable watermarks on the originals and appends the remaining seals/)).toBeTruthy();
-  fireEvent.change(screen.getByLabelText("Page layout"), { target: { value: "automatic" } });
-  expect(screen.getByText(/Uses a watermark when readable, otherwise a footer/)).toBeTruthy();
+  expect(screen.getByText("Extra seal pages if needed.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Change layout" }));
+  fireEvent.click(screen.getByText("More layouts"));
+  fireEvent.click(screen.getByRole("radio", { name: "Watermarks with footer fallback" }));
+  fireEvent.click(screen.getByRole("button", { name: "Use this layout" }));
+  expect(screen.getByText("Page or content size may change.")).toBeTruthy();
   expect(screen.queryByText(/sign-in provider directly/)).toBeNull();
 });
 
@@ -145,11 +148,11 @@ it("allows leaving offline signing before selecting a PDF, without any auth requ
 it("prepares provider authorization URLs after the PDF and layout, without opening tabs", async () => {
   const open = vi.spyOn(window, "open");
   const { container } = render(<PdfSealForm />);
-  expect(screen.getByLabelText("Page layout").value).toBe("watermark-sheets");
+  expect(screen.getByText("Extra seal pages if needed.")).toBeTruthy();
   expect(screen.queryByLabelText("Private Key")).toBeNull();
   const choices = container.querySelectorAll(".sealing-method-grid button");
   expect(choices).toHaveLength(4);
-  expect(choices[3].textContent.trim()).toBe("Private key (offline)");
+  expect(choices[3].getAttribute("aria-label")).toBe("Private key (offline)");
   upload();
   const google = await screen.findByRole("link", { name: AUTH_PROVIDERS.google.button });
   const microsoft = screen.getByRole("link", { name: AUTH_PROVIDERS.microsoft.button });
@@ -231,4 +234,71 @@ it("keeps private PDF page content out of the provider link and all third-party 
   expect(link.href).not.toContain("private page text");
   expect(fetch).toHaveBeenCalledWith("/api/auth/config", expect.any(Object));
   expect(fetch).toHaveBeenCalledTimes(1); // Only QRed configuration; commitments are handled by mock.
+});
+
+it("prepares a newly chosen layout only after it is applied, retaining the selected PDF", async () => {
+  render(<PdfSealForm />);
+  upload();
+  await screen.findByRole("link", { name: AUTH_PROVIDERS.google.button });
+  const original = screen.getByLabelText("Open PDF").files[0];
+  fireEvent.click(screen.getByRole("button", { name: "Change layout" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Separate seal pages" }));
+  expect(prepareAccountPdfSeal).toHaveBeenCalledTimes(1);
+  expect(finishAccountSignIn).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Use this layout" }));
+  await screen.findByRole("link", { name: AUTH_PROVIDERS.google.button });
+  expect(prepareAccountPdfSeal).toHaveBeenCalledTimes(2);
+  expect(prepareAccountPdfSeal).toHaveBeenLastCalledWith(expect.objectContaining({
+    file: original, pageScalingStrategy: "seal-sheets",
+  }));
+  expect(screen.getByLabelText("Open PDF").files[0]).toBe(original);
+  expect(finishAccountSignIn).toHaveBeenCalledTimes(3);
+});
+
+it("does not prepare account sessions while its retained view is inactive", async () => {
+  const { rerender } = render(<PdfSealForm active={false} />);
+  upload();
+  expect(fetch).not.toHaveBeenCalled();
+  expect(prepareAccountPdfSeal).not.toHaveBeenCalled();
+  rerender(<PdfSealForm active />);
+  await screen.findByRole("link", { name: AUTH_PROVIDERS.google.button });
+  expect(fetch).toHaveBeenCalledTimes(1);
+  rerender(<PdfSealForm active={false} />);
+  expect(screen.queryByRole("link", { name: AUTH_PROVIDERS.google.button })).toBeNull();
+  expect(finishAccountSignIn).toHaveBeenCalledTimes(3);
+  expect(screen.getByLabelText("Open PDF").files[0].name).toBe("source.pdf");
+  rerender(<PdfSealForm active />);
+  await screen.findByRole("link", { name: AUTH_PROVIDERS.google.button });
+  expect(prepareAccountPdfSeal).toHaveBeenCalledTimes(2);
+});
+
+it("keeps offline key input and PDF when its view becomes inactive, with no account requests", async () => {
+  const { rerender } = render(<PdfSealForm />);
+  fireEvent.click(screen.getByRole("button", { name: "Private key (offline)" }));
+  upload();
+  fireEvent.change(screen.getByLabelText("Private Key"), { target: { value: "unfinished key input" } });
+  rerender(<PdfSealForm active={false} />);
+  rerender(<PdfSealForm active />);
+  expect(screen.getByLabelText("Private Key").value).toBe("unfinished key input");
+  expect(screen.getByLabelText("Open PDF").files[0].name).toBe("source.pdf");
+  await Promise.resolve();
+  expect(fetch).not.toHaveBeenCalled();
+  expect(prepareAccountPdfSeal).not.toHaveBeenCalled();
+});
+
+it("lets a user-started account seal finish while the retained view is inactive", async () => {
+  let finishPolling;
+  attestPagesWithAccount.mockImplementation(() => new Promise(resolve => { finishPolling = resolve; }));
+  const { rerender } = render(<PdfSealForm />);
+  upload();
+  fireEvent.click(await screen.findByRole("link", { name: AUTH_PROVIDERS.google.button }));
+  await waitFor(() => expect(attestPagesWithAccount).toHaveBeenCalledTimes(1));
+  const options = attestPagesWithAccount.mock.calls[0][2];
+  rerender(<PdfSealForm active={false} />);
+  expect(options.signal.aborted).toBe(false);
+  expect(finishAccountSignIn.mock.calls.map(([provider]) => provider).sort()).toEqual(["amazon", "microsoft"]);
+  finishPolling([{}]);
+  await screen.findByText(/Sealed source.pdf in this browser/);
+  expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+  expect(prepareAccountPdfSeal).toHaveBeenCalledTimes(1);
 });

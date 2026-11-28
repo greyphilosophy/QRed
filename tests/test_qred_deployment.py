@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, expect
-from browser_helpers import show_seal_details, show_file_inputs, stamp_and_save, BASE_URL, NATIVE_PHOTO_CAMERA_SCRIPT
+from browser_helpers import choose_layout, start_camera, browse_files, show_seal_details, show_file_inputs, stamp_and_save, BASE_URL, NATIVE_PHOTO_CAMERA_SCRIPT
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas as rl_canvas
 from PIL import Image
@@ -169,7 +169,7 @@ def _upload_and_seal(page: Page, file_path: str, private_key: str = "", layout: 
     page.get_by_label("Private Key", exact=True).fill(private_key or DEMO_PRIVATE_KEY)
     expect(page.get_by_label("Encoding Strategy")).to_have_count(0)
     if layout is not None:
-        page.get_by_label("Page layout", exact=True).select_option(layout)
+        choose_layout(page, layout)
     saved_path, _ = stamp_and_save(page, file_path)
     return str(saved_path), _extract_seal_result(page)
 
@@ -534,7 +534,7 @@ class TestKeyGenerationImportAndSignatureVerification:
         assert page.evaluate("JSON.stringify([localStorage, sessionStorage])").find(generated_private) == -1
 
         # Closing clears the keys. The private download restores the same identity.
-        page.get_by_role("button", name="Close", exact=True).click()
+        page.get_by_role("button", name="Finish & clear", exact=True).click()
         page.get_by_role("button", name="Seal PDF").click()
         page.get_by_role("button", name="Private key (offline)", exact=True).click()
         expect(private_input).to_have_value("")
@@ -547,7 +547,7 @@ class TestKeyGenerationImportAndSignatureVerification:
         expect(page.get_by_label("Issuer public key", exact=True)).to_have_count(0)
 
         page.get_by_label("Open PDF", exact=True).set_input_files(simple_pdf_path)
-        page.get_by_label("Page layout", exact=True).select_option("legal-footer")
+        choose_layout(page, "legal-footer")
         with page.expect_download(timeout=60_000) as download_info:
             page.get_by_role("button", name="Seal and save PDF", exact=True).click()
         sealed_path = tmp_path / download_info.value.suggested_filename
@@ -758,7 +758,7 @@ class TestCameraFrameScanning:
         })();
         """.replace("CAMERA_FIXTURE", json.dumps(camera)))
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"))
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         page.wait_for_function("""() => {
             const video = document.querySelector('.ar-camera video');
             return video?.readyState >= 2 && video.videoWidth > 0;
@@ -778,9 +778,12 @@ class TestCameraFrameScanning:
                 return context.getImageData(left, top, size, size).data.some((value, i) => i % 4 !== 3 && value < 128);
             }""", arg={"left": left, "top": top, "size": size}, timeout=5000)
             page.get_by_role("button", name="Capture now", exact=True).click()
+        # Wait for completed capture to enter the check view before opening
+        # details; leaving the camera early would cancel the native decode.
+        expect(page.locator('[data-qred-view="check"]')).to_be_visible(timeout=30000)
+        expect(page.locator(".ar-camera video")).to_have_count(0)
         show_seal_details(page)
         # Both paths must decode a native still, never the preview frame.
-        expect(page.get_by_role("heading", name="Pages captured", exact=True)).to_be_visible(timeout=30000)
         assert 1 <= page.evaluate("__syntheticStillRequests.length") <= 3
         assert page.evaluate("__syntheticStillRequests[0]") == {
             "fillLightMode": "off", "imageWidth": width * 3, "imageHeight": height * 3,
@@ -847,7 +850,7 @@ class TestContinuousSealScanning:
         """.replace("FRAMES", json.dumps(frames)))
         base_url = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
         page.goto(base_url + route, wait_until="networkidle")
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         page.wait_for_function("document.querySelector('video')?.readyState >= 2")
         page.locator("video").first.scroll_into_view_if_needed()
         progress = page.locator(".ar-collection-progress" if route == "/" else "#statusText")
@@ -881,7 +884,7 @@ class TestContinuousSealScanning:
             expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_have_count(2)
             # Clearing resets duplicate suppression as well as collected results.
             page.get_by_role("button", name="Finish & clear", exact=True).click()
-            page.get_by_role("button", name="Check document", exact=True).click()
+            start_camera(page)
             page.wait_for_function("window.cameraOpenCount === 2 && document.querySelector('video')?.readyState >= 2")
             page.locator("video").first.scroll_into_view_if_needed()
             page.evaluate("window.showSealFrame(0)")

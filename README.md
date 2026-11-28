@@ -184,7 +184,7 @@ is preserved. Non-JPEG and compound HDR/motion-photo files retain their original
 bytes and use the JSON record. Unreported settings and unmeasured lens calibration
 remain unknown; saving metadata does not itself correct distortion. See the
 [scan metadata format](docs/SCAN_PHOTO_METADATA.md). Use
-**Browse files** to reopen it from Downloads. Older scan ZIPs open their first
+**File** on the homepage, or **Browse files** in the scanner, to reopen it from Downloads. Older scan ZIPs open their first
 numbered photo. **Choose photo** opens the photo picker.
 Live scanning uses a background worker with one frame in flight and no queued
 frames. It rotates through bounded attempts and disables lengthy alignment
@@ -235,7 +235,32 @@ The configured/default public key is for verification only. The sealing tool doe
 
 ## Check a printed document
 
-On the homepage or `verify.htm`, choose **Check document** and allow camera access.
+The homepage groups **Camera** and **File** under **Check document**, with a separate
+**Seal PDF** task. **File** accepts a PDF, photo, or saved scan ZIP. On mobile devices,
+the group includes “Use airplane mode for extra security”; prepare the required
+software and language resources before disconnecting. **About QRed** explains seals,
+privacy, result limitations, and offline preparation.
+
+These views use hash routes (`#/check`, `#/check/camera`, `#/seal`, and `#/about`) so
+browser Back/Forward and deep links work with the cached homepage. Changing views
+preserves the current document check, review decisions, chosen PDF, layout, and key
+input in memory. Leaving a camera or retake view stops its camera and decoding work.
+**Finish & clear** ends the current checking or sealing session; a sealing session's
+private key and PDF are discarded when it is cleared. Documents and keys are not
+added to browser storage or navigation history.
+
+The camera retains its flashlight/flash fallback, framing selector, whole-page and
+individual-seal modes, automatic/manual capture, cancel/retry controls, and scan-photo
+ZIP download. Review retains page/reading navigation, retakes, original-page capture,
+enlargement, summary, issuer-key import, and detailed seal results.
+
+In **Seal PDF**, **Change layout** shows illustrated choices. **Watermarks**, with
+extra seal pages when needed, remains the default. Separate seal pages are a primary
+choice; footer and resizing choices are under **More layouts**. Account buttons retain
+their provider icons and direct sign-in flow; the private-key method remains last.
+
+On the homepage, choose **Camera** under **Check document** and allow camera access.
+The standalone `verify.htm` page retains its **Check document** button.
 QRed prepares its local English text reader before opening the camera. Frame each
 whole page upright, in good light, against a contrasting background. QRed requests
 3840×2880 camera detail where available; lower resolutions remain supported. It detects

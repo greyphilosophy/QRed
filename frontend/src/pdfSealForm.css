@@ -1,0 +1,56 @@
+.pdf-seal-form {
+  --seal-panel: var(--qred-panel, #fff);
+  --seal-text: var(--qred-text, #15243b);
+  --seal-muted: var(--qred-muted, #52617a);
+  --seal-line: var(--qred-line, #b8c6d9);
+  --seal-action: var(--qred-action, #1c3d67);
+  --seal-action-text: var(--qred-action-text, #fff);
+  --seal-soft: var(--qred-soft, #e6eef9);
+  width: 100%; max-width: 540px; margin-inline: auto; color: var(--seal-text); line-height: 1.5;
+}
+.pdf-seal-form, .pdf-seal-form * { box-sizing: border-box; }
+.pdf-seal-form .seal-form-heading { display: flex; align-items: center; gap: .625rem; margin: 0 0 1.25rem; font-size: clamp(1.5rem, 5vw, 1.85rem); line-height: 1.25; }
+.seal-form-heading > span { font-size: 1.6rem; transform: rotate(-8deg); }
+.seal-file-input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.pdf-seal-form .seal-file-picker { display: grid; justify-items: stretch; gap: .75rem; padding: 1.5rem .875rem; border: 1px dashed var(--seal-line); border-radius: 16px; background: var(--seal-panel); }
+.seal-file-placeholder { justify-self: center; margin-bottom: .25rem; font-size: 2.5rem; line-height: 1; color: var(--seal-muted); }
+.pdf-seal-form .seal-file-card { display: grid; grid-template-columns: 32px minmax(0, 1fr) 44px; align-items: center; gap: .5rem; padding: .75rem; border: 1px solid var(--seal-line); border-radius: 14px; background: var(--seal-panel); }
+.seal-file-card > svg { color: var(--seal-muted); }
+.seal-file-description { min-width: 0; }
+.seal-file-name { display: block; font-size: .94rem; font-weight: 650; overflow-wrap: anywhere; }
+.seal-file-meta { display: block; margin-top: .125rem; color: var(--seal-muted); font-size: .82rem; }
+.pdf-seal-form .seal-icon-action { display: inline-grid; place-items: center; width: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--seal-muted); font-size: 1.7rem; }
+.pdf-seal-form .seal-primary-action, .pdf-seal-form .seal-secondary-action { display: inline-flex; justify-content: center; align-items: center; gap: .5rem; min-height: 50px; padding: .75rem .875rem; border: 1px solid var(--seal-line); border-radius: 12px; background: var(--seal-panel); color: var(--seal-text); font: inherit; font-size: .94rem; font-weight: 650; text-align: center; cursor: pointer; }
+.pdf-seal-form .seal-primary-action { border-color: var(--seal-action); background: var(--seal-action); color: var(--seal-action-text); }
+.pdf-seal-form button:disabled { opacity: .55; cursor: not-allowed; }
+.pdf-seal-form button:focus-visible, .pdf-seal-form a:focus-visible, .pdf-seal-form input:focus-visible { outline: 3px solid var(--seal-action); outline-offset: 3px; }
+.pdf-seal-form .seal-inline-action { display: inline-flex; align-items: center; gap: .4rem; min-height: 44px; padding: .5rem 0; border: 0; background: transparent; color: var(--seal-action); font: inherit; font-size: .875rem; font-weight: 650; text-align: left; cursor: pointer; }
+.seal-inline-action > span { font-size: 1.25rem; }
+.seal-about-action { margin-bottom: .5rem; }
+.seal-privacy-line { margin: .625rem 0 0; color: var(--seal-muted); font-size: .82rem; text-align: center; }
+.seal-auth-section { margin-top: 1.5rem; }
+.pdf-seal-form .sealing-methods { min-width: 0; margin: 0; padding: 0; border: 0; }
+.pdf-seal-form .sealing-methods > legend { padding: 0; margin-bottom: .5rem; color: var(--seal-text); font-size: 1.06rem; font-weight: 650; }
+.pdf-seal-form .seal-auth-copy { margin: 0 0 .75rem; color: var(--seal-muted); font-size: .84rem; line-height: 1.5; }
+.pdf-seal-form .sealing-method-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: .6rem; }
+.pdf-seal-form .sealing-method-grid .account-provider-choice { display: flex; align-items: center; justify-content: center; gap: .65rem; width: 100%; min-height: 52px; padding: .75rem .875rem; border: 1px solid var(--seal-line); border-radius: 12px; background: var(--seal-panel); color: var(--seal-text); font: inherit; font-size: .94rem; font-weight: 600; line-height: 1.35; text-align: center; text-decoration: none; }
+.pdf-seal-form .sealing-method-grid .account-provider-choice svg { flex: 0 0 24px; }
+.pdf-seal-form .sealing-method-grid a.account-provider-choice:hover, .pdf-seal-form .sealing-method-grid button.account-provider-choice:not(:disabled):hover { border-color: var(--seal-action); background: var(--seal-soft); }
+.pdf-seal-form .sealing-method-grid button.seal-private-choice { display: flex; align-items: center; justify-content: center; gap: .5rem; width: 100%; min-height: 48px; padding: .65rem .5rem; border: 1px solid transparent; background: transparent; color: var(--seal-text); font: inherit; font-size: .9rem; font-weight: 500; line-height: 1.4; }
+.pdf-seal-form .sealing-method-grid button.seal-private-choice[aria-pressed="true"] { border-color: var(--seal-action); background: var(--seal-soft); color: var(--seal-text); }
+.seal-private-section { border-top: 1px solid var(--seal-line); margin-top: 1.25rem; padding-top: 1.25rem; }
+.seal-private-section h3 { margin: 0 0 .625rem; font-size: 1.06rem; }
+.seal-key-start-actions { display: grid; gap: .65rem; margin-block: 1rem; }
+.seal-key-start-actions label, .seal-key-label { display: block; color: var(--seal-text); font-size: .94rem; font-weight: 650; }
+.seal-private-section input[type="file"] { max-width: 100%; min-height: 44px; color: var(--seal-muted); font: inherit; font-size: .875rem; }
+.seal-private-section input[type="file"]::file-selector-button { min-height: 44px; padding: .5rem .75rem; margin-right: .5rem; border: 1px solid var(--seal-line); border-radius: 9px; background: var(--seal-panel); color: var(--seal-text); font: inherit; cursor: pointer; }
+.pdf-seal-form .seal-private-section input[type="password"], .pdf-seal-form .seal-private-section input[type="text"] { display: block; width: 100%; min-height: 50px; margin: .5rem 0; padding: .75rem; border: 1px solid var(--seal-line); border-radius: 10px; background: var(--seal-panel); color: var(--seal-text); font: 1rem/1.5 ui-monospace, monospace; }
+.seal-key-help { display: block; margin: .5rem 0; color: var(--seal-muted); font-size: .82rem; line-height: 1.5; }
+.seal-key-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; margin-block: .75rem; }
+.pdf-seal-form .seal-key-actions .seal-secondary-action { padding-inline: .5rem; font-size: .84rem; }
+.pdf-seal-form .seal-save-action { width: 100%; margin-block: .875rem .25rem; }
+.seal-help-details { margin-block: .75rem; border-top: 1px solid var(--seal-line); border-bottom: 1px solid var(--seal-line); color: var(--seal-muted); font-size: .875rem; }
+.seal-help-details summary { min-height: 48px; padding-block: .75rem; color: var(--seal-text); font-weight: 600; cursor: pointer; }
+.seal-help-details p { margin: 0 0 .875rem; }
+.seal-status { margin-block: 1rem; color: var(--seal-muted); font-size: .875rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.seal-status-error { color: #a12626; }

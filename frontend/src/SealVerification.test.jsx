@@ -11,13 +11,29 @@ import App from "./App.jsx";
 import { useSealVerification } from "./SealVerification.jsx";
 import { decodeSeal } from "./qredVerifier.js";
 import { scanPhotoInWorker } from "./qr/photoScanClient.js";
+import { scanPdfSeals } from "./verifier/scanPdf.js";
+import { readScanPhotoZip } from "./qr/scanPhotoArchive.js";
 
 vi.mock("./trustedAuthorities.json", () => ({ default: { da522162396ab2d0: "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q" } }));
 
 const scanner = vi.hoisted(() => ({ props: null }));
-vi.mock("./QrScanner.jsx", () => ({ QrScanner: (props) => { scanner.props = props; return null; } }));
+const verificationView = vi.hoisted(() => ({ props: null }));
+vi.mock("./QrScanner.jsx", () => ({ QrScanner: (props) => {
+  scanner.props = props;
+  return <button type="button" onClick={props.onReview}>Review captured pages</button>;
+} }));
+vi.mock("./SealVerification.jsx", async importOriginal => {
+  const actual = await importOriginal();
+  const ActualSealVerification = actual.SealVerification;
+  return { ...actual, SealVerification: props => {
+    verificationView.props = props;
+    return <ActualSealVerification {...props} />;
+  } };
+});
 vi.mock("./PdfSealForm.jsx", () => ({ PdfSealForm: () => null }));
 vi.mock("./qr/photoScanClient.js", () => ({ preparePhotoScanner: vi.fn(), scanPhotoInWorker: vi.fn() }));
+vi.mock("./verifier/scanPdf.js", async importOriginal => ({ ...await importOriginal(), scanPdfSeals: vi.fn() }));
+vi.mock("./qr/scanPhotoArchive.js", async importOriginal => ({ ...await importOriginal(), readScanPhotoZip: vi.fn() }));
 const privateKey = "txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=";
 const publicKey = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q=";
 
@@ -27,8 +43,40 @@ function selectKey(text, name = "issuer.txt") {
   });
 }
 
+function renderCameraApp() {
+  const view = render(<App />);
+  fireEvent.click(screen.getByRole("button", { name: "Camera", exact: true }));
+  return view;
+}
+
+function renderFilesApp() {
+  const view = render(<App />);
+  fireEvent.click(screen.getByRole("button", { name: "File", exact: true }));
+  return view;
+}
+
+async function scanSeals(texts) {
+  if (!screen.queryByRole("button", { name: "Review captured pages" })) {
+    fireEvent.click(screen.getByRole("button", { name: "Camera", exact: true }));
+  }
+  await act(async () => texts.forEach(text => scanner.props.onSealDetected(text)));
+  fireEvent.click(screen.getByRole("button", { name: "Review captured pages" }));
+  await waitFor(() => expect(document.querySelector('[data-qred-view="check"]').hidden).toBe(false));
+}
+
+function choosePhoto(files) {
+  if (document.querySelector('[data-qred-view="check"]').hidden) {
+    fireEvent.click(screen.getByRole("button", { name: "File", exact: true }));
+  }
+  fireEvent.change(screen.getByLabelText("Choose QR image"), { target: { files } });
+}
+
 beforeEach(() => {
+  window.history.replaceState({}, "", "/");
+  scanner.props = null; verificationView.props = null;
   vi.mocked(scanPhotoInWorker).mockReset();
+  vi.mocked(scanPdfSeals).mockReset();
+  vi.mocked(readScanPhotoZip).mockReset();
   vi.stubGlobal("crypto", webcrypto);
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
 });
@@ -56,19 +104,19 @@ it("connects homepage scans to real signature verification and waits for every c
   const content = Array.from({ length: 700 }, (_, i) => `Record ${i}: ${Math.imul(i + 17, 2654435761) >>> 0}.`).join("\n");
   const { seals } = await createQRedSeals({ content, privateKey, publicKey });
   expect(seals.length).toBeGreaterThan(1);
-  render(<App />);
+  renderCameraApp();
   expect(scanner.props.returnPayload).toBe(true);
   expect(scanner.props.collectSeals).toBe(true);
   expect(screen.queryByLabelText("Issuer public key")).toBeNull();
   expect(screen.queryByLabelText("Open issuer public key file")).toBeNull();
-  await act(async () => scanner.props.onSealDetected(seals[0]));
+  await scanSeals([seals[0]]);
   expect(await screen.findByRole("heading", { name: "INCOMPLETE", hidden: true })).toBeTruthy();
-  expect(scanner.props.collectionProgress).toMatchObject({ collected: 1, total: seals.length, finished: false });
+  expect(verificationView.props.verification.progress).toMatchObject({ collected: 1, total: seals.length, finished: false });
   selectKey(publicKey);
   await screen.findByText(/Public key opened/);
-  await act(async () => seals.slice(1).forEach(scanner.props.onSealDetected));
+  await scanSeals(seals.slice(1));
   expect(await screen.findByRole("heading", { name: "Seal authenticated", hidden: true })).toBeTruthy();
-  await waitFor(() => expect(scanner.props.collectionProgress.complete).toBe(true));
+  await waitFor(() => expect(verificationView.props.verification.progress.complete).toBe(true));
   expect(document.querySelector(".verification-result pre").textContent).toBe(content);
 
   selectKey("Eia2iJ9vDsWocr42GjIagNI0cOVVjy8F2l-6_QgMCdI=");
@@ -78,8 +126,8 @@ it("connects homepage scans to real signature verification and waits for every c
 it("displays the signed timestamp of scanned seals and clears previous results", async () => {
   const timestamp = "2026-10-20T17:55:14.123Z";
   const { seals } = await createQRedSeals({ content: "Scanned document", timestamp, privateKey, publicKey });
-  const { container } = render(<App />);
-  await act(async () => seals.forEach(scanner.props.onSealDetected));
+  const { container } = renderCameraApp();
+  await scanSeals(seals);
   selectKey(publicKey);
   expect(await screen.findByRole("heading", { name: "Seal authenticated", hidden: true })).toBeTruthy();
   expect(container.querySelector("time").textContent).toBe(timestamp);
@@ -90,8 +138,8 @@ it("displays the signed timestamp of scanned seals and clears previous results",
 });
 
 it("keeps a normal QR visible without treating it as a verified document", async () => {
-  render(<App />);
-  await act(async () => scanner.props.onSealDetected("https://example.org/ordinary"));
+  renderCameraApp();
+  await scanSeals(["https://example.org/ordinary"]);
   expect(screen.getByText("Unverified QR content: https://example.org/ordinary")).toBeTruthy();
   expect(screen.queryByRole("heading", { name: "Seal authenticated", hidden: true })).toBeNull();
 });
@@ -102,11 +150,11 @@ it("displays recovered PDF pages in page order when scanned in reverse", async (
     content: `Document page ${pageNumber}`, timestamp, privateKey, publicKey,
     pageContext: { pageNumber, pageCount: 2, documentRoot: "a1".repeat(32) },
   })));
-  render(<App />);
-  await act(async () => pages[0].seals.forEach(scanner.props.onSealDetected));
+  renderCameraApp();
+  await scanSeals(pages[0].seals);
   expect(await screen.findByText("Page 2 of 2")).toBeTruthy();
   selectKey(publicKey);
-  await act(async () => pages[1].seals.forEach(scanner.props.onSealDetected));
+  await scanSeals(pages[1].seals);
   await waitFor(() => expect(screen.getAllByRole("heading", { name: "Seal authenticated", hidden: true })).toHaveLength(2));
   expect([...document.querySelectorAll(".verification-result pre")].map(item => item.textContent))
     .toEqual(["Document page 1", "Document page 2"]);
@@ -114,8 +162,8 @@ it("displays recovered PDF pages in page order when scanned in reverse", async (
 
 it("opens an issuer key locally and rechecks collected seals, preserving the key on invalid imports", async () => {
   const { seals } = await createQRedSeals({ content: "Saved issuer identity", privateKey, publicKey });
-  render(<App />);
-  await act(async () => scanner.props.onSealDetected(seals[0]));
+  renderCameraApp();
+  await scanSeals([seals[0]]);
   expect(await screen.findByRole("heading", { name: "UNVERIFIED", hidden: true })).toBeTruthy();
   const requestsBefore = fetch.mock.calls.length;
 
@@ -139,11 +187,11 @@ it.each(Object.keys(AUTH_PROVIDERS))("verifies %s seals offline without asking f
   const { seals } = await createQRedSeals({ content, encodingStrategy: "plaintext",
     attestation: { ...metadata, public_key: publicKey.replace(/=$/, ""), signature: encodeBase64Url(signature) } });
   expect(seals.length).toBeGreaterThan(1);
-  render(<App />);
-  await act(async () => scanner.props.onSealDetected(seals.at(-1)));
+  renderCameraApp();
+  await scanSeals([seals.at(-1)]);
   expect(await screen.findByRole("heading", { name: "INCOMPLETE", hidden: true })).toBeTruthy();
   expect(screen.queryByLabelText("Open issuer public key file")).toBeNull();
-  await act(async () => seals.slice(0, -1).forEach(scanner.props.onSealDetected));
+  await scanSeals(seals.slice(0, -1));
   expect(await screen.findByRole("heading", { name: "Seal authenticated", hidden: true })).toBeTruthy();
   expect(screen.getByText("Account authenticated through " + authProvider(provider).label + ": alice@gmail.com", { exact: false })).toBeTruthy();
   expect(Boolean(screen.queryByText(/QRed did not separately verify control of that mailbox/))).toBe(provider !== "google");
@@ -178,14 +226,12 @@ it("does not collect an uploaded image that finishes opening after the user clea
     static createObjectURL() { return "blob:pending-qr-image"; }
     static revokeObjectURL() {}
   });
-  render(<App />);
-  fireEvent.change(screen.getByLabelText("Choose QR image"), {
-    target: { files: [new File(["synthetic"], "qr.png", { type: "image/png" })] },
-  });
+  renderFilesApp();
+  choosePhoto([new File(["synthetic"], "qr.png", { type: "image/png" })]);
   fireEvent.click(screen.getByRole("button", { name: "Finish & clear" }));
   await act(async () => opened());
   expect(screen.queryByText(/No QR code found/)).toBeNull();
-  expect(scanner.props.collectionProgress).toBeNull();
+  expect(verificationView.props.verification.progress).toBeNull();
 });
 
 it.each(["cancel", "clear", "replace"])("discards a pending photo result after %s and can read another photo", async reason => {
@@ -203,10 +249,8 @@ it.each(["cancel", "clear", "replace"])("discards a pending photo result after %
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
     drawImage() {}, getImageData: () => ({ data: new Uint8ClampedArray(20 * 30 * 4), width: 20, height: 30 }),
   });
-  render(<App />);
-  const choose = () => fireEvent.change(screen.getByLabelText("Choose QR image"), {
-    target: { files: [new File(["synthetic"], "page.png", { type: "image/png" })] },
-  });
+  renderFilesApp();
+  const choose = () => choosePhoto([new File(["synthetic"], "page.png", { type: "image/png" })]);
   choose();
   await waitFor(() => expect(pending).toHaveLength(1));
   expect(screen.getByText(/Reading photo…/)).toBeTruthy();
@@ -261,17 +305,15 @@ it("collects all four signed chunks from one uploaded page photograph", async ()
   });
   vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(callback =>
     callback(new Blob(["one-page"], { type: "image/png" })));
-  render(<App />);
-  fireEvent.change(screen.getByLabelText("Choose QR image"), {
-    target: { files: [new File(["synthetic"], "whole-page.png", { type: "image/png" })] },
-  });
+  renderFilesApp();
+  choosePhoto([new File(["synthetic"], "whole-page.png", { type: "image/png" })]);
   // QRed displays the local-key picker only after a QRed v3 seal is
   // collected. The previous test tried to open it before uploading a seal.
   await screen.findByLabelText("Open issuer public key file");
   selectKey(publicKey);
   await screen.findByText(/Public key opened/);
   expect(await screen.findByRole("heading", { name: "Seal authenticated", hidden: true })).toBeTruthy();
-  await waitFor(() => expect(scanner.props.collectionProgress).toMatchObject({
+  await waitFor(() => expect(verificationView.props.verification.progress).toMatchObject({
     collected: 4, total: 4, finished: true,
   }));
   expect(screen.getAllByText("Page 1 of 1").length).toBeGreaterThan(0);
@@ -299,17 +341,15 @@ it("retains partial uploaded seals, shows the timeout, and can finish from anoth
   });
   vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(callback =>
     callback(new Blob(["page"], { type: "image/png" })));
-  render(<App />);
-  const choose = () => fireEvent.change(screen.getByLabelText("Choose QR image"), {
-    target: { files: [new File(["synthetic"], "page.png", { type: "image/png" })] },
-  });
+  renderFilesApp();
+  const choose = () => choosePhoto([new File(["synthetic"], "page.png", { type: "image/png" })]);
   choose();
   const feedback = await screen.findByText(text => text.startsWith(message));
   expect(feedback.textContent).toContain("Selected photo: 20 × 30");
-  await waitFor(() => expect(scanner.props.collectionProgress).toMatchObject({ collected: 1, total: 2, finished: false }));
+  await waitFor(() => expect(verificationView.props.verification.progress).toMatchObject({ collected: 1, total: 2, finished: false }));
   expect(screen.queryByRole("button", { name: "Cancel photo scan" })).toBeNull();
   choose();
-  await waitFor(() => expect(scanner.props.collectionProgress).toMatchObject({ collected: 2, total: 2, finished: true }));
+  await waitFor(() => expect(verificationView.props.verification.progress).toMatchObject({ collected: 2, total: 2, finished: true }));
   expect(screen.queryByText(text => text.startsWith(message))).toBeNull();
 });
 
@@ -328,12 +368,12 @@ it.each([[6000, 8000, 3000, 4000], [4032, 3024, 4000, 3000], [600, 800, 600, 800
     }));
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage, getImageData });
     vi.mocked(scanPhotoInWorker).mockResolvedValue({ status: "feedback", message: "No readable seal found." });
-    render(<App />);
+    renderCameraApp();
     const input = screen.getByLabelText("Choose QR image");
     const click = vi.spyOn(input, "click");
     // The homepage camera button selects this same file input, rather than
     // a second route that could silently retain the old full-size decoder.
-    act(() => scanner.props.onChoosePhoto());
+    act(() => scanner.props.onChoosePhoto(false));
     expect(click).toHaveBeenCalledOnce();
     fireEvent.change(input, { target: { files: [new File(["synthetic"], "page.png", { type: "image/png" })] } });
     await waitFor(() => expect(scanPhotoInWorker).toHaveBeenCalledOnce());
@@ -367,10 +407,8 @@ it.each(["cancel", "clear", "replace"])("releases a selected photo still opening
   });
   const drawImage = vi.fn();
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage });
-  render(<App />);
-  const choose = () => fireEvent.change(screen.getByLabelText("Choose QR image"), {
-    target: { files: [new File(["synthetic"], "page.png", { type: "image/png" })] },
-  });
+  renderFilesApp();
+  const choose = () => choosePhoto([new File(["synthetic"], "page.png", { type: "image/png" })]);
   choose();
   if (reason === "cancel") fireEvent.click(screen.getByRole("button", { name: "Cancel photo scan" }));
   else if (reason === "clear") fireEvent.click(screen.getByRole("button", { name: "Finish & clear" }));
@@ -395,10 +433,8 @@ it.each([[0, 800], [10000, 10000]])("rejects an invalid %i×%i selected image be
     static revokeObjectURL(url) { revoke(url); }
   });
   const context = vi.spyOn(HTMLCanvasElement.prototype, "getContext");
-  render(<App />);
-  fireEvent.change(screen.getByLabelText("Choose QR image"), {
-    target: { files: [new File(["synthetic"], "page.png", { type: "image/png" })] },
-  });
+  renderFilesApp();
+  choosePhoto([new File(["synthetic"], "page.png", { type: "image/png" })]);
   await screen.findByText("This photo could not be opened at a usable size. Choose another photo.");
   expect(context).not.toHaveBeenCalled();
   expect(scanPhotoInWorker).not.toHaveBeenCalled();
@@ -415,23 +451,127 @@ it("prominently warns when a current cover is followed by older results, while a
   const cover = await makePage(1, "a1".repeat(32), "Current cover letter");
   const currentResults = await makePage(2, "a1".repeat(32), "Current results");
   const oldResults = await makePage(2, "b2".repeat(32), "Older results");
-  render(<App />);
-  await act(async () => cover.seals.forEach(scanner.props.onSealDetected));
+  renderCameraApp();
+  await scanSeals(cover.seals);
   selectKey(publicKey);
-  await act(async () => oldResults.seals.forEach(scanner.props.onSealDetected));
+  await scanSeals(oldResults.seals);
   const warning = await screen.findByRole("alert");
   expect(warning.textContent).toContain("Mixed document pages");
   expect(warning.textContent).toContain("cover and remaining pages");
   expect(warning.closest("details")).toBeNull();
-  expect(scanner.props.collectionProgress).toMatchObject({ complete: false, finished: false, pagesCollected: 1 });
+  expect(verificationView.props.verification.progress).toMatchObject({ complete: false, finished: false, pagesCollected: 1 });
   expect(screen.getByText(/Other pages have not been checked/)).toBeTruthy();
   expect(screen.getAllByRole("heading", { name: "Seal authenticated", hidden: true })).toHaveLength(2);
   expect(document.querySelector(".collection-progress").textContent).not.toContain("All 2 pages collected");
 
   fireEvent.click(screen.getByRole("button", { name: "Finish & clear" }));
   expect(screen.queryByRole("alert")).toBeNull();
-  await act(async () => [...cover.seals, ...currentResults.seals].forEach(scanner.props.onSealDetected));
-  await waitFor(() => expect(scanner.props.collectionProgress.complete).toBe(true));
+  await scanSeals([...cover.seals, ...currentResults.seals]);
+  await waitFor(() => expect(verificationView.props.verification.progress.complete).toBe(true));
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByText(/Other pages have not been checked/)).toBeNull();
 });
+
+it.each([["download", "application/pdf"], ["SEALED.PDF", ""]])(
+  "routes a unified File selection (%s, %s) through PDF scanning and real seal verification",
+  async (name, type) => {
+    const { seals } = await createQRedSeals({ content: "Selected PDF record", privateKey, publicKey });
+    vi.mocked(scanPdfSeals).mockImplementation(async (_file, options) => {
+      await options.onSeal(seals[0]);
+      return { sealCount: 1, pagesWithSeals: 1, pageCount: 1, missingPages: [], failedPages: [] };
+    });
+    render(<App />);
+    const input = screen.getByLabelText("Browse for a PDF, photo or scan ZIP");
+    const open = vi.spyOn(input, "click");
+    fireEvent.click(screen.getByRole("button", { name: "File", exact: true }));
+    expect(open).toHaveBeenCalledOnce();
+    const file = new File(["%PDF-1.4"], name, { type });
+    fireEvent.change(input, { target: { files: [file] } });
+    await waitFor(() => expect(scanPdfSeals).toHaveBeenCalledOnce());
+    expect(scanPdfSeals).toHaveBeenCalledWith(file, expect.objectContaining({
+      signal: expect.any(AbortSignal), onSeal: expect.any(Function), onOriginalPage: expect.any(Function),
+    }));
+    expect(window.location.hash).toBe("#/check");
+    expect(input.closest("details").open).toBe(true);
+    expect(await screen.findByText("Found 1 QRed seal across 1 of 1 PDF pages.")).toBeTruthy();
+    expect(verificationView.props.verification.seals).toEqual(seals);
+    selectKey(publicKey);
+    expect(await screen.findByRole("heading", { name: "Seal authenticated", hidden: true })).toBeTruthy();
+    expect(scanPhotoInWorker).not.toHaveBeenCalled();
+    expect(readScanPhotoZip).not.toHaveBeenCalled();
+  });
+
+it("resumes a PDF before its first seal and can stop reading without losing collected pieces", async () => {
+  const { seals } = await createQRedSeals({ content: "A".repeat(3000), encodingStrategy: "plaintext", privateKey, publicKey });
+  expect(seals.length).toBeGreaterThan(1);
+  let pending;
+  vi.mocked(scanPdfSeals).mockImplementation((_file, options) => new Promise(resolve => { pending = { ...options, resolve }; }));
+  renderFilesApp();
+  fireEvent.change(screen.getByLabelText("Browse for a PDF, photo or scan ZIP"), {
+    target: { files: [new File(["%PDF-1.4"], "slow.pdf", { type: "application/pdf" })] },
+  });
+  await waitFor(() => expect(pending).toBeTruthy());
+  expect(verificationView.props.verification.seals).toEqual([]);
+  fireEvent.click(screen.getByRole("button", { name: "QRed home" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue document check" }));
+  const status = screen.getByText("Opening PDF on this device…");
+  expect(status.closest("details")).toBeNull();
+  const stop = screen.getByRole("button", { name: "Stop reading PDF" });
+  expect(stop.closest("details")).toBeNull();
+  await act(async () => pending.onSeal(seals[0]));
+  fireEvent.click(stop);
+  expect(pending.signal.aborted).toBe(true);
+  expect(verificationView.props.verification.seals).toEqual([seals[0]]);
+  await expect(pending.onSeal(seals[1])).rejects.toMatchObject({ name: "AbortError" });
+  await act(async () => pending.resolve({ sealCount: 2, pagesWithSeals: 1, pageCount: 1, missingPages: [], failedPages: [] }));
+  expect(screen.getByText("PDF reading stopped. Seals already found remain collected.")).toBeTruthy();
+  expect(verificationView.props.verification.seals).toEqual([seals[0]]);
+  expect(screen.queryByRole("button", { name: "Stop reading PDF" })).toBeNull();
+});
+
+it("finishes an inactive PDF without changing the visible route or focus and keeps its result reachable", async () => {
+  let finish;
+  vi.mocked(scanPdfSeals).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  renderFilesApp();
+  fireEvent.change(screen.getByLabelText("Browse for a PDF, photo or scan ZIP"), {
+    target: { files: [new File(["%PDF-1.4"], "empty.pdf", { type: "application/pdf" })] },
+  });
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  fireEvent.click(screen.getByRole("button", { name: "About QRed" }));
+  const about = screen.getByRole("heading", { name: "What is QRed?" });
+  expect(document.activeElement).toBe(about);
+  await act(async () => finish({ sealCount: 0, pagesWithSeals: 0, pageCount: 1, missingPages: [1], failedPages: [] }));
+  expect(window.location.hash).toBe("#/about");
+  expect(document.activeElement).toBe(about);
+  fireEvent.click(screen.getByRole("button", { name: "QRed home" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue document check" }));
+  const status = screen.getByText("Found 0 QRed seals across 0 of 1 PDF pages. No readable seal on PDF page(s): 1.");
+  expect(status.closest("details")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Stop reading PDF" })).toBeNull();
+});
+
+it.each([["page.png", "image/png"], ["QRed-scan-photo.zip", "application/zip"]])(
+  "keeps a unified File selection of %s on the photo/scan ZIP path",
+  async (name, type) => {
+    vi.stubGlobal("Image", class {
+      naturalWidth = 20; naturalHeight = 30;
+      decode() { return Promise.resolve(); }
+    });
+    vi.stubGlobal("URL", class extends URL {
+      static createObjectURL() { return "blob:selected-file"; }
+      static revokeObjectURL() {}
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage() {}, getImageData: () => ({ data: new Uint8ClampedArray(20 * 30 * 4), width: 20, height: 30 }),
+    });
+    vi.mocked(readScanPhotoZip).mockResolvedValue(new File(["photo"], "exposure-01.png", { type: "image/png" }));
+    vi.mocked(scanPhotoInWorker).mockResolvedValue({ status: "found", text: "selected photo content" });
+    renderFilesApp();
+    const file = new File(["synthetic"], name, { type });
+    fireEvent.change(screen.getByLabelText("Browse for a PDF, photo or scan ZIP"), { target: { files: [file] } });
+    expect(await screen.findByText("Unverified QR content: selected photo content")).toBeTruthy();
+    expect(scanPhotoInWorker).toHaveBeenCalledOnce();
+    expect(scanPdfSeals).not.toHaveBeenCalled();
+    if (type === "application/zip") expect(readScanPhotoZip).toHaveBeenCalledWith(file, expect.any(AbortSignal));
+    else expect(readScanPhotoZip).not.toHaveBeenCalled();
+  });
