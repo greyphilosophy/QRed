@@ -110,9 +110,9 @@ it("discards progress from a cancelled reading", async () => {
   checks.dispose();
 });
 
-it("stops on a failed engine load and retries only when requested", async () => {
+it.each([new Error("Offline"), "Offline"])("stops on a failed engine load and retries only when requested (%s)", async failure => {
   const { checks, reader } = setup();
-  reader.prepare.mockRejectedValueOnce(new Error("Offline"));
+  reader.prepare.mockRejectedValueOnce(failure);
   checks.update([page("one", 1)], [photo(1, "one")]);
   await vi.waitFor(() => expect(checks.getSnapshot().error).toContain("Offline"));
   expect(reader.prepare).toHaveBeenCalledTimes(1);

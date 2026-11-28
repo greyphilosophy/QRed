@@ -77,20 +77,23 @@ export function useSealVerification() {
     } };
 }
 
-export function SealVerification({ verification, onScanMore, onChooseMore }) {
+export function SealVerification({ verification, onScanMore, onChooseMore, active = true, onActivity, onFinish }) {
   const [openingKey, setOpeningKey] = useState(false);
   const [keyFileStatus, setKeyFileStatus] = useState("");
   const [readingImage, setReadingImage] = useState(false);
+  const [pdfState, setPdfState] = useState({ busy: false, status: "" });
   const [imageAttempt, setImageAttempt] = useState(0);
   const imageRead = useRef(0);
   const imageScan = useRef(null);
+  const pdfControls = useRef(null);
+  const fileDetails = useRef(null);
   const photoProgressRegion = useRef(null);
   const photoProgress = usePhotoScanProgress();
   useEffect(() => {
     // The real file picker scrolls to the input inside the lower disclosure.
     // Bring its status and Cancel back into view once, not on clock ticks.
-    if (readingImage) photoProgressRegion.current?.scrollIntoView?.({ block: "nearest" });
-  }, [readingImage, imageAttempt]);
+    if (active && (readingImage || pdfState.busy)) photoProgressRegion.current?.scrollIntoView?.({ block: "nearest" });
+  }, [active, readingImage, imageAttempt, pdfState.busy]);
   useEffect(() => { preparePhotoScanner(); }, []);
   useEffect(() => {
     imageRead.current += 1;
@@ -100,6 +103,22 @@ export function SealVerification({ verification, onScanMore, onChooseMore }) {
   }, [verification.session, photoProgress]);
   const { seals, setPublicKey, results, notice, setNotice, busy, addSeal } = verification;
   const hasLocalSeals = seals.some(seal => decodeSeal(seal)?.version === "3") || results.some(result => result.version === "3");
+
+  function startFileActivity() {
+    if (fileDetails.current) fileDetails.current.open = true;
+    onActivity?.();
+  }
+
+  function readSelectedFile(event) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
+      input.value = "";
+      return pdfControls.current?.openFile(file);
+    }
+    return readImage(event);
+  }
 
   async function openPublicKeyFile(event) {
     const input = event.currentTarget;
@@ -122,6 +141,7 @@ export function SealVerification({ verification, onScanMore, onChooseMore }) {
     const input = event.target;
     const file = input.files?.[0];
     if (!file) return;
+    startFileActivity();
     input.value = "";
     imageScan.current?.abort();
     const controller = new AbortController();
@@ -175,17 +195,19 @@ export function SealVerification({ verification, onScanMore, onChooseMore }) {
   }
 
   return <section className="verification-card" aria-label="Seal verification" id="document-check">
-    <div className="verification-actions"><button type="button" onClick={verification.clear}>Finish &amp; clear</button></div>
-    {readingImage && <div ref={photoProgressRegion}>
-      <PhotoScanProgress progress={photoProgress} />
-      <button type="button" onClick={cancelImageScan}>Cancel photo scan</button>
+    <div className="verification-actions"><button type="button" onClick={onFinish || verification.clear}>Finish &amp; clear</button></div>
+    {(readingImage || pdfState.status) && <div ref={photoProgressRegion}>
+      {readingImage && <><PhotoScanProgress progress={photoProgress} />
+        <button type="button" onClick={cancelImageScan}>Cancel photo scan</button></>}
+      {pdfState.status && <p role="status" aria-live="polite">{pdfState.status}</p>}
+      {pdfState.busy && <button type="button" onClick={() => pdfControls.current?.stop()}>Stop reading PDF</button>}
     </div>}
     {notice && notice !== "Check cleared. Camera off." && <p role="status">{notice}</p>}
-    <PhotoTextVerification results={results} seals={seals} session={verification.session} checks={verification.textChecks}
+    <PhotoTextVerification active={active} results={results} seals={seals} session={verification.session} checks={verification.textChecks}
       scanPhotos={verification.scanImages?.photos} captureNotice={verification.scanImages?.notice}
       collectionProgress={verification.progress}
       onScanMore={onScanMore} onChooseMore={onChooseMore} addingPage={readingImage}
-      scanning={verification.scanning} verifying={busy} onReplacePhoto={verification.replacePhoto} onFinish={verification.clear} />
+      scanning={verification.scanning} verifying={busy} onReplacePhoto={verification.replacePhoto} onFinish={onFinish || verification.clear} />
     {hasLocalSeals && <div>
       <p>This collection includes a seal made with a private key file. Use the issuer’s public key file to verify it.</p>
       <label htmlFor="issuer-public-key-file">Open issuer public key file</label>
@@ -193,7 +215,7 @@ export function SealVerification({ verification, onScanMore, onChooseMore }) {
       <p role="status">{keyFileStatus}</p>
       <p className="verification-note">Obtain the key from the issuer through a trusted channel. The default demo key is public test data and proves no issuer identity.</p>
     </div>}
-    <details className="verification-details"><summary>Open an existing PDF or image</summary>
+    <details className="verification-details" ref={fileDetails}><summary>Open an existing PDF or image</summary>
     <p className="verification-note">PDFs, QR images, and camera frames are processed in this browser and are not sent to a server.</p>
     <details>
       <summary>Optional: use airplane mode</summary>
@@ -202,8 +224,9 @@ export function SealVerification({ verification, onScanMore, onChooseMore }) {
     </details>
     <label htmlFor="qr-image">Choose QR image</label>
     <input id="qr-image" type="file" accept="image/*" onChange={readImage} />
-    <input id="qr-scan-file" type="file" aria-label="Browse for a photo or scan ZIP" hidden onChange={readImage} />
-    <PdfSealInput onSeal={addSeal} session={verification.session} />
+    <input id="qr-scan-file" type="file" aria-label="Browse for a PDF, photo or scan ZIP" hidden onChange={readSelectedFile} />
+    <PdfSealInput onSeal={addSeal} session={verification.session} controlsRef={pdfControls} onActivity={startFileActivity}
+      onStateChange={setPdfState} hideStatus />
     </details>
     <details className="verification-details"><summary>Seal details and recovered text</summary>
     <div aria-live="polite">

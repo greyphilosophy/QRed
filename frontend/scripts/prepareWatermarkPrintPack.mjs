@@ -43,9 +43,9 @@ async function sampleDocument(kind) {
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const mono = await pdf.embedFont(StandardFonts.Courier);
   page.drawRectangle({ x: 0, y: 0, width: 612, height: 792, color: rgb(1, 1, 1) });
-  const title = kind === "single-black" ? "QRED PRINT TEST A - STANDARD TEXT"
-    : kind === "single-color" ? "QRED PRINT TEST B - COLORED TEXT / LOGO"
-      : "QRED PRINT TEST C - 2 x 2 DENSE TEXT";
+  const title = kind === "single-black" ? "QRed PRINT TEST A - STANDARD TEXT"
+    : kind === "single-color" ? "QRed PRINT TEST B - COLORED TEXT / LOGO"
+      : "QRed PRINT TEST C - 2 x 2 DENSE TEXT";
   stamp(page, title, 42, 754, 13.5, ink.navy, bold);
   stamp(page, "SYNTHETIC EXAMPLE - DO NOT USE AS AN OFFICIAL DOCUMENT", 42, 735, 8.5, ink.maroon, regular);
   page.drawLine({ start: { x: 42, y: 728 }, end: { x: 570, y: 728 },
@@ -100,7 +100,7 @@ async function makeInstructions() {
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const normal = await pdf.embedFont(StandardFonts.Helvetica);
   const lines = [
-    ["QRED PRINT/CAMERA ACCEPTANCE PACK", 17, true],
+    ["QRed PRINT/CAMERA ACCEPTANCE PACK", 17, true],
     ["These pages are synthetic and signed with an openly published DEMO key.", 10, false],
     ["Never interpret these test seals as proof of an issuer's identity.", 10, false],
     ["", 8, false],

@@ -14,6 +14,7 @@ import pytest
 from PIL import Image
 from playwright.sync_api import expect
 
+from browser_helpers import start_camera, browse_files
 from browser_helpers import (BASE_URL, OfflineNetworkGuard, prepare_text_for_offline,
                              show_file_inputs, show_seal_details, wait_for_offline_resources)
 from test_photo_verification import camera_paper, PUBLIC_KEY, prepare_reader, dated_form_photos, review_differences
@@ -173,7 +174,7 @@ def test_saved_rotated_native_photo_reopens_with_its_digit_difference(browser, d
                 }
             };
         }""", base64.b64encode(stream.getvalue()).decode())
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         page.wait_for_function("document.querySelector('video')?.videoWidth > 0")
         page.get_by_role("button", name="Capture now", exact=True).click()
         page.wait_for_function("window.__savedScanStalled")
@@ -201,7 +202,7 @@ def test_saved_rotated_native_photo_reopens_with_its_digit_difference(browser, d
             page.locator("#publicKeyFileInput").set_input_files({
                 "name": "issuer.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode()})
         with page.expect_file_chooser() as picked:
-            page.get_by_role("button", name="Browse files", exact=True).click()
+            browse_files(page)
         picked.value.set_files(saved_path)
         review = page.get_by_role("region", name="Review Page 1 of 1", exact=True)
         expect(review.get_by_role("heading", name=re.compile("Seal: authenticated"))).to_be_visible(timeout=30000)

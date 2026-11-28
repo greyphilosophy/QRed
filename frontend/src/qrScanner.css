@@ -68,6 +68,25 @@
 .ar-display .ar-button-secondary { color: #f8fafc; border: 1px solid #94a3b8; }
 .ar-result-panel button { min-height: 44px; margin-top: .75rem; padding: .6rem 1rem; font: inherit; border: 1px solid #94a3b8; border-radius: 8px; background: #f8fafc; color: #0f172a; cursor: pointer; }
 
+/* Camera is already a selected task here; preparation is a short view rather
+   than the standalone scanner's full-height landing page. */
+.homepage .ar-display-idle.ar-display-compact {
+  display: grid;
+  min-height: 0;
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 1.25rem;
+  gap: 1rem;
+}
+.ar-display-compact .ar-camera-start h2 { margin: 0 0 .5rem; font-size: 1.5rem; }
+.ar-display-compact .ar-camera-start p { margin: .5rem 0 0; }
+.ar-display-compact.ar-display-idle .ar-controls {
+  position: static;
+  transform: none;
+  width: 100%;
+  border-radius: 16px;
+}
+
 .ar-camera-tools {
   position: absolute;
   top: 1rem;
@@ -142,4 +161,11 @@
   .ar-display-scanning:has(.ar-scan-target) .ar-collection-progress { top: 7.5rem; left: .75rem; right: .75rem; }
   .ar-display-scanning:has(.ar-scan-target) .ar-camera { --camera-top: 8rem; }
   .ar-display-scanning:has(.ar-scan-target):has(.ar-collection-progress:not(:empty)) .ar-camera { --camera-top: 11rem; }
+}
+
+/* Very narrow landscape screens cannot fit the stacked controls and a usable
+   camera image in one viewport. Keep the task card naturally scrollable rather
+   than collapsing its video or clipping controls; other scanners are unchanged. */
+@media (max-width: 640px) and (max-height: 500px) and (orientation: landscape) {
+  .qred-camera-view .ar-display.ar-display-scanning { min-height: 35rem; }
 }

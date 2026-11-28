@@ -9,6 +9,64 @@ from playwright.sync_api import expect
 BASE_URL = os.environ.get("QRED_BASE_URL", "http://localhost:3000")
 
 
+def start_camera(page):
+    """Use the task entry on the homepage or the standalone verifier control."""
+    for label in ("Camera", "Scan more pages", "Check document"):
+        button = page.get_by_role("button", name=label, exact=True)
+        if button.count() and button.first.is_visible():
+            button.first.click()
+            return
+    raise AssertionError("No visible camera entry point")
+
+
+def browse_files(page):
+    for label in ("File", "Browse files"):
+        button = page.get_by_role("button", name=label, exact=True)
+        if button.count() and button.first.is_visible():
+            button.first.click()
+            return
+    raise AssertionError("No visible saved-file entry point")
+
+
+def show_check(page):
+    view = page.locator('[data-qred-view="check"]')
+    if view.count() and not view.is_visible():
+        page.get_by_role("button", name="QRed home", exact=True).click()
+        resume = page.get_by_role("button", name="Continue document check", exact=True)
+        if resume.count():
+            resume.click()
+        else:
+            # Open the real File path and cancel its native picker; callers
+            # then exercise the PDF/image input or preparation control.
+            with page.expect_file_chooser() as chooser:
+                page.get_by_role("button", name="File", exact=True).click()
+            chooser.value.set_files([])
+
+
+def show_sealer(page):
+    view = page.locator('[data-qred-view="seal"]')
+    if not view.count() or not view.is_visible():
+        home = page.get_by_role("button", name="QRed home", exact=True)
+        if home.count():
+            home.click()
+        page.get_by_role("button", name="Seal PDF", exact=True).click()
+
+
+def choose_layout(page, value):
+    labels = {
+        "watermark-sheets": "Watermarks", "seal-sheets": "Separate seal pages",
+        "automatic": "Watermarks with footer fallback", "watermark": "Watermarks with footer fallback",
+        "legal-footer": "Larger pages", "shrink-footer": "Smaller content",
+    }
+    page.get_by_role("button", name="Change layout", exact=True).click()
+    if value not in ("watermark-sheets", "seal-sheets"):
+        more = page.locator(".seal-more-layouts")
+        if more.get_attribute("open") is None:
+            more.locator("summary").click()
+    page.get_by_role("radio", name=labels[value], exact=True).check()
+    page.get_by_role("button", name="Use this layout", exact=True).click()
+
+
 def wait_for_offline_resources(page, *, pdf=False, photo=False):
     page.wait_for_function("navigator.serviceWorker.controller?.state === 'activated'", timeout=10000)
     if photo:
@@ -82,6 +140,7 @@ class OfflineNetworkGuard:
 
 def stamp_and_save(page, source, destination=None):
     """Stamp through the real UI; return the saved PDF path and fresh seal result."""
+    show_sealer(page)
     page.get_by_label("Open PDF", exact=True).set_input_files(source)
     page.evaluate("window.__qredTestMode = true; window.__lastSealResult = null")
     with page.expect_download(timeout=60000) as saved:
@@ -101,22 +160,25 @@ def stamp_and_save(page, source, destination=None):
 
 
 def show_seal_details(page):
+    show_check(page)
     details = page.locator("details").filter(has=page.get_by_text("Seal details and recovered text", exact=True))
     if details.get_attribute("open") is None:
         details.locator("summary").first.click()
 
 
 def show_file_inputs(page):
+    show_check(page)
     summary = page.get_by_text("Open an existing PDF or image", exact=True)
     if summary.count() and summary.locator("..").get_attribute("open") is None:
         summary.click()
 
 
 def prepare_text_for_offline(page):
+    show_check(page)
+    summary = page.locator("summary").filter(has_text=re.compile(r"^Prepare for offline checking$"))
+    if summary.locator("..").get_attribute("open") is None:
+        summary.click()
     if not page.get_by_role("button", name="Offline text checking ready", include_hidden=True).count():
-        summary = page.get_by_text("Prepare for offline checking", exact=True)
-        if summary.locator("..").get_attribute("open") is None:
-            summary.click()
         page.get_by_role("button", name="Prepare offline checking", exact=True).click()
         expect(page.get_by_role("button", name="Offline text checking ready", include_hidden=True)).to_have_count(1, timeout=60000)
     page.wait_for_load_state("networkidle")

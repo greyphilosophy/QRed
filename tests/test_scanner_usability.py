@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageDraw, ImageFont
 from playwright.sync_api import expect
+from browser_helpers import start_camera
 from browser_helpers import show_seal_details, show_file_inputs, prepare_text_for_offline, BASE_URL, OfflineNetworkGuard, wait_for_offline_resources, NATIVE_PHOTO_CAMERA_SCRIPT
 
 
@@ -59,7 +60,7 @@ def test_main_camera_at_one_times_zoom_with_optional_flashlight(browser, path):
                 { kind: 'videoinput', deviceId: 'main', label: 'Back Main Camera 1x' },
             ];
         }""", path == "/verify.htm")
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         page.wait_for_function("cameraTest.controls.length === 1")
         state = page.evaluate("cameraTest")
         assert state["requests"][0]["video"]["facingMode"] == {"ideal": "environment"}
@@ -207,7 +208,7 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
             };
         }"""
         page.evaluate(camera_script, mode)
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         label = {"late-torch": "Flashlight off", "other-lens": "Flashlight off", "shutter-only": "Photo flash off"}.get(mode, "Try flashlight")
         light = page.get_by_role("button", name=label, exact=True)
         expect(light).to_be_visible()
@@ -226,7 +227,7 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
             if path != "/":
                 page.locator("#publicKeyFileInput").set_input_files({"name": "key.txt", "mimeType": "text/plain", "buffer": key.encode()})
             page.evaluate(camera_script, mode)
-            page.get_by_role("button", name="Check document", exact=True).click()
+            start_camera(page)
             expect(light).to_be_visible()
             assert page.evaluate("lensRequests") == ["original", "main"]
             assert page.evaluate("lightRequests") == []
@@ -260,12 +261,13 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
             fixture = Path(__file__).parent / "fixtures" / "compact-qr" / "invoice-full-300dpi.png"
             camera.value.set_files(fixture)
             if path == "/":
+                expect(page.locator('[data-qred-view="check"]')).to_be_visible(timeout=30000)
                 show_seal_details(page)
                 expect(page.get_by_role("heading", name="Seal authenticated", exact=True)).to_be_visible(timeout=30000)
             else:
                 expect(page.locator("#resultStatus")).to_have_text("Seal authenticated", timeout=30000)
                 page.get_by_role("button", name="Finish & clear", exact=True).click()
-            page.get_by_role("button", name="Scan more pages" if path == "/" else "Check document", exact=True).click()
+            start_camera(page)
             with page.expect_file_chooser() as gallery:
                 page.get_by_role("button", name="Choose photo").click()
             assert gallery.value.element.get_attribute("capture") is None
@@ -284,7 +286,7 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
             if mode in ("other-lens", "other-flash"):
                 off_name = on_name.replace(" on", " off")
                 light_requests = page.evaluate("lightRequests.length")
-                page.get_by_role("button", name="Check document", exact=True).click()
+                start_camera(page)
                 expect(page.get_by_role("button", name=off_name, exact=True)).to_have_attribute("aria-pressed", "false")
                 assert page.evaluate("lensRequests") == chosen_lenses + ["main"]
                 assert page.evaluate("lightRequests.length") == light_requests
@@ -299,7 +301,7 @@ def test_light_stays_discoverable_after_the_mobile_preview_starts(browser, path,
                 if path != "/":
                     page.locator("#publicKeyFileInput").set_input_files({"name": "key.txt", "mimeType": "text/plain", "buffer": key.encode()})
                 page.evaluate(camera_script, mode)
-                page.get_by_role("button", name="Check document", exact=True).click()
+                start_camera(page)
                 expect(page.get_by_role("button", name=label, exact=True)).to_have_attribute("aria-pressed", "false")
                 assert page.evaluate("lensRequests") == initial_lenses
                 assert page.evaluate("lightRequests") == []
@@ -349,7 +351,7 @@ def test_same_lens_framing_reaches_the_still_and_survives_flash_and_reopen(brows
                 }
             };
         }""")
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         framing = page.get_by_role("combobox", name="Camera framing")
         expect(framing).to_have_value("1")
         page.get_by_role("button", name="Flashlight off").click()
@@ -523,7 +525,7 @@ def test_live_worker_has_no_backlog_and_capture_can_resume_the_same_camera_offli
         page.evaluate(NATIVE_PHOTO_CAMERA_SCRIPT)
         prepare_text_for_offline(page)
         guard.block()
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         page.wait_for_function("liveTest.responses >= 2", timeout=15000)
         page.get_by_role("button", name="Capture now", exact=True).click()
         expect(page.get_by_role("button", name="Cancel and resume camera", exact=True)).to_be_visible()

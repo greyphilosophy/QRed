@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 from playwright.sync_api import expect
-from browser_helpers import show_seal_details, show_file_inputs, prepare_text_for_offline, OfflineNetworkGuard, stamp_and_save, wait_for_offline_resources
+from browser_helpers import choose_layout, start_camera, browse_files, show_seal_details, show_file_inputs, show_sealer, prepare_text_for_offline, OfflineNetworkGuard, stamp_and_save, wait_for_offline_resources
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
@@ -48,13 +48,13 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, la
 
         # Explicit online warm-up, using disposable data, loads the lazy
         # PDF module, worker and fonts through the actual stamping UI.
-        page.get_by_role("button", name="Seal PDF").click()
+        show_sealer(page)
         page.get_by_role("button", name="Private key (offline)", exact=True).click()
-        page.get_by_label("Page layout", exact=True).select_option(layout)
+        choose_layout(page, layout)
         page.get_by_role("button", name="Generate key pair", exact=True).click()
         expect(page.locator("#signing-key-status")).to_contain_text("Key pair generated.")
         _stamp_and_save(page, tmp_path, "public-warmup.pdf", "Non-sensitive resource warm-up")
-        page.get_by_role("button", name="Close", exact=True).click()
+        page.get_by_role("button", name="Finish & clear", exact=True).click()
         page.wait_for_load_state("networkidle")
         wait_for_offline_resources(page, pdf=True)
         prepare_text_for_offline(page)
@@ -63,8 +63,8 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, la
         assert page.evaluate("navigator.onLine") is (not offline)
 
         # Sensitive test data and fresh signing keys are introduced only
-        # after the guard is active. No navigation or reload is needed.
-        page.get_by_role("button", name="Seal PDF").click()
+        # after the guard is active. Task navigation needs no page reload.
+        show_sealer(page)
         page.get_by_role("button", name="Private key (offline)", exact=True).click()
         page.get_by_role("button", name="Generate key pair", exact=True).click()
         expect(page.locator("#signing-key-status")).to_contain_text("Key pair generated.")
@@ -77,8 +77,8 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, la
             path = tmp_path / saved.value.suggested_filename
             saved.value.save_as(path)
             assert path.read_text().strip() == key
-        page.get_by_role("button", name="Close", exact=True).click()
-        page.get_by_role("button", name="Seal PDF").click()
+        page.get_by_role("button", name="Finish & clear", exact=True).click()
+        show_sealer(page)
         page.get_by_role("button", name="Private key (offline)", exact=True).click()
         page.get_by_label("Open private key file", exact=True).set_input_files(tmp_path / "qred-ed25519-private-key.txt")
         expect(page.locator("#signing-key-status")).to_contain_text("Private key opened. Matching public key derived.")
@@ -88,7 +88,7 @@ def test_local_workflow_makes_no_network_requests(browser, tmp_path, offline, la
         expect(page.get_by_label("Issuer public key", exact=True)).to_have_count(0)
 
         text = "Private offline invoice NETWORK-1042. Approved total: $123.45."
-        page.get_by_label("Page layout", exact=True).select_option(layout)
+        choose_layout(page, layout)
         sealed_path = _stamp_and_save(page, tmp_path, "private-invoice.pdf", "\n".join([text] * 5))
         # Check that compression was chosen automatically, then verify actual
         # saved-PDF pixels through the normal image-selection UI.

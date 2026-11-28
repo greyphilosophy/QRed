@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState } from "react";
 import { pdfScanSummary, scanPdfSeals } from "./scanPdf.js";
 import "./pdfSealInput.css";
 
-export function PdfSealInput({ onSeal, session = 0 }) {
+export function PdfSealInput({ onSeal, session = 0, controlsRef, onActivity, onStateChange, hideStatus = false }) {
   const active = useRef(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
+  useEffect(() => { onStateChange?.({ busy, status }); }, [busy, status, onStateChange]);
   useEffect(() => {
     active.current?.abort();
     active.current = null;
@@ -14,11 +15,11 @@ export function PdfSealInput({ onSeal, session = 0 }) {
     return () => active.current?.abort();
   }, [session]);
 
-  async function openPdf(event) {
-    const input = event.currentTarget;
-    const file = input.files?.[0];
-    input.value = "";
+  useImperativeHandle(controlsRef, () => ({ openFile, stop: stopReading }));
+
+  async function openFile(file) {
     if (!file) return;
+    onActivity?.();
     active.current?.abort();
     const controller = new AbortController();
     active.current = controller;
@@ -52,14 +53,23 @@ export function PdfSealInput({ onSeal, session = 0 }) {
     }
   }
 
+  function openPdf(event) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    input.value = "";
+    return openFile(file);
+  }
+
+  function stopReading() {
+    active.current?.abort(); active.current = null; setBusy(false);
+    setStatus("PDF reading stopped. Seals already found remain collected.");
+  }
+
   return <div className="pdf-seal-input">
     <label htmlFor="verify-pdf">Open PDF to verify</label>
     <input id="verify-pdf" type="file" accept=".pdf,application/pdf" onChange={openPdf} />
     <p>Reads QR seals from every page on this device. Compare the page with its signed contents below; a valid seal alone does not prove that the surrounding page is unchanged.</p>
-    {busy && <button className="btn btn-secondary" type="button" onClick={() => {
-      active.current?.abort(); active.current = null; setBusy(false);
-      setStatus("PDF reading stopped. Seals already found remain collected.");
-    }}>Stop reading PDF</button>}
-    {status && <p role="status" aria-live="polite">{status}</p>}
+    {!hideStatus && busy && <button className="btn btn-secondary" type="button" onClick={stopReading}>Stop reading PDF</button>}
+    {!hideStatus && status && <p role="status" aria-live="polite">{status}</p>}
   </div>;
 }

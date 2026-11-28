@@ -142,7 +142,7 @@ def test_signed_p3_jpeg_is_recovered_and_authenticated_offline(browser):
     marginal private photograph or a particular phone will also recover.
     """
     from playwright.sync_api import expect
-    from browser_helpers import (BASE_URL, OfflineNetworkGuard, show_file_inputs,
+    from browser_helpers import (BASE_URL, OfflineNetworkGuard, prepare_text_for_offline, show_file_inputs,
                                  show_seal_details, wait_for_offline_resources)
 
     fixture = Path(__file__).parent / "fixtures/compact-qr/invoice-full-300dpi.png"
@@ -177,8 +177,7 @@ def test_signed_p3_jpeg_is_recovered_and_authenticated_offline(browser):
         })();""")
         page = context.new_page()
         page.goto(BASE_URL, wait_until="networkidle")
-        page.get_by_text("Prepare for offline checking", exact=True).click()
-        page.get_by_role("button", name="Prepare offline checking", exact=True).click()
+        prepare_text_for_offline(page)
         expect(page.get_by_role("button", name="Offline text checking ready", exact=True)).to_be_visible(timeout=60000)
         wait_for_offline_resources(page, photo=True)
         guard.block()

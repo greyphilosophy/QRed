@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from playwright.sync_api import expect
+from browser_helpers import start_camera
 from browser_helpers import BASE_URL, OfflineNetworkGuard, wait_for_offline_resources
 from test_photo_verification import PUBLIC_KEY, prepare_reader
 
@@ -82,7 +83,7 @@ def test_individual_document_seals_collect_offline_then_request_originals(browse
         wait_for_offline_resources(page, photo=True)
         guard.block()
         show_closeup(page, document_bundle["images"][-1])
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         page.get_by_role("combobox", name="Scan target").select_option("seal")
         expect(page.locator(".page-scan-guide")).not_to_be_visible()
         count = len(document_bundle["seals"])

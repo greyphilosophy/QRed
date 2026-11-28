@@ -23,7 +23,8 @@ import "./qr/cameraLight.css";
  * 3. Result — shows collection progress and can resume scanning
  */
 export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSealDetected, returnPayload = false, resultPanel,
-  collectSeals = false, collectionProgress, beforeScan, onScanningChange, onChoosePhoto, completionNotice = "", controlsRef }) {
+  collectSeals = false, collectionProgress, beforeScan, onScanningChange, onChoosePhoto, completionNotice = "", controlsRef,
+  autoStart = false, compact = false, onClose, onReview }) {
   const [mode, setMode] = useState("idle"); // "idle" | "scanning" | "result"
   const [scannedText, setScannedText] = useState(null);
   const [captureRequest, setCaptureRequest] = useState(0);
@@ -34,8 +35,14 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
   const [preparing, setPreparing] = useState(false), [preparationError, setPreparationError] = useState("");
   const startGeneration = useRef(0);
   const startingCollection = useRef(null);
+  const reviewRequested = useRef(false);
   const startButton = useRef(null);
-  useEffect(() => () => { startGeneration.current++; }, []);
+  const scanningChange = useRef(onScanningChange);
+  scanningChange.current = onScanningChange;
+  useEffect(() => () => {
+    startGeneration.current++;
+    scanningChange.current?.(false);
+  }, []);
   useEffect(() => { if (completionNotice) startButton.current?.focus(); }, [completionNotice]);
   useEffect(() => { onScanningChange?.(mode === "scanning"); }, [mode, onScanningChange]);
   const handleScan = useCallback((text, frame) => {
@@ -50,15 +57,37 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
     // A file or PDF can finish the same collection while the camera is open.
     // Stop from collection state, not from the last camera-only callback.
     // Starting another scan after a finished collection must still be possible.
-    if (mode === "scanning" && collectSeals && collectionProgress?.finished
+    if (mode === "scanning" && !reviewRequested.current && collectSeals && collectionProgress?.finished
       && (!startingCollection.current?.finished
-        || startingCollection.current.activeSeal !== collectionProgress.activeSeal)) setMode("result");
-  }, [mode, collectSeals, collectionProgress]);
+        || startingCollection.current.activeSeal !== collectionProgress.activeSeal)) {
+      reviewRequested.current = true;
+      setMode("result");
+      onReview?.();
+    }
+  }, [mode, collectSeals, collectionProgress, onReview]);
 
   const captureLabel = readingPhoto ? "Cancel and resume camera" : cameraFailed ? "Retry camera" : "Capture now";
-  const scanButtonLabel = preparing ? "Preparing check…" : mode === "scanning" ? captureLabel
-    : mode === "result" ? "Scan more pages" : "Check document";
+  const scanButtonLabel = preparing ? (compact ? "Preparing camera…" : "Preparing check…") : mode === "scanning" ? captureLabel
+    : mode === "result" ? "Scan more pages" : compact ? (preparationError ? "Retry camera" : "Start camera") : "Check document";
+  function closeScanner() {
+    reviewRequested.current = true;
+    startGeneration.current++;
+    setPreparing(false);
+    setPreparationError("");
+    setMode("idle");
+    onClose?.();
+  }
+  function reviewPages() {
+    if (reviewRequested.current) return;
+    reviewRequested.current = true;
+    startGeneration.current++;
+    setPreparing(false);
+    setMode("result");
+    if (onReview) onReview();
+    else document.getElementById("document-check")?.scrollIntoView?.({ behavior: "smooth" });
+  }
   function chooseSavedPhoto(browseFiles) {
+    reviewRequested.current = true;
     startGeneration.current++;
     setPreparing(false);
     setMode("idle");
@@ -75,11 +104,27 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
       setPreparing(false);
     }
     startingCollection.current = collectionProgress;
+    reviewRequested.current = false;
     setScannedText(null);
     setCaptureRequest(0);
     setCameraFailed(false);
     setMode("scanning");
   }
+  const autoStarted = useRef(false);
+  const startScanRef = useRef(startScan);
+  startScanRef.current = startScan;
+  useEffect(() => {
+    if (!autoStart || autoStarted.current) return;
+    let active = true;
+    // A cancelled mount (including Strict Mode's effect rehearsal) must not
+    // prepare twice or open a camera after its route has already been left.
+    Promise.resolve().then(() => {
+      if (!active || autoStarted.current) return;
+      autoStarted.current = true;
+      startScanRef.current();
+    });
+    return () => { active = false; };
+  }, [autoStart]);
   useImperativeHandle(controlsRef, () => ({
     start() {
       startButton.current?.closest(".ar-display")?.scrollIntoView?.({ block: "start" });
@@ -107,15 +152,12 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
       },
     }, scanButtonLabel),
     mode === "scanning" && collectSeals && collectionProgress?.pagesCollected > 0 ? React.createElement("button", {
-      className: "ar-button ar-button-secondary", onClick: () => {
-        setMode("result");
-        document.getElementById("document-check")?.scrollIntoView({ behavior: "smooth" });
-      },
+      className: "ar-button ar-button-secondary", onClick: reviewPages,
     }, collectionProgress?.pagesCollected > 1 ? "Check captured pages now" : "Check this page now") : null,
     mode === "scanning" && onChoosePhoto ? React.createElement("button", {
       className: "ar-button ar-button-secondary", onClick: () => chooseSavedPhoto(false),
     }, "Choose photo") : null,
-    onOpenPdfStampTool && mode !== "scanning" ? React.createElement("button", {
+    onOpenPdfStampTool && !compact && mode !== "scanning" ? React.createElement("button", {
       "aria-label": "Seal PDF",
       "aria-controls": "pdf-stamp-tool",
       "aria-expanded": pdfStampToolOpen,
@@ -128,7 +170,10 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
     ) : null,
     onChoosePhoto ? React.createElement("button", {
       className: "ar-button ar-button-secondary", type: "button", onClick: () => chooseSavedPhoto(true),
-    }, "Browse files") : null
+    }, "Browse files") : null,
+    compact && mode !== "scanning" && onClose ? React.createElement("button", {
+      className: "ar-button ar-button-secondary", type: "button", onClick: closeScanner,
+    }, "Close") : null
   );
 
   if (mode === "result") {
@@ -144,7 +189,7 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
         key: cameraAttempt,
         onCameraFailed: setCameraFailed,
         onScan: handleScan,
-        onClose: () => setMode("idle"),
+        onClose: closeScanner,
         captureRequest,
         onReadingPhoto: setReadingPhoto,
         returnPayload,
@@ -154,6 +199,19 @@ export function QrScanner({ onOpenPdfStampTool, pdfStampToolOpen = false, onSeal
         onScanTargetChange: setScanTarget,
       }),
       collectionProgress ? React.createElement("p", { className: "ar-collection-progress", role: "status", "aria-live": "polite" }, collectionProgress.message) : null,
+      controls
+    );
+  }
+
+  if (compact) {
+    return React.createElement("section", { className: "ar-display ar-display-idle ar-display-compact", "aria-label": "Camera" },
+      React.createElement("div", { className: "ar-camera-start" },
+        React.createElement("h2", null, "Camera"),
+        preparing ? React.createElement("p", { role: "status", "aria-live": "polite" }, "Preparing document check…")
+          : !preparationError ? React.createElement("p", null, "Open the camera to check a document.") : null,
+        completionNotice ? React.createElement("p", { id: "check-clear-note", role: "status" }, completionNotice) : null,
+        preparationError ? React.createElement("p", { role: "alert" }, preparationError + " Try again while connected.") : null
+      ),
       controls
     );
   }

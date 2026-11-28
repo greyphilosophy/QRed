@@ -6,6 +6,7 @@ import pytest
 from PIL import Image
 from playwright.sync_api import expect
 
+from browser_helpers import browse_files
 from browser_helpers import BASE_URL, OfflineNetworkGuard, show_file_inputs, wait_for_offline_resources
 
 
@@ -66,7 +67,7 @@ def test_homepage_small_ordinary_qr_remains_readable_offline(browser, use_downlo
         photo = Path(__file__).with_name("qr_test_plain.png")
         if use_downloads:
             with page.expect_file_chooser() as picked:
-                page.get_by_role("button", name="Browse files", exact=True).click()
+                browse_files(page)
             picked.value.set_files(photo)
         else:
             show_file_inputs(page)

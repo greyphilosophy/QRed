@@ -59,8 +59,8 @@ describe("public QRed policy and security pages", () => {
     expect(svg).not.toMatch(/<foreignObject\b/i);
   });
 
-  it("links the four pages from both the React homepage and the standalone verifier", () => {
-    const files = ["./App.jsx", "../verifier.html"];
+  it("links the four pages from About QRed and the standalone verifier", () => {
+    const files = ["./AboutQRed.jsx", "../verifier.html"];
     for (const name of files) {
       const html = readProjectFile(name);
       for (const link of nav) expect(html).toContain('href="' + link + '"');

@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from playwright.sync_api import expect
-from browser_helpers import OfflineNetworkGuard, show_file_inputs, wait_for_offline_resources, NATIVE_PHOTO_CAMERA_SCRIPT
+from browser_helpers import choose_layout, start_camera, browse_files, OfflineNetworkGuard, show_file_inputs, prepare_text_for_offline, wait_for_offline_resources, NATIVE_PHOTO_CAMERA_SCRIPT
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_KEY = "eC4VZfi1rwwnKF-m5H0wg5kJ9OGeNhPddtr2yQI5i0Q="
@@ -155,8 +155,7 @@ def review_differences(review):
 
 
 def prepare_reader(page):
-    page.get_by_text("Prepare for offline checking", exact=True).click()
-    page.get_by_role("button", name="Prepare offline checking", exact=True).click()
+    prepare_text_for_offline(page)
     expect(page.get_by_role("button", name="Offline text checking ready", exact=True)).to_be_visible(timeout=60000)
 
 
@@ -193,10 +192,9 @@ def test_browse_files_reads_one_original_offline(browser, dated_form_photos, pat
                 }
             };
         }""")
-        browse = page.get_by_role("button", name="Browse files", exact=True)
         for data in [b"incomplete", archive.getvalue()]:
             with page.expect_file_chooser() as picked:
-                browse.click()
+                browse_files(page)
             chooser = picked.value
             assert chooser.element.evaluate("e => !e.accept && !e.multiple && !e.hasAttribute('capture')")
             chooser.set_files({"name": "QRed-scan-photo.ZIP", "mimeType": "application/octet-stream", "buffer": data})
@@ -290,7 +288,7 @@ def test_scaled_table_recovers_numeric_columns_and_keeps_swapped_amounts_visible
         for swapped in [False, True]:
             page.goto(base, wait_until="networkidle")
             photo = page.evaluate(draw, {"swapped": swapped, "qr": qr, "shadowed": shadowed})
-            page.get_by_text("Open an existing PDF or image", exact=True).click()
+            show_file_inputs(page)
             page.locator("#qr-image").set_input_files({"name": "table.png", "mimeType": "image/png",
                                                        "buffer": base64.b64decode(photo["png"])})
             review = page.get_by_role("region", name="Review Page 1 of 1", exact=True)
@@ -361,7 +359,7 @@ def persistent_state(page):
     })""")
 
 
-def test_loading_all_photos_while_camera_is_open_finishes_collection_and_checks_text(browser, sealed_text):
+def test_browsing_photos_from_camera_finishes_collection_and_checks_text(browser, sealed_text):
     context = browser.new_context(service_workers="allow", viewport={"width": 393, "height": 873})
     try:
         context.route("**/api/keys/default", lambda route: route.fulfill(json={"public_key": PUBLIC_KEY}))
@@ -369,9 +367,8 @@ def test_loading_all_photos_while_camera_is_open_finishes_collection_and_checks_
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000"), wait_until="networkidle")
         prepare_reader(page)
         camera_paper(page, "", None, border=False)
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         page.wait_for_function("document.querySelector('video')?.readyState >= 2")
-        page.get_by_text("Open an existing PDF or image", exact=True).click()
         for index, text in enumerate([TEXT, TEXT.replace("Friday", "Monday")]):
             paper = Image.open(io.BytesIO(page_image(text)["buffer"]))
             qr = Image.open(io.BytesIO(base64.b64decode(sealed_text[index]["qr"]))).convert("L")
@@ -379,7 +376,10 @@ def test_loading_all_photos_while_camera_is_open_finishes_collection_and_checks_
             paper.paste(qr.convert("RGB"), (150, 620))
             photo = Image.new("RGB", (1440, 1920), (55, 55, 55)); photo.paste(paper, (120, 160))
             output = io.BytesIO(); photo.save(output, format="JPEG", quality=95)
-            page.locator("#qr-image").set_input_files({"name": f"page-{index+1}.jpg", "mimeType": "image/jpeg", "buffer": output.getvalue()})
+            with page.expect_file_chooser() as picked:
+                browse_files(page)
+            picked.value.set_files({"name": f"page-{index+1}.jpg", "mimeType": "image/jpeg", "buffer": output.getvalue()})
+            expect(page.locator("video")).to_have_count(0)
             expect(page.locator(".page-check-list button")).to_have_count(index + 1, timeout=30000)
         expect(page.locator("video")).to_have_count(0, timeout=10000)
         expect(page.get_by_role("region", name="Document check").get_by_text("All 2 pages collected.", exact=True)).to_be_visible()
@@ -414,7 +414,7 @@ def test_guided_pages_find_changed_word_and_clear_without_persistence(browser, s
         guard.check_instrumentation(page); guard.block(offline=offline)
         # Page 1 is unchanged. Page 2 carries its original valid seal but an altered word.
         camera_paper(page, TEXT, sealed_text[0]["qr"])
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         expect(page.locator(".collection-progress, .ar-collection-progress, #statusText").filter(has_text="1 of 2 pages").first).to_be_visible(timeout=30000)
         camera_paper(page, TEXT.replace("Friday", "Monday"), sealed_text[1]["qr"])
         review = page.get_by_role("region", name="Review Page 2 of 2", exact=True)
@@ -498,11 +498,11 @@ def test_missing_ocr_resource_stops_before_camera_and_retries(browser):
         context.route("**/ocr/v1/eng.traineddata.gz", lambda route: route.fulfill(status=404, body="Unavailable"))
         page.goto(base_url, wait_until="networkidle")
         page.evaluate("() => { window.__cameraRequests = 0; navigator.mediaDevices.getUserMedia = async () => { window.__cameraRequests++; throw Error('No test camera'); }; }")
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         expect(page.get_by_role("alert").filter(has_text="could not load")).to_be_visible(timeout=20000)
         assert page.evaluate("window.__cameraRequests") == 0
         context.unroute("**/ocr/v1/eng.traineddata.gz")
-        page.get_by_role("button", name="Retry text recognition", exact=True).click()
+        page.get_by_role("button", name="Retry camera", exact=True).click()
         expect(page.get_by_role("button", name="Offline text checking ready", include_hidden=True)).to_have_count(1, timeout=60000)
     finally:
         context.close()
@@ -534,7 +534,7 @@ def test_real_stamped_pages_separate_markings_and_detect_edits(browser, tmp_path
         page.get_by_role("button", name="Seal PDF").click()
         page.get_by_role("button", name="Private key (offline)", exact=True).click()
         page.get_by_label("Private Key", exact=True).fill("txzqca0BtMpjGTzQWh_FnBgQyiGjuf1mdhBMzCutAes=")
-        page.get_by_label("Page layout", exact=True).select_option(layout)
+        choose_layout(page, layout)
         stamped, _ = stamp_and_save(page, {"name": "invoice.pdf", "mimeType": "application/pdf", "buffer": source.getvalue()}, tmp_path / "sealed.pdf")
 
         for variant in ["unchanged", "changed", "light addition"]:
@@ -602,9 +602,10 @@ def test_partial_page_check_has_next_page_guidance_and_focus(browser, sealed_tex
         page.goto(os.environ.get("QRED_BASE_URL", "http://localhost:3000") + path, wait_until="networkidle")
         if path != "/":
             page.locator("#publicKeyFileInput").set_input_files({"name": "key.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode()})
-        expect(page.get_by_text("Camera photos stay on this device.", exact=False)).to_be_visible()
+        privacy_note = "Files stay on this device." if path == "/" else "Camera photos stay on this device."
+        expect(page.get_by_text(privacy_note, exact=False)).to_be_visible()
         camera_paper(page, TEXT.replace("Friday", "Monday").replace("123.45", "923.45"), sealed_text[1]["qr"])
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         expect(page.locator(".ar-collection-progress, #statusText").filter(has_text="Page 2 captured. Show page 1.")).to_be_visible(timeout=45000)
         if path == "/verify.htm":
             assert page.locator("#sealList").evaluate("e => e.scrollWidth <= e.clientWidth")

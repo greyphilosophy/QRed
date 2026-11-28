@@ -9,6 +9,7 @@ import time
 
 import pytest
 from playwright.sync_api import expect
+from browser_helpers import start_camera
 from test_photo_verification import sealed_text, camera_paper, prepare_reader, TEXT, PUBLIC_KEY
 
 
@@ -31,7 +32,7 @@ def test_whole_page_capture_and_comparison_stay_responsive(browser, sealed_text,
             });
             captureObserver.observe({type: 'longtask'});
         }""")
-        page.get_by_role("button", name="Check document", exact=True).click()
+        start_camera(page)
         page.wait_for_function("() => document.querySelector('video')?.readyState >= 2")
         started = time.monotonic()
         expect(page.locator(".page-check-list button")).to_have_count(1, timeout=6000)
