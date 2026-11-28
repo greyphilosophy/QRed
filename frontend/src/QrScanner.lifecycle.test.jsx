@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QrScanner } from "./QrScanner.jsx";
 import { createLiveScanWorker, scanPhotoInWorker } from "./qr/photoScanClient.js";
+import { createPageTextChecks } from "./verifier/pageTextChecks.js";
 
 vi.mock("./qr/photoScanClient.js", () => ({
   preparePhotoScanner: vi.fn(),
@@ -88,6 +89,29 @@ describe("QrScanner route lifecycle", () => {
     await waitFor(() => expect(document.querySelector("video")?.srcObject).toBe(stream));
     expect(beforeScan).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("reports a raw OCR worker rejection before opening the camera and can retry", async () => {
+    // Tesseract sends loading failures across the worker boundary as strings.
+    const failure = "Error: Network error while fetching /ocr/v1/eng.traineddata.gz. Response code: 404";
+    const reader = { prepare: vi.fn().mockRejectedValueOnce(failure).mockResolvedValueOnce(), dispose: vi.fn() };
+    const checks = createPageTextChecks({ reader });
+    const view = render(<QrScanner autoStart compact beforeScan={checks.prepare} />);
+    try {
+      expect(await screen.findByRole("alert")).toHaveProperty("textContent",
+        `Text recognition could not load. ${failure} Try again while connected.`);
+      expect(getUserMedia).not.toHaveBeenCalled();
+      expect(checks.getSnapshot()).toMatchObject({ ready: false, preparing: false });
+
+      fireEvent.click(screen.getByRole("button", { name: "Retry camera" }));
+      await waitFor(() => expect(document.querySelector("video")?.srcObject).toBe(stream));
+      expect(reader.prepare).toHaveBeenCalledTimes(2);
+      expect(checks.getSnapshot()).toMatchObject({ ready: true, preparing: false, error: "" });
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      view.unmount();
+      checks.dispose();
+    }
   });
 
   it("releases a camera permission request that finishes after its route unmounts", async () => {

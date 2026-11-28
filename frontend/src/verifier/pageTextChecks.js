@@ -30,8 +30,12 @@ export function createPageTextChecks({ reader = createPhotoOcrReader(), open = o
       if (job !== current || disposed) throw new Error("This check has ended.");
       ready = true;
     }).catch(cause => {
-      if (job === current) error = `Text recognition could not load. ${cause.message}`;
-      throw cause;
+      if (job !== current || disposed) throw cause;
+      // OCR workers can reject with a string. Give both the review and its
+      // camera entry the same readable error, even while the review is hidden.
+      const detail = cause?.message || (typeof cause === "string" ? cause : "");
+      error = "Text recognition could not load." + (detail ? ` ${detail}` : "");
+      throw new Error(error, { cause });
     }).finally(() => {
       if (job === current) { job = null; publish(); pump(); }
     });
