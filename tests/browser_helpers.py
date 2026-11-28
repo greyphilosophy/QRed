@@ -175,10 +175,10 @@ def show_file_inputs(page):
 
 def prepare_text_for_offline(page):
     show_check(page)
+    summary = page.locator("summary").filter(has_text=re.compile(r"^Prepare for offline checking$"))
+    if summary.locator("..").get_attribute("open") is None:
+        summary.click()
     if not page.get_by_role("button", name="Offline text checking ready", include_hidden=True).count():
-        summary = page.locator("summary").filter(has_text=re.compile(r"^Prepare for offline checking$"))
-        if summary.locator("..").get_attribute("open") is None:
-            summary.click()
         page.get_by_role("button", name="Prepare offline checking", exact=True).click()
         expect(page.get_by_role("button", name="Offline text checking ready", include_hidden=True)).to_have_count(1, timeout=60000)
     page.wait_for_load_state("networkidle")

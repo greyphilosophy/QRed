@@ -15,6 +15,8 @@
 .qred-app .qred-shell { width: 100%; max-width: 760px; margin: 0 auto; }
 .qred-app.qred-view-home .qred-shell, .qred-app.qred-view-about .qred-shell { max-width: 440px; }
 .qred-app h1 { margin: 0 0 20px; font-size: clamp(1.65rem, 5vw, 2rem); line-height: 1.2; letter-spacing: -.025em; }
+/* Route headings receive focus for screen readers, but are not controls. */
+.qred-app h1[tabindex="-1"]:focus, .qred-app .seal-form-heading[tabindex="-1"]:focus { outline: none; }
 .qred-app-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 22px; }
 .qred-app .qred-wordmark, .qred-app .qred-about-link, .qred-app .qred-back {
   display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 6px 0;

@@ -128,11 +128,15 @@ def test_load_pdf_seals_on_both_verifiers_offline(browser, tmp_path, path):
         page.goto(base + path, wait_until="networkidle")
         show_file_inputs(page)
         picker = page.get_by_label("Open PDF to verify", exact=True)
-        status = page.locator(".pdf-seal-input [role=status]")
+        status = page.locator(
+            '.verification-card > div > [role="status"][aria-live="polite"]'
+            if path == "/" else '.pdf-seal-input > [role="status"]')
         picker.set_input_files(source)
         expect(status).to_contain_text("No readable seal on PDF page(s): 1, 2.", timeout=90000)
+        expect(status).to_be_visible()
         picker.set_input_files(stamped)
         expect(status).to_have_text("Found 2 QRed seals across 2 of 2 PDF pages.", timeout=90000)
+        expect(status).to_be_visible()
         page.get_by_label("Open issuer public key file", exact=True).set_input_files({
             "name": "public-key.txt", "mimeType": "text/plain", "buffer": PUBLIC_KEY.encode(),
         })
@@ -148,6 +152,7 @@ def test_load_pdf_seals_on_both_verifiers_offline(browser, tmp_path, path):
         guard.block()
         picker.set_input_files(stamped)
         expect(status).to_have_text("Found 2 QRed seals across 2 of 2 PDF pages.", timeout=90000)
+        expect(status).to_be_visible()
         expect(results).to_have_count(2)
         for index in range(2):
             expect(results.nth(index)).to_contain_text("Seal authenticated", timeout=30000)
@@ -156,6 +161,7 @@ def test_load_pdf_seals_on_both_verifiers_offline(browser, tmp_path, path):
         guard.assert_quiet()
         picker.set_input_files({"name": "broken.pdf", "mimeType": "application/pdf", "buffer": b"not a PDF"})
         expect(status).to_contain_text("Could not read PDF seals:", timeout=30000)
+        expect(status).to_be_visible()
     finally:
         context.close()
 
